@@ -1,4 +1,4 @@
-<!-- UPDATED: 2026-05-18 16:20:27 JST -->
+<!-- UPDATED: 2026-05-18 16:35:16 JST -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -397,7 +397,7 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       <button class="btn bp" style="flex:2;min-width:120px" id="m-checkout-save" onclick="doCheckoutSave()">✅ お会計確定</button>
       <button class="btn bs" style="min-width:100px" id="btn-receipt-all" onclick="printReceipt('all')">🖨️ 全員</button>
       <button class="btn bs" style="min-width:100px" id="btn-receipt-each" onclick="printReceipt('each')" style="display:none">🖨️ 個別</button>
-      <span style="font-size:10px;color:var(--ink3);margin-left:4px">16:20</span>
+      <span style="font-size:10px;color:var(--ink3);margin-left:4px">16:35</span>
     </div>
   </div>
 </div>
@@ -852,8 +852,14 @@ function onMemberInput(){
 
 // 仮会員ID採番（900001〜）
 async function fetchNextTempMemberId(){
+  // Firestoreとcacheの両方から既存IDを取得
   var snap=await db.collection('members').where('memberId','>=','900001').where('memberId','<=','999999').get();
   var existing=snap.docs.map(function(d){ return parseInt(d.id)||0; });
+  // cacheにある仮会員IDも含める
+  cache.members.forEach(function(m){
+    var n=parseInt(m.id||m.memberId||0);
+    if(n>=900001&&n<=999999&&existing.indexOf(n)<0) existing.push(n);
+  });
   var next=900001;
   while(existing.indexOf(next)>=0) next++;
   return String(next);
@@ -961,13 +967,19 @@ g('m-checkin-save').addEventListener('click', async function(){
     }
 
     // ── 新規来場者の仮会員登録 ──
-    for(var j=0;j<newNicks.length;j++){
-      var tempId=await fetchNextTempMemberId();
-      var regCode=generateRegCode();
+    // 最初に全員分のIDを採番（Firestoreとcacheから既存IDを取得）
+    var tempIdSnap=await db.collection('members').where('memberId','>=','900001').where('memberId','<=','999999').get();
+    var existingTempIds=tempIdSnap.docs.map(function(d){ return parseInt(d.id)||0; });
+    var nextTempNum=900001;
 
-      // 重複チェック
-      var codeCheck=await db.collection('tempRegistrations').doc(regCode).get();
-      if(codeCheck.exists){ regCode=generateRegCode(); } // 再生成
+    for(var j=0;j<newNicks.length;j++){
+      // 重複しないIDを採番
+      while(existingTempIds.indexOf(nextTempNum)>=0) nextTempNum++;
+      var tempId=String(nextTempNum);
+      existingTempIds.push(nextTempNum); // 採番済みリストに追加
+      nextTempNum++;
+
+      var regCode=generateRegCode();
 
       // Firestoreに仮会員を保存
       batch.set(db.collection('members').doc(tempId),{
@@ -1002,8 +1014,8 @@ g('m-checkin-save').addEventListener('click', async function(){
       tempMemberIds.push({tempId:tempId, nickname:newNicks[j], regCode:regCode});
       _nextSeq++;
 
-      // cacheに追加（次のfetchNextTempMemberIdで重複しないよう）
-      cache.members.push({id:tempId, memberId:tempId, nickname:newNicks[j], status:'guest', isGuest:true});
+      // cacheに即座に追加
+      cache.members.push({id:tempId, memberId:tempId, nickname:newNicks[j], name:newNicks[j], status:'guest', isGuest:true});
     }
 
     await batch.commit();
