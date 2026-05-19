@@ -1,4 +1,4 @@
-<!-- UPDATED: 2026-05-19 15:04:21 JST -->
+<!-- UPDATED: 2026-05-19 15:14:47 JST -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -397,7 +397,7 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       <button class="btn bp" style="flex:2;min-width:120px" id="m-checkout-save" onclick="doCheckoutSave()">✅ お会計確定</button>
       <button class="btn bs" style="min-width:100px" id="btn-receipt-all" onclick="printReceipt('all')">🖨️ 全員</button>
       <button class="btn bs" style="min-width:100px" id="btn-receipt-each" onclick="printReceipt('each')" style="display:none">🖨️ 個別</button>
-      <span style="font-size:10px;color:var(--ink3);margin-left:4px">15:04</span>
+      <span style="font-size:10px;color:var(--ink3);margin-left:4px">15:14</span>
     </div>
   </div>
 </div>
@@ -705,9 +705,11 @@ function refreshSingleVisit(visitKey, btn){
   if(btn){ btn.textContent='…'; btn.disabled=true; }
   var today=todayStr6();
   // 注文データを再取得してこの来場者の集計を更新
-  db.collection('orders').get().then(function(snap){
-    cache.orders=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());})
-      .filter(function(o){ return o.orderDate===today; });
+  db.collection('orders').where('visitKey','==',visitKey).get().then(function(snap){
+    var newOrders=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    // cacheの該当visitKeyの注文を更新
+    cache.orders=cache.orders.filter(function(o){ return o.visitKey!==visitKey&&o.visitId!==visitKey; });
+    cache.orders=cache.orders.concat(newOrders);
     var orders=getVisitOrders(visitKey);
     var totalAmt=calcAmount(orders);
     var totalTq=calcTequila(orders);
@@ -1330,7 +1332,14 @@ function doCheckoutSave(){
       ?'お会計・退場を確定しました（'+bulkCheckoutVisitKeys.length+'名）'
       :'お会計を確定しました（'+bulkCheckoutVisitKeys.length+'名）';
     toast(msg);
+    bulkCheckoutVisitKeys=[];
     renderVisitorList();
+    // チェックボックスをクリア
+    document.querySelectorAll('.vis-check').forEach(function(cb){ cb.checked=false; });
+    var sc=g('selected-count'); if(sc) sc.textContent='0';
+    var sc2=g('selected-count2'); if(sc2) sc2.textContent='0';
+    var bb=g('btn-bulk-checkout'); if(bb) bb.disabled=true;
+    var bb2=g('btn-bulk-checkouttime'); if(bb2) bb2.disabled=true;
   }).catch(function(e){ toast('お会計処理失敗: '+e.message,'err'); });
 }
 
@@ -1351,6 +1360,11 @@ function bulkCheckoutTime(){
   fbBatch.commit().then(function(){
     toast(visitIds.length+'名を退場処理しました（'+fmtHHMM(time)+'）');
     renderVisitorList();
+    document.querySelectorAll('.vis-check').forEach(function(cb){ cb.checked=false; });
+    var sc=g('selected-count'); if(sc) sc.textContent='0';
+    var sc2=g('selected-count2'); if(sc2) sc2.textContent='0';
+    var bb=g('btn-bulk-checkout'); if(bb) bb.disabled=true;
+    var bb2=g('btn-bulk-checkouttime'); if(bb2) bb2.disabled=true;
   }).catch(function(e){ toast('退場処理失敗: '+e.message,'err'); });
 }
 
