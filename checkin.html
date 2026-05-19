@@ -1,4 +1,4 @@
-<!-- UPDATED: 2026-05-19 15:14:47 JST -->
+<!-- UPDATED: 2026-05-19 15:23:42 JST -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -171,6 +171,7 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
     <div class="top-brand">👥 来場者一覧</div>
     <div class="top-right">
       <a href="home.html" class="top-back">← ホーム</a>
+      <a href="openclose.html" style="font-size:12px;color:var(--ink3);text-decoration:none;margin-left:12px">🏪 開店・閉店</a>
       <button class="top-logout" id="btn-logout">ログアウト</button>
     </div>
   </div>
@@ -397,7 +398,7 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       <button class="btn bp" style="flex:2;min-width:120px" id="m-checkout-save" onclick="doCheckoutSave()">✅ お会計確定</button>
       <button class="btn bs" style="min-width:100px" id="btn-receipt-all" onclick="printReceipt('all')">🖨️ 全員</button>
       <button class="btn bs" style="min-width:100px" id="btn-receipt-each" onclick="printReceipt('each')" style="display:none">🖨️ 個別</button>
-      <span style="font-size:10px;color:var(--ink3);margin-left:4px">15:14</span>
+      <span style="font-size:10px;color:var(--ink3);margin-left:4px">15:23</span>
     </div>
   </div>
 </div>
@@ -555,6 +556,19 @@ function getVisitOrders(visitId){
   return cache.orders.filter(function(o){ return o.visitKey===visitId||o.visitId===visitId; });
 }
 
+function toggleRetired(el){
+  var list=document.getElementById('retired-list');
+  var icon=document.getElementById('retired-toggle-icon');
+  if(!list) return;
+  if(list.style.display==='none'){
+    list.style.display='block';
+    if(icon) icon.textContent='▼';
+  } else {
+    list.style.display='none';
+    if(icon) icon.textContent='▶';
+  }
+}
+
 function renderVisitorList(){
   var el=g('visitor-list');
   // 来場中: 会計時間も退場時間も未セット
@@ -582,8 +596,10 @@ function renderVisitorList(){
     paid.forEach(function(v){ html+=renderVisCard(v,'paid'); });
   }
   if(done.length){
-    html+='<div style="font-size:11px;font-weight:500;color:var(--ink3);letter-spacing:.1em;text-transform:uppercase;margin:16px 0 8px;padding-left:4px">退場済（'+done.length+'名）</div>';
+    html+='<div style="font-size:11px;font-weight:500;color:var(--ink3);letter-spacing:.1em;text-transform:uppercase;margin:16px 0 8px;padding-left:4px;cursor:pointer;user-select:none" onclick="toggleRetired(this)">退場済（'+done.length+'名）<span id="retired-toggle-icon" style="margin-left:6px">▶</span></div>';
+    html+='<div id="retired-list" style="display:none">';
     done.forEach(function(v){ html+=renderVisCard(v,'done'); });
+    html+='</div>';
   }
   el.innerHTML=html;
 
@@ -804,8 +820,9 @@ function filterMembers(){
       if(visits==='21-' && vc<21) return false;
     }
     if(status && m.status!==status) return false;
-    // 仮会員(900xxx)は除外
+    // 仮会員(900xxx)とゲストは除外
     if(m.id && String(m.id).startsWith('9')) return false;
+    if(m.status==='guest'||m.isGuest) return false;
     return true;
   });
 
@@ -963,6 +980,12 @@ g('m-checkin-save').addEventListener('click', async function(){
         memberId:memberId, checkinGroupId:groupId,
         tequilaAmount:0, amount:0, payment:payment, receiptIssued:'0', checkoutTime:null
       });
+      // 来店回数+1
+      var memSnap=await db.collection('members').doc(memberId).get();
+      if(memSnap.exists){
+        var curCount=memSnap.data().visitCount||0;
+        batch.update(db.collection('members').doc(memberId),{visitCount:curCount+1});
+      }
       registeredVisitKeys.push(visitKey);
       _nextSeq++; if(_nextSeq>99) _nextSeq=1;
     } else if(cntMem>0){
@@ -1325,6 +1348,32 @@ function doCheckoutSave(){
       if(alsoCheckout) v.checkoutTime=now;
     }
   });
+
+  // お会計確定時にmembersのtotalAmount・totalTequilaを更新
+  var memberUpdateBatch=db.batch();
+  var memberUpdatePromises=[];
+  bulkCheckoutVisitKeys.forEach(function(visitKey){
+    var v=cache.visits.find(function(x){ return x.id===visitKey; });
+    if(!v||!v.memberId) return;
+    var mid=v.memberId;
+    var wkEl=g('wk-'+visitKey);
+    var amt=wkEl?parseInt(wkEl.value)||0:calcAmount(cache.orders.filter(function(o){ return o.visitKey===visitKey||o.visitId===visitKey; }));
+    var tq=calcTequila(cache.orders.filter(function(o){ return o.visitKey===visitKey||o.visitId===visitKey; }));
+    memberUpdatePromises.push(
+      db.collection('members').doc(mid).get().then(function(snap){
+        if(!snap.exists) return;
+        var d=snap.data();
+        memberUpdateBatch.update(db.collection('members').doc(mid),{
+          totalAmount:(d.totalAmount||0)+amt,
+          totalTequila:(d.totalTequila||0)+tq
+        });
+      })
+    );
+  });
+
+  Promise.all(memberUpdatePromises).then(function(){
+    return memberUpdateBatch.commit();
+  }).catch(function(){});
 
   fbBatch.commit().then(function(){
     closeM('m-checkout');
