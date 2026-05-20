@@ -1,16 +1,14 @@
-<!-- UPDATED: 2026-05-15 17:15:36 JST -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>テキーラ道場 — 会員・店舗管理</title>
+<title>テキーラ道場 — 顧客・店舗管理</title>
 
 <!-- Firebase SDK -->
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
 <script>
 var FIREBASE_CONFIG = {
@@ -181,10 +179,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
     <div class="page active" id="page-members">
       <div class="phead">
         <div><div class="ptitle">顧客マスタ</div><div class="pdesc">顧客番号 6桁 = 西暦下2桁 + 通番4桁</div></div>
-        <div style="display:flex;gap:6px">
-          <button class="btn bp" id="btn-open-member">＋ 会員登録</button>
-          <button class="btn bs" onclick="checkMemberConsistency()">🔧 整合性チェック</button>
-        </div>
+        <button class="btn bp" id="btn-open-member">＋ 顧客登録</button>
       </div>
       <div class="card">
         <div class="toolbar">
@@ -199,8 +194,8 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         </div>
         <div class="tw"><table id="tbl-members">
           <colgroup><col style="width:70px"><col><col><col><col style="width:60px"><col style="width:60px"><col style="width:90px"><col style="width:86px"></colgroup>
-          <thead><tr><th>顧客番号</th><th>顧客名</th><th>ニックネーム</th><th>カタカナ</th><th>性別</th><th>種別</th><th>言語</th><th>都道府県</th><th>登録日</th><th>✏️ 操作</th></tr></thead>
-          <tbody id="tb-members"><tr><td colspan="10" class="ec">読み込み中...</td></tr></tbody>
+          <thead><tr><th>顧客番号</th><th>顧客名</th><th>ニックネーム</th><th>カタカナ</th><th>性別</th><th>都道府県</th><th>登録日</th><th>✏️ レコード操作</th></tr></thead>
+          <tbody id="tb-members"><tr><td colspan="8" class="ec">読み込み中...</td></tr></tbody>
         </table></div>
       </div>
     </div>
@@ -233,61 +228,17 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 <!-- 顧客モーダル -->
 <div class="mbg" id="m-member">
   <div class="modal modal-lg">
-    <div class="mhead"><div class="mtitle" id="mt-member">会員登録</div><button class="mx" data-close="m-member">✕</button></div>
+    <div class="mhead"><div class="mtitle" id="mt-member">顧客登録</div><button class="mx" data-close="m-member">✕</button></div>
     <div class="mbody">
-      <div class="keybox" id="kb-member">—<span class="klabel">会員番号</span></div>
-      <!-- ステータスバー -->
-      <div id="mem-status-bar" style="display:none;background:var(--ink);border-radius:var(--r);padding:10px 16px;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <span id="mem-status-badge" style="font-size:11px;padding:2px 8px;border-radius:4px;font-weight:500;"></span>
-          <span id="mem-owner-badge" style="display:none;font-size:11px;padding:2px 8px;border-radius:4px;background:#1a3a5a;color:#7ab8df;font-weight:500;">👑 オーナー</span>
-        </div>
-        <div style="font-size:11px;color:rgba(255,255,255,.4);" id="mem-password-status"></div>
-      </div>
-      <!-- ステータス変更（編集時のみ） -->
-      <div id="mem-status-change-area" style="display:none;margin-bottom:12px;">
-        <div style="font-size:11px;font-weight:500;color:var(--ink3);letter-spacing:.06em;margin-bottom:6px;">ステータス変更</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn bs sm" onclick="changeStatus('guest')">ゲストに変更</button>
-          <button class="btn bs sm" onclick="changeStatus('temp')">仮登録に変更</button>
-          <button class="btn bs sm" onclick="changeStatus('pending')">認証待ちに変更</button>
-          <button class="btn bp sm" onclick="changeStatus('active')">本登録に変更</button>
-        </div>
-      </div>
-      <!-- Firebase Auth情報 -->
-      <div class="frow">
-        <div class="fg"><label class="fl">メールアドレス</label><input class="fi" id="mem-email" type="email" placeholder="member@example.com"></div>
-      <div class="fg"><label class="fl">パスワード（新規登録・変更時のみ入力）</label><input class="fi" id="mem-password" type="password" placeholder="8文字以上" autocomplete="new-password"><div style="font-size:11px;color:var(--ink3);margin-top:3px">入力した場合のみFirebase Authに反映されます</div></div>
-      <div class="frow" style="margin-top:8px;gap:16px;align-items:center;flex-wrap:wrap;">
-        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
-          <input type="checkbox" id="mem-email-verified" style="width:14px;height:14px"> emailVerified（認証済み）
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
-          <input type="checkbox" id="mem-is-temp" style="width:14px;height:14px"> isTemp（仮登録）
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
-          <input type="checkbox" id="mem-is-guest" style="width:14px;height:14px"> isGuest（ゲスト）
-        </label>
-      </div>
-      <div class="frow" style="margin-top:8px;">
-        <div class="fg"><label class="fl">authUid（表示のみ）</label><input class="fi" id="mem-auth-uid" readonly style="background:var(--cream2);font-family:var(--mono);font-size:11px;color:var(--ink3);" placeholder="—"></div>
-        <div class="fg"><label class="fl">stripeCustomerId（表示のみ）</label><input class="fi" id="mem-stripe-id" readonly style="background:var(--cream2);font-family:var(--mono);font-size:11px;color:var(--ink3);" placeholder="—"></div>
-      </div>
-      </div>
+      <div class="keybox" id="kb-member">—<span class="klabel">顧客番号</span></div>
       <div class="frow c3">
-        <div class="fg"><label class="fl">会員番号（6桁）<span class="req">*</span></label><input class="fi mono" id="mem-id" placeholder="250001" maxlength="6" readonly style="background:var(--cream2)"></div>
+        <div class="fg"><label class="fl">顧客番号（6桁）<span class="req">*</span></label><input class="fi mono" id="mem-id" placeholder="250001" maxlength="6" readonly style="background:var(--cream2)"></div>
         <div class="fg"><label class="fl">登録日</label><div class="date-group"><input class="fi dy" id="mem-reg-y" maxlength="4" placeholder="YYYY" style="width:52px;text-align:center"><span class="date-sep">/</span><input class="fi dm" id="mem-reg-m" maxlength="2" placeholder="MM" style="width:34px;text-align:center"><span class="date-sep">/</span><input class="fi dd" id="mem-reg-d" maxlength="2" placeholder="DD" style="width:34px;text-align:center"></div><input type="hidden" id="mem-reg"></div>
         <div class="fg"><label class="fl">性別</label><select class="fs" id="mem-gender"><option value="男">男</option><option value="女">女</option><option value="他">他</option></select></div>
-        <div class="fg"><label class="fl">会員区分</label><select class="fs" id="mem-grade">
-          <option value="0">0: 無料会員</option>
-          <option value="1">1: 有料会員1</option>
-          <option value="2">2: 有料会員2</option>
-          <option value="3">3: 有料会員3</option>
-        </select></div>
       </div>
       <div class="frow">
-        <div class="fg"><label class="fl">会員名<span class="req">*</span></label><input class="fi" id="mem-name" placeholder="田中 太郎"></div>
-        <div class="fg"><label class="fl">会員名（カタカナ）</label><input class="fi" id="mem-kana" placeholder="タナカ タロウ"></div>
+        <div class="fg"><label class="fl">顧客名<span class="req">*</span></label><input class="fi" id="mem-name" placeholder="田中 太郎"></div>
+        <div class="fg"><label class="fl">顧客名（カタカナ）</label><input class="fi" id="mem-kana" placeholder="タナカ タロウ"></div>
       </div>
       <div class="fg"><label class="fl">ニックネーム</label><input class="fi" id="mem-nick" placeholder="タロ"></div>
       <div class="fg"><label class="fl">誕生日</label><div class="date-group"><input class="fi dy" id="mem-birth-y" maxlength="4" placeholder="YYYY" style="width:52px;text-align:center"><span class="date-sep">/</span><input class="fi dm" id="mem-birth-m" maxlength="2" placeholder="MM" style="width:34px;text-align:center"><span class="date-sep">/</span><input class="fi dd" id="mem-birth-d" maxlength="2" placeholder="DD" style="width:34px;text-align:center"></div><input type="hidden" id="mem-birth"></div>
@@ -303,11 +254,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         <option>徳島県</option><option>香川県</option><option>愛媛県</option><option>高知県</option>
         <option>福岡県</option><option>佐賀県</option><option>長崎県</option><option>熊本県</option><option>大分県</option><option>宮崎県</option><option>鹿児島県</option><option>沖縄県</option>
       </select></div>
-      <div class="frow">
-        <div class="fg" style="max-width:160px"><label class="fl">郵便番号</label><input class="fi" id="mem-zip" placeholder="150-0041" maxlength="8"></div>
-        <div class="fg"><label class="fl">住所</label><input class="fi" id="mem-addr" placeholder="渋谷区道玄坂1-1-1"></div>
-      </div>
-      <div class="fg"><label class="fl">建物・部屋番号</label><input class="fi" id="mem-addr2" placeholder="テキーラビル201"></div>
+      <div class="fg"><label class="fl">住所</label><input class="fi" id="mem-addr" placeholder="渋谷区道玄坂1-1-1"></div>
       <div class="fg"><label class="fl">電話番号</label><input class="fi" id="mem-tel" type="tel" placeholder="090-0000-0000"></div>
       <hr class="fsep">
       <div class="frow c3">
@@ -315,20 +262,8 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         <div class="fg"><label class="fl">Instagram ID</label><input class="fi" id="mem-ig" placeholder="@username"></div>
         <div class="fg"><label class="fl">Facebook ID</label><input class="fi" id="mem-fb" placeholder="username"></div>
       </div>
-      <div class="fg"><label class="fl">メインSNS</label><select class="fs" id="mem-main-sns">
-        <option value="0">— 未設定</option>
-        <option value="1">1: Twitter / X</option>
-        <option value="2">2: Instagram</option>
-        <option value="3">3: Facebook</option>
-      </select></div>
-      <hr class="fsep">
-      <div style="font-size:11px;font-weight:500;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">累積データ（自動集計・編集不可）</div>
-      <div class="frow c3">
-        <div class="fg"><label class="fl">来場回数</label><input class="fi" id="mem-visits" type="number" min="0" value="0" style="background:var(--cream2)" readonly></div>
-        <div class="fg"><label class="fl">総テキーラ量（ml）</label><input class="fi mono" id="mem-total-tequila" type="number" value="0" style="background:var(--cream2)" readonly></div>
-        <div class="fg"><label class="fl">総支払金額（円）</label><input class="fi mono" id="mem-total-amount" type="number" value="0" style="background:var(--cream2)" readonly></div>
-      </div>
       <div class="frow">
+        <div class="fg"><label class="fl">来店回数</label><input class="fi" id="mem-visits" type="number" min="0" value="0" style="background:var(--cream2)" readonly></div>
         <div class="fg"><label class="fl">段位</label><select class="fs" id="mem-rank">
           <option value="">—</option>
           <option value="初級">初級</option><option value="中級">中級</option><option value="上級">上級</option>
@@ -337,10 +272,6 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <option value="七段">七段</option><option value="八段">八段</option><option value="九段">九段</option>
         </select></div>
       </div>
-      <hr class="fsep">
-      <div class="fg"><label class="fl">表示言語</label><select class="fs" id="mem-lang"><option value="0">0: 日本語</option><option value="1">1: 英語</option></select><div style="font-size:11px;color:var(--ink3);margin-top:3px">注文登録画面での商品名表示言語（1=英語名で表示）</div></div>
-      <div class="fg"><label class="fl">公開区分</label><select class="fs" id="mem-visibility"><option value="0">0: 非公開</option><option value="1">1: フォロワーのみ公開</option><option value="2">2: 匿名公開</option><option value="3">3: 全公開</option></select></div>
-      <div class="fg"><label class="fl">ロール</label><select class="fs" id="mem-role"><option value="">— 一般会員</option><option value="owner">owner（オーナー）</option></select><div style="font-size:11px;color:var(--ink3);margin-top:3px">管理者権限を付与する場合はownerを選択</div></div>
       <div class="fg"><label class="fl">備考</label><textarea class="fi" id="mem-note" rows="3" style="resize:vertical;font-size:13px" placeholder="自由記入..."></textarea></div>
     </div>
     <div class="mfoot"><button class="btn bg2" data-close="m-member">キャンセル</button><button class="btn bp" id="btn-save-member">保存</button></div>
@@ -510,13 +441,7 @@ function renderMembers(){
   if(!list.length){ tb.innerHTML='<tr><td colspan="8" class="ec">データがありません</td></tr>'; return; }
   tb.innerHTML=list.map(function(r){
     var gBadge=r.gender==="男"?'<span class="badge bg-blue">男</span>':r.gender==="女"?'<span class="badge bg-teal">女</span>':'<span class="badge bg-gray">他</span>';
-    var st=r.status||(r.isGuest||!r.authUid?'guest':r.isTemp?'temp':r.emailVerified?'active':'pending');
-    var statusLabel;
-    if(st==='guest'){ statusLabel='<span style="background:#3a3a1a;color:#cccc44;padding:1px 4px;border-radius:3px;font-size:10px">ゲスト</span>'; }
-    else if(st==='temp'){ statusLabel='<span style="background:#3a1a3a;color:#cc88cc;padding:1px 4px;border-radius:3px;font-size:10px">仮登録</span>'; }
-    else if(st==='pending'){ statusLabel='<span style="background:#3a2a0a;color:#e8b84a;padding:1px 4px;border-radius:3px;font-size:10px">認証待ち</span>'; }
-    else{ statusLabel='<span style="background:#1a3a1a;color:#7adf7a;padding:1px 4px;border-radius:3px;font-size:10px">'+(r.role==='owner'?'👑 ':'')+'本登録</span>'; }
-    return '<tr><td class="mono">'+r.id+'</td><td>'+(r.name||"—")+'</td><td style="font-size:12px;color:var(--teal)">'+(r.nickname||"—")+'</td><td class="dim" style="font-size:12px">'+(r.nameKana||"—")+'</td><td>'+gBadge+'</td>'+'<td style="font-size:10px;text-align:center;white-space:nowrap">'+statusLabel+'</td>'+'<td class="dim" style="font-size:11px;text-align:center">'+(r.lang===1?'🇬🇧 EN':'🇯🇵 JA')+'</td><td class="dim" style="font-size:11px">'+(r.prefecture||"—")+'</td><td class="mono dim" style="font-size:11px">'+(r.registeredAt||"—")+'</td><td><div class="acts"><button class="btn bs sm" data-edit-member="'+r.id+'">編集</button><button class="btn bs sm" data-copy-member="'+r.id+'">コピー</button><button class="btn bd sm" data-del="members" data-del-id="'+r.id+'" data-del-label="顧客">削除</button></div></td></tr>';
+    return '<tr><td class="mono">'+r.id+'</td><td>'+(r.name||"—")+'</td><td style="font-size:12px;color:var(--teal)">'+(r.nickname||"—")+'</td><td class="dim" style="font-size:12px">'+(r.nameKana||"—")+'</td><td>'+gBadge+'</td><td class="dim" style="font-size:11px">'+(r.prefecture||"—")+'</td><td class="mono dim" style="font-size:11px">'+(r.registeredAt||"—")+'</td><td><div class="acts"><button class="btn bs sm" data-edit-member="'+r.id+'">編集</button><button class="btn bs sm" data-copy-member="'+r.id+'">コピー</button><button class="btn bd sm" data-del="members" data-del-id="'+r.id+'" data-del-label="顧客">削除</button></div></td></tr>';
   }).join("");
 }
 
@@ -548,178 +473,6 @@ document.addEventListener("click",function(e){
 });
 
 // ── 顧客マスタ ───────────────────────────────────────────────────
-// ── 整合性チェック ─────────────────────────────────────────────
-async function checkMemberConsistency(){
-  var btn=document.querySelector('button[onclick="checkMemberConsistency()"]');
-  if(btn){ btn.disabled=true; btn.textContent='チェック中...'; }
-
-  var snap=await db.collection('members').get();
-  var fixes=[], guestRenames=[];
-
-  // ゲスト用採番：0+5桁の最大値を取得
-  var maxGuestNum=0;
-  snap.forEach(function(doc){
-    var mid=doc.data().memberId||'';
-    if(mid.charAt(0)==='0'){
-      var num=parseInt(mid.slice(1))||0;
-      if(num>maxGuestNum) maxGuestNum=num;
-    }
-  });
-
-  snap.forEach(function(doc){
-    var d=doc.data();
-    var mid=d.memberId||doc.id;
-    var hasAuth=!!d.authUid;
-    var hasAuthEmail=!!d.authUid||!!d.email; // authUidまたはauthEmailがあればAuth登録あり
-
-    // authUidもauthEmailもない → ゲスト（ログイン不可）
-    // ただし既にisGuest=trueのものはスキップ
-    if(!hasAuth && !hasAuthEmail){
-      if(!d.isGuest){
-        fixes.push({id:doc.id, memberId:mid, type:'guest', data:d, currentStatus:d.status});
-      }
-    } else {
-      // authあり → メールあり=本登録、なし=仮登録
-      var shouldBeTemp=!d.email;
-      if(d.isTemp!==shouldBeTemp||d.isGuest){
-        fixes.push({id:doc.id, memberId:mid, type:shouldBeTemp?'temp':'full', data:d, currentStatus:d.status});
-      }
-    }
-  });
-
-  if(fixes.length===0){
-    toast('整合性チェック完了：問題なし ✅');
-    if(btn){ btn.disabled=false; btn.textContent='🔧 整合性チェック'; }
-    return;
-  }
-
-  // ゲストで会員IDが0始まりでないものは確認
-  for(var i=0;i<fixes.length;i++){
-    var f=fixes[i];
-    if(f.type==='guest' && f.memberId.charAt(0)!=='0'){
-      maxGuestNum++;
-      var newId='0'+String(maxGuestNum).padStart(5,'0');
-      var ok=confirm('【ゲスト会員ID変更確認】\n変更前: '+f.memberId+'\n変更後: '+newId+'\n\nこの会員IDを変更しますか？');
-      if(ok){
-        guestRenames.push({docId:f.id, oldId:f.memberId, newId:newId, fix:f});
-      } else {
-        // 変更しない場合もisGuestはtrueにする
-        guestRenames.push({docId:f.id, oldId:f.memberId, newId:f.memberId, fix:f});
-      }
-    }
-  }
-
-  // バッチ更新
-  var batch=db.batch();
-  var count=0;
-
-  fixes.forEach(function(f){
-    var rename=guestRenames.find(function(r){ return r.docId===f.id; });
-    if(f.type==='guest'){
-      var newMid=rename?rename.newId:f.memberId;
-      if(rename&&rename.newId!==rename.oldId){
-        // 新しいドキュメントIDで作成、古いものは削除
-        batch.set(db.collection('members').doc(rename.newId),
-          Object.assign({},f.data,{memberId:newMid,isGuest:true,isTemp:false,authUid:null}));
-        batch.delete(db.collection('members').doc(f.id));
-      } else {
-        batch.update(db.collection('members').doc(f.id),{isGuest:true,isTemp:false,status:'guest'});
-      }
-    } else if(f.type==='temp'){
-      batch.update(db.collection('members').doc(f.id),{isTemp:true,isGuest:false,status:'temp'});
-    } else if(f.type==='full'){
-      batch.update(db.collection('members').doc(f.id),{isTemp:false,isGuest:false,status:d.emailVerified?'active':'pending'});
-    }
-    count++;
-  });
-
-  await batch.commit();
-  toast('整合性チェック完了：'+count+'件を修正しました ✅');
-  loadMembers();
-  if(btn){ btn.disabled=false; btn.textContent='🔧 整合性チェック'; }
-}
-
-// ── ステータス変更 ──────────────────────────────────────────────
-async function changeStatus(newStatus){
-  var id=gv("mem-id");
-  if(!id){ toast("会員IDが取得できません","err"); return; }
-
-  var r=cache.members.find(function(m){ return m.id===id; });
-  var authUid=r?r.authUid:null;
-  var email=gv("mem-email")||null;
-  var password=gv("mem-password")||null;
-
-  // 確認
-  var statusLabels={guest:"ゲスト",temp:"仮登録",pending:"認証待ち",active:"本登録"};
-  if(!confirm(id+" のステータスを「"+statusLabels[newStatus]+"」に変更しますか？")) return;
-
-  try{
-    var fn=firebase.functions().httpsCallable;
-    var batch=db.batch();
-    var ref=db.collection("members").doc(id);
-
-    if(newStatus==="guest"){
-      // Firebase Authアカウント削除
-      if(authUid){
-        await firebase.functions().httpsCallable("adminAuthOperation")({
-          operation:"delete", authUid:authUid
-        }).catch(function(){});
-      }
-      batch.update(ref,{status:"guest",authUid:null,email:null,emailVerified:false,isTemp:false,isGuest:true});
-      // memberIndexも削除
-      batch.delete(db.collection("memberIndex").doc(id));
-
-    } else if(newStatus==="temp"){
-      // パスワード必須
-      if(!password||password.length<8){
-        toast("仮登録にするにはパスワード（8文字以上）を入力してください","err"); return;
-      }
-      var authEmail=id+"@tequiladojo.member";
-      if(authUid){
-        // 既存アカウントのパスワード変更
-        await firebase.functions().httpsCallable("adminAuthOperation")({
-          operation:"updatePassword", authUid:authUid, password:password
-        });
-      } else {
-        // 新規作成
-        var result=await firebase.functions().httpsCallable("adminAuthOperation")({
-          operation:"create", memberId:id, email:null, password:password
-        });
-        authUid=result.data.uid;
-      }
-      batch.update(ref,{status:"temp",authUid:authUid,email:null,emailVerified:false,isTemp:true,isGuest:false});
-
-    } else if(newStatus==="pending"){
-      // メールアドレス必須
-      if(!email){ toast("認証待ちにするにはメールアドレスを入力してください","err"); return; }
-      if(!authUid){ toast("Firebase Authアカウントがありません。先に仮登録にしてください","err"); return; }
-      // 認証メール送信はCloud Functions経由（Admin SDK）
-      await firebase.functions().httpsCallable("adminAuthOperation")({
-        operation:"updateEmail", authUid:authUid, email:email
-      });
-      batch.update(ref,{status:"pending",email:email,emailVerified:false,isTemp:false,isGuest:false});
-      batch.set(db.collection("memberIndex").doc(id),{email:email});
-
-    } else if(newStatus==="active"){
-      // 強制本登録
-      if(!authUid){ toast("Firebase Authアカウントがありません","err"); return; }
-      if(!email){ toast("本登録にするにはメールアドレスを入力してください","err"); return; }
-      await firebase.functions().httpsCallable("forceVerifyEmail")({
-        authUid:authUid, email:email
-      });
-      batch.update(ref,{status:"active",email:email,emailVerified:true,isTemp:false,isGuest:false});
-      batch.set(db.collection("memberIndex").doc(id),{email:email});
-    }
-
-    await batch.commit();
-    toast(statusLabels[newStatus]+"に変更しました");
-    closeM("m-member");
-    loadMembers();
-  }catch(e){
-    toast("変更失敗: "+e.message,"err");
-  }
-}
-
 function loadMembers(cb){
   db.collection("members").get()
     .then(function(snap){
@@ -741,108 +494,50 @@ function genMemberId(){
 }
 
 function setMemberFields(r){
-  sv("mem-email", r?r.email||"":"");
-  // emailがない場合はmemberIndexから取得して表示
-  if(r && r.memberId){
-    if(!r.email){
-      db.collection("memberIndex").doc(r.memberId).get().then(function(snap){
-        if(snap.exists && snap.data().email){
-          sv("mem-email", snap.data().email);
-        }
-      }).catch(function(){});
-    }
-  }
-  sv("mem-password", "");
-  var evEl=g("mem-email-verified"); if(evEl) evEl.checked=!!(r&&r.emailVerified);
-  var itEl=g("mem-is-temp"); if(itEl) itEl.checked=!!(r&&r.isTemp);
-  var igEl=g("mem-is-guest"); if(igEl) igEl.checked=!!(r&&r.isGuest);
-  sv("mem-auth-uid", r?r.authUid||"":"");
-  sv("mem-stripe-id", r?r.stripeCustomerId||"":"");
-
-  // ステータスバー表示
-  var statusBar=g("mem-status-bar");
-  if(statusBar){
-    if(r){
-      statusBar.style.display="flex"; statusBar.style.alignItems="center"; statusBar.style.justifyContent="space-between";
-      // ステータスバッジ
-      var badge=g("mem-status-badge");
-      if(badge){
-        var st2=r.status||(r.isGuest||!r.authUid?'guest':r.isTemp?'temp':r.emailVerified?'active':'pending');
-        if(st2==='guest'){
-          badge.textContent="ゲスト"; badge.style.background="#3a3a1a"; badge.style.color="#cccc44";
-        } else if(st2==='temp'){
-          badge.textContent="仮登録"; badge.style.background="#3a1a3a"; badge.style.color="#cc88cc";
-        } else if(st2==='pending'){
-          badge.textContent="認証待ち"; badge.style.background="#3a2a0a"; badge.style.color="#e8b84a";
-        } else {
-          badge.textContent="✓ 本登録"; badge.style.background="#1a3a1a"; badge.style.color="#7adf7a";
-        }
-      }
-      // オーナーバッジ
-      var ownerBadge=g("mem-owner-badge");
-      if(ownerBadge) ownerBadge.style.display=(r&&r.role==="owner")?"inline":"none";
-      // パスワード状態
-      var pwStatus=g("mem-password-status");
-      if(pwStatus) pwStatus.textContent=(r&&r.authUid)?"🔑 パスワード設定済み":"🔓 パスワード未設定";
-    } else {
-      statusBar.style.display="none";
-    }
-  }
   sv("mem-name",   r?r.name:"");
   sv("mem-kana",   r?r.nameKana:"");
   sv("mem-nick",   r?r.nickname:"");
   sv("mem-gender", r?r.gender:"男");
-  sv("mem-grade",  r?String(r.grade||"0"):"0");
   sv("mem-reg",    r?(r.registeredAt||todayDate()):todayDate());
   sv("mem-birth",  r?r.birthday:"");
-  sv("mem-zip",    r?r.zipCode||"":"");
   sv("mem-pref",   r?r.prefecture:"");
   sv("mem-addr",   r?r.address:"");
-  sv("mem-addr2",  r?r.address2||"":"");
   sv("mem-tel",    r?r.phone:"");
   sv("mem-tw",     r?r.twitterId:"");
   sv("mem-ig",     r?r.instagramId:"");
   sv("mem-fb",     r?r.facebookId:"");
-  sv("mem-main-sns", r?String(r.mainSns||"0"):"0");
   sv("mem-visits", r?r.visitCount||0:0);
-  sv("mem-total-tequila", r?r.totalTequila||0:0);
-  sv("mem-total-amount",  r?r.totalAmount||0:0);
   sv("mem-rank",   r?r.rank||"":"");
-  sv("mem-lang",   r?String(r.lang||"0"):"0");
-  sv("mem-visibility", r?String(r.visibility||"0"):"0");
-  sv("mem-role", r?r.role||"":"");
   var noteEl=g("mem-note"); if(noteEl) noteEl.value=r?r.note||"":"";
 }
 
 g("btn-open-member").addEventListener("click",function(){ openMemberModal(null); });
 
 function openMemberModal(id){
-  console.log("openMemberModal called:", id);
-  editId.member=id; g("mt-member").textContent=id?"会員編集":"会員登録";
+  editId.member=id; g("mt-member").textContent=id?"顧客編集":"顧客登録";
   var idEl=g("mem-id");
   if(id){
-    sv("mem-id",id); idEl.readOnly=false; idEl.style.background=""; idEl.style.borderColor="var(--gold)";
-    var sca=g("mem-status-change-area"); if(sca) sca.style.display="block";
+    sv("mem-id",id); idEl.readOnly=true; idEl.style.background="var(--cream2)";
     var r=cache.members.find(function(m){return m.id===id;}); setMemberFields(r);
   } else {
     var newId=genMemberId(); sv("mem-id",newId); idEl.readOnly=false; idEl.style.background=""; setMemberFields(null);
   }
-  g("kb-member").innerHTML='<span class="keypart kp-nom">'+gv("mem-id")+'</span><span class="klabel">会員番号</span>';
+  g("kb-member").innerHTML='<span class="keypart kp-nom">'+gv("mem-id")+'</span><span class="klabel">顧客番号</span>';
   openM("m-member");
 }
 
 var memIdEl=g("mem-id"); if(memIdEl) memIdEl.addEventListener("input",function(){
   var v=this.value.replace(/[^0-9]/g,"").slice(0,6); this.value=v;
-  g("kb-member").innerHTML=v?'<span class="keypart kp-nom">'+v+'</span><span class="klabel">会員番号</span>':'—<span class="klabel">会員番号</span>';
+  g("kb-member").innerHTML=v?'<span class="keypart kp-nom">'+v+'</span><span class="klabel">顧客番号</span>':'—<span class="klabel">顧客番号</span>';
 });
 
 function copyMemberModal(id){
   var r=cache.members.find(function(m){return m.id===id;});
-  editId.member=null; g("mt-member").textContent="会員登録（コピー）";
+  editId.member=null; g("mt-member").textContent="顧客登録（コピー）";
   var newId=genMemberId(); sv("mem-id",newId);
   var idEl=g("mem-id"); idEl.readOnly=true; idEl.style.background="var(--cream2)";
   setMemberFields(r); sv("mem-reg",todayDate());
-  g("kb-member").innerHTML='<span class="keypart kp-nom">'+newId+'</span><span class="klabel">会員番号</span>';
+  g("kb-member").innerHTML='<span class="keypart kp-nom">'+newId+'</span><span class="klabel">顧客番号</span>';
   openM("m-member");
 }
 
@@ -856,90 +551,27 @@ function findNextMemberId(conflictId){
   return null;
 }
 
-g("btn-save-member").addEventListener("click",async function(){
+g("btn-save-member").addEventListener("click",function(){
   var id=gv("mem-id"), name=gv("mem-name");
-  if(!id||id.length!==6){ toast("会員番号が不正です","err"); return; }
-  if(!name){ toast("会員名は必須です","err"); return; }
-  // 新規登録時の重複チェック
+  console.log("save clicked: id="+id+" name="+name+" editId="+editId.member);
+  if(!id||id.length!==6){ toast("顧客番号が不正です","err"); return; }
+  if(!name){ toast("顧客名は必須です","err"); return; }
   if(!editId.member && cache.members.some(function(m){return m.id===id;})){
     var suggest=findNextMemberId(id);
-    if(suggest && confirm("会員番号「"+id+"」は既に存在します。\n\n代わりに「"+suggest+"」を使いますか？")){
-      sv("mem-id",suggest); g("kb-member").innerHTML='<span class="keypart kp-nom">'+suggest+'</span><span class="klabel">会員番号</span>'; id=suggest;
+    if(suggest && confirm("顧客番号「"+id+"」は既に存在します。\n\n代わりに「"+suggest+"」を使いますか？")){
+      sv("mem-id",suggest); g("kb-member").innerHTML='<span class="keypart kp-nom">'+suggest+'</span><span class="klabel">顧客番号</span>'; id=suggest;
     } else { return; }
   }
-  var email=gv("mem-email")||null;
   var noteEl=g("mem-note");
-  var VDOMAIN='@tequiladojo.member';
-  var realEmail=(email&&email.indexOf('@')>=0)?email:null;
-
-  var saveData={
-    memberId:id, email:realEmail,
-    emailVerified:!!(g("mem-email-verified")&&g("mem-email-verified").checked),
-    isTemp:!!(g("mem-is-temp")&&g("mem-is-temp").checked),
-    isGuest:!!(g("mem-is-guest")&&g("mem-is-guest").checked),
-    status:(g("mem-is-guest")&&g("mem-is-guest").checked)?'guest':(g("mem-is-temp")&&g("mem-is-temp").checked)?'temp':(g("mem-email-verified")&&g("mem-email-verified").checked)?'active':'pending',
-    name:name, nameKana:gv("mem-kana")||null, nickname:gv("mem-nick")||null,
-    gender:gv("mem-gender")||"男", grade:parseInt(gv("mem-grade"))||0,
-    registeredAt:gv("mem-reg")||todayDate(), birthday:gv("mem-birth")||null,
-    zipCode:gv("mem-zip")||null, prefecture:gv("mem-pref")||null,
-    address:gv("mem-addr")||null, address2:gv("mem-addr2")||null,
-    phone:gv("mem-tel")||null,
+  db.collection("members").doc(id).set({
+    memberId:id, name:name, nameKana:gv("mem-kana")||null, nickname:gv("mem-nick")||null,
+    gender:gv("mem-gender")||"男", registeredAt:gv("mem-reg")||todayDate(), birthday:gv("mem-birth")||null,
+    prefecture:gv("mem-pref")||null, address:gv("mem-addr")||null, phone:gv("mem-tel")||null,
     twitterId:gv("mem-tw")||null, instagramId:gv("mem-ig")||null, facebookId:gv("mem-fb")||null,
-    mainSns:parseInt(gv("mem-main-sns"))||0,
-    visibility:parseInt(gv("mem-visibility"))||0,
-    visitCount:parseInt(gv("mem-visits"))||0,
-    totalTequila:parseInt(gv("mem-total-tequila"))||0,
-    totalAmount:parseInt(gv("mem-total-amount"))||0,
-    rank:gv("mem-rank")||null,
-    lang:parseInt(gv("mem-lang"))||0,
-    role:gv("mem-role")||null,
+    visitCount:parseInt(gv("mem-visits"))||0, rank:gv("mem-rank")||null,
     note:noteEl?noteEl.value||null:null
-  };
-
-  // 編集時にIDが変わった場合は古いドキュメントを削除して新しいIDで作成
-  var oldId=editId.member;
-  var savePromise;
-  if(oldId && oldId!==id){
-    var batch=db.batch();
-    batch.set(db.collection("members").doc(id), saveData);
-    batch.delete(db.collection("members").doc(oldId));
-    savePromise=batch.commit();
-  } else {
-    savePromise=db.collection("members").doc(id).set(saveData,{merge:true});
-  }
-  var password=gv("mem-password")||null;
-  // memberIndexも更新（パスワードリセット用）
-  if(realEmail){
-    db.collection('memberIndex').doc(id).set({email: realEmail}).catch(function(){});
-  }
-
-  savePromise
-  .then(async function(){
-    var msg=editId.member?(oldId!==id?"会員番号を "+oldId+" → "+id+" に変更しました":"会員を更新しました"):"会員を登録しました";
-
-    // パスワードが入力されている場合はCloud FunctionsでAuth操作
-    if(password && password.length>=8){
-      try{
-        var fn=firebase.functions().httpsCallable("adminAuthOperation");
-        var existingDoc=await db.collection("members").doc(id).get();
-        var existingAuthUid=existingDoc.exists?existingDoc.data().authUid:null;
-
-        if(!existingAuthUid){
-          // 新規Auth作成
-          var result=await fn({operation:"create", memberId:id, email:realEmail||null, password:password});
-          toast("Authアカウントを作成しました（UID: "+result.data.uid.slice(0,8)+"...）","inf");
-        } else {
-          // パスワード変更
-          await fn({operation:"updatePassword", authUid:existingAuthUid, password:password});
-          toast("パスワードを変更しました","inf");
-        }
-      }catch(e){
-        toast("Auth操作失敗: "+e.message,"err");
-      }
-    }
-
-    toast(msg); closeM("m-member"); loadMembers();
-  })
+  },{merge:true})
+  .then(function(){ toast(editId.member?"顧客を更新しました":"顧客を登録しました"); closeM("m-member"); loadMembers(); })
   .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
