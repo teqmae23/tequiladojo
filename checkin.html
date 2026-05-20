@@ -1,4 +1,4 @@
-<!-- UPDATED: 2026-05-21 04:54:36 JST -->
+<!-- UPDATED: 2026-05-21 05:00:55 JST -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -293,7 +293,7 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
     </div>
     <div class="modal-foot">
       <button class="btn bs" style="flex:1" id="m-checkin-cancel">キャンセル</button>
-      <button class="btn bp" style="flex:2" id="m-checkin-save">登録</button>
+      <button class="btn bp" style="flex:2;opacity:0.4" id="m-checkin-save" disabled>登録</button>
     </div>
   </div>
 </div>
@@ -389,7 +389,7 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       <button class="btn bp" style="flex:2;min-width:120px" id="m-checkout-save">✅ お会計確定</button>
       <button class="btn bs" style="min-width:100px" id="btn-receipt-all" onclick="printReceipt('all')">🖨️ 全員</button>
       <button class="btn bs" style="min-width:100px" id="btn-receipt-each" onclick="printReceipt('each')" style="display:none">🖨️ 個別</button>
-      <span style="font-size:10px;color:var(--ink3);margin-left:4px">04:54</span>
+      <span style="font-size:10px;color:var(--ink3);margin-left:4px">05:00</span>
     </div>
   </div>
 </div>
@@ -774,15 +774,25 @@ function onCountChange(){
   var inputs=g('ci-new-visitors-inputs');
   if(cntNew>0){
     area.style.display='block';
+    // 既存の入力値を保持しながら増減
+    var existingNicks=[];
+    for(var i=0;i<20;i++){
+      var ne=document.getElementById('ci-nick-'+i);
+      if(ne) existingNicks.push(ne.value||''); else break;
+    }
     var html='';
     for(var i=0;i<cntNew;i++){
-      html+='<input class="fi" type="text" id="ci-nick-'+i+'" placeholder="ニックネーム '+(i+1)+'" style="margin-bottom:6px">';
+      var nval=existingNicks[i]||'';
+      html+='<input class="fi" type="text" id="ci-nick-'+i+'" placeholder="ニックネーム '+(i+1)+'" style="margin-bottom:6px" value="'+escHtml(nval)+'" oninput="updateCheckinSaveBtn()">';
     }
     inputs.innerHTML=html;
   } else {
     area.style.display='none';
     inputs.innerHTML='';
   }
+
+  // 登録ボタンの有効無効を更新
+  updateCheckinSaveBtn();
 
   // 会員エリアは会員人数>0のときのみ表示
   var memArea=g('ci-member-area');
@@ -814,6 +824,27 @@ function onCountChange(){
 }
 
 // 会員フィルター
+function updateCheckinSaveBtn(){
+  var cntMem=parseInt(gv('ci-count-member'))||0;
+  var cntNew=parseInt(gv('ci-count-new'))||0;
+  var total=cntMem+cntNew;
+  var ok=total>0;
+  // 会員IDが人数分入っているか
+  for(var i=0;i<cntMem;i++){
+    var el=document.getElementById('ci-member-'+i);
+    if(!el||!el.value.trim()){ ok=false; break; }
+  }
+  // ニックネームが人数分入っているか
+  if(ok){
+    for(var i=0;i<cntNew;i++){
+      var ne=document.getElementById('ci-nick-'+i);
+      if(!ne||!ne.value.trim()){ ok=false; break; }
+    }
+  }
+  var btn=g('m-checkin-save');
+  if(btn){ btn.disabled=!ok; btn.style.opacity=ok?'1':'0.4'; }
+}
+
 function filterMembers(){
   var pref=gv('ci-filter-pref');
   var rank=gv('ci-filter-rank');
@@ -927,6 +958,7 @@ function onMemberInput(idx){
     }
     if(allFilled) g('ci-member-list').style.display='none';
     else filterMembers();
+    updateCheckinSaveBtn();
   } else {
     status.textContent='✕ 会員ID「'+val+'」は登録されていません';
     status.style.color='var(--ink3)';
@@ -994,16 +1026,13 @@ g('m-checkin-save').addEventListener('click', async function(){
   var cntMem=parseInt(gv('ci-count-member'))||0;
   var cntNew=parseInt(gv('ci-count-new'))||0;
   var total=cntMem+cntNew;
-  console.log('登録開始: 会員='+cntMem+' 新規='+cntNew+' 合計='+total);
   if(total<1){ toast('1名以上入力してください','err'); return; }
 
-  // 会員人数>0なのに会員IDが未入力の場合は確認
-  var memberId=gv('ci-member')||null;
-  console.log('会員ID: '+memberId);
-  if(cntMem>0 && !memberId){
-    if(!confirm('会員IDが入力されていません。非会員として登録しますか？')){
-      return;
-    }
+  // 会員IDを人数分取得
+  var memberIds=[];
+  for(var mi=0;mi<cntMem;mi++){
+    var midEl=document.getElementById('ci-member-'+mi);
+    memberIds.push(midEl?midEl.value.trim()||null:null);
   }
 
   // 新規来場者のニックネームを取得
@@ -1018,7 +1047,6 @@ g('m-checkin-save').addEventListener('click', async function(){
   saveBtn.disabled=true; saveBtn.textContent='登録中...';
 
   try{
-    // グループID確定
     if(_checkinGroup.current===1){
       _checkinGroup.total=total;
       _checkinGroup.id=calcNextGroupId(today);
@@ -1026,80 +1054,59 @@ g('m-checkin-save').addEventListener('click', async function(){
       g('kb-group-id').textContent=_checkinGroup.id;
     }
 
-    var payment=gv('ci-payment')||'0';
+    var payment='0';
     var groupId=total>1?_checkinGroup.id:null;
     var batch=db.batch();
     var registeredVisitKeys=[];
-    var tempMemberIds=[]; // 仮会員情報（レシートQR用）
+    var tempMemberIds=[];
 
-    // ── 会員の登録 ──
-    if(cntMem>0 && memberId){
-      var alreadyIn=cache.visits.find(function(v){ return v.memberId===memberId && !v.checkoutTime; });
-      if(alreadyIn){ toast(memberId+'は既に在店中です','err'); saveBtn.disabled=false; saveBtn.textContent='登録'; return; }
+    // ── 会員の登録（複数人対応） ──
+    for(var mi=0;mi<cntMem;mi++){
+      var mid=memberIds[mi]||null;
+      if(mid){
+        var alreadyIn=cache.visits.find(function(v){ return v.memberId===mid && !v.checkoutTime; });
+        if(alreadyIn){ toast(mid+'は既に在店中です','err'); saveBtn.disabled=false; saveBtn.textContent='登録'; return; }
+      }
       var visitKey=today+pad(_nextSeq,2);
       batch.set(db.collection('visits').doc(visitKey),{
         visitKey:visitKey, visitDate:today, visitTime:time, seq:_nextSeq,
-        memberId:memberId, checkinGroupId:groupId,
+        memberId:mid, checkinGroupId:groupId,
         tequilaAmount:0, amount:0, payment:payment, receiptIssued:'0', checkoutTime:null
       });
-      // 来店回数+1
-      var memSnap=await db.collection('members').doc(memberId).get();
-      if(memSnap.exists){
-        var curCount=memSnap.data().visitCount||0;
-        batch.update(db.collection('members').doc(memberId),{visitCount:curCount+1});
+      if(mid){
+        var memSnap=await db.collection('members').doc(mid).get();
+        if(memSnap.exists){
+          var curCount=memSnap.data().visitCount||0;
+          batch.update(db.collection('members').doc(mid),{visitCount:curCount+1});
+        }
       }
       registeredVisitKeys.push(visitKey);
       _nextSeq++; if(_nextSeq>99) _nextSeq=1;
-    } else if(cntMem>0){
-      // 会員なし（非会員）
-      var visitKey=today+pad(_nextSeq,2);
-      batch.set(db.collection('visits').doc(visitKey),{
-        visitKey:visitKey, visitDate:today, visitTime:time, seq:_nextSeq,
-        memberId:null, checkinGroupId:groupId,
-        tequilaAmount:0, amount:0, payment:payment, receiptIssued:'0', checkoutTime:null
-      });
-      registeredVisitKeys.push(visitKey);
-      _nextSeq++;
     }
 
     // ── 新規来場者の仮会員登録 ──
-    // 最初に全員分のIDを採番（Firestoreとcacheから既存IDを取得）
     var tempIdSnap=await db.collection('members').where('memberId','>=','900001').where('memberId','<=','999999').get();
     var existingTempIds=tempIdSnap.docs.map(function(d){ return parseInt(d.id)||0; });
     var nextTempNum=900001;
 
     for(var j=0;j<newNicks.length;j++){
-      // 重複しないIDを採番
       while(existingTempIds.indexOf(nextTempNum)>=0) nextTempNum++;
       var tempId=String(nextTempNum);
-      existingTempIds.push(nextTempNum); // 採番済みリストに追加
+      existingTempIds.push(nextTempNum);
       nextTempNum++;
 
       var regCode=generateRegCode();
-
-      // Firestoreに仮会員を保存
       batch.set(db.collection('members').doc(tempId),{
-        memberId:tempId,
-        nickname:newNicks[j],
-        status:'guest',
-        isGuest:true,
-        isTemp:false,
+        memberId:tempId, nickname:newNicks[j], status:'guest', isGuest:true, isTemp:false,
         registeredAt:new Date().toISOString().slice(0,10),
         visitCount:0, totalAmount:0, totalTequila:0
       });
-
-      // tempRegistrationsに認証コードを保存
       var expiresAt=new Date();
       expiresAt.setDate(expiresAt.getDate()+30);
       batch.set(db.collection('tempRegistrations').doc(regCode),{
-        tempId:tempId,
-        nickname:newNicks[j],
-        createdAt:new Date().toISOString(),
-        expiresAt:expiresAt.toISOString(),
-        used:false
+        tempId:tempId, nickname:newNicks[j],
+        createdAt:new Date().toISOString(), expiresAt:expiresAt.toISOString(), used:false
       });
-
-      // visitを登録
       var visitKey=today+pad(_nextSeq,2);
       batch.set(db.collection('visits').doc(visitKey),{
         visitKey:visitKey, visitDate:today, visitTime:time, seq:_nextSeq,
@@ -1109,16 +1116,13 @@ g('m-checkin-save').addEventListener('click', async function(){
       registeredVisitKeys.push(visitKey);
       tempMemberIds.push({tempId:tempId, nickname:newNicks[j], regCode:regCode});
       _nextSeq++;
-
-      // cacheに即座に追加
       cache.members.push({id:tempId, memberId:tempId, nickname:newNicks[j], name:newNicks[j], status:'guest', isGuest:true});
     }
 
     await batch.commit();
 
-    // cacheを更新
     registeredVisitKeys.forEach(function(vk, idx){
-      var mid=idx===0?memberId:tempMemberIds[idx-1]?tempMemberIds[idx-1].tempId:null;
+      var mid=idx<cntMem?(memberIds[idx]||null):(tempMemberIds[idx-cntMem]?tempMemberIds[idx-cntMem].tempId:null);
       cache.visits.push({
         id:vk, visitKey:vk, visitDate:today, visitTime:time,
         memberId:mid, checkinGroupId:groupId,
@@ -1126,9 +1130,7 @@ g('m-checkin-save').addEventListener('click', async function(){
       });
     });
 
-    // 仮会員情報をグローバルに保存（レシートQR用）
     window._lastTempMembers=tempMemberIds;
-
     toast(total+'名の来場を登録しました');
     closeM('m-checkin');
     _checkinGroup={ id:null, total:1, current:1 };
@@ -1140,7 +1142,6 @@ g('m-checkin-save').addEventListener('click', async function(){
     saveBtn.disabled=false; saveBtn.textContent='登録';
   }
 });
-
 // ── 新規注文ボタン ────────────────────────────────────────────
 function goOrderPage(){
   var chks=document.querySelectorAll('.vis-select-chk:checked[data-status="active"]');
