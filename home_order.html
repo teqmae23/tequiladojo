@@ -6,9 +6,9 @@
 <title>注文管理 | テキーラ道場</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Noto+Sans+JP:wght@400;500;700&family=DM+Mono&display=swap" rel="stylesheet">
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>
 :root{
   --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
@@ -544,34 +544,6 @@ async function init(){
   document.getElementById('loading').style.display='none';
   document.getElementById('content-area').style.display='block';
   renderOrderList();
-
-  // checkin.htmlから来場者指定で遷移してきた場合はSTEP1へ直接ジャンプ
-  const params=new URLSearchParams(window.location.search);
-  const visitsParam=params.get('visits');
-  if(visitsParam){
-    const visitKeys=visitsParam.split(',').filter(Boolean);
-    if(visitKeys.length>0){
-      flow={visits:[],cart:[],isBlind:false};
-      document.getElementById('blind-check').checked=false;
-      visitKeys.forEach(function(vk){
-        const v=allVisits.find(x=>x.id===vk);
-        if(v&&!flow.visits.find(x=>x.id===vk)) flow.visits.push(v);
-      });
-      if(flow.visits.length>0){
-        document.getElementById('order-modal').classList.add('open');
-        showStep(1);
-        renderProducts();
-        // チェックボックスを反映
-        flow.visits.forEach(function(v){
-          const cb=document.getElementById('vcb-'+v.id);
-          if(cb) cb.checked=true;
-        });
-        document.getElementById('btn-to-step1').disabled=false;
-      }
-    }
-    // URLをクリーン（ブラウザ履歴に残さない）
-    window.history.replaceState({},document.title,window.location.pathname);
-  }
 }
 
 // ━━━ マスタ ━━━
@@ -672,29 +644,6 @@ function toggleDoneSection(){
   const open=body.style.display!=='none';
   body.style.display=open?'none':'block';
   icon.textContent=open?'▶ 表示':'▼ 閉じる';
-}
-
-// 選択中の来場者から言語を取得（1人でもスペイン語ならES）
-function getFlowLang(){
-  for(const v of flow.visits){
-    if(v.memberId && allMembers[v.memberId]){
-      if(allMembers[v.memberId].lang===1) return 1;
-    }
-  }
-  return 0;
-}
-
-// 言語に応じた商品名を返す（lang=1: 英語）
-function getProductName(p, lang){
-  if(lang===1) return p.bottleEn||p.bottleEs||p.bottleJa||p.name||p.id;
-  return p.bottleJa||p.bottleEn||p.bottleEs||p.name||p.id;
-}
-
-// セット商品アイテムの言語に応じた商品名
-function getSetItemName(s, i, lang){
-  const ii=String(i).padStart(2,'0');
-  if(lang===1) return s['itemNameEn'+ii]||s['itemNameJa'+ii]||s['itemName'+ii]||s['item'+ii]||'';
-  return s['itemNameJa'+ii]||s['itemNameEn'+ii]||s['itemName'+ii]||s['item'+ii]||'';
 }
 
 function vLabel(visitKey){
@@ -1338,7 +1287,13 @@ function openOrderModal(){
   flow={visits:[],cart:[],isBlind:false};
   document.getElementById('blind-check').checked=false;
   document.getElementById('order-modal').classList.add('open');
-  showStep(0);renderVisitors();
+  showStep(0);
+  // allVisitsが未ロードの場合は再ロードしてから表示
+  if(!allVisits.length){
+    loadTodayData().then(function(){ renderVisitors(); });
+  } else {
+    renderVisitors();
+  }
 }
 function closeOrderModal(){document.getElementById('order-modal').classList.remove('open');}
 function showStep(n){
@@ -1356,13 +1311,11 @@ function renderVisitors(){
     const m=v.memberId&&allMembers[v.memberId];
     const name=m?(m.nickname||m.name):`ゲスト（来店ID: ${v.id}）`;
     const sub=v.memberId?`会員ID: ${v.memberId}`:v.id;
-    const memLang=v.memberId&&allMembers[v.memberId]?allMembers[v.memberId].lang:0;
-    const langBadge=memLang===1?'<span style="font-size:10px;background:#1a5fa8;color:#fff;padding:1px 5px;border-radius:3px;margin-left:4px">EN</span>':'';
     const checked=flow.visits.find(x=>x.id===v.id)?'checked':'';
     return`<div class="visitor-card${checked?' selected':''}" id="vc-${v.id}">
       <input type="checkbox" class="visitor-cb" id="vcb-${v.id}" ${checked} onchange="toggleVisitor('${v.id}',this)">
       <label for="vcb-${v.id}" style="flex:1;cursor:pointer">
-        <div class="visitor-name">${esc(name)}${langBadge}</div>
+        <div class="visitor-name">${esc(name)}</div>
         <div class="visitor-sub">${esc(sub)} | 来店: ${v.visitTime||''}</div>
       </label>
     </div>`;
@@ -1385,17 +1338,13 @@ function goStep0(){showStep(0);renderVisitors();}
 // STEP1
 function goStep1(){
   if(!flow.visits.length)return;
-  // 来場者が変わった場合、カート内の商品名を再適用
-  if(flow.cart.length){
-    const _reLang=getFlowLang();
-    flow.cart.forEach(item=>{
-      const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
-      if(p) item.productName=getProductName(p,_reLang);
-    });
-  }
   showStep(1);
   switchPTab('tequila',document.querySelectorAll('.ptab')[0]);
   renderCart();
+  // masterDataが未ロードなら再ロード
+  if(!masterData.tequila.length){
+    loadMasters().then(function(){ filterProducts(); });
+  }
 }
 function switchPTab(type,el){
   currentPTab=type;currentNOM='';
@@ -1417,6 +1366,14 @@ function setNOM(n){currentNOM=currentNOM===n?'':n;renderNOMs();filterProducts();
 function filterProducts(){
   const q=(document.getElementById('product-search').value||'').toLowerCase();
   const c=document.getElementById('product-list-container');
+  // masterDataが未ロードなら読み込み中を表示して再試行
+  if(!masterData[currentPTab==='set'?'set':currentPTab]||!masterData[currentPTab==='set'?'set':currentPTab].length){
+    if(currentPTab!=='set'||!masterData.set.length){
+      c.innerHTML='<div class="empty">読み込み中...</div>';
+      loadMasters().then(function(){ filterProducts(); });
+      return;
+    }
+  }
   if(currentPTab==='set'){
     if(!masterData.set.length){c.innerHTML='<div class="empty">データなし</div>';return;}
     c.innerHTML=masterData.set.map(s=>{
@@ -1426,10 +1383,11 @@ function filterProducts(){
   }
   let items=[...(masterData[currentPTab]||[])];
   if(currentNOM&&currentPTab==='tequila')items=items.filter(i=>(i.nom||'').startsWith(currentNOM)||(i.brandId||'').startsWith(currentNOM));
-  if(q)items=items.filter(i=>(i.bottleJa||i.bottleEs||i.name||'').toLowerCase().includes(q)||(i.brandJa||i.brandEs||'').toLowerCase().includes(q)||(i.nom||'').includes(q)||(i.id||'').toLowerCase().includes(q));
+  if(q)items=items.filter(i=>(i.bottleJa||i.bottleEs||i.bottleEn||i.name||'').toLowerCase().includes(q)||(i.brandJa||i.brandEs||'').toLowerCase().includes(q)||(i.nom||'').includes(q)||(i.id||'').toLowerCase().includes(q));
   if(!items.length){c.innerHTML='<div class="empty">該当なし</div>';return;}
   c.innerHTML=items.slice(0,50).map(i=>{
-    const name=i.bottleJa||i.bottleEs||i.name||i.id;
+    const isTequila=i.type==='tequila';
+    const name=isTequila?(i.bottleEs||i.bottleJa||i.name||i.id):(i.bottleJa||i.bottleEs||i.name||i.id);
     const sub=i.nom?`NOM ${i.nom}`:'';
     const price=i.price?`¥${i.price}/10ml`:i.unitPrice?`¥${i.unitPrice}`:'-';
     return`<div class="product-item" onclick="addToCart('${esc(i.id)}')">
@@ -1488,10 +1446,9 @@ function addToCart(pid){
   if(!p)return;
   const isMl=p.type==='tequila'||p.type==='other';
   const isBlind=document.getElementById('blind-check').checked;
-  const _lang=getFlowLang();
   flow.cart.push({
     productId:p.id,
-    productName:getProductName(p,_lang),
+    productName:p.bottleJa||p.bottleEs||p.name||p.id,
     productType:p.type,
     qty:isMl?getCartMl():1,
     unit:isMl?'ml':'個',
@@ -1517,8 +1474,7 @@ function _doAddSet(setId){
     const id=s[`item0${i}`];if(!id)continue;
     const t=s[`itemType0${i}`]||'misc';
     const isMl=t==='tequila'||t==='other';
-    const _sLang=getFlowLang();
-    flow.cart.push({productId:id,productName:getSetItemName(s,i,_sLang)||id,productType:t,
+    flow.cart.push({productId:id,productName:s[`itemName0${i}`]||id,productType:t,
       qty:isMl?currentMl:1,unit:isMl?'ml':'個',unitPrice:s[`itemPrice0${i}`]||0,blindMarkId:null});
   }
   if(isBlind)assignBlindMarks();
@@ -1644,14 +1600,9 @@ async function confirmOrder(){
 
   try{
     const batch=db.batch();
+    // 同時注文の全員・全アイテムで共通のorderGroupIdを使う（= batchId）
+    const orderGroupId=batchId;
     for(const visit of flow.visits){
-      // 各人ごとに個別のorderGroupIdを採番（visitKey + 当日グループ連番2桁）
-      const existGs=allGroups.filter(g=>g.visitKey===visit.id||g.groups?.some(x=>x.visitKey===visit.id));
-      const usedSeqs=allGroups.flatMap(g=>g.orders||[])
-        .filter(o=>o.visitKey===visit.id)
-        .map(o=>parseInt((o.orderGroupId||'').slice(visit.id.length))||0);
-      const maxGSeq=usedSeqs.length?Math.max(...usedSeqs):0;
-      const orderGroupId=visit.id+String(maxGSeq+1).padStart(2,'0');
       flow.cart.forEach((item,i)=>{
         maxSeq++;
         batch.set(db.collection('orders').doc(todayStr+String(maxSeq).padStart(3,'0')),{
