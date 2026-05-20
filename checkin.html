@@ -1046,34 +1046,28 @@ g('m-checkin-save').addEventListener('click', async function(){
     var registeredVisitKeys=[];
     var tempMemberIds=[]; // 仮会員情報（レシートQR用）
 
-    // ── 会員の登録 ──
-    if(cntMem>0 && memberId){
-      var alreadyIn=cache.visits.find(function(v){ return v.memberId===memberId && !v.checkoutTime; });
-      if(alreadyIn){ toast(memberId+'は既に在店中です','err'); saveBtn.disabled=false; saveBtn.textContent='登録'; return; }
+    // ── 会員の登録（複数人対応） ──
+    for(var mi=0;mi<cntMem;mi++){
+      var mid=memberIds[mi]||null;
+      if(mid){
+        var alreadyIn=cache.visits.find(function(v){ return v.memberId===mid && !v.checkoutTime; });
+        if(alreadyIn){ toast(mid+'は既に在店中です','err'); saveBtn.disabled=false; saveBtn.textContent='登録'; return; }
+      }
       var visitKey=today+pad(_nextSeq,2);
       batch.set(db.collection('visits').doc(visitKey),{
         visitKey:visitKey, visitDate:today, visitTime:time, seq:_nextSeq,
-        memberId:memberId, checkinGroupId:groupId,
+        memberId:mid, checkinGroupId:groupId,
         tequilaAmount:0, amount:0, payment:payment, receiptIssued:'0', checkoutTime:null
       });
-      // 来店回数+1
-      var memSnap=await db.collection('members').doc(memberId).get();
-      if(memSnap.exists){
-        var curCount=memSnap.data().visitCount||0;
-        batch.update(db.collection('members').doc(memberId),{visitCount:curCount+1});
+      if(mid){
+        var memSnap=await db.collection('members').doc(mid).get();
+        if(memSnap.exists){
+          var curCount=memSnap.data().visitCount||0;
+          batch.update(db.collection('members').doc(mid),{visitCount:curCount+1});
+        }
       }
       registeredVisitKeys.push(visitKey);
       _nextSeq++; if(_nextSeq>99) _nextSeq=1;
-    } else if(cntMem>0){
-      // 会員なし（非会員）
-      var visitKey=today+pad(_nextSeq,2);
-      batch.set(db.collection('visits').doc(visitKey),{
-        visitKey:visitKey, visitDate:today, visitTime:time, seq:_nextSeq,
-        memberId:null, checkinGroupId:groupId,
-        tequilaAmount:0, amount:0, payment:payment, receiptIssued:'0', checkoutTime:null
-      });
-      registeredVisitKeys.push(visitKey);
-      _nextSeq++;
     }
 
     // ── 新規来場者の仮会員登録 ──
@@ -1132,7 +1126,7 @@ g('m-checkin-save').addEventListener('click', async function(){
 
     // cacheを更新
     registeredVisitKeys.forEach(function(vk, idx){
-      var mid=idx===0?memberId:tempMemberIds[idx-1]?tempMemberIds[idx-1].tempId:null;
+      var mid=idx<cntMem?(memberIds[idx]||null):(tempMemberIds[idx-cntMem]?tempMemberIds[idx-cntMem].tempId:null);
       cache.visits.push({
         id:vk, visitKey:vk, visitDate:today, visitTime:time,
         memberId:mid, checkinGroupId:groupId,
