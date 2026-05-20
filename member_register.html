@@ -1,4 +1,4 @@
-<!-- UPDATED: 2026-05-18 16:20:27 JST -->
+<!-- UPDATED: 2026-05-21 12:00:00 JST -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -238,7 +238,7 @@ select.fi{cursor:pointer;}
 
         <div class="err-msg" id="reg-err"></div>
 
-        <!-- 会員登録ボタン①（上） -->
+        <!-- 会員登録ボタン① -->
         <button class="btn-primary" id="btn-register" onclick="doRegister()" disabled style="opacity:.5;margin-top:16px">会員登録</button>
 
         <!-- 以下任意項目 -->
@@ -287,7 +287,7 @@ select.fi{cursor:pointer;}
         <label class="fl">Facebook ID</label>
         <input type="text" class="fi" id="reg-fb" placeholder="username">
 
-        <!-- 会員登録ボタン②（下） -->
+        <!-- 会員登録ボタン② -->
         <button class="btn-primary" id="btn-register2" onclick="doRegister()" disabled style="opacity:.5;margin-top:20px">会員登録</button>
         <p class="info-msg" style="margin-top:8px" id="reg-info-msg"></p>
       </div>
@@ -295,7 +295,7 @@ select.fi{cursor:pointer;}
   </div>
 </div>
 
-<!-- 登録・編集フォーム -->
+<!-- 登録・編集フォーム（?edit=1 時のみ使用） -->
 <div id="app">
   <div class="page-header">
     <div style="display:flex;flex-direction:column;gap:2px">
@@ -472,8 +472,6 @@ select.fi{cursor:pointer;}
       <div style="font-size:11px;color:var(--ink3);margin-top:4px">プロフィール情報の公開範囲を設定します</div>
     </div>
 
-
-
     <!-- パスワード変更 -->
     <div class="section">
       <div class="section-title">パスワード変更</div>
@@ -484,8 +482,6 @@ select.fi{cursor:pointer;}
       <button class="btn-primary" style="max-width:200px;margin-top:14px" onclick="doChangePassword()">パスワードを変更</button>
       <div class="err-msg" id="pass-err"></div>
     </div>
-
-
 
   </div><!-- /form-area -->
 
@@ -524,7 +520,6 @@ function toast(msg,type){
 var GRADE_LABELS=['無料会員','有料会員1','有料会員2','有料会員3'];
 
 // ── 会員番号自動採番 ──────────────────────────────────────────
-// ── Firebase AuthのメールをFirestoreに同期 ──────────────────────
 async function syncEmailToFirestore(user){
   if(!user||!memberDoc) return;
   try{
@@ -533,7 +528,6 @@ async function syncEmailToFirestore(user){
     var updateData={};
     var needsUpdate=false;
 
-    // 認証リンククリック後：実メールに変更完了
     if(!isVirtual && user.email && user.emailVerified && memberDoc.email!==user.email){
       updateData.email=user.email;
       updateData.status='active';
@@ -548,8 +542,6 @@ async function syncEmailToFirestore(user){
 
     if(needsUpdate){
       await db.collection('members').doc(docId).update(updateData);
-      console.log('Firestore同期完了:', updateData);
-      // 画面を再描画
       fillForm(memberDoc);
     }
   }catch(e){
@@ -557,11 +549,9 @@ async function syncEmailToFirestore(user){
   }
 }
 
-
 async function fetchNextMemberId(){
   var year=String(new Date().getFullYear()).slice(2);
   try{
-    // トランザクションでcounters/membersのlastIdをインクリメント
     var counterRef=firebase.firestore().collection('counters').doc('members');
     var newId=null;
     await firebase.firestore().runTransaction(async function(tx){
@@ -578,7 +568,6 @@ async function fetchNextMemberId(){
   }
 }
 
-// ── 会員登録ボタンのアクティブ/非アクティブ切替 ────────────────
 function checkRegReady(){
   var nick=document.getElementById('reg-nick').value.trim();
   var pass=document.getElementById('reg-pass').value;
@@ -590,7 +579,6 @@ function checkRegReady(){
   if(btn2){ btn2.disabled=!ready; btn2.style.opacity=ready?'1':'.5'; }
 }
 
-// ── タブ切替 ──────────────────────────────────────────────────
 function switchLoginTab(tab){
   document.querySelectorAll('.ltab').forEach(function(b,i){
     b.classList.toggle('active',(i===0&&tab==='login')||(i===1&&tab==='register'));
@@ -598,14 +586,11 @@ function switchLoginTab(tab){
   document.querySelectorAll('.tab-panel').forEach(function(p,i){
     p.classList.toggle('active',(i===0&&tab==='login')||(i===1&&tab==='register'));
   });
-
 }
 
-// ── ユーティリティ: 仮想メール変換 ────────────────────────────────
 var VIRTUAL_DOMAIN = '@tequiladojo.member';
 
 function toAuthEmail(input){
-  // @が含まれていればそのままメール、なければ会員IDとして仮想メールに変換
   if(!input) return '';
   return input.indexOf('@') >= 0 ? input : input + VIRTUAL_DOMAIN;
 }
@@ -614,23 +599,29 @@ function toAuthEmail(input){
 auth.onAuthStateChanged(function(user){
   if(user){
     currentUser=user;
-    g('login-screen').style.display='none';
-    g('app').style.display='block';
-    g('header-email').textContent=user.email||'仮登録会員';
-    loadProfile();
-    // 会員IDをヘッダーに表示（loadProfile完了後にprofile-member-idから取得）
+    var _params=new URLSearchParams(window.location.search);
+    if(_params.get('reg')){
+      // 仮会員本登録フロー中 — initTempRegistration が処理するので何もしない
+    } else if(_params.get('edit')){
+      // プロフィール編集モード（mypage.html からの遷移など）
+      g('login-screen').style.display='none';
+      g('app').style.display='block';
+      g('header-email').textContent=user.email||'仮登録会員';
+      loadProfile();
+    } else {
+      // 通常ログイン → マイページへリダイレクト
+      window.location.href='/mypage.html';
+    }
   } else {
     currentUser=null;
     g('login-screen').style.display='flex';
     g('app').style.display='none';
     var vb=g('verify-banner'); if(vb) vb.style.display='none';
     var tb=g('temp-banner'); if(tb) tb.style.display='none';
-    // URLパラメータ?tab=registerで登録タブを直接表示
     var params=new URLSearchParams(window.location.search);
     if(params.get('tab')==='register'){
       switchLoginTab('register');
     }
-    // ?reg=XXXXXXXXで仮会員からの本登録フロー
     var regCode=params.get('reg');
     if(regCode){
       initTempRegistration(regCode);
@@ -638,7 +629,6 @@ auth.onAuthStateChanged(function(user){
   }
 });
 
-// 仮会員からの本登録フロー
 async function initTempRegistration(code){
   try{
     var snap=await db.collection('tempRegistrations').doc(code).get();
@@ -649,15 +639,10 @@ async function initTempRegistration(code){
     if(data.used){
       toast('このコードは既に使用済みです','err'); return;
     }
-    // 有効期限チェック
     if(data.expiresAt && new Date(data.expiresAt)<new Date()){
       toast('登録コードの有効期限が切れています','err'); return;
     }
-
-    // 仮会員情報をグローバルに保持
     window._tempRegData={ code:code, tempId:data.tempId, nickname:data.nickname };
-
-    // ログイン画面を隠して仮会員本登録フォームを表示
     var ls=g('login-screen'); if(ls) ls.style.display='none';
     showTempRegForm(data.tempId, data.nickname);
   }catch(e){
@@ -666,7 +651,6 @@ async function initTempRegistration(code){
 }
 
 function showTempRegForm(tempId, nickname){
-  // 既存のapp領域を一時的に使う
   var app=g('app');
   if(!app) return;
   app.style.display='block';
@@ -685,7 +669,7 @@ function showTempRegForm(tempId, nickname){
     +'<label class="fl">メールアドレス（任意）</label>'
     +'<input type="email" class="fi" id="treg-email" placeholder="member@example.com" style="margin-bottom:20px">'
     +'<div id="treg-err" style="color:#e55;font-size:12px;min-height:16px;margin-bottom:8px"></div>'
-    +'<button class="btn bp" style="width:100%" onclick="doTempRegComplete()">本登録を完了する</button>'
+    +'<button class="btn-primary" style="width:100%" onclick="doTempRegComplete()">本登録を完了する</button>'
     +'</div>';
 }
 
@@ -708,15 +692,12 @@ async function doTempRegComplete(){
   if(btn){ btn.disabled=true; btn.textContent='登録中...'; }
 
   try{
-    // 新しい会員IDを採番（26XXXX）
     var newMemberId=await fetchNextMemberId();
     var authEmail=newMemberId+VIRTUAL_DOMAIN;
 
-    // Firebase Authアカウント作成
     var cred=await auth.createUserWithEmailAndPassword(authEmail, pass);
     var uid=cred.user.uid;
 
-    // メールあり→verifyBeforeUpdateEmail
     if(email){
       await cred.user.verifyBeforeUpdateEmail(email).catch(function(e){ console.error(e); });
     }
@@ -724,11 +705,9 @@ async function doTempRegComplete(){
     var now=new Date().toISOString().slice(0,10);
     var batch=db.batch();
 
-    // 旧仮会員ドキュメント（900001）のデータを取得
     var oldSnap=await db.collection('members').doc(trd.tempId).get();
     var oldData=oldSnap.exists?oldSnap.data():{};
 
-    // 新会員ドキュメントを作成
     batch.set(db.collection('members').doc(newMemberId),Object.assign({},oldData,{
       memberId:newMemberId,
       authUid:uid,
@@ -738,28 +717,24 @@ async function doTempRegComplete(){
       registeredAt:now
     }));
 
-    // 旧仮会員ドキュメントを削除
     batch.delete(db.collection('members').doc(trd.tempId));
 
-    // tempRegistrationsを使用済みに
     batch.update(db.collection('tempRegistrations').doc(trd.code),{
       used:true, newMemberId:newMemberId
     });
 
-    // visitsのmemberIdを更新
     var visitSnap=await db.collection('visits').where('memberId','==',trd.tempId).get();
     visitSnap.docs.forEach(function(doc){
       batch.update(doc.ref,{memberId:newMemberId});
     });
 
-    // memberIndexに登録
     if(email){
       batch.set(db.collection('memberIndex').doc(newMemberId),{email:email});
     }
 
     await batch.commit();
 
-    // ログイン
+    // ログイン → onAuthStateChanged 発火 → mypage.html へ自動遷移
     await auth.signInWithEmailAndPassword(authEmail, pass);
     toast('本登録が完了しました！会員番号: '+newMemberId);
   }catch(e){
@@ -777,7 +752,6 @@ async function doLogin(){
   var isEmail = input.indexOf('@')>=0;
 
   if(isEmail){
-    // メールアドレスでそのままログイン
     auth.signInWithEmailAndPassword(input, pass)
       .catch(function(e){
         g('login-err').textContent=
@@ -786,13 +760,11 @@ async function doLogin(){
         btn.disabled=false; btn.textContent='ログイン';
       });
   } else {
-    // 会員IDの場合：まずmemberIndexで実メールを検索
     try{
       var idxSnap=await db.collection('memberIndex').doc(input).get();
       var authEmail = (idxSnap.exists && idxSnap.data().email)
         ? idxSnap.data().email
         : input+VIRTUAL_DOMAIN;
-      console.log('memberIndex:', idxSnap.exists, idxSnap.exists?idxSnap.data():{}, 'authEmail:', authEmail);
       auth.signInWithEmailAndPassword(authEmail, pass)
         .catch(function(e){
           g('login-err').textContent='会員IDまたはパスワードが正しくありません';
@@ -808,7 +780,6 @@ async function doLogin(){
   }
 }
 
-// ニックネームの文字数チェック（全角1文字=2バイト換算）
 function nickByteLen(str){
   var len=0;
   for(var i=0;i<str.length;i++){
@@ -834,19 +805,16 @@ async function doRegister(){
   if(pass.length<8){ errEl.textContent='パスワードは8文字以上にしてください'; return; }
   if(pass!==pass2){ errEl.textContent='パスワードが一致しません'; return; }
 
-  // 会員番号を採番
   var memberId=await fetchNextMemberId();
   if(!memberId){ errEl.textContent='会員番号の採番に失敗しました。もう一度お試しください'; return; }
   document.getElementById('reg-memberid').value=memberId;
 
-  // メールなしの場合は確認ダイアログ
   if(!emailInput){
     if(!confirm('メールアドレスを登録しない場合、仮登録状態となりメンバーポータル機能が利用できませんが、よろしいですか？')){
       return;
     }
   }
 
-  // メールアドレス重複チェック（Firebase Auth経由でセキュアに確認）
   if(emailInput){
     try{
       var methods=await auth.fetchSignInMethodsForEmail(emailInput);
@@ -857,7 +825,6 @@ async function doRegister(){
     }
   }
 
-  // Firebase Authは仮想メールで登録（実メールはverifyBeforeUpdateEmailで後から変更）
   var authEmail = memberId + VIRTUAL_DOMAIN;
   var realEmail = emailInput || null;
   var isTemp = !emailInput;
@@ -867,24 +834,19 @@ async function doRegister(){
   if(btn2){ btn2.disabled=true; btn2.textContent='登録中...'; }
 
   try{
-    // 新規登録（ログアウト状態での実行を前提）
     var cred=await auth.createUserWithEmailAndPassword(authEmail, pass);
     var uid=cred.user.uid;
 
-    // メールあり会員：仮想メールから実メールへの変更確認リンクを送信
     if(!isTemp && realEmail){
       await cred.user.verifyBeforeUpdateEmail(realEmail).catch(function(e){
         console.error('verifyBeforeUpdateEmail:', e);
       });
     }
 
-    // memberIndexに会員ID→メール対応を保存（パスワードリセット用・公開）
-    // 実メールがあればそれを、なければ仮想メールを保存
     await db.collection('memberIndex').doc(memberId).set({
       email: realEmail || authEmail
     });
 
-    // Firestoreに保存（ドキュメントIDは会員番号）
     await db.collection('members').doc(memberId).set({
       authUid: uid,
       memberId: memberId,
@@ -920,10 +882,8 @@ async function doRegister(){
       if(msg) msg.textContent='認証メールを送信しました。リンクをクリックして本登録を完了してください。';
       toast('認証メールを送信しました。メールをご確認ください。','inf');
     }
-    // 登録完了後にプロフィール画面に切り替え
-    var ls=g('login-screen'); if(ls) ls.style.display='none';
-    var app=g('app'); if(app) app.style.display='block';
-    await loadProfile();
+    // 登録完了 → onAuthStateChanged が発火して mypage.html へ自動遷移
+    // （doRegister は createUserWithEmailAndPassword でログイン状態になるため）
   }catch(e){
     errEl.textContent=
       e.code==='auth/email-already-in-use'?'このメールアドレスは既に登録されています':
@@ -944,15 +904,11 @@ async function doResetPassword(){
 
   try{
     var isEmail = input.indexOf('@')>=0;
-    var memberId = isEmail ? null : input;
     var realEmail = null;
 
     if(isEmail){
-      // メールアドレスが直接入力された場合
       realEmail = input;
-      memberId = null;
     } else {
-      // 会員IDからmemberIndexで実メールを取得（公開コレクション）
       var idxSnap=await db.collection('memberIndex').doc(input).get();
       if(idxSnap.exists && idxSnap.data().email){
         realEmail = idxSnap.data().email;
@@ -980,17 +936,14 @@ async function loadProfile(){
     await currentUser.reload();
     var memberData=null;
 
-    // 1. UIDをドキュメントIDとして検索
     var snap=await db.collection('members').doc(currentUser.uid).get();
     if(snap.exists){
       memberData=snap.data();
     } else {
-      // 2. authUidフィールドで検索
       var q=await db.collection('members').where('authUid','==',currentUser.uid).limit(1).get();
       if(!q.empty){
         memberData=q.docs[0].data();
       } else if(currentUser.email&&currentUser.email.indexOf(VIRTUAL_DOMAIN)<0){
-        // 3. emailフィールドで検索
         var q2=await db.collection('members').where('email','==',currentUser.email).limit(1).get();
         if(!q2.empty) memberData=q2.docs[0].data();
       }
@@ -998,18 +951,14 @@ async function loadProfile(){
     memberDoc=memberData;
     fillForm(memberDoc);
 
-    // Firebase AuthのemailとemailVerifiedをFirestoreに同期
     await syncEmailToFirestore(currentUser);
 
-    // バナー表示
-    // バナー表示（statusフィールドで判定）
     var st=memberDoc&&memberDoc.status?memberDoc.status:'guest';
     var tb=g('temp-banner'); if(tb) tb.style.display=(st==='temp')?'flex':'none';
     var vb=g('verify-banner'); if(vb) vb.style.display=(st==='pending')?'flex':'none';
 
   }catch(e){
     console.error('loadProfile error:', e);
-    // 新規登録直後など初回はドキュメントがない場合があるので空フォームで表示
     fillForm(null);
     var tb=g('temp-banner'); if(tb) tb.style.display='none';
     var vb=g('verify-banner'); if(vb) vb.style.display='none';
@@ -1021,16 +970,13 @@ async function loadProfile(){
 function fillForm(d){
   sv('f-name',    d?d.name||'':'');
   sv('f-kana',    d?d.nameKana||'':'');
-  // 会員IDカード
   var pmid=g('profile-member-id');
   if(pmid) pmid.textContent=d&&d.memberId?d.memberId:'—';
-  // ヘッダーにも会員IDを表示
   var hmid=g('header-member-id');
   if(hmid&&d&&d.memberId){
     hmid.textContent='会員番号: '+d.memberId;
     hmid.style.display='block';
   }
-  // メールアドレス表示
   var ped=g('profile-email-disp');
   if(ped){
     var displayEmail=currentUser&&currentUser.email&&currentUser.email.indexOf(VIRTUAL_DOMAIN)<0
@@ -1038,7 +984,6 @@ function fillForm(d){
     ped.textContent=displayEmail||'未登録';
     ped.style.color=displayEmail?'rgba(255,255,255,.7)':'rgba(255,255,255,.3)';
   }
-  // 連絡先セクションのメール表示も更新
   var fed=g('f-email-disp');
   if(fed){
     var displayEmail2=currentUser&&currentUser.email&&currentUser.email.indexOf(VIRTUAL_DOMAIN)<0
@@ -1069,14 +1014,12 @@ function fillForm(d){
   sv('f-main-sns',d?String(d.mainSns||0):'0');
   sv('f-lang',    d?String(d.lang||0):'0');
   sv('f-visibility', d?String(d.visibility||0):'0');
-  // 読み取り専用（要素が存在する場合のみ）
   var fmid=g('f-member-id'); if(fmid) fmid.textContent=d&&d.memberId?d.memberId:(d&&d.authUid?d.authUid.slice(0,8)+'...':'—');
   var fgrd=g('f-grade'); if(fgrd) fgrd.textContent=GRADE_LABELS[d&&d.grade?d.grade:0]||'無料会員';
   var sv1=g('stat-visits'); if(sv1) sv1.innerHTML=(d?d.visitCount||0:0)+'<span class="stat-unit">回</span>';
   var sv2=g('stat-tequila'); if(sv2) sv2.innerHTML=(d?d.totalTequila||0:0)+'<span class="stat-unit">ml</span>';
   var sv3=g('stat-rank'); if(sv3) sv3.textContent=d&&d.rank?d.rank:'—';
   var sv4=g('stat-amount'); if(sv4) sv4.textContent='¥'+(d?d.totalAmount||0:0).toLocaleString();
-  // 画像（要素が存在する場合のみ）
   var iconPrev=g('icon-preview'); if(iconPrev) iconPrev.src=(d&&d.iconUrl)?d.iconUrl:DEFAULT_ICON_SVG;
   var iconClr=g('icon-clear'); if(iconClr&&d&&d.iconUrl) iconClr.style.display='inline';
   var photoPrev=g('photo-preview'); if(photoPrev) photoPrev.src=(d&&d.photoUrl)?d.photoUrl:DEFAULT_PHOTO_SVG;
@@ -1084,24 +1027,18 @@ function fillForm(d){
 }
 
 function formatDateInput(dateStr){
-  // YYYYMMDD → YYYY-MM-DD
   if(!dateStr||dateStr.length<8) return '';
   return dateStr.slice(0,4)+'-'+dateStr.slice(4,6)+'-'+dateStr.slice(6,8);
 }
 function parseDateInput(dateStr){
-  // YYYY-MM-DD → YYYYMMDD
   return dateStr?dateStr.replace(/-/g,''):'';
 }
 
-// ── 画像プレビュー ──────────────────────────────────────────────
-// ── デフォルト画像（SVG） ──────────────────────────────────────
 var DEFAULT_ICON_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><circle cx="40" cy="40" r="40" fill="%23e4ddd0"/><circle cx="40" cy="30" r="14" fill="%239a8470"/><ellipse cx="40" cy="68" rx="22" ry="16" fill="%239a8470"/></svg>';
 var DEFAULT_PHOTO_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 90"><rect width="120" height="90" fill="%23e4ddd0"/><circle cx="60" cy="34" r="18" fill="%239a8470"/><ellipse cx="60" cy="80" rx="30" ry="18" fill="%239a8470"/></svg>';
 
-// ── 画像圧縮 ────────────────────────────────────────────────────
 function compressImage(file, maxW, maxH, quality){
   return new Promise(function(resolve){
-    // GIFはそのまま（アニメーション維持のため圧縮しない）
     if(file.type==='image/gif'){
       if(file.size > 2*1024*1024){ alert('GIFは2MB以下にしてください'); resolve(null); return; }
       resolve(file); return;
@@ -1122,12 +1059,11 @@ function compressImage(file, maxW, maxH, quality){
   });
 }
 
-// ── 画像をセット（圧縮→プレビュー→File保存） ───────────────────
 async function setImage(type, file){
   var maxW = type==='icon' ? 200 : 800;
   var maxH = type==='icon' ? 200 : 800;
   var blob = await compressImage(file, maxW, maxH, 0.8);
-  if(!blob) return;  // サイズ超過でキャンセル
+  if(!blob) return;
   var isGif = file.type==='image/gif';
   var compressed = isGif ? file : new File([blob], file.name||'image.jpg', {type:'image/jpeg'});
   if(type==='icon') iconFile=compressed;
@@ -1161,14 +1097,12 @@ function clearImg(type){
   }
 }
 
-// ── ペースト対応 ─────────────────────────────────────────────────
 document.addEventListener('paste', function(e){
   var items = e.clipboardData && e.clipboardData.items;
   if(!items) return;
   for(var i=0;i<items.length;i++){
     if(items[i].type.indexOf('image')!==-1){
       var file=items[i].getAsFile();
-      // フォーカスされているエリアに応じてtype判定（デフォルトはicon）
       var activeEl=document.activeElement;
       var type='icon';
       if(activeEl && (activeEl.id==='photo-drop' || (activeEl.closest && activeEl.closest('#photo-drop')))) type='photo';
@@ -1178,7 +1112,6 @@ document.addEventListener('paste', function(e){
   }
 });
 
-// ── ドラッグ&ドロップ ─────────────────────────────────────────────
 ['icon','photo'].forEach(function(type){
   var area=g(type+'-drop');
   if(!area) return;
@@ -1191,14 +1124,12 @@ document.addEventListener('paste', function(e){
   });
 });
 
-// ── 画像アップロード ────────────────────────────────────────────
 async function uploadImage(file, path){
   var ref=storage.ref(path);
   await ref.put(file);
   return await ref.getDownloadURL();
 }
 
-// ── プロフィール保存 ────────────────────────────────────────────
 async function saveProfile(){
   var nick=gv('f-nick');
   if(!nick){ toast('ニックネームは必須です','err'); return; }
@@ -1221,7 +1152,6 @@ async function saveProfile(){
       email:currentUser.email,
       authUid:uid,
     };
-    // 画像アップロード
     if(iconFile){
       updateData.iconUrl=await uploadImage(iconFile,'member-images/'+uid+'/icon');
       iconFile=null;
@@ -1230,7 +1160,6 @@ async function saveProfile(){
       updateData.photoUrl=await uploadImage(photoFile,'member-images/'+uid+'/photo');
       photoFile=null;
     }
-    // 既存ドキュメントIDを確認（UIDで保存）
     await db.collection('members').doc(uid).set(updateData,{merge:true});
     memberDoc=Object.assign(memberDoc||{},updateData);
     toast('プロフィールを保存しました');
@@ -1242,8 +1171,6 @@ async function saveProfile(){
   btn.disabled=false; btn.textContent='保存する';
 }
 
-// ── パスワード変更 ──────────────────────────────────────────────
-// ── メールアドレス変更 ──────────────────────────────────────────
 function openEmailChange(){
   g('email-change-modal').style.display='flex';
   g('new-email-input').value='';
@@ -1267,7 +1194,6 @@ async function doEmailChange(){
   if(!password){ errEl.textContent='現在のパスワードを入力してください'; return; }
   if(!newEmail){ errEl.textContent='新しいメールアドレスを入力してください'; return; }
 
-  // 重複チェック
   try{
     var methods=await auth.fetchSignInMethodsForEmail(newEmail);
     if(methods.length>0){ errEl.textContent='このメールアドレスは既に登録されています'; return; }
@@ -1278,7 +1204,6 @@ async function doEmailChange(){
   btn.disabled=true; btn.textContent='送信中...';
 
   try{
-    // 再認証
     var currentEmail=currentUser.email;
     var credential=firebase.auth.EmailAuthProvider.credential(currentEmail, password);
     await currentUser.reauthenticateWithCredential(credential);
@@ -1286,20 +1211,16 @@ async function doEmailChange(){
     var oldEmail=currentUser.email&&currentUser.email.indexOf(VIRTUAL_DOMAIN)<0
       ?currentUser.email:null;
 
-    // 新しいアドレスに確認リンク送信（クリック後に変更が完了）
     await currentUser.verifyBeforeUpdateEmail(newEmail);
 
-    // 確認メール送信時点でFirestoreをpending状態に更新
     var docId2=memberDoc&&memberDoc.memberId?memberDoc.memberId:currentUser.uid;
     await db.collection('members').doc(docId2).update({
       status: 'pending'
     }).catch(function(){});
     if(memberDoc) memberDoc.status='pending';
 
-    // memberIndexにも登録（パスワードリセット用）
     await db.collection('memberIndex').doc(docId2).set({email: newEmail}).catch(function(){});
 
-    // 古いメールに通知用リクエストを記録
     if(oldEmail){
       db.collection('emailChangeRequests').add({
         uid: currentUser.uid,
@@ -1312,12 +1233,10 @@ async function doEmailChange(){
 
     toast('確認メールを '+newEmail+' に送信しました。メール内のリンクをクリックして変更を完了してください。','inf');
     closeEmailChange();
-    // リンククリック後に自動反映されるよう3秒ごとにreloadして確認
     var reloadTimer=setInterval(async function(){
       await currentUser.reload();
       if(currentUser.email===newEmail){
         clearInterval(reloadTimer);
-        // リンクがクリックされてメール変更完了 → Firestoreを更新
         var docId=memberDoc&&memberDoc.memberId?memberDoc.memberId:currentUser.uid;
         await db.collection('members').doc(docId).update({
           email: newEmail,
@@ -1328,7 +1247,6 @@ async function doEmailChange(){
         toast('メールアドレスが変更されました','inf');
       }
     }, 3000);
-    // 5分後にタイマーを止める
     setTimeout(function(){ clearInterval(reloadTimer); }, 300000);
   }catch(e){
     if(e.code==='auth/wrong-password'||e.code==='auth/invalid-credential'){
@@ -1342,7 +1260,6 @@ async function doEmailChange(){
   btn.disabled=false; btn.textContent='確認メールを送信';
 }
 
-// ── 認証メール再送 ─────────────────────────────────────────────
 async function resendVerifyEmail(){
   try{
     await currentUser.sendEmailVerification();
@@ -1371,7 +1288,6 @@ async function doChangePassword(){
   }
 }
 
-// ── Enter キーでログイン ────────────────────────────────────────
 document.getElementById('login-pass').addEventListener('keydown',function(e){ if(e.key==='Enter') doLogin(); });
 document.getElementById('reg-pass2').addEventListener('keydown',function(e){ if(e.key==='Enter') doRegister(); });
 </script>
