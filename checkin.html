@@ -1,4 +1,4 @@
-<!-- UPDATED: 2026-05-19 15:48:19 JST -->
+<!-- UPDATED: 2026-05-20 14:14:07 JST -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -282,8 +282,9 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
           </select>
         </div>
 
-        <!-- 会員ID直接入力（人数分） -->
-        <div id="ci-member-inputs"></div>
+        <!-- 会員ID直接入力 -->
+        <input class="fi" type="text" id="ci-member" placeholder="会員IDを入力または下のリストから選択" oninput="onMemberInput()">
+        <div id="ci-member-status" style="font-size:11px;margin-top:4px;min-height:16px"></div>
 
         <!-- フィルター結果リスト -->
         <div id="ci-member-list" style="display:none;max-height:180px;overflow-y:auto;border:1px solid var(--border2);border-radius:var(--r);margin-top:6px;background:var(--white)"></div>
@@ -397,7 +398,7 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       <button class="btn bp" style="flex:2;min-width:120px" id="m-checkout-save" onclick="doCheckoutSave()">✅ お会計確定</button>
       <button class="btn bs" style="min-width:100px" id="btn-receipt-all" onclick="printReceipt('all')">🖨️ 全員</button>
       <button class="btn bs" style="min-width:100px" id="btn-receipt-each" onclick="printReceipt('each')" style="display:none">🖨️ 個別</button>
-      <span style="font-size:10px;color:var(--ink3);margin-left:4px">15:48</span>
+      <span style="font-size:10px;color:var(--ink3);margin-left:4px">14:14</span>
     </div>
   </div>
 </div>
@@ -794,19 +795,7 @@ function onCountChange(){
 
   // 会員エリアは会員人数>0のときのみ表示
   var memArea=g('ci-member-area');
-  if(memArea){
-    memArea.style.display=cntMem>0?'block':'none';
-    // 会員ID入力欄を人数分生成
-    var memberInputs=document.getElementById('ci-member-inputs');
-    if(memberInputs){
-      var html='';
-      for(var i=0;i<cntMem;i++){
-        html+='<input class="fi" type="text" id="ci-member-'+i+'" placeholder="会員ID '+(i+1)+'人目" oninput="onMemberInput('+i+')" style="margin-bottom:6px">'
-          +'<div id="ci-member-status-'+i+'" style="font-size:11px;margin-bottom:8px;min-height:14px"></div>';
-      }
-      memberInputs.innerHTML=html;
-    }
-  }
+  if(memArea) memArea.style.display=cntMem>0?'block':'none';
 }
 
 // 会員フィルター
@@ -856,26 +845,19 @@ function filterMembers(){
 }
 
 function selectMember(id){
-  // 空いている最初の入力欄に入力
-  var cntMem=parseInt(gv('ci-count-member'))||0;
-  for(var i=0;i<cntMem;i++){
-    var el=document.getElementById('ci-member-'+i);
-    if(el&&!el.value){
-      el.value=id;
-      onMemberInput(i);
-      break;
-    }
+  sv('ci-member', id);
+  var mem=getMemberInfo(id);
+  var status=g('ci-member-status');
+  if(mem){
+    status.textContent='✓ '+(mem.nickname||mem.name)+'（'+(mem.rank||'段位なし')+'・来場'+(mem.visitCount||0)+'回）';
+    status.style.color='var(--teal)';
   }
   g('ci-member-list').style.display='none';
 }
 
-function onMemberInput(idx){
-  idx=idx||0;
-  var el=document.getElementById('ci-member-'+idx)||g('ci-member');
-  if(!el) return;
-  var val=el.value.trim();
-  var status=document.getElementById('ci-member-status-'+idx)||g('ci-member-status');
-  if(!status) return;
+function onMemberInput(){
+  var val=g('ci-member').value.trim();
+  var status=g('ci-member-status');
   if(!val){ status.textContent=''; return; }
   var mem=getMemberInfo(val);
   if(mem){
@@ -918,11 +900,11 @@ g('btn-checkin').addEventListener('click',function(){
   g('kb-seq').textContent=pad(_nextSeq,2);
   g('kb-group-id').textContent=_checkinGroup.id;
   sv('ci-time',nowHHMM());
-  sv('ci-member','');
+  var cmEl=g('ci-member'); if(cmEl) cmEl.value='';
   sv('ci-count-member','0');
   sv('ci-count-new','0');
   sv('ci-payment','0');
-  g('ci-member-status').textContent='';
+  var ms=g('ci-member-status'); if(ms) ms.textContent='';
   g('ci-progress').style.display='none';
   g('ci-new-visitors-area').style.display='none';
   g('ci-new-visitors-inputs').innerHTML='';
@@ -953,16 +935,11 @@ g('m-checkin-save').addEventListener('click', async function(){
   console.log('登録開始: 会員='+cntMem+' 新規='+cntNew+' 合計='+total);
   if(total<1){ toast('1名以上入力してください','err'); return; }
 
-  // 会員IDを人数分取得
-  var memberIds=[];
-  for(var mi=0;mi<cntMem;mi++){
-    var midEl=document.getElementById('ci-member-'+mi);
-    memberIds.push(midEl?midEl.value.trim()||null:null);
-  }
-  var hasAnyMemberId=memberIds.some(function(id){ return !!id; });
-  console.log('会員IDs:', memberIds);
-  if(cntMem>0 && !hasAnyMemberId){
-    if(!confirm('会員IDが入力されていません。全員非会員として登録しますか？')){
+  // 会員人数>0なのに会員IDが未入力の場合は確認
+  var memberId=gv('ci-member')||null;
+  console.log('会員ID: '+memberId);
+  if(cntMem>0 && !memberId){
+    if(!confirm('会員IDが入力されていません。非会員として登録しますか？')){
       return;
     }
   }
@@ -993,28 +970,34 @@ g('m-checkin-save').addEventListener('click', async function(){
     var registeredVisitKeys=[];
     var tempMemberIds=[]; // 仮会員情報（レシートQR用）
 
-    // ── 会員の登録（複数人対応） ──
-    for(var mi=0;mi<cntMem;mi++){
-      var mid=memberIds[mi]||null;
-      if(mid){
-        var alreadyIn=cache.visits.find(function(v){ return v.memberId===mid && !v.checkoutTime; });
-        if(alreadyIn){ toast(mid+'は既に在店中です','err'); saveBtn.disabled=false; saveBtn.textContent='登録'; return; }
-      }
+    // ── 会員の登録 ──
+    if(cntMem>0 && memberId){
+      var alreadyIn=cache.visits.find(function(v){ return v.memberId===memberId && !v.checkoutTime; });
+      if(alreadyIn){ toast(memberId+'は既に在店中です','err'); saveBtn.disabled=false; saveBtn.textContent='登録'; return; }
       var visitKey=today+pad(_nextSeq,2);
       batch.set(db.collection('visits').doc(visitKey),{
         visitKey:visitKey, visitDate:today, visitTime:time, seq:_nextSeq,
-        memberId:mid, checkinGroupId:groupId,
+        memberId:memberId, checkinGroupId:groupId,
         tequilaAmount:0, amount:0, payment:payment, receiptIssued:'0', checkoutTime:null
       });
-      if(mid){
-        var memSnap=await db.collection('members').doc(mid).get();
-        if(memSnap.exists){
-          var curCount=memSnap.data().visitCount||0;
-          batch.update(db.collection('members').doc(mid),{visitCount:curCount+1});
-        }
+      // 来店回数+1
+      var memSnap=await db.collection('members').doc(memberId).get();
+      if(memSnap.exists){
+        var curCount=memSnap.data().visitCount||0;
+        batch.update(db.collection('members').doc(memberId),{visitCount:curCount+1});
       }
       registeredVisitKeys.push(visitKey);
       _nextSeq++; if(_nextSeq>99) _nextSeq=1;
+    } else if(cntMem>0){
+      // 会員なし（非会員）
+      var visitKey=today+pad(_nextSeq,2);
+      batch.set(db.collection('visits').doc(visitKey),{
+        visitKey:visitKey, visitDate:today, visitTime:time, seq:_nextSeq,
+        memberId:null, checkinGroupId:groupId,
+        tequilaAmount:0, amount:0, payment:payment, receiptIssued:'0', checkoutTime:null
+      });
+      registeredVisitKeys.push(visitKey);
+      _nextSeq++;
     }
 
     // ── 新規来場者の仮会員登録 ──
