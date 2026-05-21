@@ -50,7 +50,9 @@ input,select{font-family:var(--sans)}
 
 /* プロフィールバー */
 .profile-bar{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);padding:16px 20px;margin-bottom:12px;display:flex;align-items:center;gap:14px;box-shadow:var(--shadow);flex-wrap:wrap}
-.profile-avatar{width:48px;height:48px;border-radius:50%;background:var(--gold-d);color:var(--cream);font-family:var(--serif);font-size:22px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.profile-avatar{width:48px;height:48px;border-radius:50%;background:var(--gold-d);color:var(--cream);font-family:var(--serif);font-size:22px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden}
+.profile-avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+.profile-avatar svg{width:32px;height:32px;opacity:.85}
 /* 左側：アイコン＋名前エリア */
 .profile-left{display:flex;align-items:center;gap:14px;flex:1;min-width:0}
 .profile-name-area{min-width:0}
@@ -67,7 +69,8 @@ input,select{font-family:var(--sans)}
 .btn-resend{padding:2px 9px;border-radius:10px;font-size:10px;font-weight:500;background:none;border:1px solid var(--gold-d);color:var(--gold-d);cursor:pointer;white-space:nowrap}
 .btn-resend:hover{background:var(--gold-d);color:var(--cream)}
 /* 右側：CLASSと段位 */
-.profile-right{margin-left:auto;text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
+.profile-right{margin-left:auto;text-align:left;display:flex;flex-direction:column;align-items:flex-start;gap:2px;flex-shrink:0}
+.profile-right-label{font-size:9px;color:var(--ink3);letter-spacing:.1em;text-transform:uppercase;font-weight:600}
 .profile-stat-lbl{font-size:10px;color:var(--ink3);letter-spacing:.06em}
 /* CLASSバッジ */
 .class-badge{display:inline-block;padding:3px 10px;border-radius:14px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-family:var(--serif)}
@@ -200,7 +203,12 @@ select.fi{min-width:80px}
     <div class="profile-bar" id="profile-bar">
       <!-- 左：アイコン＋名前＋区分バッジ -->
       <div class="profile-left">
-        <div class="profile-avatar" id="prof-avatar">?</div>
+        <div class="profile-avatar" id="prof-avatar">
+          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" id="prof-avatar-svg">
+            <circle cx="16" cy="11" r="6" fill="rgba(255,255,255,.8)"/>
+            <ellipse cx="16" cy="26" rx="10" ry="7" fill="rgba(255,255,255,.8)"/>
+          </svg>
+        </div>
         <div class="profile-name-area">
           <div class="profile-name" id="prof-name">—</div>
           <div class="profile-id" id="prof-id"></div>
@@ -212,8 +220,9 @@ select.fi{min-width:80px}
       </div>
       <!-- 右：CLASSバッジ＋段位 -->
       <div class="profile-right">
+        <div class="profile-right-label">来場 CLASS</div>
         <div id="prof-class-badge" class="class-badge class-blanco">BLANCO</div>
-        <div class="profile-stat-lbl" id="prof-class-lbl">来場 0回</div>
+        <div class="profile-stat-lbl" id="prof-class-lbl">0回</div>
         <div class="rank-badge" id="prof-rank"></div>
       </div>
     </div>
@@ -398,7 +407,11 @@ async function initMyPage(user){
     // 2. 表示名・プロフィール設定
     const name=memberDoc?(memberDoc.nickname||memberDoc.name||memberId):memberId||'会員';
     const initChar=name?name.charAt(0).toUpperCase():'?';
-    document.getElementById('prof-avatar').textContent=initChar;
+    // アバター：iconUrlがあれば画像、なければSVGシルエットのまま
+    if(memberDoc?.iconUrl){
+      const av=document.getElementById('prof-avatar');
+      av.innerHTML='<img src="'+memberDoc.iconUrl+'" alt="avatar">';
+    }
     document.getElementById('prof-name').textContent=name;
     document.getElementById('prof-id').textContent=memberId?`ID: ${memberId}`:'';
     document.getElementById('top-user-label').textContent=name;
@@ -440,18 +453,11 @@ async function loadBlindMarks(){
 async function loadMyData(memberId){
   const issues=[];
 
-  // productsマスタ取得（定番品のみ）
+  // productsマスタ取得（定番品のみ：productionType===0）
   if(!allProducts.length){
     try{
-      const pSnap=await db.collection('products').where('isRegular','==',true).get();
-      // isRegularがない場合はproductTypeで絞り込み
-      if(pSnap.empty){
-        const pSnap2=await db.collection('products').get();
-        allProducts=pSnap2.docs.map(d=>({id:d.id,...d.data()}))
-          .filter(p=>p.productType==='tequila'||p.category==='定番'||p.isRegular);
-      } else {
-        allProducts=pSnap.docs.map(d=>({id:d.id,...d.data()}));
-      }
+      const pSnap=await db.collection('products').where('productionType','==',0).get();
+      allProducts=pSnap.docs.map(d=>({id:d.id,...d.data()}));
     }catch(e){
       console.warn('products取得失敗:', e);
     }
@@ -580,17 +586,23 @@ function updateMemBadge(doc){
   const badge=document.getElementById('prof-mem-badge');
   const resendBtn=document.getElementById('btn-resend-verify');
   if(!badge) return;
-  const st=doc?.status||'guest';
-  const isGuest=doc?.isGuest||st==='guest';
-  if(st==='active'){
+  if(resendBtn) resendBtn.style.display='none';
+  // statusが未設定の場合はisGuest/isTempフラグで判断
+  const st=doc?.status||null;
+  const isGuest=doc?.isGuest===true;
+  const isTemp=doc?.isTemp===true;
+  if(st==='active' || (!st && !isGuest && !isTemp)){
+    // statusがactiveまたは未設定かつフラグなし→本登録
     badge.textContent='本登録'; badge.className='mem-badge mb-active';
   } else if(st==='pending'){
     badge.textContent='認証待ち'; badge.className='mem-badge mb-pending';
     if(resendBtn) resendBtn.style.display='inline-block';
-  } else if(st==='temp'){
+  } else if(st==='temp'||isTemp){
     badge.textContent='仮登録'; badge.className='mem-badge mb-temp';
-  } else {
+  } else if(isGuest||st==='guest'){
     badge.textContent='ゲスト'; badge.className='mem-badge mb-guest';
+  } else {
+    badge.textContent='本登録'; badge.className='mem-badge mb-active';
   }
 }
 
@@ -618,7 +630,7 @@ function updateClassBadge(count){
   else{                 cls='class-blanco';       name='BLANCO'; }
   badge.className='class-badge '+cls;
   badge.textContent=name;
-  if(lbl) lbl.textContent='来場 '+count+'回';
+  if(lbl) lbl.textContent=count+'回';
 }
 
 function updateSummary(visits){
