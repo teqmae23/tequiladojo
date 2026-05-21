@@ -128,7 +128,7 @@ select.fi{min-width:80px}
 .og-header{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--cream2)}
 .og-time{font-family:var(--mono);font-size:11px;color:var(--ink3)}
 .og-badge{font-size:10px;padding:1px 6px;border-radius:8px}
-.og-together{font-size:11px;color:var(--ink3)}
+.og-together{font-size:11px;color:var(--ink3);display:flex;align-items:center;gap:3px}
 .og-total{margin-left:auto;font-size:12px;font-weight:600;color:var(--gold-d)}
 .og-items{}
 .og-item{display:flex;align-items:center;padding:8px 14px 8px 24px;border-bottom:1px solid var(--border);gap:8px;font-size:13px}
@@ -801,7 +801,6 @@ function buildVisitCard(v){
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span class="visit-date">${esc(dateLabel)}</span>
           <div class="visit-badges">
-            ${hasBlind?'<span class="badge badge-blind">🎭 BLIND</span>':''}
             ${itemCount?`<span class="badge badge-items">${itemCount}品</span>`:''}
           </div>
         </div>
@@ -872,7 +871,8 @@ function buildBatchBlock(b,visitId){
       const names=otherVisitKeys.map(vk=>{
         const mid=allMembersMap['visit_'+vk];
         const info=mid?allMembersMap[mid]:null;
-        return info?info.nickname:(mid||'ゲスト');
+        if(info)return info.nickname;
+        return 'ゲスト';
       });
       togetherLabel=`👥 ${names.join('・')}と一緒`;
     } else if(b.batchId){
@@ -882,12 +882,13 @@ function buildBatchBlock(b,visitId){
         &&r.visitKey!==visitId
       );
       if(blindOthers.length){
+        const myMidT=currentMember?.memberId||currentMember?.id;
         const names=blindOthers.map(r=>{
           const mid=r.customerId;
+          if(mid===myMidT)return null;
           const info=mid?allMembersMap[mid]:null;
-          const myMid=currentMember?.memberId||currentMember?.id;
-          if(mid===myMid)return null;
-          return info?info.nickname:(mid||'ゲスト');
+          if(info)return info.nickname;
+          return 'ゲスト';
         }).filter(Boolean);
         if(names.length)togetherLabel=`👥 ${[...new Set(names)].join('・')}と一緒`;
       }
@@ -918,20 +919,21 @@ function buildBatchBlock(b,visitId){
 
   const allCorrect=blindResults4group.reduce((s,r)=>s+(r.correctCount||0),0);
   const allTotal=blindResults4group.reduce((s,r)=>s+(r.totalCount||0),0);
-  const blindSummary=blindResults4group.length?` (${blindResults4group.length}名 ${allCorrect}/${allTotal})`: '（未入力）';
-  const blindBtn=isBlind?`<button class="blind-result-btn" onclick="event.stopPropagation();openBlindModal('${esc(b.repGid||b.groups[0])}','${esc(visitId)}')">
-    🎭 ブラインド結果を見る${blindSummary}
-  </button>`:'';
+  const blindSummary=blindResults4group.length?`${allCorrect}/${allTotal}正解`:'';
+
+  // ブラインドアイコン（クリックで結果表示）
+  const blindIcon=isBlind
+    ?`<span class="og-badge" style="background:#f3eaff;color:#6b3fa0;cursor:pointer" onclick="event.stopPropagation();openBlindModal('${esc(b.repGid||b.groups[0])}','${esc(visitId)}')" title="ブラインド結果を見る">🎭 ${blindResults4group.length?blindSummary:'未入力'}</span>`
+    :'';
 
   return`<div class="order-group">
     <div class="og-header">
       <span class="og-time">${esc(time)}</span>
-      ${isBlind?'<span class="og-badge" style="background:#f3eaff;color:#6b3fa0">🎭 BLIND</span>':''}
-      ${togetherLabel?`<span class="og-together">👥 ${esc(togetherLabel)}</span>`:''}
+      ${blindIcon}
+      ${togetherLabel?`<span class="og-together">${esc(togetherLabel)}</span>`:''}
       <span class="og-total">${fmtAmt(total)}</span>
     </div>
     <div class="og-items">${itemsHtml}</div>
-    ${blindBtn}
   </div>`;
 }
 
@@ -976,14 +978,13 @@ function openBlindModal(gid, visitId){
   });
 
   // 会員名取得
+  const myMid2=currentMember?.memberId||currentMember?.id;
   const memberNames=results.map(r=>{
     const mid=r.customerId;
-    const info=mid?allMembersMap[mid]:null;
-    if(info)return info.nickname;
     // 自分かチェック
-    const myMid=currentMember?.memberId||currentMember?.id;
-    if(mid===myMid)return currentMember?.nickname||currentMember?.name||mid||'—';
-    return mid||'—';
+    if(mid===myMid2)return currentMember?.nickname||currentMember?.name||mid||'—';
+    const info=mid?allMembersMap[mid]:null;
+    return info?info.nickname:(mid||'—');
   });
 
   // テーブルヘッダー
