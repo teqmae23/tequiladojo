@@ -515,6 +515,7 @@ const db = firebase.firestore();
 
 // ━━━ 状態 ━━━
 let todayStr='', allGroups=[], allBatchGroups=[], allVisits=[], allMembers={};
+let currentSessionBT=null; // 営業時刻用セッション情報
 let blindResultsSet=new Set();
 let masterData={tequila:[],other:[],misc:[],set:[]};
 let blindMarks=[];
@@ -543,11 +544,16 @@ async function doLogin(){
 
 // ━━━ 初期化 ━━━
 async function init(){
+  // まずrawな今日の日付でtodayStrを初期化
   const now=new Date();
   todayStr=String(now.getFullYear()).slice(2).padStart(2,'0')
     +String(now.getMonth()+1).padStart(2,'0')
     +String(now.getDate()).padStart(2,'0');
   await Promise.all([loadMasters(),loadTodayData()]);
+  // loadTodayData後にセッション情報が取れたので営業日付に更新
+  if(currentSessionBT&&currentSessionBT.openDate){
+    todayStr=AuthRole.businessDate(currentSessionBT.openTime, currentSessionBT.openDate);
+  }
   document.getElementById('loading').style.display='none';
   document.getElementById('content-area').style.display='block';
   renderOrderList();
@@ -608,6 +614,7 @@ async function loadTodayData(){
     db.collection('blindResults').get(),
     AuthRole.getActiveSession(db)
   ]);
+  currentSessionBT=session; // 営業時刻計算用に保存
 
   // 現セッションのopenTime以降のvisitのみ対象
   allVisits=[];
@@ -753,7 +760,7 @@ function buildBatchCard(b,mode){
   const showCb=mode==='pending'||mode==='blind-pending';
   const showResult=mode==='blind-pending';
   const isCancelled=b.served===0;
-  const time=b.orderTime?b.orderTime.slice(0,2)+':'+b.orderTime.slice(2):'';
+  const time=b.orderTime?AuthRole.formatBusinessTime(b.orderTime)||b.orderTime.slice(0,2)+':'+b.orderTime.slice(2):'';
   const bb=b.isBlind?'<span class="blind-badge">🎭 BLIND</span>':'';
   const cancelBadge=isCancelled?'<span style="font-size:10px;background:var(--red-l);color:var(--red);padding:1px 6px;border-radius:3px;font-weight:700">キャンセル</span>':'';
   const names=b.groups.map(g=>esc(vLabel(g.visitKey))).join('・');
@@ -1658,8 +1665,8 @@ function goStep2(){
 // 確定
 async function confirmOrder(){
   if(!flow.visits.length||!flow.cart.length)return;
-  const now=new Date();
-  const orderTime=String(now.getHours()).padStart(2,'0')+String(now.getMinutes()).padStart(2,'0');
+  // 営業時刻でorderTimeを記録（日またぎ対応）
+  const orderTime=AuthRole.nowBusinessTime(currentSessionBT&&currentSessionBT.openTime);
   const isBlind=document.getElementById('blind-check').checked;
   const todayOrders=allGroups.flatMap(g=>g.orders);
   let maxSeq=todayOrders.reduce((m,o)=>{const s=parseInt(o.id.slice(6))||0;return Math.max(m,s);},0);

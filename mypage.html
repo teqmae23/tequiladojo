@@ -326,6 +326,9 @@ function fmtDateFull(yymmdd){
 }
 function fmtTime(hhmm){
   if(!hhmm)return '';
+  if(typeof AuthRole!=='undefined'&&AuthRole.formatBusinessTime){
+    return AuthRole.formatBusinessTime(hhmm)||hhmm.slice(0,2)+':'+hhmm.slice(2,4);
+  }
   return hhmm.slice(0,2)+':'+hhmm.slice(2,4);
 }
 function fmtAmt(n){return n!=null?'¥'+Number(n).toLocaleString():'—';}
@@ -525,8 +528,9 @@ async function loadMyData(memberId){
 
   // 来場日でソート（visitDateがない場合はIDから推定）
   allVisits.sort((a,b)=>{
-    const da=a.visitDate||a.id.slice(0,6)||'';
-    const db2=b.visitDate||b.id.slice(0,6)||'';
+    // 営業日付+営業時刻でソート（降順）
+    const da=(a.visitDate||a.id.slice(0,6)||'')+(a.visitTime||'');
+    const db2=(b.visitDate||b.id.slice(0,6)||'')+(b.visitTime||'');
     return db2.localeCompare(da);
   });
 
@@ -558,16 +562,15 @@ async function loadMyData(memberId){
     console.log('[mypage] unmatched sample:', unmatchedOrders.slice(0,3).map(o=>({id:o.id,visitKey:o.visitKey,visitId:o.visitId})));
   }
 
-  // blindResults取得
+  // blindResults取得（batchIdで全員分 + groupIdでも取得）
   allBlindResults=[];
-  // orderGroupIdのリスト（blindResultsのドキュメントID）
-  const groupIds=[];
-  allOrders.forEach(o=>{if(o.orderGroupId&&!groupIds.includes(o.orderGroupId))groupIds.push(o.orderGroupId);});
-  if(groupIds.length){
+  const batchIds=[];
+  allOrders.forEach(o=>{if(o.batchId&&!batchIds.includes(o.batchId))batchIds.push(o.batchId);});
+  if(batchIds.length){
     const bChunks=[];
-    for(let i=0;i<groupIds.length;i+=30)bChunks.push(groupIds.slice(i,i+30));
+    for(let i=0;i<batchIds.length;i+=30)bChunks.push(batchIds.slice(i,i+30));
     for(const chunk of bChunks){
-      const bSnap=await db.collection('blindResults').where(firebase.firestore.FieldPath.documentId(),'in',chunk).get();
+      const bSnap=await db.collection('blindResults').where('batchId','in',chunk).get();
       bSnap.forEach(d=>allBlindResults.push({id:d.id,...d.data()}));
     }
   }

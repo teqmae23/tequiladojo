@@ -450,9 +450,22 @@ function gv(id){ var el=g(id); return el?el.value.trim():''; }
 function sv(id,val){ var el=g(id); if(el) el.value=(val==null?'':val); }
 function pad(n,l){ return String(n||'').padStart(l,'0'); }
 function escHtml(s){ var t=String(s||''); t=t.split('&').join('&amp;'); t=t.split('<').join('&lt;'); t=t.split('>').join('&gt;'); return t; }
-function nowHHMM(){ var d=new Date(); return pad(d.getHours(),2)+pad(d.getMinutes(),2); }
-function todayStr6(){ var d=new Date(); return String(d.getFullYear()).slice(2)+pad(d.getMonth()+1,2)+pad(d.getDate(),2); }
-function fmtHHMM(t){ if(!t||!/[0-9]{4}/.test(t.slice(0,4))) return t||''; return t.slice(0,2)+':'+t.slice(2,4); }
+function nowHHMM(){
+  if(currentSession&&currentSession.openTime){
+    return AuthRole.nowBusinessTime(currentSession.openTime).slice(0,4);
+  }
+  var d=new Date(); return pad(d.getHours(),2)+pad(d.getMinutes(),2);
+}
+function nowHHMMSS(){
+  return AuthRole.nowBusinessTime(currentSession&&currentSession.openTime);
+}
+function todayStr6(){
+  if(currentSession&&currentSession.openTime&&currentSession.date){
+    return AuthRole.businessDate(currentSession.openTime, currentSession.date);
+  }
+  var d=new Date(); return String(d.getFullYear()).slice(2)+pad(d.getMonth()+1,2)+pad(d.getDate(),2);
+}
+function fmtHHMM(t){ if(!t||!/[0-9]{4}/.test(t.slice(0,4))) return t||''; return AuthRole.formatBusinessTime(t)||t.slice(0,2)+':'+t.slice(2,4); }
 function fmtDate6(d){ if(!d||d.length<6) return d||''; return '20'+d.slice(0,2)+'/'+d.slice(2,4)+'/'+d.slice(4,6); }
 
 function toast(msg,type){
@@ -485,6 +498,7 @@ function calcTequila(orders){
 
 // ── キャッシュ ──────────────────────────────────────────────────
 var cache = { visits:[], members:[], orders:[], blindMarks:[] };
+var currentSession = null; // 現在のセッション（openTime, date）
 var currentCheckoutVisitKey = null;
 
 // ── 認証 ───────────────────────────────────────────────────────
@@ -553,6 +567,7 @@ g('btn-refresh').addEventListener('click',function(){
   ]).then(function(results){
     var visitsSnap2=results[0];
     var session2=results[2];
+    currentSession=session2; // グローバルに保存
     cache.visits=visitsSnap2.docs.map(function(d){return Object.assign({id:d.id},d.data());})
       .filter(function(v){ return AuthRole.isVisitInSession(v, session2); });
     var sessionIds2=new Set(cache.visits.map(function(v){return v.id;}));
@@ -1624,7 +1639,7 @@ function doCheckoutSave(){
   if(!bulkCheckoutVisitKeys.length) return;
   var payment=gv('co-payment')||'0';
   var receipt=gv('co-receipt')||'0';
-  var now=nowHHMM();
+  var now=nowHHMMSS();
   var alsoCheckout=g('co-also-checkout')&&g('co-also-checkout').checked;
 
   var fbBatch=db.batch();

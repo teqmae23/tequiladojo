@@ -166,13 +166,26 @@ function toast(msg,type){
   g("toasts").appendChild(el);
   setTimeout(function(){el.remove();},3000);
 }
-function nowStr(){var d=new Date();return pad(d.getHours())+pad(d.getMinutes())+pad(d.getSeconds());}
-function todayStr6(){var d=new Date();return String(d.getFullYear()).slice(2)+pad(d.getMonth()+1)+pad(d.getDate());}
+function nowStr(){
+  // 営業時刻対応（日またぎ時は2400加算）
+  if(currentOpenTime){
+    return AuthRole.nowBusinessTime(currentOpenTime);
+  }
+  var d=new Date();return pad(d.getHours())+pad(d.getMinutes())+pad(d.getSeconds());
+}
+function todayStr6(){
+  // 営業日付（日またぎ時は開店日付を引き継ぐ）
+  if(currentOpenTime && currentSessionDate){
+    return AuthRole.businessDate(currentOpenTime, currentSessionDate);
+  }
+  var d=new Date();return String(d.getFullYear()).slice(2)+pad(d.getMonth()+1)+pad(d.getDate());
+}
 function fmtHHMM(t){if(!t||t.length<4)return t||"—";return t.slice(0,2)+":"+t.slice(2,4);}
 
 var storeStatus="closed";
 var currentSessionId=null;
-var currentOpenTime=null; // 開店時刻（HHMMSS形式）
+var currentOpenTime=null;   // 開店時刻（HHMMSS形式）
+var currentSessionDate=null; // 開店日付（YYMMDD形式）
 var breakIndex=0;
 var layouts=[];
 var members=[];
@@ -303,6 +316,7 @@ g("btn-open-store").addEventListener("click",function(){
       }).then(function(){
         currentSessionId=sessionId;
         currentOpenTime=openTime;
+        currentSessionDate=today;
         breakIndex=0;
         applyStoreStatus("open");
         toast("開店しました（"+openTime+"）");
@@ -365,7 +379,8 @@ function restoreStoreState(){
         return kb.localeCompare(ka);
       });
       var d=docs[0];
-      if(d.closeTime){currentSessionId=null;currentOpenTime=null;applyStoreStatus("closed");return;}
+      if(d.closeTime){currentSessionId=null;currentOpenTime=null;currentSessionDate=null;applyStoreStatus("closed");return;}
+      currentSessionDate=d.date||null;
       currentSessionId=d.sessionId||d.date+(d.seq!==undefined?String(d.seq):"0");
       currentOpenTime=d.openTime||null;
       var memoEl=g("oc-memo");if(memoEl)memoEl.value=d.memo||"";
