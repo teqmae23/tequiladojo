@@ -616,24 +616,12 @@ async function loadMyData(memberId){
     }
   }
 
-  // _togetherMapをallMembersMapが揃った状態で構築
-  window._togetherMap={};
+  // _togetherMapをFirestoreから直接構築（allOrdersは自分のvisitのみなので直接取得）
   const myMidFinal=currentMember?.memberId||currentMember?.id;
   const myVisitKeysFinal=new Set(allVisits.map(v=>v.id));
-  // batchIdごとに他visitKeyの名前をまとめる
   const batchToOtherNames={};
-  // allMembersMapに登録されているvisit_*からbatchを逆引き
-  allOrders.forEach(o=>{
-    if(!o.batchId||myVisitKeysFinal.has(o.visitKey||o.visitId))return;
-    const vk=o.visitKey||o.visitId;
-    const mid=allMembersMap['visit_'+vk];
-    const info=mid?allMembersMap[mid]:null;
-    const name=info?info.nickname:null;
-    if(!name||mid===myMidFinal)return;
-    if(!batchToOtherNames[o.batchId])batchToOtherNames[o.batchId]=[];
-    if(!batchToOtherNames[o.batchId].includes(name))batchToOtherNames[o.batchId].push(name);
-  });
-  // blindResultsからも補完
+
+  // まずblindResultsから補完（既にallMembersMapに情報あり）
   allBlindResults.forEach(r=>{
     if(!r.batchId||r.customerId===myMidFinal)return;
     const mid=r.customerId;
@@ -643,6 +631,52 @@ async function loadMyData(memberId){
     if(!batchToOtherNames[r.batchId])batchToOtherNames[r.batchId]=[];
     if(!batchToOtherNames[r.batchId].includes(name))batchToOtherNames[r.batchId].push(name);
   });
+
+  // batchIdでordersを取得して他visitKeyの名前を収集
+  const allBatchIds=[...new Set(allOrders.map(o=>o.batchId).filter(Boolean))];
+  if(allBatchIds.length){
+    const bChunksT=[];
+    for(let i=0;i<allBatchIds.length;i+=10)bChunksT.push(allBatchIds.slice(i,i+10));
+    for(const chunk of bChunksT){
+      const oSnap=await db.collection('orders').where('batchId','in',chunk).get();
+      // 他visitKeyを収集
+      const otherVkSet=new Set();
+      oSnap.docs.forEach(d=>{
+        const vk=d.data().visitKey||d.data().visitId;
+        if(vk&&!myVisitKeysFinal.has(vk))otherVkSet.add(vk);
+      });
+      // visitKey→memberIdが未登録なら取得
+      const unknownVks=[...otherVkSet].filter(vk=>!allMembersMap['visit_'+vk]);
+      if(unknownVks.length){
+        const vkChunks=[];
+        for(let i=0;i<unknownVks.length;i+=30)vkChunks.push(unknownVks.slice(i,i+30));
+        for(const vkChunk of vkChunks){
+          const vSnap=await db.collection('visits').where(firebase.firestore.FieldPath.documentId(),'in',vkChunk).get();
+          const newMids=[];
+          vSnap.docs.forEach(vd=>{
+            const mid=vd.data().memberId;
+            if(mid){allMembersMap['visit_'+vd.id]=mid;if(!allMembersMap[mid]){allMembersMap[mid]={nickname:mid};newMids.push(mid);}}
+          });
+          for(const mid of newMids){
+            try{const mSnap=await db.collection('members').doc(mid).get();if(mSnap.exists){const md=mSnap.data();allMembersMap[mid]={nickname:md.nickname||md.name||mid};}}catch(e){}
+          }
+        }
+      }
+      // batchToOtherNamesに登録
+      oSnap.docs.forEach(d=>{
+        const dat=d.data();
+        const vk=dat.visitKey||dat.visitId;
+        const bid=dat.batchId;
+        if(!vk||!bid||myVisitKeysFinal.has(vk))return;
+        const mid=allMembersMap['visit_'+vk];
+        const info=mid?allMembersMap[mid]:null;
+        const name=info?info.nickname:null;
+        if(!name||mid===myMidFinal)return;
+        if(!batchToOtherNames[bid])batchToOtherNames[bid]=[];
+        if(!batchToOtherNames[bid].includes(name))batchToOtherNames[bid].push(name);
+      });
+    }
+  }
   window._togetherMap=batchToOtherNames;
 
   showDebugBanner(issues);
