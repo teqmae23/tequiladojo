@@ -14,6 +14,20 @@
  */
 var AuthRole = (function() {
 
+  // ページ読み込み直後にログイン・アプリ画面を両方非表示にする
+  // → onAuthStateChanged完了後に適切な画面を表示
+  (function hideOnLoad(){
+    var style = document.createElement('style');
+    style.id = 'auth-role-hide';
+    style.textContent = '#login-screen, #app, #main-screen { visibility: hidden !important; }';
+    document.head.appendChild(style);
+  })();
+
+  function showScreens(){
+    var el = document.getElementById('auth-role-hide');
+    if(el) el.remove();
+  }
+
   /**
    * IDトークンからroleを取得（キャッシュ付き、60秒で再取得）
    */
@@ -65,6 +79,7 @@ var AuthRole = (function() {
    */
   function requireStaff(auth, onAllowed, onSignedOut) {
     auth.onAuthStateChanged(async function(user) {
+      showScreens();
       if (!user) {
         if (onSignedOut) onSignedOut();
         else showLoginScreen();
@@ -110,6 +125,7 @@ var AuthRole = (function() {
    */
   function requireOwner(auth, onAllowed, onSignedOut) {
     auth.onAuthStateChanged(async function(user) {
+      showScreens();
       if (!user) {
         if (onSignedOut) onSignedOut();
         else showLoginScreen();
