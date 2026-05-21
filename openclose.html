@@ -112,6 +112,7 @@ td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle
         <div style="font-size:11px;font-weight:500;color:var(--ink3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em">現在の状態</div>
         <div style="display:flex;align-items:center;gap:10px">
           <span id="store-status-badge" style="font-size:20px;font-weight:500">閉店中</span>
+          <span id="store-open-time" style="display:none;font-size:12px;color:var(--ink3);font-family:var(--mono)"></span>
         </div>
         <div id="oc-session-detail" style="font-size:11px;color:var(--ink3);margin-top:6px"></div>
       </div>
@@ -171,6 +172,7 @@ function fmtHHMM(t){if(!t||t.length<4)return t||"—";return t.slice(0,2)+":"+t.
 
 var storeStatus="closed";
 var currentSessionId=null;
+var currentOpenTime=null; // 開店時刻（HHMMSS形式）
 var breakIndex=0;
 var layouts=[];
 var members=[];
@@ -241,6 +243,19 @@ function applyStoreStatus(status){
     badge.textContent=STATUS_LABEL[status]||status;
     badge.style.cssText="font-size:13px;font-weight:500;padding:3px 10px;border-radius:20px;background:rgba(0,0,0,.06);"+STATUS_COLOR[status];
   }
+  // 開店中の場合、開店時刻を右に表示
+  var openTimeEl=g("store-open-time");
+  if(openTimeEl){
+    if(status==="open"&&currentOpenTime){
+      var ot=currentOpenTime;
+      var otStr=ot.slice(0,2)+":"+ot.slice(2,4);
+      openTimeEl.textContent="開店 "+otStr;
+      openTimeEl.style.display="inline";
+    } else {
+      openTimeEl.textContent="";
+      openTimeEl.style.display="none";
+    }
+  }
   var btnOpen=g("btn-open-store"),btnBreak=g("btn-break-store"),btnClose=g("btn-close-store");
   if(!btnOpen)return;
   if(status==="open"){
@@ -287,6 +302,7 @@ g("btn-open-store").addEventListener("click",function(){
         guestCount:null,sales:null,memo:null
       }).then(function(){
         currentSessionId=sessionId;
+        currentOpenTime=openTime;
         breakIndex=0;
         applyStoreStatus("open");
         toast("開店しました（"+openTime+"）");
@@ -349,8 +365,9 @@ function restoreStoreState(){
         return kb.localeCompare(ka);
       });
       var d=docs[0];
-      if(d.closeTime){currentSessionId=null;applyStoreStatus("closed");return;}
+      if(d.closeTime){currentSessionId=null;currentOpenTime=null;applyStoreStatus("closed");return;}
       currentSessionId=d.sessionId||d.date+(d.seq!==undefined?String(d.seq):"0");
+      currentOpenTime=d.openTime||null;
       var memoEl=g("oc-memo");if(memoEl)memoEl.value=d.memo||"";
       var fields=[d.breakStart1,d.breakEnd1,d.breakStart2,d.breakEnd2,d.breakStart3,d.breakEnd3];
       var filled=fields.filter(function(f){return f;}).length;
