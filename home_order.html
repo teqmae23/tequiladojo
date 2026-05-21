@@ -854,17 +854,35 @@ async function cancelChecked(section){
   if(!bids.length)return;
   if(!confirm(`${bids.length}グループをキャンセルしますか？`))return;
   try{
-    const batch=db.batch();
+    const fsBatch=db.batch();
     for(const bid of bids){
       const b=allBatchGroups.find(x=>x.bid===bid);if(!b)continue;
-      for(const g of b.groups)
-        for(const o of g.orders)batch.update(db.collection('orders').doc(o.id),{served:0});
+      for(const g of b.groups){
+        for(const o of g.orders){
+          fsBatch.update(db.collection('orders').doc(o.id),{served:0});
+          o.served=0; // ローカルも即時更新
+        }
+        g.served=0;
+      }
       b.served=0;
     }
-    await batch.commit();
+    await fsBatch.commit();
+    // ローカルのallGroupsも更新（served再計算）
+    allGroups.forEach(g=>{
+      if(g.orders.some(o=>o.served===0)&&g.orders.every(o=>o.served===0)){
+        g.served=0;
+      }
+    });
+    // batchGroupsのtotal再計算
+    allBatchGroups.forEach(b=>{
+      if(b.served===0){
+        b.total=0;
+        b.groups.forEach(g=>{ g.total=0; });
+      }
+    });
     showToast(`${bids.length}グループをキャンセルしました`,'info');
-    await loadTodayData();renderOrderList();
-  }catch(e){showToast('エラー: '+e.message,'error');}
+    renderOrderList();
+  }catch(e){showToast('キャンセル失敗: '+e.message,'error');}
 }
 
 // ━━━ 結果入力（表形式） ━━━
