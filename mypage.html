@@ -56,6 +56,12 @@ input,select{font-family:var(--sans)}
 .profile-stats{margin-left:auto;text-align:right}
 .profile-stat-val{font-family:var(--serif);font-size:22px;font-weight:600;color:var(--gold-d)}
 .profile-stat-lbl{font-size:10px;color:var(--ink3);letter-spacing:.06em}
+/* CLASSバッジ */
+.class-badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-family:var(--serif)}
+.class-blanco{background:#f5f5f5;color:#555;border:1px solid #ccc}
+.class-reposado{background:#fff0dc;color:#b06000;border:1px solid #f0c080}
+.class-anejo{background:#ffe0b0;color:#7a3800;border:1px solid #e09040}
+.class-extra-anejo{background:#3a1a00;color:#e8b84a;border:1px solid #7a5610}
 
 /* フィルター */
 .filter-bar{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
@@ -181,8 +187,8 @@ select.fi{min-width:80px}
         <div class="profile-id" id="prof-id"></div>
       </div>
       <div class="profile-stats">
-        <div class="profile-stat-val" id="prof-visits">—</div>
-        <div class="profile-stat-lbl">来場回数</div>
+        <div id="prof-class-badge" class="class-badge class-blanco">BLANCO</div>
+        <div class="profile-stat-lbl" style="margin-top:4px" id="prof-class-lbl">来場 0回</div>
       </div>
     </div>
 
@@ -204,7 +210,7 @@ select.fi{min-width:80px}
     <!-- サマリー -->
     <div class="summary-bar" id="summary-bar">
       <div class="sum-chip"><strong id="s-visits">—</strong>来場</div>
-      <div class="sum-chip"><strong id="s-amount">—</strong>合計金額</div>
+      <div class="sum-chip"><strong id="s-bottles">—</strong>試飲ボトル</div>
       <div class="sum-chip"><strong id="s-tequila">—</strong>テキーラml</div>
       <div class="sum-chip"><strong id="s-blind">—</strong>ブラインド</div>
     </div>
@@ -250,6 +256,7 @@ const db=firebase.firestore();
 let currentMember=null;   // Firestoreのmembersドキュメント
 let allVisits=[];         // 当会員の全来場
 let allOrders=[];         // 当会員の全注文（全来場分）
+let allProducts=[];       // 定番品マスタ
 let allBlindResults=[];   // 当会員の全ブラインド結果
 let filteredVisits=[];    // フィルター後
 let blindMarkMap={};      // markId→{emoji,label}
@@ -368,7 +375,8 @@ async function initMyPage(user){
     document.getElementById('prof-name').textContent=name;
     document.getElementById('prof-id').textContent=memberId?`ID: ${memberId}`:'';
     document.getElementById('top-user-label').textContent=name;
-    document.getElementById('prof-visits').textContent=(memberDoc?.visitCount||'—')+'回';
+    // CLASSバッジ更新
+    updateClassBadge(memberDoc?.visitCount||0);
 
     // 3. ブラインドマーク取得
     await loadBlindMarks();
@@ -399,6 +407,23 @@ async function loadBlindMarks(){
 
 async function loadMyData(memberId){
   const issues=[];
+
+  // productsマスタ取得（定番品のみ）
+  if(!allProducts.length){
+    try{
+      const pSnap=await db.collection('products').where('isRegular','==',true).get();
+      // isRegularがない場合はproductTypeで絞り込み
+      if(pSnap.empty){
+        const pSnap2=await db.collection('products').get();
+        allProducts=pSnap2.docs.map(d=>({id:d.id,...d.data()}))
+          .filter(p=>p.productType==='tequila'||p.category==='定番'||p.isRegular);
+      } else {
+        allProducts=pSnap.docs.map(d=>({id:d.id,...d.data()}));
+      }
+    }catch(e){
+      console.warn('products取得失敗:', e);
+    }
+  }
 
   // visits取得（memberId一致）
   const vSnap=await db.collection('visits')
@@ -518,6 +543,21 @@ function resetFilter(){
   applyFilter();
 }
 
+// CLASSバッジ更新
+function updateClassBadge(count){
+  const badge=document.getElementById('prof-class-badge');
+  const lbl=document.getElementById('prof-class-lbl');
+  if(!badge) return;
+  let cls, name;
+  if(count>=36){        cls='class-extra-anejo'; name='EXTRA AÑEJO'; }
+  else if(count>=12){   cls='class-anejo';       name='AÑEJO'; }
+  else if(count>=2){    cls='class-reposado';     name='REPOSADO'; }
+  else{                 cls='class-blanco';       name='BLANCO'; }
+  badge.className='class-badge '+cls;
+  badge.textContent=name;
+  if(lbl) lbl.textContent='来場 '+count+'回';
+}
+
 function updateSummary(visits){
   const vIds=new Set(visits.map(v=>v.id));
   const orders=allOrders.filter(o=>vIds.has(o.visitKey||o.visitId));
@@ -526,8 +566,23 @@ function updateSummary(visits){
     .reduce((s,o)=>o.served!==0?s+(o.qty||0):s,0);
   const blindCount=allBlindResults.filter(r=>vIds.has(r.visitKey)).length;
 
+  // 試飲ボトル数（全来場通じてユニークな定番品を何本飲んだか）
+  const allVIds=new Set(allVisits.map(v=>v.id));
+  const allOrdersForMember=allOrders.filter(o=>allVIds.has(o.visitKey||o.visitId));
+  const drunkProductNames=new Set(
+    allOrdersForMember
+      .filter(o=>o.productType==='tequila'||o.productType==='other')
+      .map(o=>o.productName)
+      .filter(Boolean)
+  );
+  const regularNames=new Set(allProducts.map(p=>p.name||p.productName).filter(Boolean));
+  const drunkRegular=allProducts.length
+    ? [...drunkProductNames].filter(n=>regularNames.has(n)).length
+    : drunkProductNames.size;
+  const totalRegular=allProducts.length||'?';
+  document.getElementById('s-bottles').textContent=drunkRegular+'('+totalRegular+')';
+
   document.getElementById('s-visits').textContent=visits.length;
-  document.getElementById('s-amount').textContent=fmtAmt(totalAmt);
   document.getElementById('s-tequila').textContent=totalTq+'ml';
   document.getElementById('s-blind').textContent=blindCount+'回';
   document.getElementById('list-count').textContent=visits.length+'件';
