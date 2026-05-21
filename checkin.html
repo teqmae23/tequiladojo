@@ -471,7 +471,7 @@ function calcTequila(orders){
 }
 
 // ── キャッシュ ──────────────────────────────────────────────────
-var cache = { visits:[], members:[], orders:[] };
+var cache = { visits:[], members:[], orders:[], blindMarks:[] };
 var currentCheckoutVisitKey = null;
 
 // ── 認証 ───────────────────────────────────────────────────────
@@ -506,6 +506,10 @@ function loadAll(){
   // 現セッションのopenTime以降のvisitのみ対象
   Promise.all([
     db.collection('members').get().then(function(s){ cache.members=s.docs.map(function(d){return Object.assign({id:d.id},d.data());}); }),
+    db.collection('blindMarks').get().then(function(s){
+      cache.blindMarks=s.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+      cache.blindMarks.sort(function(a,b){return (a.sortOrder||0)-(b.sortOrder||0);});
+    }),
     db.collection('visits').get(),
     db.collection('orders').get().then(function(s){
       cache.orders=s.docs.map(function(d){return Object.assign({id:d.id},d.data());});
@@ -741,19 +745,26 @@ function openOrdersModal(visitKey, visitorName){
     });
     // ブラインド結果を取得してからレンダリング
     var orderGroupIds2=groupOrder2.filter(function(gid){ return !gid.startsWith('_'); });
+    // blindResultsはgroupIdフィールドで複数人分取得（1人1ドキュメント）
     var blindProm=orderGroupIds2.length
-      ? db.collection('blindResults').where(firebase.firestore.FieldPath.documentId(),'in',orderGroupIds2.slice(0,30)).get()
+      ? db.collection('blindResults').where('groupId','in',orderGroupIds2.slice(0,30)).get()
       : Promise.resolve({docs:[]});
     blindProm.then(function(bSnap){
+      // groupIdでまとめる（複数人分）
       var bmap={};
-      bSnap.docs.forEach(function(d){ bmap[d.id]=d.data(); });
+      bSnap.docs.forEach(function(d){
+        var data=d.data();
+        var gid=data.groupId||d.id;
+        if(!bmap[gid]) bmap[gid]=[];
+        bmap[gid].push(data);
+      });
       var html2='';
       groupOrder2.forEach(function(gid){
         var gitems=groupMap2[gid];
         var gTime=gitems[0].orderTime||'';
         var gTimeStr=gTime?gTime.slice(0,2)+':'+gTime.slice(2,4):'';
         var isBlind=gitems.some(function(o){ return o.blindId===1||o.blindId==='1'; });
-        var hasResult=!!bmap[gid];
+        var hasResult=!!(bmap[gid]&&bmap[gid].length);
         var labelClass='co-group-label'+(isBlind?' has-blind':'');
         var labelAttr=isBlind?' onclick="openBlindPopup(\'' +gid+ '\')"':'';
         var itemsHtml2=gitems.map(function(o){
@@ -784,53 +795,71 @@ function openBlindPopup(orderGroupId){
   var body=g('blind-popup-body');
   if(!popup||!body) return;
 
-  // デバッグ: bmapの中身を確認
-  console.log('[blind] orderGroupId:', orderGroupId, '/ bmap keys:', Object.keys(bmap));
+  var results=bmap[orderGroupId]||[];
 
-  var result=bmap[orderGroupId];
-
-  if(!result){
+  if(!results.length){
     body.innerHTML='<div style="font-size:13px;color:var(--ink3);text-align:center;padding:16px">結果未入力</div>';
     g('blind-popup-title').textContent='🎭 ブラインド結果';
     popup.classList.add('open');
     return;
   }
 
-  // 実データ構造:
-  // answers[]: { actualProduct, guessProduct, isCorrect, blindMarkId, actualOrderId, guessOrderId }
-  // correctCount, totalCount, winner（markId文字列）
-  var answers=result.answers||[];
-  var correctCount=result.correctCount||0;
-  var totalCount=result.totalCount||0;
-  var winner=result.winner||null;
+  // results: 1人1エントリ [{customerId, answers[], correctCount, totalCount, winner}, ...]
+  // answersからマーク一覧を収集
+  var marksSet={}, marksOrder=[];
+  results.forEach(function(r){
+    (r.answers||[]).forEach(function(ans){
+      var mk=ans.blindMarkId||'?';
+      if(!marksSet[mk]){ marksSet[mk]=ans.actualProduct||''; marksOrder.push(mk); }
+    });
+  });
 
-  var scoreHtml='<div style="text-align:center;margin-bottom:12px">'
-    +'<div style="font-family:var(--serif);font-size:36px;font-weight:600;color:var(--gold-d)">'
-      +correctCount+'<span style="font-size:18px;color:var(--ink3)">/' +totalCount+'</span>'
+  var blindMarks=cache.blindMarks||[];
+
+  // テーブルヘッダー
+  var thead='<tr><th style="text-align:left;padding-left:6px">名前</th>'
+    +marksOrder.map(function(mk){
+      return '<th style="min-width:28px;max-width:48px;overflow:hidden;text-overflow:ellipsis;font-size:10px">'+escHtml(mk)+'</th>';
+    }).join('')
+    +'<th>正解</th></tr>';
+
+  // マーク対応表
+  var legendHtml='<div style="margin:8px 0 4px;font-size:10px;color:var(--ink3);font-weight:600;letter-spacing:.06em">マーク対応表</div>'
+    +marksOrder.map(function(mk,i){
+      return '<div style="font-size:11px;color:var(--ink2);padding:2px 0">'
+        +(i+1)+'. '+escHtml(mk)+' → '+escHtml(marksSet[mk])
+      +'</div>';
+    }).join('');
+
+  // 各人の行
+  var tbody=results.map(function(r){
+    var mem=cache.members.find(function(m){ return m.id===r.customerId||m.memberId===r.customerId; });
+    var name=mem?(mem.nickname||mem.name||r.customerId):escHtml(r.customerId||'—');
+    var ansMap={};
+    (r.answers||[]).forEach(function(ans){ ansMap[ans.blindMarkId||'?']=ans; });
+    var cells=marksOrder.map(function(mk){
+      var ans=ansMap[mk];
+      if(!ans) return '<td>—</td>';
+      var bg=ans.isCorrect?'background:#d4edda':'background:#f8d7da';
+      return '<td style="'+bg+';font-size:11px">'+escHtml(ans.guessProduct||'?')+'</td>';
+    }).join('');
+    var winner=r.winner?'🏆':'';
+    return '<tr>'
+      +'<td style="text-align:left;padding-left:6px;font-size:12px;font-weight:600">'+escHtml(name)+winner+'</td>'
+      +cells
+      +'<td style="font-weight:700;color:var(--gold-d)">'+(r.correctCount||0)+'/'+(r.totalCount||0)+'</td>'
+    +'</tr>';
+  }).join('');
+
+  body.innerHTML=''
+    +'<div style="overflow-x:auto;margin-bottom:8px">'
+      +'<table style="border-collapse:collapse;width:100%;font-size:11px">'
+        +'<thead style="background:var(--cream2)">'+thead+'</thead>'
+        +'<tbody>'+tbody+'</tbody>'
+      +'</table>'
     +'</div>'
-    +(winner?'<div style="font-size:12px;color:var(--teal);margin-top:4px">🏆 ウィナー: '+escHtml(winner)+'</div>':'')
-  +'</div>';
+    +legendHtml;
 
-  var answersHtml='';
-  if(answers.length){
-    answersHtml='<div style="margin-top:8px">'
-      +answers.map(function(ans){
-        if(!ans) return '';
-        var icon=ans.isCorrect?'✅':'❌';
-        var actual=escHtml(ans.actualProduct||'—');
-        var guess=escHtml(ans.guessProduct||'—');
-        var mark=escHtml(ans.blindMarkId||'');
-        return '<div class="blind-ans-row">'
-          +'<span style="font-size:11px;background:var(--cream2);border-radius:3px;padding:1px 5px;flex-shrink:0">'+mark+'</span>'
-          +'<span style="flex:1;font-size:12px">'+actual+'</span>'
-          +'<span style="color:var(--ink3);font-size:11px;white-space:nowrap">→ '+guess+'</span>'
-          +'<span style="flex-shrink:0">'+icon+'</span>'
-        +'</div>';
-      }).filter(Boolean).join('')
-    +'</div>';
-  }
-
-  body.innerHTML=scoreHtml+answersHtml;
   g('blind-popup-title').textContent='🎭 ブラインド結果';
   popup.classList.add('open');
 }
