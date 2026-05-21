@@ -481,14 +481,11 @@ async function initMyPage(user){
     await loadBlindMarks();
 
     // 4. 来場・注文データ取得
-    // productsマスタを先に取得
+    // 定番品総数：bottlesコレクションのproduction==='0'かつservingStatus!==1
     try{
-      const pSnap=await db.collection('products').where('productionType','==',0).get();
-      allProducts=pSnap.docs.map(d=>({id:d.id,...d.data()}));
-      if(!allProducts.length){
-        const pSnap2=await db.collection('products').get();
-        allProducts=pSnap2.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.productionType===0||p.productionType==='0');
-      }
+      const bSnap=await db.collection('bottles').where('production','==','0').get();
+      allProducts=bSnap.docs.map(d=>({id:d.id,...d.data()}))
+        .filter(p=>p.servingStatus!==1&&p.servingStatus!=='1');
     }catch(e){ allProducts=[]; }
     await loadMyData(memberDoc?.memberId||memberId);
 
@@ -741,7 +738,7 @@ function updateSummary(visits){
       .map(o=>o.productName)
       .filter(Boolean)
   );
-  const regularNames=new Set(allProducts.map(p=>p.name||p.productName).filter(Boolean));
+  const regularNames=new Set(allProducts.map(p=>p.bottleJa||p.bottleEs||p.name||p.productName).filter(Boolean));
   const drunkRegular=allProducts.length
     ? [...drunkProductNames].filter(n=>regularNames.has(n)).length
     : drunkProductNames.size;
@@ -852,31 +849,42 @@ function buildBatchBlock(b,visitId){
     // batchId共通のordersで別visitKeyのものを探す
     const batchOrders=allOrders.filter(o=>o.batchId===b.batchId&&(o.visitKey!==visitId&&o.visitId!==visitId));
     const otherVisitKeys=[...new Set(batchOrders.map(o=>o.visitKey||o.visitId).filter(Boolean))];
+    // まず全batchの他visitKeyをallMembersMapから名前に変換
+    const myMidTG=currentMember?.memberId||currentMember?.id;
+    let togetherNames2=[];
     if(otherVisitKeys.length){
-      const names=otherVisitKeys.map(vk=>{
+      togetherNames2=otherVisitKeys.map(vk=>{
         const mid=allMembersMap['visit_'+vk];
         const info=mid?allMembersMap[mid]:null;
-        if(info)return info.nickname;
-        return 'ゲスト';
-      });
-      togetherLabel=`👥 ${names.join('、')}と一緒`;
-    } else if(b.batchId){
-      // allOrdersに他visitKeyがない場合はblindResultsから補完
-      const blindOthers=allBlindResults.filter(r=>
-        (r.batchId===b.batchId||b.groups.some(g=>r.groupId===g))
-        &&r.visitKey!==visitId
+        return info?info.nickname:null;
+      }).filter(Boolean);
+    }
+    // blindResultsからも補完（ブラインド・非ブラインド両方）
+    if(b.batchId){
+      const batchOthers=allBlindResults.filter(r=>
+        r.batchId===b.batchId && r.customerId!==myMidTG
       );
-      if(blindOthers.length){
-        const myMidT=currentMember?.memberId||currentMember?.id;
-        const names=blindOthers.map(r=>{
-          const mid=r.customerId;
-          if(mid===myMidT)return null;
-          const info=mid?allMembersMap[mid]:null;
-          if(info)return info.nickname;
-          return 'ゲスト';
-        }).filter(Boolean);
-        if(names.length)togetherLabel=`👥 ${[...new Set(names)].join('、')}と一緒`;
+      batchOthers.forEach(r=>{
+        const mid=r.customerId;
+        const info=mid?allMembersMap[mid]:null;
+        const name=info?info.nickname:null;
+        if(name&&!togetherNames2.includes(name))togetherNames2.push(name);
+      });
+      // allMembersMapのvisitKey経由も試みる
+      if(!togetherNames2.length && b.groups){
+        b.groups.forEach(gid=>{
+          const vkFromGroup=allBlindResults.find(r=>r.groupId===gid)?.visitKey;
+          if(vkFromGroup && vkFromGroup!==visitId){
+            const mid=allMembersMap['visit_'+vkFromGroup];
+            const info=mid?allMembersMap[mid]:null;
+            const name=info?info.nickname:null;
+            if(name&&!togetherNames2.includes(name))togetherNames2.push(name);
+          }
+        });
       }
+    }
+    if(togetherNames2.length){
+      togetherLabel=`👥 ${[...new Set(togetherNames2)].join('、')}と一緒`;
     }
   }
 
