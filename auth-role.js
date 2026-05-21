@@ -77,17 +77,30 @@ var AuthRole = (function() {
           showDenied('スタッフ専用ページです');
           return;
         }
-        const role = await getRole(user);
+        let role = null;
+        try {
+          role = await getRole(user);
+        } catch(tokenErr) {
+          // トークン取得失敗時は一度だけリトライ
+          console.warn('getRole retry:', tokenErr);
+          await new Promise(r => setTimeout(r, 1000));
+          try { role = await getRole(user); } catch(e2) { console.error('getRole failed:', e2); }
+        }
         if (role === 'owner' || role === 'staff') {
           onAllowed(user, role);
+        } else if (role === null) {
+          // role未設定：ログイン画面に戻す（エラー扱いにしない）
+          if (onSignedOut) onSignedOut();
+          else showLoginScreen('権限が設定されていません。管理者にお問い合わせください。');
         } else {
-          // roleが未設定 or memberの場合
           await auth.signOut();
           showDenied('スタッフ専用ページです（権限がありません）');
         }
       } catch(e) {
         console.error('AuthRole.requireStaff:', e);
-        showDenied('認証エラーが発生しました');
+        // エラー時はログイン画面に戻す（showDeniedで詰まらせない）
+        if (onSignedOut) onSignedOut();
+        else showLoginScreen('認証エラー: ' + e.message);
       }
     });
   }
@@ -108,19 +121,30 @@ var AuthRole = (function() {
           showDenied('オーナー専用ページです');
           return;
         }
-        const role = await getRole(user);
+        let role = null;
+        try {
+          role = await getRole(user);
+        } catch(tokenErr) {
+          console.warn('getRole retry:', tokenErr);
+          await new Promise(r => setTimeout(r, 1000));
+          try { role = await getRole(user); } catch(e2) { console.error('getRole failed:', e2); }
+        }
         if (role === 'owner') {
           onAllowed(user, role);
         } else if (role === 'staff') {
           await auth.signOut();
           showDenied('このページはオーナー専用です');
+        } else if (role === null) {
+          if (onSignedOut) onSignedOut();
+          else showLoginScreen('権限が設定されていません。管理者にお問い合わせください。');
         } else {
           await auth.signOut();
           showDenied('オーナー専用ページです（権限がありません）');
         }
       } catch(e) {
         console.error('AuthRole.requireOwner:', e);
-        showDenied('認証エラーが発生しました');
+        if (onSignedOut) onSignedOut();
+        else showLoginScreen('認証エラー: ' + e.message);
       }
     });
   }
@@ -202,5 +226,77 @@ function isVisitInSession(visit, session) {
   return vTime >= session.openTime;
 }
 
-    return { requireStaff, requireOwner, requireMember, getRole, getActiveSession, isVisitInSession };
+  
+/* ─────────────────────────────────────────────
+ * 営業時刻ユーティリティ
+ *
+ * 日またぎ営業に対応した時刻管理
+ * 開店時刻を基準に、0時以降は2400加算して記録
+ *
+ * 例: 開店19:00, 翌01:30 → 2530 (25:30)
+ *     開店19:00, 当日22:00 → 2200 (22:00)
+ *
+ * nowBusinessTime(sessionOpenTime)
+ *   → 現在の営業時刻を HHMMSS 形式で返す（例: "253045"）
+ *
+ * formatBusinessTime(hhmmss)
+ *   → "2530" → "25:30" の表示用文字列
+ *
+ * businessDate(sessionOpenTime, sessionDate)
+ *   → 現在の営業日付を YYMMDD で返す（開店日付を引き継ぐ）
+ * ───────────────────────────────────────────── */
+
+function nowBusinessTime(sessionOpenTime) {
+  if(!sessionOpenTime) {
+    // セッションなし → 通常の時刻
+    const d = new Date();
+    const pad = n => String(n).padStart(2,'0');
+    return pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  }
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const hh = d.getHours();
+  const mm = d.getMinutes();
+  const ss = d.getSeconds();
+  const currentHHMM = hh * 100 + mm;
+  const openHHMM = parseInt(sessionOpenTime.slice(0,4));
+
+  if(currentHHMM < openHHMM) {
+    // 開店時刻より小さい → 日またぎ → +2400
+    const bizHH = hh + 24;
+    return String(bizHH) + pad(mm) + pad(ss);
+  }
+  return pad(hh) + pad(mm) + pad(ss);
+}
+
+function businessDate(sessionOpenTime, sessionDate) {
+  // 日またぎ中は開店日付を引き継ぐ
+  if(!sessionOpenTime || !sessionDate) {
+    const d = new Date();
+    const pad = n => String(n).padStart(2,'0');
+    return String(d.getFullYear()).slice(2) + pad(d.getMonth()+1) + pad(d.getDate());
+  }
+  const d = new Date();
+  const hh = d.getHours() * 100 + d.getMinutes();
+  const openHHMM = parseInt(sessionOpenTime.slice(0,4));
+  if(hh < openHHMM) {
+    // 日またぎ中 → 開店日付を使う
+    return sessionDate;
+  }
+  // 通常
+  const pad = n => String(n).padStart(2,'0');
+  return String(d.getFullYear()).slice(2) + pad(d.getMonth()+1) + pad(d.getDate());
+}
+
+function formatBusinessTime(hhmmss) {
+  // "253045" → "25:30"
+  // "201500" → "20:15"
+  if(!hhmmss) return '';
+  const h = parseInt(hhmmss.slice(0,2));
+  const m = hhmmss.slice(2,4);
+  // 秒は表示しない
+  return h + ':' + m;
+}
+
+  return { requireStaff, requireOwner, requireMember, getRole, getActiveSession, isVisitInSession, nowBusinessTime, businessDate, formatBusinessTime };
 })();
