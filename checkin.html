@@ -133,6 +133,7 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
 .co-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink2)}
 .co-qty{font-family:var(--mono);color:var(--ink3);font-size:11px;flex-shrink:0}
 .co-price{font-family:var(--mono);font-weight:500;color:var(--ink);flex-shrink:0}
+.co-unserved{font-size:9px;color:var(--ink3);background:var(--cream3);border:1px solid var(--border);border-radius:4px;padding:1px 5px;flex-shrink:0}
 .co-cancelled{font-size:9px;color:var(--red);background:var(--red-l);border:1px solid var(--red);border-radius:4px;padding:1px 5px;flex-shrink:0}
 .checkout-summary{background:var(--ink);border-radius:var(--r);padding:12px 16px;color:#fff;display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .cs-label{font-size:12px;color:rgba(255,255,255,.6)}
@@ -718,16 +719,17 @@ function openOrdersModal(visitKey, visitorName){
       var bg=TYPE_BG[o.productType]||'background:var(--cream2);color:var(--ink3)';
       var qty=(o.qty||0)+(o.unit||'ml');
       var isCancelled=(o.served===0||o.served==='0');
-      var amt=isCancelled ? 0
+      var isUnserved=(o.served===1||o.served==='1');
+      var amt=(isCancelled||isUnserved) ? 0
         : (o.productType==='tequila'||o.productType==='other')
           ? Math.round((o.unitPrice||0)*(o.qty||0)/10)
           : Math.round((o.unitPrice||0)*(o.qty||0));
-      return '<div class="checkout-order-row'+(isCancelled?' not-served':'')+'">'
+      return '<div class="checkout-order-row'+((isCancelled||isUnserved)?' not-served':'')+'">'
         +'<span class="co-type" style="'+bg+'">'+escHtml(lbl)+'</span>'
         +'<span class="co-name">'+escHtml(o.productName||'—')+'</span>'
         +'<span class="co-qty">'+escHtml(qty)+'</span>'
-        +(isCancelled
-          ? '<span class="co-cancelled">キャンセル</span>'
+        +(isCancelled ? '<span class="co-cancelled">キャンセル</span>'
+          : isUnserved ? '<span class="co-unserved">未提供</span>'
           : '<span class="co-price">¥'+amt.toLocaleString()+'</span>')
       +'</div>';
     }).join('');
@@ -1274,12 +1276,16 @@ function openBulkCheckout(){
             var lbl=TYPE_LABEL[o.productType]||o.productType||'—';
             var bg=TYPE_BG[o.productType]||'background:var(--cream2);color:var(--ink3)';
             var t=o.productType||o.type||'';
-            var amt=(t==='tequila'||t==='spirits')?Math.round((o.unitPrice||0)*(o.qty||0)/10):Math.round((o.unitPrice||0)*(o.qty||0));
-            return '<div class="checkout-order-row">'
+            var isCo=(o.served===0||o.served==='0');
+            var isUn=(o.served===1||o.served==='1');
+            var amt=(isCo||isUn)?0:(t==='tequila'||t==='spirits')?Math.round((o.unitPrice||0)*(o.qty||0)/10):Math.round((o.unitPrice||0)*(o.qty||0));
+            return '<div class="checkout-order-row'+((isCo||isUn)?' not-served':'')+'">'
               +'<span class="co-type" style="'+bg+'">'+escHtml(lbl)+'</span>'
               +'<span class="co-name">'+escHtml(o.productName||'—')+'</span>'
               +'<span class="co-qty">'+escHtml((o.qty||0)+(o.unit||'ml'))+'</span>'
-              +'<span class="co-price">¥'+amt.toLocaleString()+'</span>'
+              +(isCo?'<span class="co-cancelled">キャンセル</span>'
+                :isUn?'<span class="co-unserved">未提供</span>'
+                :'<span class="co-price">¥'+amt.toLocaleString()+'</span>')
               +'</div>';
           }).join('');
           orderRows+='<div class="co-group">'
@@ -1301,6 +1307,42 @@ function openBulkCheckout(){
 
     g('checkout-persons-area').innerHTML=personsHtml;
     g('co-grand-total').textContent='¥'+grandTotal.toLocaleString();
+
+    // ── 未提供チェック ──────────────────────────────────────────
+    // served=1（未提供）の注文がある場合、確認ダイアログを表示
+    var unservedOrders=allOrders.filter(function(o){
+      return bulkCheckoutVisitKeys.some(function(vk){ return o.visitKey===vk||o.visitId===vk; })
+        && (o.served===1||o.served==='1');
+    });
+    if(unservedOrders.length>0){
+      var TYPE_LABEL2={'tequila':'テキーラ','other':'他酒','misc':'その他'};
+      var unservedList=unservedOrders.map(function(o){
+        return '  ・'+(TYPE_LABEL2[o.productType]||o.productType||'—')+' '+escHtml(o.productName||'—')+' '+(o.qty||0)+(o.unit||'ml');
+      }).join('\n');
+      var msg='未提供の商品が'+unservedOrders.length+'件あります。\n\nキャンセルして会計に進みますか？\n\n'+unservedList;
+      if(!confirm(msg)){
+        closeM('m-checkout');
+        return;
+      }
+      // OKの場合：未提供注文をserved=0（キャンセル）にセット
+      var cancelBatch=db.batch();
+      unservedOrders.forEach(function(o){
+        cancelBatch.update(db.collection('orders').doc(o.id),{served:0});
+        o.served=0;
+      });
+      cancelBatch.commit().catch(function(e){ console.error('未提供キャンセル失敗:',e); });
+      // grandTotalを再計算（キャンセル分を除く）
+      grandTotal=0;
+      bulkCheckoutVisitKeys.forEach(function(visitKey){
+        var orders=allOrders.filter(function(o){ return (o.visitKey===visitKey||o.visitId===visitKey)&&o.served!==0&&o.served!=='0'; });
+        var amt=calcAmount(orders);
+        grandTotal+=amt;
+        warikanAmounts[visitKey]=amt;
+        var wkEl=g('wk-'+visitKey); if(wkEl) wkEl.value=amt;
+      });
+      g('co-grand-total').textContent='¥'+grandTotal.toLocaleString();
+    }
+    // ── 未提供チェックここまで ────────────────────────────────
 
     // 1人の場合は割り勘セクション非表示・確定ボタン即有効化
     var ws=g('warikan-section');
