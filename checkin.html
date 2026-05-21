@@ -126,14 +126,21 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
 /* 退店モーダル内の注文リスト */
 .checkout-order-list{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
 .co-group{border:1px solid var(--border2);border-radius:var(--r);overflow:hidden;margin-bottom:4px}
-.co-group-label{font-size:10px;color:var(--ink3);padding:2px 8px;background:var(--cream3);border-bottom:1px solid var(--border);letter-spacing:.04em}
+.co-group-label{font-size:10px;color:var(--ink3);padding:2px 8px;background:var(--cream3);border-bottom:1px solid var(--border);letter-spacing:.04em;display:flex;align-items:center;gap:6px;cursor:default}
+.co-group-label.has-blind{background:#fdf0d0;color:var(--gold-d);cursor:pointer}
+.co-group-label.has-blind:hover{background:#f8e4b0}
+.blind-result-popup{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;align-items:center;justify-content:center}
+.blind-result-popup.open{display:flex}
+.blind-result-box{background:var(--white);border-radius:var(--rl);padding:24px 20px;width:90%;max-width:380px;max-height:80vh;overflow-y:auto;box-shadow:var(--shadow-lg)}
+.blind-result-box h3{font-family:var(--serif);font-size:16px;color:var(--gold-d);margin-bottom:12px}
+.blind-ans-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px}
+.blind-ans-row:last-child{border-bottom:none}
 .checkout-order-row{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--cream2);border-radius:var(--r);font-size:12px}
 .checkout-order-row.not-served{opacity:.45;background:var(--cream3)}
 .co-type{padding:2px 6px;border-radius:20px;font-size:9px;font-weight:500;flex-shrink:0}
 .co-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink2)}
 .co-qty{font-family:var(--mono);color:var(--ink3);font-size:11px;flex-shrink:0}
 .co-price{font-family:var(--mono);font-weight:500;color:var(--ink);flex-shrink:0}
-.co-unserved{font-size:9px;color:var(--ink3);background:var(--cream3);border:1px solid var(--border);border-radius:4px;padding:1px 5px;flex-shrink:0}
 .co-cancelled{font-size:9px;color:var(--red);background:var(--red-l);border:1px solid var(--red);border-radius:4px;padding:1px 5px;flex-shrink:0}
 .checkout-summary{background:var(--ink);border-radius:var(--r);padding:12px 16px;color:#fff;display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .cs-label{font-size:12px;color:rgba(255,255,255,.6)}
@@ -336,6 +343,15 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
     <div class="modal-foot">
       <button class="btn bs btn-full" id="m-orders-close2">閉じる</button>
     </div>
+  </div>
+</div>
+
+<!-- ブラインド結果ポップアップ -->
+<div class="blind-result-popup" id="blind-result-popup" onclick="if(event.target===this)closeBlindPopup()">
+  <div class="blind-result-box">
+    <h3 id="blind-popup-title">🎭 ブラインド結果</h3>
+    <div id="blind-popup-body"></div>
+    <button class="btn bs btn-full" style="margin-top:14px" onclick="closeBlindPopup()">閉じる</button>
   </div>
 </div>
 
@@ -713,29 +729,92 @@ function openOrdersModal(visitKey, visitorName){
   if(!orders.length){
     ol.innerHTML='<div style="font-size:12px;color:var(--ink3);padding:12px;text-align:center;background:var(--cream2);border-radius:var(--r)">注文記録なし</div>';
   } else {
-    orders.sort(function(a,b){ return (a.orderTime||'').localeCompare(b.orderTime||''); });
-    ol.innerHTML=orders.map(function(o){
-      var lbl=TYPE_LABEL[o.productType]||o.productType||'—';
-      var bg=TYPE_BG[o.productType]||'background:var(--cream2);color:var(--ink3)';
-      var qty=(o.qty||0)+(o.unit||'ml');
-      var isCancelled=(o.served===0||o.served==='0');
-      var isUnserved=(o.served===1||o.served==='1');
-      var amt=(isCancelled||isUnserved) ? 0
-        : (o.productType==='tequila'||o.productType==='other')
-          ? Math.round((o.unitPrice||0)*(o.qty||0)/10)
-          : Math.round((o.unitPrice||0)*(o.qty||0));
-      return '<div class="checkout-order-row'+((isCancelled||isUnserved)?' not-served':'')+'">'
-        +'<span class="co-type" style="'+bg+'">'+escHtml(lbl)+'</span>'
-        +'<span class="co-name">'+escHtml(o.productName||'—')+'</span>'
-        +'<span class="co-qty">'+escHtml(qty)+'</span>'
-        +(isCancelled ? '<span class="co-cancelled">キャンセル</span>'
-          : isUnserved ? '<span class="co-unserved">未提供</span>'
-          : '<span class="co-price">¥'+amt.toLocaleString()+'</span>')
-      +'</div>';
-    }).join('');
+    // orderGroupId単位でグループ化（時刻順）
+    var sortedOrders=orders.slice().sort(function(a,b){
+      return (a.orderGroupId||a.orderTime||'').localeCompare(b.orderGroupId||b.orderTime||'');
+    });
+    var groupMap2={}, groupOrder2=[];
+    sortedOrders.forEach(function(o){
+      var gid=o.orderGroupId||('_'+o.id);
+      if(!groupMap2[gid]){ groupMap2[gid]=[]; groupOrder2.push(gid); }
+      groupMap2[gid].push(o);
+    });
+    // ブラインド結果を取得してからレンダリング
+    var orderGroupIds2=groupOrder2.filter(function(gid){ return !gid.startsWith('_'); });
+    var blindProm=orderGroupIds2.length
+      ? db.collection('blindResults').where(firebase.firestore.FieldPath.documentId(),'in',orderGroupIds2.slice(0,30)).get()
+      : Promise.resolve({docs:[]});
+    blindProm.then(function(bSnap){
+      var bmap={};
+      bSnap.docs.forEach(function(d){ bmap[d.id]=d.data(); });
+      var html2='';
+      groupOrder2.forEach(function(gid){
+        var gitems=groupMap2[gid];
+        var gTime=gitems[0].orderTime||'';
+        var gTimeStr=gTime?gTime.slice(0,2)+':'+gTime.slice(2,4):'';
+        var isBlind=gitems.some(function(o){ return o.blindId===1||o.blindId==='1'; });
+        var hasResult=!!bmap[gid];
+        var labelClass='co-group-label'+(isBlind?' has-blind':'');
+        var labelAttr=isBlind?' onclick="openBlindPopup(\'' +gid+ '\')"':'';
+        var itemsHtml2=gitems.map(function(o){
+          var lbl=TYPE_LABEL[o.productType]||o.productType||'—';
+          var bg=TYPE_BG[o.productType]||'background:var(--cream2);color:var(--ink3)';
+          var isCancelled=(o.served===0||o.served==='0');
+          var isUnserved=(o.served===1||o.served==='1');
+          var amt=(isCancelled||isUnserved)?0
+            :(o.productType==='tequila'||o.productType==='other')
+              ?Math.round((o.unitPrice||0)*(o.qty||0)/10)
+              :Math.round((o.unitPrice||0)*(o.qty||0));
+          return '<div class="checkout-order-row'+((isCancelled||isUnserved)?' not-served':'')+'">'            +'<span class="co-type" style="'+bg+'">'+escHtml(lbl)+'</span>'            +'<span class="co-name">'+escHtml(o.productName||'—')+'</span>'            +'<span class="co-qty">'+escHtml((o.qty||0)+(o.unit||'ml'))+'</span>'            +(isCancelled?'<span class="co-cancelled">キャンセル</span>'              :isUnserved?'<span class="co-unserved">未提供</span>'              :'<span class="co-price">¥'+amt.toLocaleString()+'</span>')          +'</div>';
+        }).join('');
+        html2+='<div class="co-group">'          +'<div class="'+labelClass+'"'+labelAttr+'>'            +escHtml(gTimeStr)            +(isBlind?'<span style="font-size:10px;background:#fdf0d0;border:1px solid var(--gold);border-radius:3px;padding:1px 5px;color:var(--gold-d);margin-left:4px">🎭 BLIND'+(hasResult?' ✓':'')+'</span>':'')          +'</div>'          +itemsHtml2        +'</div>';
+      });
+      ol.innerHTML=html2;
+      window._ordersBlindResultMap=bmap;
+    });
   }
   g('orders-total').textContent='¥'+totalAmt.toLocaleString();
   g('orders-tequila').textContent=totalTq+' ml';
+}
+
+// ── ブラインド結果ポップアップ ───────────────────────────────────
+function openBlindPopup(orderGroupId){
+  var result=(window._ordersBlindResultMap||{})[orderGroupId];
+  var popup=g('blind-result-popup');
+  var body=g('blind-popup-body');
+  if(!popup||!body) return;
+
+  if(!result){
+    body.innerHTML='<div style="font-size:13px;color:var(--ink3);text-align:center;padding:16px">結果未入力</div>';
+    g('blind-popup-title').textContent='🎭 ブラインド結果';
+    popup.classList.add('open');
+    return;
+  }
+
+  var answers=result.answers||[];
+  var correctCount=result.correctCount||0;
+  var totalCount=result.totalCount||0;
+  var winner=result.winner||null;
+
+  var scoreHtml='<div style="text-align:center;margin-bottom:12px">'    +'<div style="font-family:var(--serif);font-size:36px;font-weight:600;color:var(--gold-d)">'      +correctCount+'<span style="font-size:18px;color:var(--ink3)">/'+totalCount+'</span>'    +'</div>'    +(winner?'<div style="font-size:12px;color:var(--teal);margin-top:4px">🏆 ウィナー</div>':'')  +'</div>';
+
+  var answersHtml='';
+  if(answers.length){
+    answersHtml=answers.map(function(ans){
+      if(!ans) return '';
+      var correct=ans.correct?'✅':'❌';
+      return '<div class="blind-ans-row">'        +'<span style="flex:1">'+escHtml(ans.productName||'—')+'</span>'        +'<span style="color:var(--ink3);font-size:11px">→ '+escHtml(ans.answer||'—')+'</span>'        +'<span>'+correct+'</span>'      +'</div>';
+    }).filter(Boolean).join('');
+  }
+
+  body.innerHTML=scoreHtml+(answersHtml?'<div>'+answersHtml+'</div>':'');
+  g('blind-popup-title').textContent='🎭 ブラインド結果';
+  popup.classList.add('open');
+}
+
+function closeBlindPopup(){
+  var popup=g('blind-result-popup');
+  if(popup) popup.classList.remove('open');
 }
 
 // ── 個別更新 ───────────────────────────────────────────────────
@@ -1276,16 +1355,12 @@ function openBulkCheckout(){
             var lbl=TYPE_LABEL[o.productType]||o.productType||'—';
             var bg=TYPE_BG[o.productType]||'background:var(--cream2);color:var(--ink3)';
             var t=o.productType||o.type||'';
-            var isCo=(o.served===0||o.served==='0');
-            var isUn=(o.served===1||o.served==='1');
-            var amt=(isCo||isUn)?0:(t==='tequila'||t==='spirits')?Math.round((o.unitPrice||0)*(o.qty||0)/10):Math.round((o.unitPrice||0)*(o.qty||0));
-            return '<div class="checkout-order-row'+((isCo||isUn)?' not-served':'')+'">'
+            var amt=(t==='tequila'||t==='spirits')?Math.round((o.unitPrice||0)*(o.qty||0)/10):Math.round((o.unitPrice||0)*(o.qty||0));
+            return '<div class="checkout-order-row">'
               +'<span class="co-type" style="'+bg+'">'+escHtml(lbl)+'</span>'
               +'<span class="co-name">'+escHtml(o.productName||'—')+'</span>'
               +'<span class="co-qty">'+escHtml((o.qty||0)+(o.unit||'ml'))+'</span>'
-              +(isCo?'<span class="co-cancelled">キャンセル</span>'
-                :isUn?'<span class="co-unserved">未提供</span>'
-                :'<span class="co-price">¥'+amt.toLocaleString()+'</span>')
+              +'<span class="co-price">¥'+amt.toLocaleString()+'</span>'
               +'</div>';
           }).join('');
           orderRows+='<div class="co-group">'
@@ -1307,42 +1382,6 @@ function openBulkCheckout(){
 
     g('checkout-persons-area').innerHTML=personsHtml;
     g('co-grand-total').textContent='¥'+grandTotal.toLocaleString();
-
-    // ── 未提供チェック ──────────────────────────────────────────
-    // served=1（未提供）の注文がある場合、確認ダイアログを表示
-    var unservedOrders=allOrders.filter(function(o){
-      return bulkCheckoutVisitKeys.some(function(vk){ return o.visitKey===vk||o.visitId===vk; })
-        && (o.served===1||o.served==='1');
-    });
-    if(unservedOrders.length>0){
-      var TYPE_LABEL2={'tequila':'テキーラ','other':'他酒','misc':'その他'};
-      var unservedList=unservedOrders.map(function(o){
-        return '  ・'+(TYPE_LABEL2[o.productType]||o.productType||'—')+' '+escHtml(o.productName||'—')+' '+(o.qty||0)+(o.unit||'ml');
-      }).join('\n');
-      var msg='未提供の商品が'+unservedOrders.length+'件あります。\n\nキャンセルして会計に進みますか？\n\n'+unservedList;
-      if(!confirm(msg)){
-        closeM('m-checkout');
-        return;
-      }
-      // OKの場合：未提供注文をserved=0（キャンセル）にセット
-      var cancelBatch=db.batch();
-      unservedOrders.forEach(function(o){
-        cancelBatch.update(db.collection('orders').doc(o.id),{served:0});
-        o.served=0;
-      });
-      cancelBatch.commit().catch(function(e){ console.error('未提供キャンセル失敗:',e); });
-      // grandTotalを再計算（キャンセル分を除く）
-      grandTotal=0;
-      bulkCheckoutVisitKeys.forEach(function(visitKey){
-        var orders=allOrders.filter(function(o){ return (o.visitKey===visitKey||o.visitId===visitKey)&&o.served!==0&&o.served!=='0'; });
-        var amt=calcAmount(orders);
-        grandTotal+=amt;
-        warikanAmounts[visitKey]=amt;
-        var wkEl=g('wk-'+visitKey); if(wkEl) wkEl.value=amt;
-      });
-      g('co-grand-total').textContent='¥'+grandTotal.toLocaleString();
-    }
-    // ── 未提供チェックここまで ────────────────────────────────
 
     // 1人の場合は割り勘セクション非表示・確定ボタン即有効化
     var ws=g('warikan-section');
