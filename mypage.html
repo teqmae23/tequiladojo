@@ -216,7 +216,10 @@ select.fi{min-width:80px}
 <!-- ─── メイン ─── -->
 <div id="main-screen">
   <div class="topbar">
-    <span class="top-brand">テキーラ道場</span>
+    <div>
+      <div style="font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:1px">会員マイページ</div>
+      <span class="top-brand">テキーラ道場</span>
+    </div>
     <span class="top-user" id="top-user-label"></span>
     <button class="top-logout" onclick="doLogout()">ログアウト</button>
   </div>
@@ -478,7 +481,15 @@ async function initMyPage(user){
     await loadBlindMarks();
 
     // 4. 来場・注文データ取得
-    console.log('[initMyPage] calling loadMyData with:', memberDoc?.memberId, '||', memberId, '=', memberDoc?.memberId||memberId);
+    // productsマスタを先に取得
+    try{
+      const pSnap=await db.collection('products').where('productionType','==',0).get();
+      allProducts=pSnap.docs.map(d=>({id:d.id,...d.data()}));
+      if(!allProducts.length){
+        const pSnap2=await db.collection('products').get();
+        allProducts=pSnap2.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.productionType===0||p.productionType==='0');
+      }
+    }catch(e){ allProducts=[]; }
     await loadMyData(memberDoc?.memberId||memberId);
 
     // 5. フィルター初期化
@@ -506,23 +517,7 @@ async function loadMyData(memberId){
   const issues=[];
   console.log('[loadMyData] called with memberId:', memberId, typeof memberId);
 
-  // productsマスタ取得（定番品のみ：productionType===0）常に再取得
-  try{
-    const pSnap=await db.collection('products').where('productionType','==',0).get();
-    allProducts=pSnap.docs.map(d=>({id:d.id,...d.data()}));
-    console.log('[mypage] products(定番):', allProducts.length);
-  }catch(e){
-    console.warn('products取得失敗、全件フォールバック:', e);
-    try{
-      const pSnap2=await db.collection('products').get();
-      allProducts=pSnap2.docs.map(d=>({id:d.id,...d.data()}))
-        .filter(p=>p.productionType===0||p.productionType==='0');
-      console.log('[mypage] products(fallback定番):', allProducts.length);
-    }catch(e2){
-      console.warn('products全件取得も失敗:', e2);
-      allProducts=[];
-    }
-  }
+  // productsはinitMyPageで取得済み
 
   // visits取得（memberId一致）
   const vSnap=await db.collection('visits')
@@ -575,15 +570,7 @@ async function loadMyData(memberId){
   if(ordersNoVisit.length>0){
     issues.push(`${ordersNoVisit.length}件の注文データにvisitKeyがありません`);
   }
-  // デバッグ: visitとorderの紐付き確認
-  console.log('[mypage] visits:', allVisits.length, '/ orders:', allOrders.length);
-  const visitIds2=new Set(allVisits.map(v=>v.id));
-  const matchedOrders=allOrders.filter(o=>visitIds2.has(o.visitKey||o.visitId));
-  const unmatchedOrders=allOrders.filter(o=>!visitIds2.has(o.visitKey||o.visitId));
-  console.log('[mypage] orders matched:', matchedOrders.length, '/ unmatched:', unmatchedOrders.length);
-  if(unmatchedOrders.length>0){
-    console.log('[mypage] unmatched sample:', unmatchedOrders.slice(0,3).map(o=>({id:o.id,visitKey:o.visitKey,visitId:o.visitId})));
-  }
+
 
   // blindResults取得（batchIdで全員分 + groupIdでも取得）
   allBlindResults=[];
