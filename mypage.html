@@ -128,7 +128,10 @@ select.fi{min-width:80px}
 .og-header{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--cream2)}
 .og-time{font-family:var(--mono);font-size:11px;color:var(--ink3)}
 .og-badge{font-size:10px;padding:1px 6px;border-radius:8px}
-.og-together{font-size:11px;color:var(--ink3);padding:4px 14px 8px;}
+.og-together{font-size:11px;color:var(--teal);cursor:pointer;text-decoration:underline;text-underline-offset:2px;flex-shrink:0}
+.og-together:hover{color:var(--gold-d)}
+.together-popup{position:fixed;background:var(--white);border:1px solid var(--border2);border-radius:var(--r);padding:10px 14px;box-shadow:var(--shadow-lg);z-index:500;font-size:12px;min-width:120px;max-width:200px}
+.together-popup-name{padding:3px 0;color:var(--ink2);display:flex;align-items:center;gap:6px}
 .og-total{margin-left:auto;font-size:12px;font-weight:600;color:var(--gold-d)}
 .og-items{}
 .og-item{display:flex;align-items:center;padding:8px 14px 8px 24px;border-bottom:1px solid var(--border);gap:8px;font-size:13px}
@@ -503,22 +506,21 @@ async function loadMyData(memberId){
   const issues=[];
   console.log('[loadMyData] called with memberId:', memberId, typeof memberId);
 
-  // productsマスタ取得（定番品のみ：productionType===0）
-  if(!allProducts.length){
+  // productsマスタ取得（定番品のみ：productionType===0）常に再取得
+  try{
+    const pSnap=await db.collection('products').where('productionType','==',0).get();
+    allProducts=pSnap.docs.map(d=>({id:d.id,...d.data()}));
+    console.log('[mypage] products(定番):', allProducts.length);
+  }catch(e){
+    console.warn('products取得失敗、全件フォールバック:', e);
     try{
-      const pSnap=await db.collection('products').where('productionType','==',0).get();
-      allProducts=pSnap.docs.map(d=>({id:d.id,...d.data()}));
-      console.log('[mypage] products(定番):', allProducts.length);
-    }catch(e){
-      console.warn('products取得失敗、全件フォールバック:', e);
-      try{
-        const pSnap2=await db.collection('products').get();
-        allProducts=pSnap2.docs.map(d=>({id:d.id,...d.data()}))
-          .filter(p=>p.productionType===0||p.productionType==='0');
-        console.log('[mypage] products(fallback):', allProducts.length);
-      }catch(e2){
-        console.warn('products全件取得も失敗:', e2);
-      }
+      const pSnap2=await db.collection('products').get();
+      allProducts=pSnap2.docs.map(d=>({id:d.id,...d.data()}))
+        .filter(p=>p.productionType===0||p.productionType==='0');
+      console.log('[mypage] products(fallback定番):', allProducts.length);
+    }catch(e2){
+      console.warn('products全件取得も失敗:', e2);
+      allProducts=[];
     }
   }
 
@@ -756,8 +758,10 @@ function updateSummary(visits){
   const drunkRegular=allProducts.length
     ? [...drunkProductNames].filter(n=>regularNames.has(n)).length
     : drunkProductNames.size;
-  const totalRegular=allProducts.length||'?';
-  document.getElementById('s-bottles').textContent=drunkRegular+'('+totalRegular+')';
+  const totalRegular=allProducts.length;
+  document.getElementById('s-bottles').textContent=totalRegular>0
+    ? drunkRegular+'('+totalRegular+')'
+    : drunkProductNames.size+'(?)';
 
   document.getElementById('s-visits').textContent=visits.length;
   document.getElementById('s-tequila').textContent=totalTq+'ml';
@@ -915,25 +919,50 @@ function buildBatchBlock(b,visitId){
   const allTotal=blindResults4group.reduce((s,r)=>s+(r.totalCount||0),0);
   const blindSummary=blindResults4group.length?`${allCorrect}/${allTotal}正解`:'';
 
-  // ブラインドリンク（アイコン＋「結果を表示」）
+  // ブラインドリンク
   const blindLink=isBlind
     ?`<span class="og-badge" style="background:#f3eaff;color:#6b3fa0;cursor:pointer;font-size:11px" onclick="event.stopPropagation();openBlindModal('${esc(b.repGid||b.groups[0])}','${esc(visitId)}')" title="ブラインド結果を見る">🎭 結果を表示</span>`
     :'';
 
-  // 一緒に飲んだ人（リストで表示）
-  const togetherHtml=togetherLabel
-    ?`<div class="og-together">${esc(togetherLabel)}</div>`
+  // 一緒に飲んだ人：「N人と一緒」クリックでポップアップ
+  const togetherNames=togetherLabel.replace('👥 ','').replace('と一緒','').split('、').filter(Boolean);
+  const batchKey=esc(b.batchId||b.groups[0]||'');
+  const togetherChip=togetherNames.length
+    ?`<span class="og-together" onclick="event.stopPropagation();showTogetherPopup(event,'${batchKey}')">${togetherNames.length}人と一緒</span>`
     :'';
+  // ポップアップ用データを保存
+  if(togetherNames.length) window._togetherMap=window._togetherMap||{};
+  if(togetherNames.length) window._togetherMap[b.batchId||b.groups[0]]=togetherNames;
 
   return`<div class="order-group">
     <div class="og-header">
       <span class="og-time">${esc(time)}</span>
       ${blindLink}
+      ${togetherChip}
       <span class="og-total">${fmtAmt(total)}</span>
     </div>
     <div class="og-items">${itemsHtml}</div>
-    ${togetherHtml}
   </div>`;
+}
+
+// ─── 一緒に飲んだ人ポップアップ ───
+function showTogetherPopup(e, batchKey){
+  // 既存ポップアップを削除
+  document.querySelectorAll('.together-popup').forEach(el=>el.remove());
+  const names=(window._togetherMap||{})[batchKey]||[];
+  if(!names.length)return;
+  const popup=document.createElement('div');
+  popup.className='together-popup';
+  popup.innerHTML=names.map(n=>`<div class="together-popup-name">👤 ${n}</div>`).join('');
+  document.body.appendChild(popup);
+  // 位置調整
+  const rect=e.target.getBoundingClientRect();
+  popup.style.top=(rect.bottom+4+window.scrollY)+'px';
+  popup.style.left=Math.min(rect.left+window.scrollX, window.innerWidth-210)+'px';
+  // クリックで閉じる
+  setTimeout(()=>document.addEventListener('click',function handler(){
+    popup.remove();document.removeEventListener('click',handler);
+  }),10);
 }
 
 // ─── ブラインド結果モーダル（全員分テーブル表示） ───
