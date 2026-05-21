@@ -212,14 +212,20 @@ select.fi{min-width:80px}
           </svg>
         </div>
         <div class="profile-name-area">
-          <div class="profile-name" id="prof-name">—</div>
-          <div class="profile-id" id="prof-id"></div>
+          <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+            <div class="profile-name" id="prof-name">—</div>
+            <div class="profile-id" id="prof-id"></div>
+          </div>
           <div class="profile-badges">
             <span id="prof-mem-badge" class="mem-badge mb-active">本登録</span>
             <button id="btn-resend-verify" class="btn-resend" style="display:none" onclick="resendVerifyEmail()">📧 認証メール再送</button>
           </div>
         </div>
       </div>
+      <!-- プロフィール編集ボタン -->
+      <a href="/member_register.html?edit=1" style="display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:11px;color:var(--gold-d);text-decoration:none;white-space:nowrap;flex-shrink:0">
+        ✏️ プロフィール編集
+      </a>
       <!-- 右：CLASSバッジ＋段位 -->
       <div class="profile-right">
         <div class="profile-right-label">来場 CLASS</div>
@@ -515,6 +521,15 @@ async function loadMyData(memberId){
   if(ordersNoVisit.length>0){
     issues.push(`${ordersNoVisit.length}件の注文データにvisitKeyがありません`);
   }
+  // デバッグ: visitとorderの紐付き確認
+  console.log('[mypage] visits:', allVisits.length, '/ orders:', allOrders.length);
+  const visitIds2=new Set(allVisits.map(v=>v.id));
+  const matchedOrders=allOrders.filter(o=>visitIds2.has(o.visitKey||o.visitId));
+  const unmatchedOrders=allOrders.filter(o=>!visitIds2.has(o.visitKey||o.visitId));
+  console.log('[mypage] orders matched:', matchedOrders.length, '/ unmatched:', unmatchedOrders.length);
+  if(unmatchedOrders.length>0){
+    console.log('[mypage] unmatched sample:', unmatchedOrders.slice(0,3).map(o=>({id:o.id,visitKey:o.visitKey,visitId:o.visitId})));
+  }
 
   // blindResults取得
   allBlindResults=[];
@@ -681,12 +696,13 @@ function buildVisitCard(v){
   const checkinTime=v.visitTime?fmtTime(v.visitTime):'';
   const checkoutTime=v.checkoutTime?'〜'+fmtTime(v.checkoutTime):'';
 
-  // この来場の注文
-  const orders=allOrders.filter(o=>(o.visitKey===v.id||o.visitId===v.id)&&o.served!==0);
-  const totalAmt=orders.reduce((s,o)=>s+calcOrderAmt(o),0);
-  const totalTq=orders.filter(o=>o.productType==='tequila'||o.productType==='other').reduce((s,o)=>s+(o.qty||0),0);
+  // この来場の注文（全件）
+  const orders=allOrders.filter(o=>(o.visitKey===v.id||o.visitId===v.id));
+  const servedOrders=orders.filter(o=>o.served!==0&&o.served!=='0'); // 金額・ml集計はキャンセル除く
+  const totalAmt=servedOrders.reduce((s,o)=>s+calcOrderAmt(o),0);
+  const totalTq=servedOrders.filter(o=>o.productType==='tequila'||o.productType==='other').reduce((s,o)=>s+(o.qty||0),0);
   const hasBlind=orders.some(o=>o.blindId===1);
-  const itemCount=orders.length;
+  const itemCount=servedOrders.length;
 
   return`<div class="visit-card" id="vc-${esc(v.id)}" onclick="toggleVisitCard('${esc(v.id)}')">
     <div class="visit-header">
