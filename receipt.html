@@ -345,14 +345,21 @@ function vDate(visitKey){
 async function loadData(){
   showLoading(true);
   try {
-    var vsSnap = await db.collection('visits').orderBy('checkInTime','desc').limit(100).get();
-    allVisits = vsSnap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    // 現セッションのopenTime以降のvisitのみ対象
+    var session = await AuthRole.getActiveSession(db);
+
+    var vsSnap = await db.collection('visits').get();
+    allVisits = vsSnap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); })
+      .filter(function(v){ return AuthRole.isVisitInSession(v, session); });
 
     var mbSnap = await db.collection('members').get();
     mbSnap.docs.forEach(function(d){ allMembers[d.id] = d.data(); });
 
+    // visitKeyで絞り込んだorderのみ取得
+    var sessionIds = new Set(allVisits.map(function(v){ return v.id; }));
     var orSnap = await db.collection('orders').get();
-    allOrders = orSnap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    allOrders = orSnap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); })
+      .filter(function(o){ return sessionIds.has(o.visitKey||o.visitId); });
 
     var prSnap = await db.collection('products').get();
     prSnap.docs.forEach(function(d){ allProducts[d.id] = d.data(); });

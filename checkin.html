@@ -486,22 +486,22 @@ g('btn-logout').addEventListener('click',function(){ auth.signOut(); });
 
 // ── データ読み込み ──────────────────────────────────────────────
 function loadAll(){
-  var today=todayStr6();
+  // 現セッションのopenTime以降のvisitのみ対象
   Promise.all([
     db.collection('members').get().then(function(s){ cache.members=s.docs.map(function(d){return Object.assign({id:d.id},d.data());}); }),
-    db.collection('visits').get().then(function(s){
-      cache.visits=s.docs.map(function(d){return Object.assign({id:d.id},d.data());})
-        .filter(function(v){ return (v.visitDate||v.id.slice(0,6))===today; });
-    }),
+    db.collection('visits').get(),
     db.collection('orders').get().then(function(s){
       cache.orders=s.docs.map(function(d){return Object.assign({id:d.id},d.data());});
-    })
-  ]).then(function(){
-    // 当日visitのIDセットで絞り込む
-    var todayIds=new Set(cache.visits.map(function(v){return v.id;}));
+    }),
+    AuthRole.getActiveSession(db)
+  ]).then(function(results){
+    var visitsSnap=results[1];
+    var session=results[3];
+    cache.visits=visitsSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());})
+      .filter(function(v){ return AuthRole.isVisitInSession(v, session); });
+    var sessionIds=new Set(cache.visits.map(function(v){return v.id;}));
     cache.orders=cache.orders.filter(function(o){
-      if(o.orderDate) return o.orderDate===today;
-      return todayIds.has(o.visitKey||o.visitId);
+      return sessionIds.has(o.visitKey||o.visitId);
     });
     renderVisitorList();
   }).catch(function(e){ toast('読み込み失敗: '+e.message,'err'); });
@@ -509,21 +509,21 @@ function loadAll(){
 
 // ── 更新ボタン ──────────────────────────────────────────────────
 g('btn-refresh').addEventListener('click',function(){
-  var today=todayStr6();
   g('visitor-list').innerHTML='<div class="loading">更新中...</div>';
   Promise.all([
-    db.collection('visits').get().then(function(s){
-      cache.visits=s.docs.map(function(d){return Object.assign({id:d.id},d.data());})
-        .filter(function(v){ return (v.visitDate||v.id.slice(0,6))===today; });
-    }),
+    db.collection('visits').get(),
     db.collection('orders').get().then(function(s){
       cache.orders=s.docs.map(function(d){return Object.assign({id:d.id},d.data());});
-    })
-  ]).then(function(){
-    var todayIds2=new Set(cache.visits.map(function(v){return v.id;}));
+    }),
+    AuthRole.getActiveSession(db)
+  ]).then(function(results){
+    var visitsSnap2=results[0];
+    var session2=results[2];
+    cache.visits=visitsSnap2.docs.map(function(d){return Object.assign({id:d.id},d.data());})
+      .filter(function(v){ return AuthRole.isVisitInSession(v, session2); });
+    var sessionIds2=new Set(cache.visits.map(function(v){return v.id;}));
     cache.orders=cache.orders.filter(function(o){
-      if(o.orderDate) return o.orderDate===today;
-      return todayIds2.has(o.visitKey||o.visitId);
+      return sessionIds2.has(o.visitKey||o.visitId);
     });
     // 各来場者の注文集計を更新してFirestoreに書き込む
     var batch=db.batch();
