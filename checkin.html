@@ -131,10 +131,24 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
 .co-group-label.has-blind:hover{background:#f8e4b0}
 .blind-result-popup{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1100;align-items:center;justify-content:center}
 .blind-result-popup.open{display:flex}
-.blind-result-box{background:var(--white);border-radius:var(--rl);padding:24px 20px;width:90%;max-width:380px;max-height:80vh;overflow-y:auto;box-shadow:var(--shadow-lg)}
-.blind-result-box h3{font-family:var(--serif);font-size:16px;color:var(--gold-d);margin-bottom:12px}
-.blind-ans-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px}
-.blind-ans-row:last-child{border-bottom:none}
+.blind-result-box{background:var(--white);border-radius:var(--rl);padding:0;width:94%;max-width:500px;max-height:85vh;overflow-y:auto;box-shadow:var(--shadow-lg)}
+.blind-result-box h3{font-family:var(--serif);font-size:16px;color:var(--gold-d);padding:14px 16px 12px;border-bottom:1px solid var(--border);margin:0;position:sticky;top:0;background:var(--white);z-index:1;display:flex;align-items:center;justify-content:space-between}
+.blind-result-body{padding:0}
+.bpop-info{padding:8px 14px;background:var(--cream);font-size:12px;color:var(--ink2);border-bottom:1px solid var(--border)}
+.bpop-table-wrap{overflow-x:auto}
+.bpop-table{border-collapse:collapse;width:100%;font-size:12px}
+.bpop-table th,.bpop-table td{border:1px solid var(--border2);padding:3px 2px;text-align:center;white-space:nowrap}
+.bpop-table th{background:var(--cream2);font-size:10px;font-weight:600;color:var(--ink3)}
+.bpop-table th.name-th{text-align:left;padding-left:8px}
+.bpop-table td.name-td{text-align:left;padding-left:8px;font-weight:600;font-size:12px;color:var(--ink);min-width:60px}
+.bpop-table td.correct{background:#d4edda}
+.bpop-table td.wrong{background:#f8d7da}
+.bpop-table td.score-td{font-family:var(--mono);font-weight:700;color:var(--gold-d)}
+.bpop-legend{padding:8px 14px;background:var(--cream);border-top:1px solid var(--border)}
+.bpop-legend-title{font-size:10px;font-weight:600;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px}
+.bpop-legend-row{display:flex;align-items:center;gap:6px;padding:2px 0;font-size:12px}
+.bpop-legend-num{font-size:13px;min-width:22px;text-align:center}
+.bpop-legend-name{color:var(--ink2)}
 .checkout-order-row{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--cream2);border-radius:var(--r);font-size:12px}
 .checkout-order-row.not-served{opacity:.45;background:var(--cream3)}
 .co-type{padding:2px 6px;border-radius:20px;font-size:9px;font-weight:500;flex-shrink:0}
@@ -349,9 +363,8 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
 <!-- ブラインド結果ポップアップ -->
 <div class="blind-result-popup" id="blind-result-popup" onclick="if(event.target===this)closeBlindPopup()">
   <div class="blind-result-box">
-    <h3 id="blind-popup-title">🎭 ブラインド結果</h3>
-    <div id="blind-popup-body"></div>
-    <button class="btn bs btn-full" style="margin-top:14px" onclick="closeBlindPopup()">閉じる</button>
+    <h3 id="blind-popup-title">🎭 ブラインド結果 <button onclick="closeBlindPopup()" style="background:none;border:none;font-size:20px;color:var(--ink3);cursor:pointer;padding:0;line-height:1">✕</button></h3>
+    <div class="blind-result-body" id="blind-popup-body"></div>
   </div>
 </div>
 
@@ -796,69 +809,99 @@ function openBlindPopup(orderGroupId){
   if(!popup||!body) return;
 
   var results=bmap[orderGroupId]||[];
+  var bms=cache.blindMarks||[];
+  var nums=['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩'];
 
   if(!results.length){
-    body.innerHTML='<div style="font-size:13px;color:var(--ink3);text-align:center;padding:16px">結果未入力</div>';
+    body.innerHTML='<div style="padding:20px;text-align:center;font-size:13px;color:var(--ink3)">結果未入力</div>';
     g('blind-popup-title').textContent='🎭 ブラインド結果';
     popup.classList.add('open');
     return;
   }
 
-  // results: 1人1エントリ [{customerId, answers[], correctCount, totalCount, winner}, ...]
-  // answersからマーク一覧を収集
-  var marksSet={}, marksOrder=[];
+  // マーク順序をblinMarksMasterから取得（なければanswersから収集）
+  var marksOrder=[];
+  var marksProductMap={};
   results.forEach(function(r){
     (r.answers||[]).forEach(function(ans){
       var mk=ans.blindMarkId||'?';
-      if(!marksSet[mk]){ marksSet[mk]=ans.actualProduct||''; marksOrder.push(mk); }
+      if(marksOrder.indexOf(mk)<0){
+        marksOrder.push(mk);
+        marksProductMap[mk]=ans.actualProduct||'—';
+      }
     });
   });
 
-  var blindMarks=cache.blindMarks||[];
+  // メンバー名取得
+  var memberNames=results.map(function(r){
+    var mem=cache.members.find(function(m){ return m.id===r.customerId||m.memberId===r.customerId; });
+    return mem?(mem.nickname||mem.name||r.customerId):(r.customerId||'—');
+  });
 
   // テーブルヘッダー
-  var thead='<tr><th style="text-align:left;padding-left:6px">名前</th>'
-    +marksOrder.map(function(mk){
-      return '<th style="min-width:28px;max-width:48px;overflow:hidden;text-overflow:ellipsis;font-size:10px">'+escHtml(mk)+'</th>';
-    }).join('')
-    +'<th>正解</th></tr>';
+  var thMarks=marksOrder.map(function(mk,mi){
+    var bm=bms.find(function(b){return b.id===mk;})||{id:mk};
+    var ms=markSymCI(bm);
+    return '<th class="mark-th" style="min-width:28px">'
+      +'<div style="font-size:10px;color:var(--ink3)">'+nums[mi]+'</div>'
+      +'<div style="color:'+ms.color+';font-weight:700;font-size:12px;letter-spacing:-1px">'+ms.sym+'</div>'
+    +'</th>';
+  }).join('');
+  var thead='<thead><tr>'
+    +'<th class="name-th">名前</th>'
+    +thMarks
+    +'<th>好</th><th>正解</th>'
+  +'</tr></thead>';
 
-  // マーク対応表
-  var legendHtml='<div style="margin:8px 0 4px;font-size:10px;color:var(--ink3);font-weight:600;letter-spacing:.06em">マーク対応表</div>'
-    +marksOrder.map(function(mk,i){
-      return '<div style="font-size:11px;color:var(--ink2);padding:2px 0">'
-        +(i+1)+'. '+escHtml(mk)+' → '+escHtml(marksSet[mk])
-      +'</div>';
-    }).join('');
-
-  // 各人の行
-  var tbody=results.map(function(r){
-    var mem=cache.members.find(function(m){ return m.id===r.customerId||m.memberId===r.customerId; });
-    var name=mem?(mem.nickname||mem.name||r.customerId):escHtml(r.customerId||'—');
+  // データ行
+  var tbody=results.map(function(r,ri){
     var ansMap={};
     (r.answers||[]).forEach(function(ans){ ansMap[ans.blindMarkId||'?']=ans; });
     var cells=marksOrder.map(function(mk){
       var ans=ansMap[mk];
       if(!ans) return '<td>—</td>';
-      var bg=ans.isCorrect?'background:#d4edda':'background:#f8d7da';
-      return '<td style="'+bg+';font-size:11px">'+escHtml(ans.guessProduct||'?')+'</td>';
+      var bm=bms.find(function(b){return b.id===ans.guessProduct;})||null;
+      // guessProductは商品名なのでmarkSymは使えない。正解・不正解のみ色分け
+      var cellClass=ans.isCorrect?'correct':'wrong';
+      var bm2=bms.find(function(b){return b.id===mk;})||{id:mk};
+      var ms2=markSymCI(bm2);
+      return '<td class="'+cellClass+'" style="font-size:11px">'+escHtml(ans.guessProduct||'?')+'</td>';
     }).join('');
-    var winner=r.winner?'🏆':'';
+    // ウィナー
+    var winnerText=r.winner?'🏆':'—';
+    // スコア
+    var scoreText=(r.correctCount||0)+'/'+(r.totalCount||0);
+    var scoreColor=(r.correctCount||0)===(r.totalCount||0)?'var(--teal)':'var(--ink)';
     return '<tr>'
-      +'<td style="text-align:left;padding-left:6px;font-size:12px;font-weight:600">'+escHtml(name)+winner+'</td>'
+      +'<td class="name-td">'+escHtml(memberNames[ri])+'</td>'
       +cells
-      +'<td style="font-weight:700;color:var(--gold-d)">'+(r.correctCount||0)+'/'+(r.totalCount||0)+'</td>'
+      +'<td>'+winnerText+'</td>'
+      +'<td class="score-td" style="color:'+scoreColor+'">'+scoreText+'</td>'
     +'</tr>';
   }).join('');
 
+  // マーク対応表
+  var legendRows=marksOrder.map(function(mk,i){
+    var bm=bms.find(function(b){return b.id===mk;})||{id:mk};
+    var ms=markSymCI(bm);
+    return '<div class="bpop-legend-row">'
+      +'<span class="bpop-legend-num">'+nums[i]+'</span>'
+      +'<span style="color:'+ms.color+';font-weight:700;font-size:13px;letter-spacing:-1px">'+ms.sym+'</span>'
+      +'<span class="bpop-legend-name">'+escHtml(marksProductMap[mk])+'</span>'
+    +'</div>';
+  }).join('');
+
   body.innerHTML=''
-    +'<div style="overflow-x:auto;margin-bottom:8px">'
-      +'<table style="border-collapse:collapse;width:100%;font-size:11px">'
-        +'<thead style="background:var(--cream2)">'+thead+'</thead>'
-        +'<tbody>'+tbody+'</tbody>'
-      +'</table>'
+    +'<div class="bpop-info">'
+      +escHtml(memberNames.join('・'))+' | '+marksOrder.length+'種 × '+results.length+'名'
     +'</div>'
-    +legendHtml;
+    +'<div class="bpop-table-wrap">'
+      +'<table class="bpop-table">'+thead+'<tbody>'+tbody+'</tbody></table>'
+    +'</div>'
+    +'<div class="bpop-legend">'
+      +'<div class="bpop-legend-title">マーク対応表</div>'
+      +legendRows
+    +'</div>';
 
   g('blind-popup-title').textContent='🎭 ブラインド結果';
   popup.classList.add('open');
@@ -867,6 +910,18 @@ function openBlindPopup(orderGroupId){
 function closeBlindPopup(){
   var popup=g('blind-result-popup');
   if(popup) popup.classList.remove('open');
+}
+
+var MARK_COLOR_MAP_CI={R:'#c0392b',G:'#1a6e3a',W:null,Y:'#b8860b',B:'#185FA5'};
+function markSymCI(m){
+  if(!m) return {sym:'?',color:'#666'};
+  var id=m.id||m;
+  var cc=(m.colorCode||String(id).charAt(0));
+  var isDbl=(m.mark||String(id).charAt(1))==='◎';
+  var isWhite=cc==='W';
+  var color=isWhite?'#18110a':(MARK_COLOR_MAP_CI[cc]||'#666');
+  var sym=isWhite?(isDbl?'○○':'○'):(isDbl?'●●':'●');
+  return {sym:sym,color:color};
 }
 
 // ── 個別更新 ───────────────────────────────────────────────────
