@@ -120,6 +120,8 @@ select.fi{min-width:80px}
 /* 注文詳細パネル */
 .visit-detail{display:none;border-top:1px solid var(--border);background:var(--cream)}
 .visit-card.open .visit-detail{display:block}
+.og-item.og-item-cancelled{opacity:.5}
+.og-item-cancelled-badge{font-size:9px;padding:1px 5px;border-radius:3px;background:var(--red-l);color:var(--red);border:1px solid var(--red);flex-shrink:0}
 
 .order-group{border-bottom:1px solid var(--border)}
 .order-group:last-child{border-bottom:none}
@@ -405,7 +407,7 @@ async function initMyPage(user){
     currentMember=memberDoc;
 
     // 2. 表示名・プロフィール設定
-    const name=memberDoc?(memberDoc.nickname||memberDoc.name||memberId):memberId||'会員';
+    const name=(memberDoc&&(memberDoc.nickname||memberDoc.name))||(memberId&&memberId!=='会員'?memberId:'—');
     const initChar=name?name.charAt(0).toUpperCase():'?';
     // アバター：iconUrlがあれば画像、なければSVGシルエットのまま
     if(memberDoc?.iconUrl){
@@ -630,7 +632,7 @@ function updateClassBadge(count){
   else{                 cls='class-blanco';       name='BLANCO'; }
   badge.className='class-badge '+cls;
   badge.textContent=name;
-  if(lbl) lbl.textContent=count+'回';
+  if(lbl) lbl.style.display='none'; // 来場回数ラベル不要
 }
 
 function updateSummary(visits){
@@ -720,7 +722,7 @@ function toggleVisitCard(vid){
 
 // ─── 注文詳細パネル ───
 function buildOrderDetail(visitId){
-  const orders=allOrders.filter(o=>(o.visitKey===visitId||o.visitId===visitId)&&o.served!==0);
+  const orders=allOrders.filter(o=>(o.visitKey===visitId||o.visitId===visitId));
   if(!orders.length)return'<div class="empty" style="padding:20px">注文記録がありません</div>';
 
   // orderGroupIdでグループ化
@@ -777,13 +779,10 @@ function buildBatchBlock(b,visitId){
 
   const itemsHtml=repItems.map(o=>{
     const mark=o.blindMarkId?`<span class="og-item-mark">${markDisplay(o.blindMarkId)}</span>`:'<span class="og-item-mark" style="opacity:0">　</span>';
-    const amt=calcOrderAmt(o);
-    return`<div class="og-item">
-      ${mark}
-      <span class="og-item-name">${esc(o.productName)}</span>
-      <span class="og-item-qty">${o.qty}${o.unit||''}</span>
-      <span class="og-item-price">${fmtAmt(amt)}</span>
-    </div>`;
+    const isCancelled=(o.served===0||o.served==='0');
+    const isUnserved=(o.served===1||o.served==='1');
+    const amt=isCancelled||isUnserved?0:calcOrderAmt(o);
+    return`<div class="og-item${isCancelled||isUnserved?' og-item-cancelled':''}">      ${mark}      <span class="og-item-name">${esc(o.productName)}</span>      <span class="og-item-qty">${o.qty}${o.unit||''}</span>      ${isCancelled?'<span class="og-item-cancelled-badge">キャンセル</span>'        :isUnserved?'<span class="og-item-cancelled-badge" style="background:var(--cream3);color:var(--ink3)">未提供</span>'        :`<span class="og-item-price">${fmtAmt(amt)}</span>`}    </div>`;
   }).join('');
 
   const blindBtn=isBlind?`<button class="blind-result-btn" onclick="event.stopPropagation();openBlindModal('${esc(b.repGid||b.groups[0])}','${esc(visitId)}')">
