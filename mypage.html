@@ -128,7 +128,7 @@ select.fi{min-width:80px}
 .og-header{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--cream2)}
 .og-time{font-family:var(--mono);font-size:11px;color:var(--ink3)}
 .og-badge{font-size:10px;padding:1px 6px;border-radius:8px}
-.og-together{font-size:11px;color:var(--ink3);display:flex;align-items:center;gap:3px}
+.og-together{font-size:11px;color:var(--ink3);padding:4px 14px 8px;}
 .og-total{margin-left:auto;font-size:12px;font-weight:600;color:var(--gold-d)}
 .og-items{}
 .og-item{display:flex;align-items:center;padding:8px 14px 8px 24px;border-bottom:1px solid var(--border);gap:8px;font-size:13px}
@@ -543,47 +543,7 @@ async function loadMyData(memberId){
   if(!allVisits.length){
     document.getElementById('visit-list').innerHTML='<div class="empty"><div class="empty-icon">🥃</div>来場履歴がありません</div>';
     updateSummary([]);
-    // batchId共通の他visitKeyのmemberId→会員名を取得
-  const myVisitKeys=new Set(allVisits.map(v=>v.id));
-  const otherVisitKeySet=new Set();
-  allBlindResults.forEach(r=>{
-    const vk=r.visitKey||r.visitId;
-    if(vk&&!myVisitKeys.has(vk))otherVisitKeySet.add(vk);
-  });
-  // blindResultsのcustomerIdからも会員名をキャッシュ
-  const customerIds=allBlindResults.map(r=>r.customerId).filter(id=>id&&!allMembersMap[id]);
-  const uniqueCustomerIds=[...new Set(customerIds)];
-  for(const mid of uniqueCustomerIds){
-    const mSnap=await db.collection('members').doc(mid).get();
-    if(mSnap.exists){
-      const md=mSnap.data();
-      allMembersMap[mid]={nickname:md.nickname||md.name||mid};
-    }
-  }
-  if(otherVisitKeySet.size>0){
-    const otherKeys=[...otherVisitKeySet].filter(k=>k);
-    const chunks2=[];
-    for(let i=0;i<otherKeys.length;i+=30)chunks2.push(otherKeys.slice(i,i+30));
-    for(const chunk of chunks2){
-      const vSnap2=await db.collection('visits').where(firebase.firestore.FieldPath.documentId(),'in',chunk).get();
-      for(const vd of vSnap2.docs){
-        const vdata=vd.data();
-        const mid=vdata.memberId;
-        if(mid&&!allMembersMap[mid]){
-          // membersコレクションから取得
-          const mSnap=await db.collection('members').doc(mid).get();
-          if(mSnap.exists){
-            const md=mSnap.data();
-            allMembersMap[mid]={nickname:md.nickname||md.name||mid};
-          }
-        }
-        // visitKey→memberIdのマッピング
-        if(mid) allMembersMap['visit_'+vd.id]=mid;
-      }
-    }
-  }
-
-  showDebugBanner(issues);
+    showDebugBanner(issues);
     return;
   }
 
@@ -633,6 +593,40 @@ async function loadMyData(memberId){
     for(const chunk of bChunks){
       const bSnap=await db.collection('blindResults').where('batchId','in',chunk).get();
       bSnap.forEach(d=>allBlindResults.push({id:d.id,...d.data()}));
+    }
+  }
+
+  // blindResultsのcustomerIdから会員名をキャッシュ
+  const customerIds=[...new Set(allBlindResults.map(r=>r.customerId).filter(id=>id&&!allMembersMap[id]))];
+  for(const mid of customerIds){
+    try{
+      const mSnap=await db.collection('members').doc(mid).get();
+      if(mSnap.exists){const md=mSnap.data();allMembersMap[mid]={nickname:md.nickname||md.name||mid};}
+    }catch(e){}
+  }
+  // visitKey→memberIdのマッピング（blindResultsのvisitKeyから）
+  const myVisitKeys2=new Set(allVisits.map(v=>v.id));
+  const otherVisitKeys2=[...new Set(allBlindResults.map(r=>r.visitKey||r.visitId).filter(vk=>vk&&!myVisitKeys2.has(vk)))];
+  if(otherVisitKeys2.length){
+    const chunks3=[];
+    for(let i=0;i<otherVisitKeys2.length;i+=30)chunks3.push(otherVisitKeys2.slice(i,i+30));
+    for(const chunk of chunks3){
+      const vSnap3=await db.collection('visits').where(firebase.firestore.FieldPath.documentId(),'in',chunk).get();
+      vSnap3.docs.forEach(vd=>{
+        const mid=vd.data().memberId;
+        if(mid){
+          allMembersMap['visit_'+vd.id]=mid;
+          if(!allMembersMap[mid])allMembersMap[mid]={nickname:mid}; // 後でキャッシュ
+        }
+      });
+    }
+    // visitKeyで見つかったmemberIdの会員名も取得
+    const newMids=[...new Set(otherVisitKeys2.map(vk=>allMembersMap['visit_'+vk]).filter(m=>m&&allMembersMap[m]?.nickname===m))];
+    for(const mid of newMids){
+      try{
+        const mSnap=await db.collection('members').doc(mid).get();
+        if(mSnap.exists){const md=mSnap.data();allMembersMap[mid]={nickname:md.nickname||md.name||mid};}
+      }catch(e){}
     }
   }
 
@@ -874,7 +868,7 @@ function buildBatchBlock(b,visitId){
         if(info)return info.nickname;
         return 'ゲスト';
       });
-      togetherLabel=`👥 ${names.join('・')}と一緒`;
+      togetherLabel=`👥 ${names.join('、')}と一緒`;
     } else if(b.batchId){
       // allOrdersに他visitKeyがない場合はblindResultsから補完
       const blindOthers=allBlindResults.filter(r=>
@@ -890,7 +884,7 @@ function buildBatchBlock(b,visitId){
           if(info)return info.nickname;
           return 'ゲスト';
         }).filter(Boolean);
-        if(names.length)togetherLabel=`👥 ${[...new Set(names)].join('・')}と一緒`;
+        if(names.length)togetherLabel=`👥 ${[...new Set(names)].join('、')}と一緒`;
       }
     }
   }
@@ -910,30 +904,35 @@ function buildBatchBlock(b,visitId){
   const total=repItems.reduce((s,o)=>s+calcOrderAmt(o),0);
 
   const itemsHtml=repItems.map(o=>{
-    const mark=o.blindMarkId?`<span class="og-item-mark">${markDisplay(o.blindMarkId)}</span>`:'<span class="og-item-mark" style="opacity:0">　</span>';
+    // ブラインドマークは表示しない
     const isCancelled=(o.served===0||o.served==='0');
     const isUnserved=(o.served===1||o.served==='1');
     const amt=isCancelled||isUnserved?0:calcOrderAmt(o);
-    return`<div class="og-item${isCancelled||isUnserved?' og-item-cancelled':''}">      ${mark}      <span class="og-item-name">${esc(o.productName)}</span>      <span class="og-item-qty">${o.qty}${o.unit||''}</span>      ${isCancelled?'<span class="og-item-cancelled-badge">キャンセル</span>'        :isUnserved?'<span class="og-item-cancelled-badge" style="background:var(--cream3);color:var(--ink3)">未提供</span>'        :`<span class="og-item-price">${fmtAmt(amt)}</span>`}    </div>`;
+    return`<div class="og-item${isCancelled||isUnserved?' og-item-cancelled':''}">      <span class="og-item-name">${esc(o.productName)}</span>      <span class="og-item-qty">${o.qty}${o.unit||''}</span>      ${isCancelled?'<span class="og-item-cancelled-badge">キャンセル</span>'        :isUnserved?'<span class="og-item-cancelled-badge" style="background:var(--cream3);color:var(--ink3)">未提供</span>'        :`<span class="og-item-price">${fmtAmt(amt)}</span>`}    </div>`;
   }).join('');
 
   const allCorrect=blindResults4group.reduce((s,r)=>s+(r.correctCount||0),0);
   const allTotal=blindResults4group.reduce((s,r)=>s+(r.totalCount||0),0);
   const blindSummary=blindResults4group.length?`${allCorrect}/${allTotal}正解`:'';
 
-  // ブラインドアイコン（クリックで結果表示）
-  const blindIcon=isBlind
-    ?`<span class="og-badge" style="background:#f3eaff;color:#6b3fa0;cursor:pointer" onclick="event.stopPropagation();openBlindModal('${esc(b.repGid||b.groups[0])}','${esc(visitId)}')" title="ブラインド結果を見る">🎭 ${blindResults4group.length?blindSummary:'未入力'}</span>`
+  // ブラインドリンク（アイコン＋「結果を表示」）
+  const blindLink=isBlind
+    ?`<span class="og-badge" style="background:#f3eaff;color:#6b3fa0;cursor:pointer;font-size:11px" onclick="event.stopPropagation();openBlindModal('${esc(b.repGid||b.groups[0])}','${esc(visitId)}')" title="ブラインド結果を見る">🎭 結果を表示</span>`
+    :'';
+
+  // 一緒に飲んだ人（リストで表示）
+  const togetherHtml=togetherLabel
+    ?`<div class="og-together">${esc(togetherLabel)}</div>`
     :'';
 
   return`<div class="order-group">
     <div class="og-header">
       <span class="og-time">${esc(time)}</span>
-      ${blindIcon}
-      ${togetherLabel?`<span class="og-together">${esc(togetherLabel)}</span>`:''}
+      ${blindLink}
       <span class="og-total">${fmtAmt(total)}</span>
     </div>
     <div class="og-items">${itemsHtml}</div>
+    ${togetherHtml}
   </div>`;
 }
 
@@ -988,11 +987,15 @@ function openBlindModal(gid, visitId){
   });
 
   // テーブルヘッダー
+  // ウィナーマーク集計（各マークが何人に選ばれたか）
+  const winnerCount={};
+  results.forEach(r=>{if(r.winner)winnerCount[r.winner]=(winnerCount[r.winner]||0)+1;});
+
   const thMarks=marksOrder.map((mk,mi)=>{
     const c=markColor(mk); const s=markSym(mk);
     return`<th><div style="font-size:10px;color:var(--ink3)">${nums[mi]}</div><div style="color:${c};font-weight:700;font-size:12px">${s}</div></th>`;
   }).join('');
-  const thead=`<thead><tr><th class="name-th">名前</th>${thMarks}<th>🏆</th><th>正解</th></tr></thead>`;
+  const thead=`<thead><tr><th class="name-th">名前</th>${thMarks}<th>好</th><th>正解</th></tr></thead>`;
 
   // データ行
   const tbody=results.map((r,ri)=>{
@@ -1005,16 +1008,22 @@ function openBlindModal(gid, visitId){
       const s=markSym(ans.guessMarkId||'');
       return`<td class="${ans.isCorrect?'correct':'wrong'}" style="color:${c};font-weight:700">${s}</td>`;
     }).join('');
-    const win=r.winner?'🏆':'';
+    // 好きなマーク（winner）をマーク記号で表示
+    const winMk=r.winner||'';
+    const winC=winMk?markColor(winMk):'#999';
+    const winS=winMk?markSym(winMk):'—';
+    const winDisp=winMk?`<span style="color:${winC};font-weight:700">${winS}</span>`:'—';
     const sc=`${r.correctCount||0}/${r.totalCount||0}`;
     const scColor=(r.correctCount||0)===(r.totalCount||0)?'var(--teal)':'var(--ink)';
-    return`<tr><td class="name-td">${esc(memberNames[ri])}</td>${cells}<td>${win}</td><td class="score-td" style="color:${scColor}">${sc}</td></tr>`;
+    return`<tr><td class="name-td">${esc(memberNames[ri])}</td>${cells}<td>${winDisp}</td><td class="score-td" style="color:${scColor}">${sc}</td></tr>`;
   }).join('');
 
-  // マーク対応表
+  // マーク対応表（ウィナー件数付き）
   const legendRows=marksOrder.map((mk,i)=>{
     const c=markColor(mk);const s=markSym(mk);
-    return`<div class="bpop-legend-row"><span class="bpop-legend-num">${nums[i]}</span><span style="color:${c};font-weight:700;font-size:13px">${s}</span><span style="color:var(--ink2)">${esc(marksProductMap[mk])}</span></div>`;
+    const wc=winnerCount[mk]||0;
+    const wcDisp=wc?`<span style="margin-left:auto;font-size:11px;color:var(--gold-d);font-weight:600">好 ${wc}票</span>`:'';
+    return`<div class="bpop-legend-row"><span class="bpop-legend-num">${nums[i]}</span><span style="color:${c};font-weight:700;font-size:13px">${s}</span><span style="color:var(--ink2);flex:1">${esc(marksProductMap[mk])}</span>${wcDisp}</div>`;
   }).join('');
 
   body.innerHTML=`
