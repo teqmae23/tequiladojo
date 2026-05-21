@@ -396,7 +396,12 @@ async function initMyPage(user){
     const authEmail=user.email||'';
     let memberId=null;
     if(authEmail.endsWith('@tequiladojo.member')){
+      // 仮想メール → 会員ID直接取得
       memberId=authEmail.replace('@tequiladojo.member','');
+    } else if(authEmail){
+      // 実メール → memberIndexから逆引き
+      const idxSnap=await db.collection('memberIndex').where('email','==',authEmail).limit(1).get();
+      if(!idxSnap.empty) memberId=idxSnap.docs[0].id;
     }
 
     // membersコレクションから取得
@@ -405,10 +410,21 @@ async function initMyPage(user){
       const snap=await db.collection('members').doc(memberId).get();
       if(snap.exists)memberDoc={id:snap.id,...snap.data()};
     }
-    // fallback: uidで検索
+    // fallback: authUidで検索
     if(!memberDoc){
-      const snap=await db.collection('members').where('uid','==',user.uid).limit(1).get();
-      if(!snap.empty)memberDoc={id:snap.docs[0].id,...snap.docs[0].data()};
+      const snap=await db.collection('members').where('authUid','==',user.uid).limit(1).get();
+      if(!snap.empty){
+        memberDoc={id:snap.docs[0].id,...snap.docs[0].data()};
+        memberId=memberDoc.memberId||snap.docs[0].id;
+      }
+    }
+    // fallback2: emailで検索
+    if(!memberDoc && authEmail && !authEmail.endsWith('@tequiladojo.member')){
+      const snap=await db.collection('members').where('email','==',authEmail).limit(1).get();
+      if(!snap.empty){
+        memberDoc={id:snap.docs[0].id,...snap.docs[0].data()};
+        memberId=memberDoc.memberId||snap.docs[0].id;
+      }
     }
     currentMember=memberDoc;
 
@@ -421,7 +437,7 @@ async function initMyPage(user){
       av.innerHTML='<img src="'+memberDoc.iconUrl+'" alt="avatar">';
     }
     document.getElementById('prof-name').textContent=name;
-    document.getElementById('prof-id').textContent=memberId?`ID: ${memberId}`:'';
+    const displayMemberId=memberDoc?.memberId||memberId||'';    document.getElementById('prof-id').textContent=displayMemberId?`ID: ${displayMemberId}`:'';
     document.getElementById('top-user-label').textContent=name;
     // CLASSバッジ更新
     updateClassBadge(memberDoc?.visitCount||0);
@@ -435,7 +451,7 @@ async function initMyPage(user){
     await loadBlindMarks();
 
     // 4. 来場・注文データ取得
-    await loadMyData(memberId);
+    await loadMyData(memberDoc?.memberId||memberId);
 
     // 5. フィルター初期化
     initFilters();
@@ -466,8 +482,17 @@ async function loadMyData(memberId){
     try{
       const pSnap=await db.collection('products').where('productionType','==',0).get();
       allProducts=pSnap.docs.map(d=>({id:d.id,...d.data()}));
+      console.log('[mypage] products(定番):', allProducts.length);
     }catch(e){
-      console.warn('products取得失敗:', e);
+      console.warn('products取得失敗、全件フォールバック:', e);
+      try{
+        const pSnap2=await db.collection('products').get();
+        allProducts=pSnap2.docs.map(d=>({id:d.id,...d.data()}))
+          .filter(p=>p.productionType===0||p.productionType==='0');
+        console.log('[mypage] products(fallback):', allProducts.length);
+      }catch(e2){
+        console.warn('products全件取得も失敗:', e2);
+      }
     }
   }
 
