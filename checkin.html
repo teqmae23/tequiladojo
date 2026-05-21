@@ -758,18 +758,40 @@ function openOrdersModal(visitKey, visitorName){
     });
     // ブラインド結果を取得してからレンダリング
     var orderGroupIds2=groupOrder2.filter(function(gid){ return !gid.startsWith('_'); });
-    // blindResultsはgroupIdフィールドで複数人分取得（1人1ドキュメント）
-    var blindProm=orderGroupIds2.length
-      ? db.collection('blindResults').where('groupId','in',orderGroupIds2.slice(0,30)).get()
+    // batchIdで複数人分のblindResultsを取得
+    // ordersからbatchIdを収集
+    var batchIds2=[];
+    var batchToGroups={};  // batchId → [orderGroupId, ...]
+    sortedOrders.forEach(function(o){
+      if(o.batchId && batchIds2.indexOf(o.batchId)<0) batchIds2.push(o.batchId);
+      if(o.batchId && o.orderGroupId){
+        if(!batchToGroups[o.batchId]) batchToGroups[o.batchId]=[];
+        if(batchToGroups[o.batchId].indexOf(o.orderGroupId)<0)
+          batchToGroups[o.batchId].push(o.orderGroupId);
+      }
+    });
+    var blindProm=batchIds2.length
+      ? db.collection('blindResults').where('batchId','in',batchIds2.slice(0,30)).get()
       : Promise.resolve({docs:[]});
     blindProm.then(function(bSnap){
-      // groupIdでまとめる（複数人分）
+      // orderGroupId単位でまとめる（batchId経由で全員分）
       var bmap={};
       bSnap.docs.forEach(function(d){
         var data=d.data();
         var gid=data.groupId||d.id;
         if(!bmap[gid]) bmap[gid]=[];
         bmap[gid].push(data);
+      });
+      // さらにbatchIdで紐づく全グループに同じ結果を共有
+      // （同じbatchの他グループのgidにも結果をコピー）
+      Object.keys(batchToGroups).forEach(function(bid){
+        var gids=batchToGroups[bid];
+        // このbatchに属するresultsを収集
+        var allResults=[];
+        gids.forEach(function(gid){ if(bmap[gid]) allResults=allResults.concat(bmap[gid]); });
+        if(allResults.length){
+          gids.forEach(function(gid){ bmap[gid]=allResults; });
+        }
       });
       var html2='';
       groupOrder2.forEach(function(gid){
