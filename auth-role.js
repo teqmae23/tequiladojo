@@ -148,5 +148,59 @@ var AuthRole = (function() {
     });
   }
 
-  return { requireStaff, requireOwner, requireMember, getRole };
+
+/* ─────────────────────────────────────────────
+ * getActiveSession
+ *   現在の営業セッション（closeTimeがnull）を取得し、
+ *   openTimeを返す。セッションがない場合はnullを返す。
+ *
+ *   使い方:
+ *     const session = await AuthRole.getActiveSession(db);
+ *     // session.openTime: "HHMM" 形式
+ *     // session.openDate: "YYMMDD" 形式
+ *     // session.sessionId: セッションID
+ *     // session.sinceVisitDate: "YYMMDD"
+ *     // session.sinceVisitTime: "HHMM"
+ * ───────────────────────────────────────────── */
+async function getActiveSession(db) {
+  try {
+    // closeTimeがnullのセッションを取得（複数ある場合は最新のopenTimeで判断）
+    const snap = await db.collection('sessions').where('closeTime', '==', null).get();
+    if (snap.empty) return null;
+
+    // 複数ある場合は最も新しいopenTimeのものを選ぶ
+    const sessions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    sessions.sort((a, b) => (b.openTime || '').localeCompare(a.openTime || ''));
+    const session = sessions[0];
+
+    return {
+      sessionId:     session.sessionId || session.id,
+      openDate:      session.date || session.id.slice(0, 6),
+      openTime:      session.openTime || '0000',
+      sinceVisitDate: session.date || session.id.slice(0, 6),
+      sinceVisitTime: session.openTime || '0000',
+    };
+  } catch(e) {
+    console.warn('getActiveSession error:', e);
+    return null;
+  }
+}
+
+/* ─────────────────────────────────────────────
+ * isVisitInSession
+ *   visitがセッション開始以降かどうかを判定
+ *   session: getActiveSession() の戻り値
+ *   visit:   Firestoreのvisitドキュメント
+ * ───────────────────────────────────────────── */
+function isVisitInSession(visit, session) {
+  if (!session) return true; // セッション取得失敗時は全件表示
+  const vDate = visit.visitDate || visit.id.slice(0, 6) || '';
+  const vTime = visit.visitTime || visit.checkInTime || '0000';
+  if (vDate > session.openDate) return true;
+  if (vDate < session.openDate) return false;
+  // 同日の場合はopenTime以降
+  return vTime >= session.openTime;
+}
+
+    return { requireStaff, requireOwner, requireMember, getRole, getActiveSession, isVisitInSession };
 })();
