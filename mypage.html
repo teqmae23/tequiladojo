@@ -141,6 +141,21 @@ select.fi{min-width:80px}
 /* ブラインド結果ボタン */
 .blind-result-btn{margin:8px 14px 10px;display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f3eaff;border:1px solid #c9a8f0;border-radius:var(--r);cursor:pointer;font-size:12px;color:#6b3fa0;width:calc(100% - 28px)}
 .blind-result-btn:hover{background:#ecdeff}
+/* ブラインド結果テーブル（checkin.htmlと共通） */
+.bpop-info{padding:8px 14px;background:var(--cream);font-size:12px;color:var(--ink2);border-bottom:1px solid var(--border)}
+.bpop-table-wrap{overflow-x:auto}
+.bpop-table{border-collapse:collapse;width:100%;font-size:12px}
+.bpop-table th,.bpop-table td{border:1px solid var(--border2);padding:4px 3px;text-align:center;white-space:nowrap}
+.bpop-table th{background:var(--cream2);font-size:10px;font-weight:600;color:var(--ink3)}
+.bpop-table th.name-th{text-align:left;padding-left:8px}
+.bpop-table td.name-td{text-align:left;padding-left:8px;font-weight:600;font-size:12px;min-width:60px}
+.bpop-table td.correct{background:#d4edda}
+.bpop-table td.wrong{background:#f8d7da}
+.bpop-table td.score-td{font-family:var(--mono);font-weight:700;color:var(--gold-d)}
+.bpop-legend{padding:8px 14px;background:var(--cream);border-top:1px solid var(--border)}
+.bpop-legend-title{font-size:10px;font-weight:600;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px}
+.bpop-legend-row{display:flex;align-items:center;gap:6px;padding:2px 0;font-size:12px}
+.bpop-legend-num{min-width:22px;text-align:center}
 
 /* ブラインド結果モーダル */
 #blind-modal{display:none;position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:200;align-items:center;justify-content:center;padding:16px}
@@ -529,12 +544,20 @@ async function loadMyData(memberId){
     document.getElementById('visit-list').innerHTML='<div class="empty"><div class="empty-icon">🥃</div>来場履歴がありません</div>';
     updateSummary([]);
     // batchId共通の他visitKeyのmemberId→会員名を取得
+  // allBlindResultsのvisitKeyとallOrdersの両方から収集
+  const myVisitKeys=new Set(allVisits.map(v=>v.id));
   const otherVisitKeySet=new Set();
+  // blindResultsから他visitKeyを収集（同じbatchIdを持つ別visitKey）
+  const batchIdToMyVisitKeys={};
   allOrders.forEach(o=>{
-    if(o.batchId){
-      allOrders.filter(o2=>o2.batchId===o.batchId&&(o2.visitKey||o2.visitId)!==(o.visitKey||o.visitId))
-        .forEach(o2=>otherVisitKeySet.add(o2.visitKey||o2.visitId));
+    if(o.batchId&&(o.visitKey||o.visitId)){
+      if(!batchIdToMyVisitKeys[o.batchId])batchIdToMyVisitKeys[o.batchId]=new Set();
+      batchIdToMyVisitKeys[o.batchId].add(o.visitKey||o.visitId);
     }
+  });
+  allBlindResults.forEach(r=>{
+    const vk=r.visitKey||r.visitId;
+    if(vk&&!myVisitKeys.has(vk))otherVisitKeySet.add(vk);
   });
   if(otherVisitKeySet.size>0){
     const otherKeys=[...otherVisitKeySet].filter(k=>k);
@@ -845,13 +868,28 @@ function buildBatchBlock(b,visitId){
     const batchOrders=allOrders.filter(o=>o.batchId===b.batchId&&(o.visitKey!==visitId&&o.visitId!==visitId));
     const otherVisitKeys=[...new Set(batchOrders.map(o=>o.visitKey||o.visitId).filter(Boolean))];
     if(otherVisitKeys.length){
-      // allMembersMapからvisitKey→memberId→nicknameを取得
       const names=otherVisitKeys.map(vk=>{
         const mid=allMembersMap['visit_'+vk];
         const info=mid?allMembersMap[mid]:null;
-        return info?info.nickname:(mid||vk.slice(6)||'ゲスト');
+        return info?info.nickname:(mid||'ゲスト');
       });
       togetherLabel=`👥 ${names.join('・')}と一緒`;
+    } else if(b.batchId){
+      // allOrdersに他visitKeyがない場合はblindResultsから補完
+      const blindOthers=allBlindResults.filter(r=>
+        (r.batchId===b.batchId||b.groups.some(g=>r.groupId===g))
+        &&r.visitKey!==visitId
+      );
+      if(blindOthers.length){
+        const names=blindOthers.map(r=>{
+          const mid=r.customerId;
+          const info=mid?allMembersMap[mid]:null;
+          const myMid=currentMember?.memberId||currentMember?.id;
+          if(mid===myMid)return null;
+          return info?info.nickname:(mid||'ゲスト');
+        }).filter(Boolean);
+        if(names.length)togetherLabel=`👥 ${[...new Set(names)].join('・')}と一緒`;
+      }
     }
   }
 
@@ -892,50 +930,87 @@ function buildBatchBlock(b,visitId){
   </div>`;
 }
 
-// ─── ブラインド結果モーダル ───
+// ─── ブラインド結果モーダル（全員分テーブル表示） ───
 function openBlindModal(gid, visitId){
-  // groupIdで全員分取得（新形式: id=groupId_customerId、旧形式: id=groupId）
+  // groupIdで全員分取得
   const results=allBlindResults.filter(r=>r.groupId===gid||r.id===gid);
-  // 自分の結果を優先（customerId一致）
-  const myMemberId=currentMember?.memberId||currentMember?.id;
-  const result=results.find(r=>r.customerId===myMemberId)||results[0];
   const body=document.getElementById('blind-modal-body');
+  const nums=['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩'];
+  const MARK_COLOR={R:'#c0392b',G:'#1a6e3a',W:null,Y:'#b8860b',B:'#185FA5'};
 
-  if(!result){
-    body.innerHTML=`<div class="empty" style="padding:30px 0">
-      <div class="empty-icon">🎭</div>
-      ブラインドテイスティングの結果はまだ入力されていません
-    </div>`;
+  function markColor(markId){
+    if(!markId)return'#666';
+    const cc=markId.charAt(0);
+    return cc==='W'?'#18110a':(MARK_COLOR[cc]||'#666');
+  }
+  function markSym(markId){
+    if(!markId)return'?';
+    const isDbl=markId.charAt(1)==='◎';
+    const isW=markId.charAt(0)==='W';
+    return isW?(isDbl?'○○':'○'):(isDbl?'●●':'●');
+  }
+
+  if(!results.length){
+    body.innerHTML=`<div class="empty" style="padding:30px 0"><div class="empty-icon">🎭</div>結果未入力</div>`;
     document.getElementById('blind-modal').classList.add('open');
     return;
   }
 
-  const {answers,correctCount,totalCount,winner}=result;
-  const scoreClass=correctCount>=totalCount*0.7?'win':'lose';
-  const isWinner=winner&&true; // winnerはmarkId
+  // マーク順序を収集
+  const marksOrder=[];
+  const marksProductMap={};
+  results.forEach(r=>{
+    (r.answers||[]).forEach(ans=>{
+      const mk=ans.blindMarkId||'?';
+      if(!marksOrder.includes(mk)){marksOrder.push(mk);marksProductMap[mk]=ans.actualProduct||'—';}
+    });
+  });
 
-  let scoreHtml=`<div class="bm-score">
-    <div class="bm-score-num ${scoreClass}">${correctCount}<span style="font-size:24px;color:var(--ink3)">/${totalCount}</span></div>
-    <div class="bm-score-lbl">正解数</div>
-    ${isWinner?`<div class="bm-winner">🏆 ウィナー</div>`:''}
-  </div>`;
+  // 会員名取得
+  const memberNames=results.map(r=>{
+    const mid=r.customerId;
+    const info=mid?allMembersMap[mid]:null;
+    if(info)return info.nickname;
+    // 自分かチェック
+    const myMid=currentMember?.memberId||currentMember?.id;
+    if(mid===myMid)return currentMember?.nickname||currentMember?.name||mid||'—';
+    return mid||'—';
+  });
 
-  let answersHtml='';
-  if(answers&&answers.length){
-    answersHtml=answers.map(ans=>{
-      const correct=ans.isCorrect;
-      const markDisp=markDisplay(ans.blindMarkId||ans.actualMarkId||ans.markId||'');
-      return`<div class="bm-ans-row ${correct?'correct':'wrong'}">
-        <span class="bm-ans-mark">${markDisp}</span>
-        <span class="bm-ans-actual">${esc(ans.actualProduct||'')}</span>
-        <span class="bm-ans-arrow">→</span>
-        <span class="bm-ans-guess">${esc(ans.guessProduct||'')}</span>
-        <span class="bm-ans-result">${correct?'✅':'❌'}</span>
-      </div>`;
+  // テーブルヘッダー
+  const thMarks=marksOrder.map((mk,mi)=>{
+    const c=markColor(mk); const s=markSym(mk);
+    return`<th><div style="font-size:10px;color:var(--ink3)">${nums[mi]}</div><div style="color:${c};font-weight:700;font-size:12px">${s}</div></th>`;
+  }).join('');
+  const thead=`<thead><tr><th class="name-th">名前</th>${thMarks}<th>🏆</th><th>正解</th></tr></thead>`;
+
+  // データ行
+  const tbody=results.map((r,ri)=>{
+    const ansMap={};
+    (r.answers||[]).forEach(ans=>{ansMap[ans.blindMarkId||'?']=ans;});
+    const cells=marksOrder.map(mk=>{
+      const ans=ansMap[mk];
+      if(!ans)return'<td>—</td>';
+      const c=markColor(ans.guessMarkId||'');
+      const s=markSym(ans.guessMarkId||'');
+      return`<td class="${ans.isCorrect?'correct':'wrong'}" style="color:${c};font-weight:700">${s}</td>`;
     }).join('');
-  }
+    const win=r.winner?'🏆':'';
+    const sc=`${r.correctCount||0}/${r.totalCount||0}`;
+    const scColor=(r.correctCount||0)===(r.totalCount||0)?'var(--teal)':'var(--ink)';
+    return`<tr><td class="name-td">${esc(memberNames[ri])}</td>${cells}<td>${win}</td><td class="score-td" style="color:${scColor}">${sc}</td></tr>`;
+  }).join('');
 
-  body.innerHTML=scoreHtml+(answersHtml?`<div>${answersHtml}</div>`:'');
+  // マーク対応表
+  const legendRows=marksOrder.map((mk,i)=>{
+    const c=markColor(mk);const s=markSym(mk);
+    return`<div class="bpop-legend-row"><span class="bpop-legend-num">${nums[i]}</span><span style="color:${c};font-weight:700;font-size:13px">${s}</span><span style="color:var(--ink2)">${esc(marksProductMap[mk])}</span></div>`;
+  }).join('');
+
+  body.innerHTML=`
+    <div class="bpop-info">${memberNames.join('・')} | ${marksOrder.length}種 × ${results.length}名</div>
+    <div class="bpop-table-wrap"><table class="bpop-table">${thead}<tbody>${tbody}</tbody></table></div>
+    <div class="bpop-legend"><div class="bpop-legend-title">マーク対応表</div>${legendRows}</div>`;
   document.getElementById('blind-modal').classList.add('open');
 }
 
