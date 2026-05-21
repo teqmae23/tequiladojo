@@ -18,7 +18,7 @@ var AuthRole = (function() {
    * IDトークンからroleを取得（キャッシュ付き、60秒で再取得）
    */
   async function getRole(user) {
-    const result = await user.getIdTokenResult(false);
+    const result = await user.getIdTokenResult(true);
     return result.claims.role || null;
   }
 
