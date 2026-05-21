@@ -305,6 +305,7 @@ let allVisits=[];         // 当会員の全来場
 let allOrders=[];         // 当会員の全注文（全来場分）
 let allProducts=[];       // 定番品マスタ
 let allBlindResults=[];   // 当会員の全ブラインド結果
+let allMembersMap={};     // memberId → {nickname, name} のキャッシュ
 let filteredVisits=[];    // フィルター後
 let blindMarkMap={};      // markId→{emoji,label}
 
@@ -527,7 +528,38 @@ async function loadMyData(memberId){
   if(!allVisits.length){
     document.getElementById('visit-list').innerHTML='<div class="empty"><div class="empty-icon">🥃</div>来場履歴がありません</div>';
     updateSummary([]);
-    showDebugBanner(issues);
+    // batchId共通の他visitKeyのmemberId→会員名を取得
+  const otherVisitKeySet=new Set();
+  allOrders.forEach(o=>{
+    if(o.batchId){
+      allOrders.filter(o2=>o2.batchId===o.batchId&&(o2.visitKey||o2.visitId)!==(o.visitKey||o.visitId))
+        .forEach(o2=>otherVisitKeySet.add(o2.visitKey||o2.visitId));
+    }
+  });
+  if(otherVisitKeySet.size>0){
+    const otherKeys=[...otherVisitKeySet].filter(k=>k);
+    const chunks2=[];
+    for(let i=0;i<otherKeys.length;i+=30)chunks2.push(otherKeys.slice(i,i+30));
+    for(const chunk of chunks2){
+      const vSnap2=await db.collection('visits').where(firebase.firestore.FieldPath.documentId(),'in',chunk).get();
+      for(const vd of vSnap2.docs){
+        const vdata=vd.data();
+        const mid=vdata.memberId;
+        if(mid&&!allMembersMap[mid]){
+          // membersコレクションから取得
+          const mSnap=await db.collection('members').doc(mid).get();
+          if(mSnap.exists){
+            const md=mSnap.data();
+            allMembersMap[mid]={nickname:md.nickname||md.name||mid};
+          }
+        }
+        // visitKey→memberIdのマッピング
+        if(mid) allMembersMap['visit_'+vd.id]=mid;
+      }
+    }
+  }
+
+  showDebugBanner(issues);
     return;
   }
 
@@ -813,14 +845,22 @@ function buildBatchBlock(b,visitId){
     const batchOrders=allOrders.filter(o=>o.batchId===b.batchId&&(o.visitKey!==visitId&&o.visitId!==visitId));
     const otherVisitKeys=[...new Set(batchOrders.map(o=>o.visitKey||o.visitId).filter(Boolean))];
     if(otherVisitKeys.length){
-      // 来場者名はvisitKeyだが、会員情報はcurrentMemberしか持っていない
-      // visitKeyから日付+連番はわかる
-      togetherLabel=`同時注文（${otherVisitKeys.length}名と）`;
+      // allMembersMapからvisitKey→memberId→nicknameを取得
+      const names=otherVisitKeys.map(vk=>{
+        const mid=allMembersMap['visit_'+vk];
+        const info=mid?allMembersMap[mid]:null;
+        return info?info.nickname:(mid||vk.slice(6)||'ゲスト');
+      });
+      togetherLabel=`👥 ${names.join('・')}と一緒`;
     }
   }
 
   // この注文グループのブラインド結果
-  const blindResult=isBlind?allBlindResults.find(r=>r.visitKey===visitId&&b.groups.includes(r.id)):null;
+  // blindResultをgroupIdで検索（batchの代表グループで確認）
+  const repGidForBlind=b.repGid||b.groups[0];
+  const blindResults4group=allBlindResults.filter(r=>r.groupId===repGidForBlind||r.id===repGidForBlind);
+  const myMid=currentMember?.memberId||currentMember?.id;
+  const blindResult=isBlind?(blindResults4group.find(r=>r.customerId===myMid)||blindResults4group[0]):null;
 
   // 注文アイテム（重複除去：batchで同じ商品が複数人分あるので代表1件）
   // batchの場合は代表グループ（最初のgid）の商品のみ表示
@@ -854,7 +894,11 @@ function buildBatchBlock(b,visitId){
 
 // ─── ブラインド結果モーダル ───
 function openBlindModal(gid, visitId){
-  const result=allBlindResults.find(r=>r.id===gid);
+  // groupIdで全員分取得（新形式: id=groupId_customerId、旧形式: id=groupId）
+  const results=allBlindResults.filter(r=>r.groupId===gid||r.id===gid);
+  // 自分の結果を優先（customerId一致）
+  const myMemberId=currentMember?.memberId||currentMember?.id;
+  const result=results.find(r=>r.customerId===myMemberId)||results[0];
   const body=document.getElementById('blind-modal-body');
 
   if(!result){
@@ -880,8 +924,9 @@ function openBlindModal(gid, visitId){
   if(answers&&answers.length){
     answersHtml=answers.map(ans=>{
       const correct=ans.isCorrect;
+      const markDisp=markDisplay(ans.blindMarkId||ans.actualMarkId||ans.markId||'');
       return`<div class="bm-ans-row ${correct?'correct':'wrong'}">
-        <span class="bm-ans-mark">${markDisplay(ans.actualMarkId||ans.markId||'')}</span>
+        <span class="bm-ans-mark">${markDisp}</span>
         <span class="bm-ans-actual">${esc(ans.actualProduct||'')}</span>
         <span class="bm-ans-arrow">→</span>
         <span class="bm-ans-guess">${esc(ans.guessProduct||'')}</span>
