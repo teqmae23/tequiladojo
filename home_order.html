@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Noto+Sans+JP:wght@400;500;700&family=DM+Mono&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="/auth-role.js"></script>
+<script src="/auth-role.js?v=20260521"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -602,29 +602,50 @@ async function loadMasters(){
 
 // ━━━ 当日データ ━━━
 async function loadTodayData(){
-  const [visitsSnap,ordersSnap,resultsSnap]=await Promise.all([
+  const [visitsSnap,ordersSnap,resultsSnap,session]=await Promise.all([
     db.collection('visits').get(),
     db.collection('orders').get(),
-    db.collection('blindResults').get()
+    db.collection('blindResults').get(),
+    AuthRole.getActiveSession(db)
   ]);
+
+  // 現セッションのopenTime以降のvisitのみ対象
   allVisits=[];
-  visitsSnap.forEach(d=>{if(d.id.startsWith(todayStr))allVisits.push({id:d.id,...d.data()});});
+  visitsSnap.forEach(d=>{
+    const v={id:d.id,...d.data()};
+    if(!v.checkoutTime && AuthRole.isVisitInSession(v, session)) allVisits.push(v);
+  });
   allVisits.sort((a,b)=>(a.seq||0)-(b.seq||0));
+
+  // 来場中のvisitKeyセット
+  const activeVisitKeys=new Set(allVisits.map(v=>v.id));
+
   blindResultsSet=new Set();
   resultsSnap.forEach(d=>blindResultsSet.add(d.id));
 
-  // orderGroupId単位でグループ化
+  // orderGroupId単位でグループ化（現セッションのvisitに紐づくorderのみ）
   const gmap={};
   ordersSnap.forEach(d=>{
-    if(!d.id.startsWith(todayStr))return;
     const o={id:d.id,...d.data()};
     if(!o.orderGroupId)return;
+    if(!o.visitKey||!activeVisitKeys.has(o.visitKey))return;
     if(!gmap[o.orderGroupId])gmap[o.orderGroupId]=[];
     gmap[o.orderGroupId].push(o);
   });
   allGroups=Object.entries(gmap).map(([gid,orders])=>{
+    // served判定：グループ内は全order同一値のはず（sample1件で代表）
     const sample=orders.find(o=>o.served!==undefined)||orders[0];
     const served=sample.served??1;
+    // 不一致チェック：グループ内のservedが揃っていない場合はエラーをコンソールに出力
+    const servedVals=orders.map(o=>o.served??1);
+    const allSame=servedVals.every(v=>v===servedVals[0]);
+    if(!allSame){
+      console.error('[served不一致] orderGroupId:', orders[0]?.orderGroupId,
+        '/ values:', servedVals,
+        '/ orders:', orders.map(o=>o.id));
+      // トースト通知（開発確認用）
+      setTimeout(()=>showToast('⚠ served不一致: orderGroupId='+orders[0]?.orderGroupId,'error'),100);
+    }
     const isBlind=orders.some(o=>o.blindId===1);
     const hasResult=blindResultsSet.has(gid);
     const total=orders.filter(o=>o.served!==0).reduce((s,o)=>s+calcAmt(o),0);
@@ -860,28 +881,18 @@ async function cancelChecked(section){
       for(const g of b.groups){
         for(const o of g.orders){
           fsBatch.update(db.collection('orders').doc(o.id),{served:0});
-          o.served=0; // ローカルも即時更新
+          o.served=0; // ローカル即時更新
         }
+        // キャンセル後はグループ全体をserved=0に
         g.served=0;
+        g.total=0;
       }
       b.served=0;
+      b.total=0;
     }
     await fsBatch.commit();
-    // ローカルのallGroupsも更新（served再計算）
-    allGroups.forEach(g=>{
-      if(g.orders.some(o=>o.served===0)&&g.orders.every(o=>o.served===0)){
-        g.served=0;
-      }
-    });
-    // batchGroupsのtotal再計算
-    allBatchGroups.forEach(b=>{
-      if(b.served===0){
-        b.total=0;
-        b.groups.forEach(g=>{ g.total=0; });
-      }
-    });
-    showToast(`${bids.length}グループをキャンセルしました`,'info');
     renderOrderList();
+    showToast(`${bids.length}グループをキャンセルしました`,'info');
   }catch(e){showToast('キャンセル失敗: '+e.message,'error');}
 }
 
