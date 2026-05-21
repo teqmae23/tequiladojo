@@ -616,6 +616,35 @@ async function loadMyData(memberId){
     }
   }
 
+  // _togetherMapをallMembersMapが揃った状態で構築
+  window._togetherMap={};
+  const myMidFinal=currentMember?.memberId||currentMember?.id;
+  const myVisitKeysFinal=new Set(allVisits.map(v=>v.id));
+  // batchIdごとに他visitKeyの名前をまとめる
+  const batchToOtherNames={};
+  // allMembersMapに登録されているvisit_*からbatchを逆引き
+  allOrders.forEach(o=>{
+    if(!o.batchId||myVisitKeysFinal.has(o.visitKey||o.visitId))return;
+    const vk=o.visitKey||o.visitId;
+    const mid=allMembersMap['visit_'+vk];
+    const info=mid?allMembersMap[mid]:null;
+    const name=info?info.nickname:null;
+    if(!name||mid===myMidFinal)return;
+    if(!batchToOtherNames[o.batchId])batchToOtherNames[o.batchId]=[];
+    if(!batchToOtherNames[o.batchId].includes(name))batchToOtherNames[o.batchId].push(name);
+  });
+  // blindResultsからも補完
+  allBlindResults.forEach(r=>{
+    if(!r.batchId||r.customerId===myMidFinal)return;
+    const mid=r.customerId;
+    const info=mid?allMembersMap[mid]:null;
+    const name=info?info.nickname:null;
+    if(!name)return;
+    if(!batchToOtherNames[r.batchId])batchToOtherNames[r.batchId]=[];
+    if(!batchToOtherNames[r.batchId].includes(name))batchToOtherNames[r.batchId].push(name);
+  });
+  window._togetherMap=batchToOtherNames;
+
   showDebugBanner(issues);
 }
 
@@ -849,42 +878,10 @@ function buildBatchBlock(b,visitId){
     // batchId共通のordersで別visitKeyのものを探す
     const batchOrders=allOrders.filter(o=>o.batchId===b.batchId&&(o.visitKey!==visitId&&o.visitId!==visitId));
     const otherVisitKeys=[...new Set(batchOrders.map(o=>o.visitKey||o.visitId).filter(Boolean))];
-    // まず全batchの他visitKeyをallMembersMapから名前に変換
-    const myMidTG=currentMember?.memberId||currentMember?.id;
-    let togetherNames2=[];
-    if(otherVisitKeys.length){
-      togetherNames2=otherVisitKeys.map(vk=>{
-        const mid=allMembersMap['visit_'+vk];
-        const info=mid?allMembersMap[mid]:null;
-        return info?info.nickname:null;
-      }).filter(Boolean);
-    }
-    // blindResultsからも補完（ブラインド・非ブラインド両方）
-    if(b.batchId){
-      const batchOthers=allBlindResults.filter(r=>
-        r.batchId===b.batchId && r.customerId!==myMidTG
-      );
-      batchOthers.forEach(r=>{
-        const mid=r.customerId;
-        const info=mid?allMembersMap[mid]:null;
-        const name=info?info.nickname:null;
-        if(name&&!togetherNames2.includes(name))togetherNames2.push(name);
-      });
-      // allMembersMapのvisitKey経由も試みる
-      if(!togetherNames2.length && b.groups){
-        b.groups.forEach(gid=>{
-          const vkFromGroup=allBlindResults.find(r=>r.groupId===gid)?.visitKey;
-          if(vkFromGroup && vkFromGroup!==visitId){
-            const mid=allMembersMap['visit_'+vkFromGroup];
-            const info=mid?allMembersMap[mid]:null;
-            const name=info?info.nickname:null;
-            if(name&&!togetherNames2.includes(name))togetherNames2.push(name);
-          }
-        });
-      }
-    }
+    // _togetherMapから名前を取得（loadMyData完了後に構築済み）
+    const togetherNames2=(window._togetherMap||{})[b.batchId||b.groups[0]]||[];
     if(togetherNames2.length){
-      togetherLabel=`👥 ${[...new Set(togetherNames2)].join('、')}と一緒`;
+      togetherLabel=`👥 ${togetherNames2.join('、')}と一緒`;
     }
   }
 
@@ -920,14 +917,10 @@ function buildBatchBlock(b,visitId){
     :'';
 
   // 一緒に飲んだ人：「N人と一緒」クリックでポップアップ
-  const togetherNames=togetherLabel.replace('👥 ','').replace('と一緒','').split('、').filter(Boolean);
   const batchKey=esc(b.batchId||b.groups[0]||'');
-  const togetherChip=togetherNames.length
-    ?`<span class="og-together" onclick="event.stopPropagation();showTogetherPopup(event,'${batchKey}')">${togetherNames.length}人と一緒</span>`
+  const togetherChip=togetherNames2.length
+    ?`<span class="og-together" onclick="event.stopPropagation();showTogetherPopup(event,'${batchKey}')">${togetherNames2.length}人と一緒</span>`
     :'';
-  // ポップアップ用データを保存
-  if(togetherNames.length) window._togetherMap=window._togetherMap||{};
-  if(togetherNames.length) window._togetherMap[b.batchId||b.groups[0]]=togetherNames;
 
   return`<div class="order-group">
     <div class="og-header">
