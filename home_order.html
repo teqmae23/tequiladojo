@@ -583,8 +583,9 @@ async function init(){
 
 // ━━━ マスタ ━━━
 async function loadMasters(){
-  const [membSnap,blindSnap,bottleSnap,miscSnap,setSnap,otherSnap]=await Promise.all([
-    db.collection('members').get(),
+  const [membSnap_arr,blindSnap,bottleSnap,miscSnap,setSnap,otherSnap]=await Promise.all([
+    // publicProfilesとmembersを両方取得（移行期）
+    Promise.all([db.collection('publicProfiles').get(),db.collection('members').get()]),
     db.collection('blindMarks').get(),
     db.collection('bottleData').get(),
     db.collection('miscProducts').get(),
@@ -592,7 +593,15 @@ async function loadMasters(){
     db.collection('otherBottles').get()
   ]);
   allMembers={};
-  membSnap.forEach(d=>{allMembers[d.id]=d.data();});
+  // publicProfilesとmembersをマージ（publicProfiles優先）
+  const ppSnap2=membSnap_arr[0]; const mSnap2=membSnap_arr[1];
+  const ppMap2={};
+  ppSnap2.forEach(d=>{ppMap2[d.id]=d.data();});
+  mSnap2.forEach(d=>{
+    const m=d.data();
+    if(ppMap2[d.id]&&ppMap2[d.id].nickname) m.nickname=ppMap2[d.id].nickname;
+    allMembers[d.id]=m;
+  });
   blindMarks=[];
   blindSnap.forEach(d=>blindMarks.push({id:d.id,...d.data()}));
   blindMarks.sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));

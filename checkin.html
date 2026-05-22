@@ -532,7 +532,20 @@ g('btn-logout').addEventListener('click',function(){ auth.signOut(); });
 function loadAll(){
   // 現セッションのopenTime以降のvisitのみ対象
   Promise.all([
-    db.collection('members').get().then(function(s){ cache.members=s.docs.map(function(d){return Object.assign({id:d.id},d.data());}); }),
+    // publicProfilesとmembersを両方取得してマージ（移行期）
+    Promise.all([
+      db.collection('publicProfiles').get(),
+      db.collection('members').get()
+    ]).then(function(snaps){
+      var ppMap={};
+      snaps[0].docs.forEach(function(d){ ppMap[d.id]=d.data(); });
+      cache.members=snaps[1].docs.map(function(d){
+        var m=Object.assign({id:d.id},d.data());
+        // publicProfilesのnicknameで上書き（あれば）
+        if(ppMap[d.id]&&ppMap[d.id].nickname) m.nickname=ppMap[d.id].nickname;
+        return m;
+      });
+    }),
     db.collection('blindMarks').get().then(function(s){
       cache.blindMarks=s.docs.map(function(d){return Object.assign({id:d.id},d.data());});
       cache.blindMarks.sort(function(a,b){return (a.sortOrder||0)-(b.sortOrder||0);});
