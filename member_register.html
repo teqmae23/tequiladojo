@@ -1291,28 +1291,12 @@ function compressImage(file, maxW, maxH, quality){
   });
 }
 
-async function setImage(type, file){
-  var maxW = type==='icon' ? 200 : 800;
-  var maxH = type==='icon' ? 200 : 800;
-  var blob = await compressImage(file, maxW, maxH, 0.8);
-  if(!blob) return;
-  var isGif = file.type==='image/gif';
-  var compressed = isGif ? file : new File([blob], file.name||'image.jpg', {type:'image/jpeg'});
-  if(type==='icon') iconFile=compressed;
-  else photoFile=compressed;
-  var reader=new FileReader();
-  reader.onload=function(e){
-    g(type+'-preview').src=e.target.result;
-    g(type+'-clear').style.display='inline';
-  };
-  reader.readAsDataURL(compressed);
-}
-
+async 
 function previewImg(type){
   var fileEl=g(type+'-file');
   var file=fileEl.files[0];
   if(!file) return;
-  setImage(type, file);
+  handleIconFile(file);
 }
 
 function clearImg(type){
@@ -1338,7 +1322,7 @@ document.addEventListener('paste', function(e){
       var activeEl=document.activeElement;
       var type='icon';
       if(activeEl && (activeEl.id==='photo-drop' || (activeEl.closest && activeEl.closest('#photo-drop')))) type='photo';
-      setImage(type, file);
+      handleIconFile(file);
       break;
     }
   }
@@ -1352,7 +1336,7 @@ document.addEventListener('paste', function(e){
   area.addEventListener('drop',function(e){
     e.preventDefault(); area.style.borderColor='';
     var file=e.dataTransfer.files[0];
-    if(file && file.type.indexOf('image')!==-1) setImage(type, file);
+    if(file && file.type.indexOf('image')!==-1) handleIconFile(file);
   });
 });
 
@@ -1429,6 +1413,8 @@ async function saveProfile(){
   g('save-status').textContent='保存中...';
   try{
     var uid=currentUser.uid;
+    // 会員IDを先に確定（memberDoc.memberId優先、なければuid）
+    var saveMid=memberDoc&&memberDoc.memberId?memberDoc.memberId:uid;
     var updateData={
       name:name, nameKana:gv('f-kana')||null, nickname:gv('f-nick')||null,
       gender:gv('f-gender')||'男',
@@ -1442,6 +1428,7 @@ async function saveProfile(){
       visibility:parseInt(gv('f-visibility'))||0,
       email:currentUser.email,
       authUid:uid,
+      memberId:saveMid,
     };
     if(iconFile){
       var iExt=iconFile.ext||'jpg';
@@ -1449,8 +1436,6 @@ async function saveProfile(){
       updateData.iconUrl=await uploadImage(iconFile.blob||iconFile, iPath);
       iconFile=null;
     }
-    // memberDocから会員IDを取得（memberId優先、なければuid）
-    var saveMid=memberDoc&&memberDoc.memberId?memberDoc.memberId:uid;
     await db.collection('members').doc(saveMid).set(updateData,{merge:true});
     memberDoc=Object.assign(memberDoc||{},updateData);
     toast('プロフィールを保存しました');
