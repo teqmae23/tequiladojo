@@ -6,7 +6,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>テキーラ道場 — 会員登録</title>
 
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js">// クロッパーイベント初期化
+document.addEventListener('DOMContentLoaded',function(){ Cropper.initEvents(); });
+</script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
@@ -368,6 +370,33 @@ select.fi{cursor:pointer;}
       </div>
     </div>
 
+    <!-- アイコン画像 -->
+    <div class="section">
+      <div class="section-title">アイコン画像</div>
+      <div style="display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
+        <!-- プレビュー -->
+        <div id="icon-preview-wrap" style="width:96px;height:96px;border-radius:50%;overflow:hidden;border:2px solid var(--border2);background:var(--cream2);flex-shrink:0;position:relative">
+          <img id="icon-preview" style="width:100%;height:100%;object-fit:cover" src="">
+        </div>
+        <!-- 操作 -->
+        <div style="flex:1;min-width:200px">
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+            <label style="display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:12px;cursor:pointer;background:var(--white)">
+              📁 ファイルを選択
+              <input type="file" id="icon-file-input" accept="image/jpeg,image/png,image/gif" style="display:none" onchange="handleIconFile(this.files[0])">
+            </label>
+            <button onclick="openIconCamera()" style="padding:7px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:12px;background:var(--white);cursor:pointer">📷 カメラ</button>
+            <label style="display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:12px;cursor:pointer;background:var(--white)" title="クリックしてからCtrl+V / Cmd+Vで貼り付け" id="icon-paste-btn" tabindex="0">
+              📋 貼り付け
+            </label>
+            <button id="icon-clear-btn" onclick="clearIconImage()" style="display:none;padding:7px 12px;border:1px solid var(--red);border-radius:var(--r);font-size:12px;background:var(--white);cursor:pointer;color:var(--red)">✕ 削除</button>
+          </div>
+          <div style="font-size:11px;color:var(--ink3)">JPEG / PNG / GIF対応。クリップボードからの貼り付けも可。</div>
+          <input type="file" id="icon-camera-input" accept="image/*" capture="environment" style="display:none" onchange="handleIconFile(this.files[0])">
+        </div>
+      </div>
+    </div>
+
     <!-- 基本情報 -->
     <div class="section">
       <div class="section-title">基本情報</div>
@@ -499,9 +528,186 @@ select.fi{cursor:pointer;}
   </div>
 </div>
 
+<!-- クロッパーモーダル -->
+<div id="crop-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:500;flex-direction:column;align-items:center;justify-content:center;gap:12px">
+  <div style="color:#fff;font-size:13px;opacity:.7">ドラッグで移動・スクロール/ピンチでズーム</div>
+  <canvas id="crop-canvas" style="border-radius:8px;cursor:grab;max-width:100%;touch-action:none"></canvas>
+  <div style="display:flex;gap:10px">
+    <button id="btn-crop-cancel" style="padding:10px 24px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);border-radius:8px;color:#fff;font-size:14px;cursor:pointer">キャンセル</button>
+    <button id="btn-crop-ok" style="padding:10px 24px;background:#c8921e;border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:600;cursor:pointer">この範囲で決定</button>
+  </div>
+</div>
+
 <div id="toasts"></div>
 
 <script>
+// ════════════════════════════════════════════════════════
+// CROPPER — インタラクティブ画像クロッパー
+// 使い方:
+//   Cropper.open(file, {shape:'circle'|'rect', onCrop: function(blob, ext){}})
+// ════════════════════════════════════════════════════════
+var Cropper = (function(){
+  var _shape='circle', _onCrop=null;
+  var _img=null, _scale=1, _ox=0, _oy=0;
+  var _dragging=false, _lastX=0, _lastY=0;
+  var _pinchDist=0;
+
+  function _getExt(file){
+    var t=file.type||'';
+    if(t.includes('png'))return'png';
+    if(t.includes('gif'))return'gif';
+    return'jpg';
+  }
+
+  function _draw(){
+    var canvas=document.getElementById('crop-canvas');
+    if(!canvas||!_img)return;
+    var ctx=canvas.getContext('2d');
+    var W=canvas.width, H=canvas.height;
+    ctx.clearRect(0,0,W,H);
+
+    // 画像描画
+    ctx.save();
+    ctx.translate(W/2+_ox, H/2+_oy);
+    ctx.scale(_scale,_scale);
+    ctx.drawImage(_img,-_img.naturalWidth/2,-_img.naturalHeight/2);
+    ctx.restore();
+
+    // オーバーレイ
+    ctx.fillStyle='rgba(0,0,0,.5)';
+    if(_shape==='circle'){
+      ctx.fillRect(0,0,W,H);
+      ctx.globalCompositeOperation='destination-out';
+      ctx.beginPath();
+      var r=Math.min(W,H)/2-8;
+      ctx.arc(W/2,H/2,r,0,Math.PI*2);
+      ctx.fill();
+      ctx.globalCompositeOperation='source-over';
+      ctx.strokeStyle='rgba(255,255,255,.8)';
+      ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.arc(W/2,H/2,r,0,Math.PI*2);
+      ctx.stroke();
+    } else {
+      var pw=W-16, ph=H-16;
+      ctx.fillRect(0,0,W,H);
+      ctx.globalCompositeOperation='destination-out';
+      ctx.fillRect(8,8,pw,ph);
+      ctx.globalCompositeOperation='source-over';
+      ctx.strokeStyle='rgba(255,255,255,.8)';
+      ctx.lineWidth=2;
+      ctx.strokeRect(8,8,pw,ph);
+    }
+  }
+
+  function _crop(){
+    var canvas=document.getElementById('crop-canvas');
+    if(!canvas||!_img)return;
+    var W=canvas.width, H=canvas.height;
+    var size=Math.min(W,H)-16;
+    var out=document.createElement('canvas');
+    out.width=size; out.height=size;
+    var ctx=out.getContext('2d');
+    if(_shape==='circle'){
+      ctx.beginPath();
+      ctx.arc(size/2,size/2,size/2,0,Math.PI*2);
+      ctx.clip();
+    }
+    // 切り抜き範囲
+    var cx=W/2+_ox, cy=H/2+_oy;
+    var sx=cx-size/2/_scale, sy=cy-size/2/_scale;
+    var sw=size/_scale, sh=size/_scale;
+    var iw=_img.naturalWidth, ih=_img.naturalHeight;
+    var ix=iw/2-(cx-W/2)/_scale, iy=ih/2-(cy-H/2)/_scale;
+    var startX=ix-size/2/_scale, startY=iy-size/2/_scale;
+    ctx.drawImage(_img, startX, startY, sw, sh, 0, 0, size, size);
+    var ext=document.getElementById('crop-canvas').dataset.ext||'jpg';
+    var mime=ext==='png'?'image/png':ext==='gif'?'image/gif':'image/jpeg';
+    out.toBlob(function(blob){ if(_onCrop)_onCrop(blob,ext); close(); }, mime, 0.92);
+  }
+
+  function close(){
+    var m=document.getElementById('crop-modal');
+    if(m) m.style.display='none';
+    _img=null; _scale=1; _ox=0; _oy=0;
+  }
+
+  function open(file, opts){
+    _shape=(opts&&opts.shape)||'circle';
+    _onCrop=(opts&&opts.onCrop)||null;
+    var reader=new FileReader();
+    reader.onload=function(e){
+      var img=new Image();
+      img.onload=function(){
+        _img=img; _scale=1; _ox=0; _oy=0;
+        var canvas=document.getElementById('crop-canvas');
+        var ext=_getExt(file);
+        canvas.dataset.ext=ext;
+        // キャンバスサイズ設定
+        var maxW=Math.min(window.innerWidth-40, 400);
+        canvas.width=maxW; canvas.height=_shape==='circle'?maxW:Math.round(maxW*0.75);
+        // 初期スケール（画像がキャンバスに収まるように）
+        _scale=Math.max(canvas.width/img.naturalWidth, canvas.height/img.naturalHeight)*1.05;
+        _draw();
+        document.getElementById('crop-modal').style.display='flex';
+      };
+      img.src=e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // イベント設定（DOM構築後に呼ぶ）
+  function initEvents(){
+    var canvas=document.getElementById('crop-canvas');
+    if(!canvas)return;
+
+    // マウス
+    canvas.addEventListener('mousedown',function(e){
+      _dragging=true; _lastX=e.clientX; _lastY=e.clientY;
+    });
+    document.addEventListener('mousemove',function(e){
+      if(!_dragging)return;
+      _ox+=e.clientX-_lastX; _oy+=e.clientY-_lastY;
+      _lastX=e.clientX; _lastY=e.clientY; _draw();
+    });
+    document.addEventListener('mouseup',function(){ _dragging=false; });
+    canvas.addEventListener('wheel',function(e){
+      e.preventDefault();
+      _scale=Math.max(0.2,Math.min(10,_scale*(e.deltaY<0?1.1:0.9)));
+      _draw();
+    },{passive:false});
+
+    // タッチ
+    canvas.addEventListener('touchstart',function(e){
+      if(e.touches.length===1){
+        _dragging=true; _lastX=e.touches[0].clientX; _lastY=e.touches[0].clientY;
+      } else if(e.touches.length===2){
+        _dragging=false;
+        _pinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+      }
+      e.preventDefault();
+    },{passive:false});
+    canvas.addEventListener('touchmove',function(e){
+      if(e.touches.length===1&&_dragging){
+        _ox+=e.touches[0].clientX-_lastX; _oy+=e.touches[0].clientY-_lastY;
+        _lastX=e.touches[0].clientX; _lastY=e.touches[0].clientY; _draw();
+      } else if(e.touches.length===2){
+        var d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+        _scale=Math.max(0.2,Math.min(10,_scale*(d/_pinchDist)));
+        _pinchDist=d; _draw();
+      }
+      e.preventDefault();
+    },{passive:false});
+    canvas.addEventListener('touchend',function(){ _dragging=false; });
+
+    document.getElementById('btn-crop-ok').addEventListener('click',_crop);
+    document.getElementById('btn-crop-cancel').addEventListener('click',close);
+  }
+
+  return {open:open, close:close, initEvents:initEvents};
+})();
+
+
 if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
 var auth    = firebase.auth();
 var db      = firebase.firestore();
@@ -1029,7 +1235,9 @@ function fillForm(d){
   var sv2=g('stat-tequila'); if(sv2) sv2.innerHTML=(d?d.totalTequila||0:0)+'<span class="stat-unit">ml</span>';
   var sv3=g('stat-rank'); if(sv3) sv3.textContent=d&&d.rank?d.rank:'—';
   var sv4=g('stat-amount'); if(sv4) sv4.textContent='¥'+(d?d.totalAmount||0:0).toLocaleString();
-  var iconPrev=g('icon-preview'); if(iconPrev) iconPrev.src=(d&&d.iconUrl)?d.iconUrl:DEFAULT_ICON_SVG;
+  var iconPrev=g('icon-preview');
+  if(iconPrev){ iconPrev.src=(d&&d.iconUrl)?d.iconUrl:''; iconPrev.style.display=(d&&d.iconUrl)?'block':'none'; }
+  var iconClrBtn=g('icon-clear-btn'); if(iconClrBtn) iconClrBtn.style.display=(d&&d.iconUrl)?'inline-flex':'none';
   var iconClr=g('icon-clear'); if(iconClr&&d&&d.iconUrl) iconClr.style.display='inline';
   var photoPrev=g('photo-preview'); if(photoPrev) photoPrev.src=(d&&d.photoUrl)?d.photoUrl:DEFAULT_PHOTO_SVG;
   var photoClr=g('photo-clear'); if(photoClr&&d&&d.photoUrl) photoClr.style.display='inline';
@@ -1133,6 +1341,41 @@ document.addEventListener('paste', function(e){
   });
 });
 
+// ─── アイコン画像 ───────────────────────────────────────────
+function handleIconFile(file){
+  if(!file)return;
+  Cropper.open(file,{shape:'circle',onCrop:function(blob,ext){
+    iconFile={blob:blob,ext:ext};
+    var url=URL.createObjectURL(blob);
+    var p=g('icon-preview'); if(p){p.src=url;p.style.display='block';}
+    var c=g('icon-clear-btn'); if(c) c.style.display='inline-flex';
+  }});
+}
+
+function openIconCamera(){
+  var inp=g('icon-camera-input'); if(inp) inp.click();
+}
+
+function clearIconImage(){
+  iconFile=null;
+  var p=g('icon-preview');
+  if(p){ p.src=memberDoc&&memberDoc.iconUrl?memberDoc.iconUrl:''; }
+  var c=g('icon-clear-btn'); if(c) c.style.display='none';
+}
+
+// ─── クリップボード貼り付け ──────────────────────────────────
+document.addEventListener('paste',function(e){
+  var items=e.clipboardData&&e.clipboardData.items;
+  if(!items)return;
+  for(var i=0;i<items.length;i++){
+    if(items[i].type.indexOf('image')!==-1){
+      var file=items[i].getAsFile();
+      handleIconFile(file);
+      break;
+    }
+  }
+});
+
 async function uploadImage(file, path){
   var ref=storage.ref(path);
   await ref.put(file);
@@ -1162,14 +1405,14 @@ async function saveProfile(){
       authUid:uid,
     };
     if(iconFile){
-      updateData.iconUrl=await uploadImage(iconFile,'member-images/'+uid+'/icon');
+      var iExt=iconFile.ext||'jpg';
+      var iPath='members/'+saveMid+'/icon.'+iExt;
+      updateData.iconUrl=await uploadImage(iconFile.blob||iconFile, iPath);
       iconFile=null;
     }
-    if(photoFile){
-      updateData.photoUrl=await uploadImage(photoFile,'member-images/'+uid+'/photo');
-      photoFile=null;
-    }
-    await db.collection('members').doc(uid).set(updateData,{merge:true});
+    // memberDocから会員IDを取得（memberId優先、なければuid）
+    var saveMid=memberDoc&&memberDoc.memberId?memberDoc.memberId:uid;
+    await db.collection('members').doc(saveMid).set(updateData,{merge:true});
     memberDoc=Object.assign(memberDoc||{},updateData);
     toast('プロフィールを保存しました');
     g('save-status').textContent='保存済み';

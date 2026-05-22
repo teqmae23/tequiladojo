@@ -10,6 +10,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
 
 <script>
 var FIREBASE_CONFIG = {
@@ -228,6 +229,16 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 </div><!-- /app -->
 
 <!-- 顧客モーダル -->
+<!-- クロッパーモーダル -->
+<div id="crop-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:1100;flex-direction:column;align-items:center;justify-content:center;gap:12px">
+  <div style="color:#fff;font-size:13px;opacity:.7">ドラッグで移動・スクロール/ピンチでズーム</div>
+  <canvas id="crop-canvas" style="border-radius:8px;cursor:grab;max-width:100%;touch-action:none"></canvas>
+  <div style="display:flex;gap:10px">
+    <button id="btn-crop-cancel" style="padding:10px 24px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);border-radius:8px;color:#fff;font-size:14px;cursor:pointer">キャンセル</button>
+    <button id="btn-crop-ok" style="padding:10px 24px;background:#c8921e;border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:600;cursor:pointer">この範囲で決定</button>
+  </div>
+</div>
+
 <div class="mbg" id="m-member">
   <div class="modal modal-lg">
     <div class="mhead"><div class="mtitle" id="mt-member">顧客登録</div><button class="mx" data-close="m-member">✕</button></div>
@@ -276,6 +287,34 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       </div>
       <div class="fg"><label class="fl">備考</label><textarea class="fi" id="mem-note" rows="3" style="resize:vertical;font-size:13px" placeholder="自由記入..."></textarea></div>
     </div>
+    <!-- アイコン画像 -->
+    <div class="fg" style="border-top:1px solid var(--border);padding-top:10px">
+      <label class="fl" style="font-weight:600;margin-bottom:6px">アイコン画像</label>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="width:64px;height:64px;border-radius:50%;overflow:hidden;border:2px solid var(--border2);background:var(--cream2);flex-shrink:0">
+          <img id="m-icon-preview" style="width:100%;height:100%;object-fit:cover;display:none" src="">
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          <label style="display:inline-flex;align-items:center;padding:5px 10px;border:1px solid var(--border2);border-radius:var(--r);font-size:11px;cursor:pointer;background:var(--white)">📁<input type="file" id="m-icon-file-input" accept="image/jpeg,image/png,image/gif" style="display:none" onchange="handleMemberIcon(this.files[0])"></label>
+          <label style="display:inline-flex;align-items:center;padding:5px 10px;border:1px solid var(--border2);border-radius:var(--r);font-size:11px;cursor:pointer;background:var(--white)">📷<input type="file" id="m-icon-camera-input" accept="image/*" capture="environment" style="display:none" onchange="handleMemberIcon(this.files[0])"></label>
+          <button id="m-icon-clear-btn" onclick="clearMemberIcon()" style="display:none;padding:5px 10px;border:1px solid var(--red);border-radius:var(--r);font-size:11px;background:var(--white);cursor:pointer;color:var(--red)">✕</button>
+        </div>
+      </div>
+    </div>
+    <!-- 写真（owner専用） -->
+    <div class="fg" id="m-photo-section" style="border-top:1px solid var(--border);padding-top:10px;display:none">
+      <label class="fl" style="font-weight:600;margin-bottom:4px">写真 <span style="font-size:10px;color:var(--red)">🔒 OWNER</span></label>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="width:96px;height:72px;border-radius:var(--r);overflow:hidden;border:2px solid var(--border2);background:var(--cream2);flex-shrink:0">
+          <img id="m-photo-preview" style="width:100%;height:100%;object-fit:cover;display:none" src="">
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          <label style="display:inline-flex;align-items:center;padding:5px 10px;border:1px solid var(--border2);border-radius:var(--r);font-size:11px;cursor:pointer;background:var(--white)">📁<input type="file" id="m-photo-file-input" accept="image/jpeg,image/png,image/gif" style="display:none" onchange="handleMemberPhoto(this.files[0])"></label>
+          <label style="display:inline-flex;align-items:center;padding:5px 10px;border:1px solid var(--border2);border-radius:var(--r);font-size:11px;cursor:pointer;background:var(--white)">📷<input type="file" id="m-photo-camera-input" accept="image/*" capture="environment" style="display:none" onchange="handleMemberPhoto(this.files[0])"></label>
+          <button id="m-photo-clear-btn" onclick="clearMemberPhoto()" style="display:none;padding:5px 10px;border:1px solid var(--red);border-radius:var(--r);font-size:11px;background:var(--white);cursor:pointer;color:var(--red)">✕</button>
+        </div>
+      </div>
+    </div>
     <div class="mfoot"><button class="btn bg2" data-close="m-member">キャンセル</button><button class="btn bp" id="btn-save-member">保存</button></div>
   </div>
 </div>
@@ -317,6 +356,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 <script>
 // Firebase初期化
 if (!firebase.apps.length) { firebase.initializeApp(FIREBASE_CONFIG); }
+var storage = firebase.storage();
 var auth = firebase.auth();
 var db   = firebase.firestore();
 
@@ -347,6 +387,9 @@ document.addEventListener("click",function(e){
 
 // ── キャッシュ ───────────────────────────────────────────────────
 var cache = { members:[], layouts:[] };
+var _currentRole = null;
+var _memberIconFile = null;
+var _memberPhotoFile = null;
 var editId = { member:null, layout:null };
 
 // ── 認証 ────────────────────────────────────────────────────────
@@ -387,6 +430,211 @@ document.querySelectorAll(".tab").forEach(function(tab){
 });
 
 // ── データロード ─────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════
+// CROPPER — インタラクティブ画像クロッパー
+// 使い方:
+//   Cropper.open(file, {shape:'circle'|'rect', onCrop: function(blob, ext){}})
+// ════════════════════════════════════════════════════════
+var Cropper = (function(){
+  var _shape='circle', _onCrop=null;
+  var _img=null, _scale=1, _ox=0, _oy=0;
+  var _dragging=false, _lastX=0, _lastY=0;
+  var _pinchDist=0;
+
+  function _getExt(file){
+    var t=file.type||'';
+    if(t.includes('png'))return'png';
+    if(t.includes('gif'))return'gif';
+    return'jpg';
+  }
+
+  function _draw(){
+    var canvas=document.getElementById('crop-canvas');
+    if(!canvas||!_img)return;
+    var ctx=canvas.getContext('2d');
+    var W=canvas.width, H=canvas.height;
+    ctx.clearRect(0,0,W,H);
+
+    // 画像描画
+    ctx.save();
+    ctx.translate(W/2+_ox, H/2+_oy);
+    ctx.scale(_scale,_scale);
+    ctx.drawImage(_img,-_img.naturalWidth/2,-_img.naturalHeight/2);
+    ctx.restore();
+
+    // オーバーレイ
+    ctx.fillStyle='rgba(0,0,0,.5)';
+    if(_shape==='circle'){
+      ctx.fillRect(0,0,W,H);
+      ctx.globalCompositeOperation='destination-out';
+      ctx.beginPath();
+      var r=Math.min(W,H)/2-8;
+      ctx.arc(W/2,H/2,r,0,Math.PI*2);
+      ctx.fill();
+      ctx.globalCompositeOperation='source-over';
+      ctx.strokeStyle='rgba(255,255,255,.8)';
+      ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.arc(W/2,H/2,r,0,Math.PI*2);
+      ctx.stroke();
+    } else {
+      var pw=W-16, ph=H-16;
+      ctx.fillRect(0,0,W,H);
+      ctx.globalCompositeOperation='destination-out';
+      ctx.fillRect(8,8,pw,ph);
+      ctx.globalCompositeOperation='source-over';
+      ctx.strokeStyle='rgba(255,255,255,.8)';
+      ctx.lineWidth=2;
+      ctx.strokeRect(8,8,pw,ph);
+    }
+  }
+
+  function _crop(){
+    var canvas=document.getElementById('crop-canvas');
+    if(!canvas||!_img)return;
+    var W=canvas.width, H=canvas.height;
+    var size=Math.min(W,H)-16;
+    var out=document.createElement('canvas');
+    out.width=size; out.height=size;
+    var ctx=out.getContext('2d');
+    if(_shape==='circle'){
+      ctx.beginPath();
+      ctx.arc(size/2,size/2,size/2,0,Math.PI*2);
+      ctx.clip();
+    }
+    // 切り抜き範囲
+    var cx=W/2+_ox, cy=H/2+_oy;
+    var sx=cx-size/2/_scale, sy=cy-size/2/_scale;
+    var sw=size/_scale, sh=size/_scale;
+    var iw=_img.naturalWidth, ih=_img.naturalHeight;
+    var ix=iw/2-(cx-W/2)/_scale, iy=ih/2-(cy-H/2)/_scale;
+    var startX=ix-size/2/_scale, startY=iy-size/2/_scale;
+    ctx.drawImage(_img, startX, startY, sw, sh, 0, 0, size, size);
+    var ext=document.getElementById('crop-canvas').dataset.ext||'jpg';
+    var mime=ext==='png'?'image/png':ext==='gif'?'image/gif':'image/jpeg';
+    out.toBlob(function(blob){ if(_onCrop)_onCrop(blob,ext); close(); }, mime, 0.92);
+  }
+
+  function close(){
+    var m=document.getElementById('crop-modal');
+    if(m) m.style.display='none';
+    _img=null; _scale=1; _ox=0; _oy=0;
+  }
+
+  function open(file, opts){
+    _shape=(opts&&opts.shape)||'circle';
+    _onCrop=(opts&&opts.onCrop)||null;
+    var reader=new FileReader();
+    reader.onload=function(e){
+      var img=new Image();
+      img.onload=function(){
+        _img=img; _scale=1; _ox=0; _oy=0;
+        var canvas=document.getElementById('crop-canvas');
+        var ext=_getExt(file);
+        canvas.dataset.ext=ext;
+        // キャンバスサイズ設定
+        var maxW=Math.min(window.innerWidth-40, 400);
+        canvas.width=maxW; canvas.height=_shape==='circle'?maxW:Math.round(maxW*0.75);
+        // 初期スケール（画像がキャンバスに収まるように）
+        _scale=Math.max(canvas.width/img.naturalWidth, canvas.height/img.naturalHeight)*1.05;
+        _draw();
+        document.getElementById('crop-modal').style.display='flex';
+      };
+      img.src=e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // イベント設定（DOM構築後に呼ぶ）
+  function initEvents(){
+    var canvas=document.getElementById('crop-canvas');
+    if(!canvas)return;
+
+    // マウス
+    canvas.addEventListener('mousedown',function(e){
+      _dragging=true; _lastX=e.clientX; _lastY=e.clientY;
+    });
+    document.addEventListener('mousemove',function(e){
+      if(!_dragging)return;
+      _ox+=e.clientX-_lastX; _oy+=e.clientY-_lastY;
+      _lastX=e.clientX; _lastY=e.clientY; _draw();
+    });
+    document.addEventListener('mouseup',function(){ _dragging=false; });
+    canvas.addEventListener('wheel',function(e){
+      e.preventDefault();
+      _scale=Math.max(0.2,Math.min(10,_scale*(e.deltaY<0?1.1:0.9)));
+      _draw();
+    },{passive:false});
+
+    // タッチ
+    canvas.addEventListener('touchstart',function(e){
+      if(e.touches.length===1){
+        _dragging=true; _lastX=e.touches[0].clientX; _lastY=e.touches[0].clientY;
+      } else if(e.touches.length===2){
+        _dragging=false;
+        _pinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+      }
+      e.preventDefault();
+    },{passive:false});
+    canvas.addEventListener('touchmove',function(e){
+      if(e.touches.length===1&&_dragging){
+        _ox+=e.touches[0].clientX-_lastX; _oy+=e.touches[0].clientY-_lastY;
+        _lastX=e.touches[0].clientX; _lastY=e.touches[0].clientY; _draw();
+      } else if(e.touches.length===2){
+        var d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+        _scale=Math.max(0.2,Math.min(10,_scale*(d/_pinchDist)));
+        _pinchDist=d; _draw();
+      }
+      e.preventDefault();
+    },{passive:false});
+    canvas.addEventListener('touchend',function(){ _dragging=false; });
+
+    document.getElementById('btn-crop-ok').addEventListener('click',_crop);
+    document.getElementById('btn-crop-cancel').addEventListener('click',close);
+  }
+
+  return {open:open, close:close, initEvents:initEvents};
+})();
+
+
+// ─── 会員画像処理 ──────────────────────────────────────────────
+function handleMemberIcon(file){
+  if(!file)return;
+  Cropper.open(file,{shape:'circle',onCrop:function(blob,ext){
+    _memberIconFile={blob:blob,ext:ext};
+    var p=g('m-icon-preview'); if(p){p.src=URL.createObjectURL(blob);p.style.display='block';}
+    var c=g('m-icon-clear-btn'); if(c) c.style.display='inline-flex';
+  }});
+}
+function clearMemberIcon(){
+  _memberIconFile=null;
+  var p=g('m-icon-preview'); if(p){p.src='';p.style.display='none';}
+  var c=g('m-icon-clear-btn'); if(c) c.style.display='none';
+}
+function handleMemberPhoto(file){
+  if(!file)return;
+  Cropper.open(file,{shape:'rect',onCrop:function(blob,ext){
+    _memberPhotoFile={blob:blob,ext:ext};
+    var p=g('m-photo-preview'); if(p){p.src=URL.createObjectURL(blob);p.style.display='block';}
+    var c=g('m-photo-clear-btn'); if(c) c.style.display='inline-flex';
+  }});
+}
+function clearMemberPhoto(){
+  _memberPhotoFile=null;
+  var p=g('m-photo-preview'); if(p){p.src='';p.style.display='none';}
+  var c=g('m-photo-clear-btn'); if(c) c.style.display='none';
+}
+async function uploadMemberImage(blob,path){
+  var ref=storage.ref(path); await ref.put(blob); return await ref.getDownloadURL();
+}
+document.addEventListener('paste',function(e){
+  if(!g('m-member').classList.contains('open'))return;
+  var items=e.clipboardData&&e.clipboardData.items; if(!items)return;
+  for(var i=0;i<items.length;i++){
+    if(items[i].type.indexOf('image')!==-1){handleMemberIcon(items[i].getAsFile());break;}
+  }
+});
+
 function loadAll(){
   loadMembers();
   loadLayouts();
@@ -560,7 +808,7 @@ function findNextMemberId(conflictId){
   return null;
 }
 
-g("btn-save-member").addEventListener("click",function(){
+g("btn-save-member").addEventListener("click",async function(){
   var id=gv("mem-id"), name=gv("mem-name");
   // 必須チェック関数
   function requireField(elId, label){
@@ -596,8 +844,23 @@ g("btn-save-member").addEventListener("click",function(){
     } else { return; }
   }
   var noteEl=g("mem-note");
+  // 画像アップロード（保存前）
+  if(_memberIconFile){
+    var iExt=_memberIconFile.ext||'jpg';
+    var iUrl=await uploadMemberImage(_memberIconFile.blob,'members/'+id+'/icon.'+iExt);
+    _memberIconFile=null;
+    // saveObjにiconUrlを含める
+  }
+  if(_memberPhotoFile&&_currentRole==='owner'){
+    var pExt=_memberPhotoFile.ext||'jpg';
+    var pUrl=await uploadMemberImage(_memberPhotoFile.blob,'members/'+id+'/photo.'+pExt);
+    _memberPhotoFile=null;
+  }
   db.collection("members").doc(id).set({
-    memberId:id, name:name, nameKana:gv("mem-kana")||null, nickname:gv("mem-nick")||null,
+    memberId:id,
+    iconUrl:(typeof iUrl!=="undefined"?iUrl:(r?r.iconUrl||null:null)),
+    photoUrl:(_currentRole==="owner"&&typeof pUrl!=="undefined"?pUrl:(r?r.photoUrl||null:null)),
+    name:name, nameKana:gv("mem-kana")||null, nickname:gv("mem-nick")||null,
     gender:gv("mem-gender")||"男", registeredAt:gv("mem-reg")||todayDate(), birthday:gv("mem-birth")||null,
     prefecture:gv("mem-pref")||null, address:gv("mem-addr")||null, phone:gv("mem-tel")||null,
     twitterId:gv("mem-tw")||null, instagramId:gv("mem-ig")||null, facebookId:gv("mem-fb")||null,
@@ -680,6 +943,7 @@ g("btn-save-layout").addEventListener("click",function(){
     .then(function(){ toast(editId.layout?"レイアウトを更新しました":"レイアウトを登録しました"); closeM("m-layout"); loadLayouts(); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
+document.addEventListener('DOMContentLoaded',function(){ Cropper.initEvents(); });
 </script>
 </body>
 </html>
