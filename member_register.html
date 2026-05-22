@@ -6,7 +6,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>テキーラ道場 — 会員登録</title>
 
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js">// クロッパーイベント初期化
+document.addEventListener('DOMContentLoaded',function(){ Cropper.initEvents(); });
+</script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
@@ -1152,16 +1154,29 @@ async function loadProfile(){
     await currentUser.reload();
     var memberData=null;
 
-    var snap=await db.collection('members').doc(currentUser.uid).get();
-    if(snap.exists){
-      memberData=snap.data();
-    } else {
-      var q=await db.collection('members').where('authUid','==',currentUser.uid).limit(1).get();
-      if(!q.empty){
-        memberData=q.docs[0].data();
-      } else if(currentUser.email&&currentUser.email.indexOf(VIRTUAL_DOMAIN)<0){
-        var q2=await db.collection('members').where('email','==',currentUser.email).limit(1).get();
-        if(!q2.empty) memberData=q2.docs[0].data();
+    var authEmail=currentUser.email||'';
+    // 1. 仮想メール → 会員IDを直接取得
+    if(authEmail.indexOf(VIRTUAL_DOMAIN)>=0){
+      var virtualMid=authEmail.replace(VIRTUAL_DOMAIN,'');
+      var snap0=await db.collection('members').doc(virtualMid).get();
+      if(snap0.exists) memberData=snap0.data();
+    }
+    // 2. 実メール → memberIndexで逆引き
+    if(!memberData&&authEmail&&authEmail.indexOf(VIRTUAL_DOMAIN)<0){
+      var idxSnap=await db.collection('memberIndex').where('email','==',authEmail).limit(1).get();
+      if(!idxSnap.empty){
+        var midFromIdx=idxSnap.docs[0].id;
+        var snap1=await db.collection('members').doc(midFromIdx).get();
+        if(snap1.exists) memberData=snap1.data();
+      }
+    }
+    // 3. authUidで検索
+    if(!memberData){
+      var snap2=await db.collection('members').doc(currentUser.uid).get();
+      if(snap2.exists){ memberData=snap2.data(); }
+      else{
+        var q=await db.collection('members').where('authUid','==',currentUser.uid).limit(1).get();
+        if(!q.empty) memberData=q.docs[0].data();
       }
     }
     memberDoc=memberData;
@@ -1186,14 +1201,12 @@ async function loadProfile(){
 function fillForm(d){
   sv('f-name',    d?d.name||'':'');
   sv('f-kana',    d?d.nameKana||'':'');
-  // 会員ID表示（fillForm冒頭で確実に設定）
-  var _mid=d&&(d.memberId||d.id)||'—';
   var pmid=g('profile-member-id');
-  if(pmid) pmid.textContent=_mid!=='—'?_mid:'—';
+  if(pmid) pmid.textContent=d&&d.memberId?d.memberId:'—';
   var hmid=g('header-member-id');
-  if(hmid){
-    hmid.textContent=_mid!=='—'?('会員番号: '+_mid):'';
-    hmid.style.display=_mid!=='—'?'block':'none';
+  if(hmid&&d&&d.memberId){
+    hmid.textContent='会員番号: '+d.memberId;
+    hmid.style.display='block';
   }
   var ped=g('profile-email-disp');
   if(ped){
@@ -1291,6 +1304,7 @@ function compressImage(file, maxW, maxH, quality){
   });
 }
 
+async 
 function previewImg(type){
   var fileEl=g(type+'-file');
   var file=fileEl.files[0];
@@ -1565,7 +1579,6 @@ async function doChangePassword(){
 
 document.getElementById('login-pass').addEventListener('keydown',function(e){ if(e.key==='Enter') doLogin(); });
 document.getElementById('reg-pass2').addEventListener('keydown',function(e){ if(e.key==='Enter') doRegister(); });
-Cropper.initEvents();
 </script>
 </body>
 </html>
