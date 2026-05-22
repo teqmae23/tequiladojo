@@ -62,6 +62,7 @@ button,input,select,textarea{font-family:var(--sans)}
 .ltab.active{color:var(--gold-d);border-bottom-color:var(--gold-d);}
 .tab-panel{display:none;}.tab-panel.active{display:block;}
 .fi{width:100%;padding:10px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream);color:var(--ink);outline:none;transition:.15s;}
+.fi.has-value{background:#eef4fd;border-color:#90b8e8;}
 .fi:focus{border-color:var(--gold);}
 .fl{display:block;font-size:10px;font-weight:500;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px;margin-top:14px;}
 .fl:first-child{margin-top:0;}
@@ -386,9 +387,11 @@ select.fi{cursor:pointer;}
               <input type="file" id="icon-file-input" accept="image/jpeg,image/png,image/gif" style="display:none" onchange="handleIconFile(this.files[0])">
             </label>
             <button onclick="openIconCamera()" style="padding:7px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:12px;background:var(--white);cursor:pointer">📷 カメラ</button>
-            <label style="display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:12px;cursor:pointer;background:var(--white)" title="クリックしてからCtrl+V / Cmd+Vで貼り付け" id="icon-paste-btn" tabindex="0">
-              📋 貼り付け
-            </label>
+            <button type="button" onclick="activatePasteMode()" id="icon-paste-btn" style="display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:12px;cursor:pointer;background:var(--white)">
+              📋 Ctrl+V で貼り付け
+            </button>
+            <!-- 貼り付け受け取り用の透明textarea -->
+            <textarea id="paste-receiver" style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0" readonly></textarea>
             <button id="icon-clear-btn" onclick="clearIconImage()" style="display:none;padding:7px 12px;border:1px solid var(--red);border-radius:var(--r);font-size:12px;background:var(--white);cursor:pointer;color:var(--red)">✕ 削除</button>
           </div>
           <div style="font-size:11px;color:var(--ink3)">JPEG / PNG / GIF対応。クリップボードからの貼り付けも可。</div>
@@ -1238,6 +1241,18 @@ function fillForm(d){
   var iconPrev=g('icon-preview');
   if(iconPrev){ iconPrev.src=(d&&d.iconUrl)?d.iconUrl:''; iconPrev.style.display=(d&&d.iconUrl)?'block':'none'; }
   var iconClrBtn=g('icon-clear-btn'); if(iconClrBtn) iconClrBtn.style.display=(d&&d.iconUrl)?'inline-flex':'none';
+  // 値があるフィールドにblue背景を適用
+  document.querySelectorAll('.fi').forEach(function(el){
+    if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){
+      var hasVal=el.value&&el.value.trim().length>0;
+      el.classList.toggle('has-value', !!hasVal);
+      el.addEventListener('input',function(){ this.classList.toggle('has-value', !!(this.value&&this.value.trim().length>0)); });
+    } else if(el.tagName==='SELECT'){
+      var hasVal2=el.value&&el.value!=='';
+      el.classList.toggle('has-value', !!hasVal2);
+      el.addEventListener('change',function(){ this.classList.toggle('has-value', !!(this.value&&this.value!=='')); });
+    }
+  });
   var iconClr=g('icon-clear'); if(iconClr&&d&&d.iconUrl) iconClr.style.display='inline';
   var photoPrev=g('photo-preview'); if(photoPrev) photoPrev.src=(d&&d.photoUrl)?d.photoUrl:DEFAULT_PHOTO_SVG;
   var photoClr=g('photo-clear'); if(photoClr&&d&&d.photoUrl) photoClr.style.display='inline';
@@ -1356,6 +1371,20 @@ function openIconCamera(){
   var inp=g('icon-camera-input'); if(inp) inp.click();
 }
 
+function activatePasteMode(){
+  // paste-receiverにフォーカスしてCtrl+Vを受け付ける状態にする
+  var recv=g('paste-receiver');
+  if(recv){
+    recv.focus();
+    var btn=g('icon-paste-btn');
+    if(btn){
+      btn.textContent='⌨️ 今すぐCtrl+Vを押してください';
+      btn.style.background='#eef4fd';
+      btn.style.borderColor='#90b8e8';
+    }
+  }
+}
+
 function clearIconImage(){
   iconFile=null;
   var p=g('icon-preview');
@@ -1363,7 +1392,7 @@ function clearIconImage(){
   var c=g('icon-clear-btn'); if(c) c.style.display='none';
 }
 
-// ─── クリップボード貼り付け ──────────────────────────────────
+// ─── クリップボード貼り付け（Ctrl+V）──────────────────────────
 document.addEventListener('paste',function(e){
   var items=e.clipboardData&&e.clipboardData.items;
   if(!items)return;
@@ -1371,7 +1400,17 @@ document.addEventListener('paste',function(e){
     if(items[i].type.indexOf('image')!==-1){
       var file=items[i].getAsFile();
       handleIconFile(file);
-      break;
+      // ボタンを元に戻す
+      var btn=g('icon-paste-btn');
+      if(btn){
+        btn.textContent='📋 Ctrl+V で貼り付け';
+        btn.style.background='var(--white)';
+        btn.style.borderColor='var(--border2)';
+      }
+      // paste-receiverからフォーカスを外す
+      var recv=g('paste-receiver'); if(recv) recv.blur();
+      e.preventDefault();
+      return;
     }
   }
 });
