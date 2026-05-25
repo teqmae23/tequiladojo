@@ -72,14 +72,29 @@ body::before{
 .section{width:100%;margin-bottom:20px;background:rgba(255,255,255,0.68);backdrop-filter:blur(6px);border-radius:12px;border:1px solid rgba(40,120,80,.15);overflow:hidden;box-shadow:0 2px 10px rgba(20,80,50,.06);}
 .section-title{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#2a6b44;padding:10px 16px 8px;border-bottom:1px solid rgba(40,120,80,.10);background:rgba(40,120,80,.05);font-weight:700;}
 .news-list{padding:2px 0;}
-.news-item{display:flex;gap:10px;align-items:flex-start;padding:11px 16px;border-bottom:1px solid rgba(40,120,80,.07);text-decoration:none;color:inherit;transition:.13s;}
+.news-item{display:flex;gap:10px;align-items:center;padding:11px 16px;border-bottom:1px solid rgba(40,120,80,.07);text-decoration:none;color:inherit;transition:.13s;cursor:pointer;}
 .news-item:last-child{border-bottom:none;}
 .news-item:hover{background:rgba(40,120,80,.05);}
 .news-badge{flex-shrink:0;font-size:10px;font-weight:700;letter-spacing:.04em;padding:2px 7px;border-radius:3px;color:#fff;margin-top:2px;white-space:nowrap;}
-.news-text{flex:1;}
-.news-title{font-size:14px;font-weight:600;color:#1a2e28;margin-bottom:2px;}
-.news-date{font-size:11px;color:#6a9080;font-family:monospace;}
+.news-text{flex:1;min-width:0;display:flex;align-items:baseline;gap:8px;}
+.news-title{font-size:14px;font-weight:600;color:#1a2e28;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.news-date{font-size:11px;color:#6a9080;font-family:monospace;flex-shrink:0;white-space:nowrap;}
 .news-empty{padding:18px 16px;color:#7a9a8a;font-size:13px;text-align:center;}
+.news-modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:flex;align-items:center;justify-content:center;padding:20px;}
+.news-modal{background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:80vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.25);}
+.news-modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:18px 20px 12px;border-bottom:1px solid #eee;}
+.news-modal-badge{flex-shrink:0;font-size:11px;font-weight:700;padding:3px 8px;border-radius:3px;color:#fff;margin-top:3px;}
+.news-modal-title{flex:1;font-size:16px;font-weight:700;color:#1a2e28;line-height:1.4;}
+.news-modal-date{flex-shrink:0;font-size:11px;color:#7a9a8a;font-family:monospace;margin-top:4px;white-space:nowrap;}
+.news-modal-close{flex-shrink:0;width:28px;height:28px;border:none;background:rgba(0,0,0,.08);border-radius:50%;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;color:#555;}
+.news-modal-close:hover{background:rgba(0,0,0,.15);}
+.news-modal-body{padding:16px 20px 20px;font-size:14px;color:#2a2a2a;line-height:1.75;}
+.news-modal-body h3{font-size:15px;margin:.8em 0 .3em;}
+.news-modal-body h4{font-size:14px;margin:.6em 0 .2em;}
+.news-modal-body ul,.news-modal-body ol{padding-left:1.4em;margin:.4em 0;}
+.news-modal-body a{color:#1a5e3a;text-decoration:underline;}
+.news-modal-body img{max-width:100%;height:auto;border-radius:4px;}
+.news-modal-body hr{border:none;border-top:1px solid #e0e0e0;margin:.8em 0;}
 .rsv-wrap{width:100%;text-align:center;margin-bottom:20px;padding:4px 0;}
 .rsv-btn{display:inline-block;padding:14px 40px;background:#1a5e3a;color:#fff;border-radius:10px;font-size:17px;font-weight:700;letter-spacing:.1em;text-decoration:none;box-shadow:0 3px 14px rgba(20,80,50,.28);transition:.18s;font-family:'Hiragino Mincho ProN','Yu Mincho',serif;}
 .rsv-btn:hover{background:#145230;box-shadow:0 5px 18px rgba(20,80,50,.38);}
@@ -555,16 +570,20 @@ function loadIndexNews(){
       })
       .slice(0,10);
     if(!rows.length){list.innerHTML='<div class="news-empty">現在お知らせはありません</div>';return;}
-    list.innerHTML=rows.map(function(r){
+    // キャッシュに保存しておく（モーダル表示用）
+    window._newsRows=rows;
+    list.innerHTML=rows.map(function(r,i){
       var tc=NEWS_TYPE_COLORS[r.type]||'#64748B';
       var tl=NEWS_TYPES[r.type]||r.type||'その他';
       var dateStr=r.publishStart?r.publishStart.slice(0,10):'';
-      return '<div class="news-item">'
+      var hasBody=!!(r.body&&r.body.replace(/<[^>]*>/g,'').trim());
+      return '<div class="news-item" onclick="nmOpen('+i+')" style="'+(hasBody?'':'cursor:default')+'">'
         +'<span class="news-badge" style="background:'+tc+'">'+tl+'</span>'
         +'<div class="news-text">'
-          +'<div class="news-title">'+(r.title||'')+'</div>'
+          +'<div class="news-title">'+(r.title||'')+(hasBody?' <span style="font-size:10px;color:#3a7d5e;margin-left:4px;">▶</span>':'')+'</div>'
           +(dateStr?'<div class="news-date">'+dateStr+'</div>':'')
-        +'</div></div>';
+        +'</div>'
+      +'</div>';
     }).join('');
   }).catch(function(e){
     console.error('news load error:',e);
@@ -572,10 +591,44 @@ function loadIndexNews(){
     if(list) list.innerHTML='<div class="news-empty">読み込みに失敗しました</div>';
   });
 }
+
+function nmOpen(i){
+  var r=(window._newsRows||[])[i]; if(!r) return;
+  if(!r.body||!r.body.replace(/<[^>]*>/g,'').trim()) return;
+  var tc=NEWS_TYPE_COLORS[r.type]||'#64748B';
+  var tl=NEWS_TYPES[r.type]||r.type||'その他';
+  var dateStr=r.publishStart?r.publishStart.slice(0,10):'';
+  var badge=document.getElementById('nm-badge');
+  badge.textContent=tl; badge.style.background=tc;
+  document.getElementById('nm-title').textContent=r.title||'';
+  document.getElementById('nm-date').textContent=dateStr;
+  document.getElementById('nm-body').innerHTML=r.body||'';
+  document.getElementById('nm-bg').style.display='flex';
+  document.body.style.overflow='hidden';
+}
+function nmClose(){
+  document.getElementById('nm-bg').style.display='none';
+  document.body.style.overflow='';
+}
+document.addEventListener('keydown',function(e){if(e.key==='Escape')nmClose();});
+
 window.addEventListener('DOMContentLoaded',function(){
   idxBuildSchedule();
   loadIndexNews();
 });
 </script>
+
+<!-- ニュース本文モーダル -->
+<div class="news-modal-bg" id="nm-bg" style="display:none" onclick="if(event.target===this)nmClose()">
+  <div class="news-modal">
+    <div class="news-modal-head">
+      <span class="news-modal-badge" id="nm-badge"></span>
+      <div class="news-modal-title" id="nm-title"></div>
+      <div class="news-modal-date" id="nm-date"></div>
+      <button class="news-modal-close" onclick="nmClose()">✕</button>
+    </div>
+    <div class="news-modal-body" id="nm-body"></div>
+  </div>
+</div>
 </body>
 </html>
