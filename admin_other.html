@@ -197,6 +197,9 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <button class="tab" data-page="mproducts">商品 <span class="cnt" id="cnt-mproducts">—</span></button>
       <button class="tab" data-page="ssets">セット商品 <span class="cnt" id="cnt-ssets">—</span></button>
       <button class="tab" data-page="blindmarks">ブラインドマーク <span class="cnt" id="cnt-blindmarks">—</span></button>
+      <span class="tab-sep"></span>
+      <span class="tab-group-label">サイト</span>
+      <button class="tab" data-page="news">ニュース <span class="cnt" id="cnt-news">—</span></button>
     </div>
   </div>
 
@@ -394,6 +397,23 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <thead><tr><th>ID</th><th>色</th><th>記号</th><th>表示ラベル</th><th>順番</th><th>✏️ 操作</th></tr></thead>
           <tbody id="tb-blindmarks"><tr><td colspan="6" class="ec">読み込み中...</td></tr></tbody>
         </table></div>
+      </div>
+    </div>
+
+    <!-- ── ニュース管理 ── -->
+    <div class="page" id="page-news">
+      <div class="phead">
+        <div><div class="ptitle">ニュース管理</div><div class="pdesc">newsコレクション。公開期間を設定して予約投稿可能。ニュース種別はタイトル前に表示されます。</div></div>
+        <button class="btn bp" id="btn-open-news">＋ ニュース登録</button>
+      </div>
+      <div class="sbox"><input type="text" id="s-news" placeholder="タイトルで検索..."></div>
+      <div class="tbl-wrap">
+        <table id="tbl-news">
+          <thead>
+            <tr><th>種別</th><th>タイトル</th><th>公開開始</th><th>公開終了</th><th>公開</th><th>✏️ 操作</th></tr>
+          </thead>
+          <tbody id="tbody-news"></tbody>
+        </table>
       </div>
     </div>
 
@@ -617,6 +637,41 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
   </div>
 </div>
 
+
+<!-- ── ニュースモーダル ── -->
+<div class="mbg" id="m-news">
+  <div class="modal" style="max-width:600px">
+    <div class="mhead"><div class="mtitle" id="mt-news">ニュース登録</div><button class="mx" data-close="m-news">✕</button></div>
+    <div class="mbody">
+      <div class="keybox" id="kb-news">—<span class="klabel">news ID（自動採番）</span></div>
+      <div class="fg">
+        <label class="fl">ニュース種別<span class="req">*</span></label>
+        <select class="fs" id="nw-type">
+          <option value="info">お知らせ</option>
+          <option value="event">イベント</option>
+          <option value="feature">新機能</option>
+          <option value="menu">メニュー</option>
+          <option value="other">その他</option>
+        </select>
+      </div>
+      <div class="fg"><label class="fl">タイトル<span class="req">*</span></label><input class="fi" id="nw-title" placeholder="タイトルを入力"></div>
+      <div class="fg"><label class="fl">本文</label><textarea class="fi" id="nw-body" rows="5" style="resize:vertical" placeholder="本文を入力（Markdown可）"></textarea></div>
+      <div class="frow">
+        <div class="fg"><label class="fl">公開開始日</label><input class="fi" type="date" id="nw-start"></div>
+        <div class="fg"><label class="fl">公開終了日</label><input class="fi" type="date" id="nw-end"></div>
+      </div>
+      <div class="fg" style="display:flex;align-items:center;gap:10px">
+        <label class="fl" style="margin:0">公開フラグ</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="nw-publish" style="width:16px;height:16px">
+          <span style="font-size:13px;color:rgba(255,255,255,.7)">公開する</span>
+        </label>
+      </div>
+    </div>
+    <div class="mfoot"><button class="btn bg2" data-close="m-news">キャンセル</button><button class="btn bp" id="btn-save-news">保存</button></div>
+  </div>
+</div>
+
 <!-- 削除確認 -->
 <div class="cbg" id="confirm-bg">
   <div class="ccard">
@@ -708,8 +763,8 @@ document.querySelectorAll(".tab").forEach(function(tab){
 });
 
 // ── キャッシュ ────────────────────────────────────────────────
-var cache={ocat1:[],ocat2:[],ocat3:[],obottles:[],mkinds:[],mproducts:[],ssets:[],blindmarks:[],distilleries:[],brands:[],classes:[],bottles:[],bottleData:[]};
-var editId={ocat1:null,ocat2:null,ocat3:null,obottle:null,mkind:null,mproduct:null,sset:null,blindmark:null};
+var cache={ocat1:[],ocat2:[],ocat3:[],obottles:[],mkinds:[],mproducts:[],ssets:[],blindmarks:[],distilleries:[],brands:[],classes:[],bottles:[],bottleData:[],news:[]};
+var editId={ocat1:null,ocat2:null,ocat3:null,obottle:null,mkind:null,mproduct:null,sset:null,blindmark:null,news:null};
 var sortState={};
 
 // ── 初期ロード ───────────────────────────────────────────────
@@ -722,6 +777,7 @@ function loadAll(){
   loadCol("mproducts","miscProducts",function(){ updateMiscFilters(); });
   loadCol("ssets","setProducts",function(){});
   loadCol("blindmarks","blindMarks",function(){});
+  loadNews();
   // テキーラ・他酒マスタ（セット商品ピッカー用）
   loadColSilent("distilleries","distilleries");
   loadColSilent("brands","brands");
@@ -1628,6 +1684,98 @@ function openBlindmarkModal(id){
     .then(function(){ toast(editId.blindmark?"更新しました":"登録しました"); closeM("m-blindmark"); loadCol("blindmarks","blindMarks",function(){}); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
   });
+})();
+
+// ── ニュース管理 ────────────────────────────────────────────────
+var NEWS_TYPES = {info:'お知らせ',event:'イベント',feature:'新機能',menu:'メニュー',other:'その他'};
+var NEWS_TYPE_COLORS = {info:'#378ADD',event:'#D4730A',feature:'#2CA44E',menu:'#8B5CF6',other:'#64748B'};
+
+function loadNews(){
+  db.collection('news').orderBy('publishStart','desc').get()
+  .then(function(snap){
+    cache.news = snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    setCnt('news', cache.news.length);
+    renderNews(cache.news);
+  }).catch(function(e){ toast('ニュース読み込みエラー: '+e.message,'err'); });
+}
+
+function renderNews(rows){
+  var q=(g('s-news')||{}).value||'';
+  if(q) rows=rows.filter(function(r){ return (r.title||'').includes(q); });
+  var tbody=g('tbody-news'); if(!tbody) return;
+  if(!rows.length){ tbody.innerHTML='<tr><td colspan="6" class="ec">データなし</td></tr>'; return; }
+  tbody.innerHTML=rows.map(function(r){
+    var typeLabel=NEWS_TYPES[r.type]||r.type||'—';
+    var typeColor=NEWS_TYPE_COLORS[r.type]||'#666';
+    var pub=r.published?'<span style="color:#2CA44E;font-weight:600">公開中</span>':'<span style="color:#999">非公開</span>';
+    var eid=r.id.replace(/"/g,'&quot;');
+    return '<tr>'
+      +'<td><span style="background:'+typeColor+';color:#fff;border-radius:3px;padding:1px 6px;font-size:11px;font-weight:600">'+typeLabel+'</span></td>'
+      +'<td style="font-weight:500">'+(r.title||'—')+'</td>'
+      +'<td style="font-family:var(--mono);font-size:12px">'+(r.publishStart||'—')+'</td>'
+      +'<td style="font-family:var(--mono);font-size:12px">'+(r.publishEnd||'（無期限）')+'</td>'
+      +'<td>'+pub+'</td>'
+      +'<td class="op">'
+        +'<button class="btn bs sm" onclick="openNewsModal(this.dataset.id)" data-id="'+eid+'">編集</button> '
+        +'<button class="btn bd sm" onclick="delNews(this.dataset.id)" data-id="'+eid+'">削除</button>'
+      +'</td>'
+    +'</tr>';
+  }).join('');
+}
+
+function openNewsModal(id){
+  editId.news=id||null;
+  g('mt-news').textContent=id?'ニュース編集':'ニュース登録';
+  if(id){
+    var r=cache.news.find(function(x){return x.id===id;});
+    if(r){
+      sv('nw-type',r.type||'info');
+      sv('nw-title',r.title||'');
+      sv('nw-body',r.body||'');
+      sv('nw-start',r.publishStart||'');
+      sv('nw-end',r.publishEnd||'');
+      g('nw-publish').checked=!!r.published;
+    }
+  } else {
+    sv('nw-type','info'); sv('nw-title',''); sv('nw-body','');
+    sv('nw-start',''); sv('nw-end','');
+    g('nw-publish').checked=false;
+  }
+  openM('m-news');
+}
+
+function delNews(id){
+  showConfirm('このニュースを削除しますか？',function(){
+    db.collection('news').doc(id).delete()
+    .then(function(){ toast('削除しました'); loadNews(); })
+    .catch(function(e){ toast('削除失敗: '+e.message,'err'); });
+  });
+}
+
+(function(){
+  var btn=g('btn-save-news'); if(!btn) return;
+  btn.addEventListener('click',function(){
+    var type=gv('nw-type'), title=gv('nw-title'), body=gv('nw-body');
+    var start=gv('nw-start'), end=gv('nw-end');
+    var published=g('nw-publish').checked;
+    if(!title){ toast('タイトルは必須です','err'); return; }
+    var data={type:type,title:title,body:body,publishStart:start,publishEnd:end,published:published,updatedAt:new Date().toISOString()};
+    if(!editId.news) data.createdAt=new Date().toISOString();
+    var ref=editId.news?db.collection('news').doc(editId.news):db.collection('news').doc();
+    ref.set(data,{merge:!!editId.news})
+    .then(function(){ toast(editId.news?'更新しました':'登録しました'); closeM('m-news'); loadNews(); })
+    .catch(function(e){ toast('保存失敗: '+e.message,'err'); });
+  });
+})();
+
+(function(){
+  var el=g('s-news'); if(!el) return;
+  el.addEventListener('input',function(){ renderNews(cache.news); });
+})();
+
+(function(){
+  var btn=g('btn-open-news'); if(!btn) return;
+  btn.addEventListener('click',function(){ openNewsModal(null); });
 })();
 
 </script>
