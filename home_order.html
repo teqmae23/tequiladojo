@@ -502,6 +502,15 @@ input,select{font-family:var(--sans)}
 <div id="toast"></div>
 
 <script>
+// ボトル名にsuffixを付加して返す
+function bdName(item, lang){
+  var base;
+  if(lang==='ja') base=item.bottleJa||item.bottleEs||item.bottleEn||item.name||item.id||'';
+  else base=item.bottleEs||item.bottleJa||item.bottleEn||item.name||item.id||'';
+  var sfx=(item.suffix||'').trim();
+  return sfx?base+'('+sfx+')':base;
+}
+
 // ━━━ Firebase ━━━
 const firebaseConfig = {
   apiKey: "AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -606,7 +615,7 @@ async function loadMasters(){
   blindSnap.forEach(d=>blindMarks.push({id:d.id,...d.data()}));
   blindMarks.sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));
   masterData.tequila=[];
-  bottleSnap.forEach(d=>{const v=d.data();if(v.visibility!==false)masterData.tequila.push({id:d.id,...v,type:'tequila'});});
+  bottleSnap.forEach(d=>{const v=d.data();if(v.visibility==="0"||v.visibility===0||v.visibility===false||v.visibility===undefined||v.visibility===null)masterData.tequila.push({id:d.id,...v,type:'tequila'});});
   masterData.other=[];
   otherSnap.forEach(d=>masterData.other.push({id:d.id,...d.data(),type:'other'}));
   masterData.misc=[];
@@ -1475,9 +1484,9 @@ function filterProducts(){
   if(currentNOM&&currentPTab==='tequila')items=items.filter(i=>(i.nom||'').startsWith(currentNOM)||(i.brandId||'').startsWith(currentNOM));
   if(q)items=items.filter(i=>(i.bottleJa||i.bottleEs||i.bottleEn||i.name||'').toLowerCase().includes(q)||(i.brandJa||i.brandEs||'').toLowerCase().includes(q)||(i.nom||'').includes(q)||(i.id||'').toLowerCase().includes(q));
   if(!items.length){c.innerHTML='<div class="empty">該当なし</div>';return;}
-  c.innerHTML=items.slice(0,50).map(i=>{
+  c.innerHTML=items.slice(0,200).map(i=>{
     const isTequila=i.type==='tequila';
-    const name=isTequila?(i.bottleEs||i.bottleJa||i.name||i.id):(i.bottleJa||i.bottleEs||i.name||i.id);
+    const name=isTequila?bdName(i,'es'):bdName(i,'ja');
     const sub=i.nom?`NOM ${i.nom}`:'';
     const price=i.price?`¥${i.price}/10ml`:i.unitPrice?`¥${i.unitPrice}`:'-';
     return`<div class="product-item" onclick="addToCart('${esc(i.id)}')">
@@ -1538,7 +1547,7 @@ function addToCart(pid){
   const isBlind=document.getElementById('blind-check').checked;
   flow.cart.push({
     productId:p.id,
-    productName:p.type==='tequila'?(p.bottleEs||p.bottleJa||p.name||p.id):(p.bottleJa||p.bottleEs||p.name||p.id),
+    productName:p.type==='tequila'?bdName(p,'es'):bdName(p,'ja'),
     productType:p.type,
     qty:isMl?getCartMl():1,
     unit:isMl?'ml':'個',
@@ -1702,7 +1711,7 @@ async function confirmOrder(){
         maxSeq++;
         // テキーラはbottleEs優先で保存
         const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
-        const saveName=p&&p.type==='tequila'?(p.bottleEs||p.bottleJa||item.productName):item.productName;
+        const saveName=p&&p.type==='tequila'?bdName(p,'es'):item.productName;
         batch.set(db.collection('orders').doc(todayStr+String(maxSeq).padStart(3,'0')),{
           orderTime,customerId:visit.memberId||null,visitKey:visit.id,orderGroupId,batchId,
           itemSeq:i+1,productCode:item.productId,productName:saveName,productType:item.productType,
