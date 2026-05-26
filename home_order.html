@@ -293,6 +293,15 @@ input,select{font-family:var(--sans)}
 #toast.success{background:var(--teal);color:#fff}
 #toast.error{background:var(--red);color:#fff}
 #toast.info{background:var(--ink);color:var(--cream)}
+
+.cls-btn{
+  padding:2px 7px;font-size:12px;font-weight:700;border-radius:3px;cursor:pointer;
+  border:1.5px solid var(--gold-d,#8B6914);
+  background:var(--cream2,#f5e9c8);color:var(--gold-d,#8B6914);
+  transition:.12s;line-height:1.5;
+}
+.cls-btn.active{background:var(--gold-d,#8B6914);color:#fff;}
+.cls-btn:hover{opacity:.8;}
 </style>
 </head>
 <body>
@@ -420,14 +429,37 @@ input,select{font-family:var(--sans)}
           <div class="ptab" onclick="switchPTab('set',this)">セット</div>
         </div>
         <div id="nom-shortcuts-area" class="nom-shortcuts"></div>
-        <div id="tequila-extra-filters" style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
-          <select id="filter-lottype" class="fi" style="width:120px;font-size:12px;padding:4px 6px;" onchange="currentLotType=this.value;filterProducts()">
-            <option value="1">現行ロット</option>
-            <option value="0">全件</option>
-            <option value="2">旧ロット</option>
-            <option value="3">非売品</option>
-          </select>
-          <input type="text" id="filter-initial" class="fi" maxlength="1" placeholder="頭文字" style="width:52px;font-size:12px;padding:4px 6px;text-transform:uppercase;" oninput="currentInitial=this.value.trim().toUpperCase();filterProducts()">
+        <div id="tequila-extra-filters" style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px;flex-wrap:wrap;flex-direction:column;">
+          <!-- 行1: クラスボタン + 頭文字 -->
+          <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
+            <span style="font-size:10px;color:var(--ink3);flex-shrink:0;">クラス:</span>
+            <button class="cls-btn active" data-cls="B" onclick="toggleCls('B',this)">B</button>
+            <button class="cls-btn active" data-cls="J" onclick="toggleCls('J',this)">J</button>
+            <button class="cls-btn active" data-cls="R" onclick="toggleCls('R',this)">R</button>
+            <button class="cls-btn active" data-cls="A" onclick="toggleCls('A',this)">A</button>
+            <button class="cls-btn active" data-cls="X" onclick="toggleCls('X',this)">X</button>
+            <span style="width:1px;height:16px;background:var(--line1);margin:0 2px;flex-shrink:0;"></span>
+            <input type="text" id="filter-initial" maxlength="1" placeholder="頭文字" style="width:46px;font-size:12px;padding:3px 5px;border:1px solid var(--line1);border-radius:4px;background:var(--cream1);color:var(--ink1);text-transform:uppercase;" oninput="currentInitial=this.value.trim().toUpperCase();filterProducts()">
+          </div>
+          <!-- 行2: ロット区分 + 度数 + 添加 -->
+          <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
+            <select id="filter-lottype" style="font-size:11px;padding:3px 5px;border:1px solid var(--line1);border-radius:4px;background:var(--cream1);color:var(--ink1);" onchange="currentLotType=this.value;filterProducts()">
+              <option value="1">現行ロット</option>
+              <option value="0">全件</option>
+              <option value="2">旧ロット</option>
+              <option value="3">非売品</option>
+            </select>
+            <select id="filter-abv" style="font-size:11px;padding:3px 5px;border:1px solid var(--line1);border-radius:4px;background:var(--cream1);color:var(--ink1);" onchange="currentAbv=this.value;filterProducts()">
+              <option value="">度数:全件</option>
+              <option value="normal">通常(40%以下)</option>
+              <option value="hp">HP(41%以上)</option>
+            </select>
+            <select id="filter-additive" style="font-size:11px;padding:3px 5px;border:1px solid var(--line1);border-radius:4px;background:var(--cream1);color:var(--ink1);" onchange="currentAdditive=this.value;filterProducts()">
+              <option value="">添加:全件</option>
+              <option value="0">無添加</option>
+              <option value="1">添加あり</option>
+            </select>
+          </div>
         </div>
         <input type="text" id="product-search" class="fi" placeholder="商品名・NOMで検索..." oninput="filterProducts()">
         <div class="product-list-wrap" id="product-list-container"><div class="empty">読み込み中...</div></div>
@@ -542,7 +574,7 @@ let masterData={tequila:[],other:[],misc:[],set:[]};
 let blindMarks=[];
 let flow={visits:[],cart:[],isBlind:false};
 let resultTarget=null;
-let currentPTab='tequila', currentNOM='', currentLotType='1', currentInitial='', pendingProduct=null;
+let currentPTab='tequila', currentNOM='', currentLotType='1', currentInitial='', currentClasses=new Set(), currentAbv='', currentAdditive='', pendingProduct=null;
 
 // ━━━ 認証 ━━━
 AuthRole.requireStaff(auth,
@@ -1482,6 +1514,18 @@ function renderNOMs(){
     ).join('');
 }
 function setNOM(n){currentNOM=currentNOM===n?'':n;renderNOMs();filterProducts();}
+// クラス略称 → classId[1]数値マッピング
+var CLS_MAP={B:'1',J:'2',R:'3',A:'4',X:'5'};
+// 全クラスをデフォルトでアクティブに初期化
+currentClasses=new Set(['B','J','R','A','X']);
+
+function toggleCls(cls,el){
+  if(currentClasses.has(cls)) currentClasses.delete(cls);
+  else currentClasses.add(cls);
+  el.classList.toggle('active',currentClasses.has(cls));
+  filterProducts();
+}
+
 function filterProducts(){
   const q=(document.getElementById('product-search').value||'').toLowerCase();
   const c=document.getElementById('product-list-container');
@@ -1495,16 +1539,38 @@ function filterProducts(){
   }
   let items=[...(masterData[currentPTab]||[])];
   if(currentNOM&&currentPTab==='tequila')items=items.filter(i=>(i.nom||'').startsWith(currentNOM)||(i.brandId||'').startsWith(currentNOM));
-  // ロット区分フィルター（tequilaのみ、0=全件）
-  if(currentPTab==='tequila'&&currentLotType!=='0'){
-    const lt=parseInt(currentLotType)||1;
-    items=items.filter(i=>(i.lotType===lt)||(i.lotType===undefined||i.lotType===null)&&lt===1);
-  }
-  // 頭文字フィルター（tequilaのみ、ES名の先頭1文字）
-  if(currentPTab==='tequila'&&currentInitial){
-    items=items.filter(i=>{
-      const es=(i.bottleEsBase||i.bottleEs||i.name||'').trim().toUpperCase();
-      return es.charAt(0)===currentInitial;
+  if(currentPTab==='tequila'){
+    // ロット区分フィルター
+    if(currentLotType!=='0'){
+      const lt=parseInt(currentLotType)||1;
+      items=items.filter(i=>(i.lotType===lt)||((i.lotType===undefined||i.lotType===null)&&lt===1));
+    }
+    // クラスフィルター（BJRAX）classIdは"1"〜"5"の文字列
+    if(currentClasses.size>0&&currentClasses.size<5){
+      items=items.filter(i=>{
+        const code=String(i.classId||'');
+        // 数値コード（"1"=B,"2"=J,"3"=R,"4"=A,"5"=X）
+        const clsKey=Object.keys(CLS_MAP).find(k=>CLS_MAP[k]===code);
+        return clsKey?currentClasses.has(clsKey):false;
+      });
+    }
+    // 頭文字フィルター
+    if(currentInitial){
+      items=items.filter(i=>{
+        const es=(i.bottleEsBase||i.bottleEs||i.name||'').trim().toUpperCase();
+        return es.charAt(0)===currentInitial;
+      });
+    }
+    // 度数フィルター
+    if(currentAbv==='normal') items=items.filter(i=>(parseFloat(i.abv)||0)<=40);
+    else if(currentAbv==='hp')  items=items.filter(i=>(parseFloat(i.abv)||0)>=41);
+    // 添加フィルター
+    if(currentAdditive!=='') items=items.filter(i=>String(i.additive||'0')===currentAdditive);
+    // ソート：クラス順（classId）→価格順
+    items.sort((a,b)=>{
+      const ca=a.classId?String(a.classId):'9',cb=b.classId?String(b.classId):'9';
+      if(ca!==cb) return ca.localeCompare(cb);
+      return (parseFloat(a.price)||0)-(parseFloat(b.price)||0);
     });
   }
   if(q)items=items.filter(i=>(i.bottleJa||i.bottleEs||i.bottleEn||i.name||'').toLowerCase().includes(q)||(i.brandJa||i.brandEs||'').toLowerCase().includes(q)||(i.nom||'').includes(q)||(i.id||'').toLowerCase().includes(q));
