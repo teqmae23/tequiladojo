@@ -311,14 +311,14 @@ async function initTasting(user){
     // 6. ordersのproductId（=bottleDataId）を収集
     var bdIds=new Set();
     orders.filter(function(o){
-      return (o.productType==='tequila'||o.productType==='other')&&o.productId;
-    }).forEach(function(o){ bdIds.add(o.productId); });
-    // ordersのフィールドを確認
-    var sampleOrder=orders.find(function(o){return o.productType==='tequila';});
-    if(sampleOrder) console.log('[sampleOrder]',JSON.stringify({productId:sampleOrder.productId,productType:sampleOrder.productType,productName:sampleOrder.productName}));
+      return (o.productType==='tequila'||o.productType==='other');
+    }).forEach(function(o){
+      // productIdまたはproductCode（旧フィールド名）を使用
+      var pid=o.productId||o.productCode;
+      if(pid) bdIds.add(pid);
+    });
 
-    // 7. bottleDataを取得してbottleIdに変換
-    console.log('[bdIds]',bdIds.size,'件:',[...bdIds].slice(0,5).join(' | '));
+    // 7. bottleData経由でbottleIdに変換（productId = bottleDataId）
     drunkIds=new Set();
     drunkNames=new Set();
     if(bdIds.size>0){
@@ -327,23 +327,13 @@ async function initTasting(user){
       for(var bi=0;bi<bdIdArr.length;bi+=10) bdChunks.push(bdIdArr.slice(bi,bi+10));
       for(var bc=0;bc<bdChunks.length;bc++){
         try{
-          var bdSnap=await db.collection('bottleData').where('bottleDataId','in',bdChunks[bc]).get();
-          console.log('[bottleData chunk'+bc+'] hits='+bdSnap.size);
+          // doc.idがbottleDataId
+          var bdSnap=await db.collection('bottleData').where(firebase.firestore.FieldPath.documentId(),'in',bdChunks[bc]).get();
           bdSnap.forEach(function(d){
             var bd=d.data();
-            console.log('[bd]',d.id,'bottleId=',bd.bottleId,'bottleDataId=',bd.bottleDataId);
             if(bd.bottleId) drunkIds.add(bd.bottleId);
           });
-        }catch(e5){
-          // bottleDataIdフィールドがない場合はdoc.idで試みる
-          try{
-            var bdSnap2=await db.collection('bottleData').where('__name__','in',bdChunks[bc]).get();
-            bdSnap2.forEach(function(d){
-              var bd=d.data();
-              if(bd.bottleId) drunkIds.add(bd.bottleId);
-            });
-          }catch(e6){ console.warn('bottleData取得失敗:',e6); }
-        }
+        }catch(e5){ console.warn('bottleData取得失敗:',e5); }
       }
     }
 
