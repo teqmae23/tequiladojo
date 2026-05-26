@@ -562,6 +562,15 @@ var CLASS_CAT={"0":"100% Agave","1":"Mixto"};
 var CLASS_CLS={"1":"Blanco","2":"Joven/Gold","3":"Reposado","4":"Añejo","5":"Extra Añejo"};
 var PUB_ST={"0":"OP","1":"CL"};
 
+// ── ボトル名表示ヘルパー ────────────────────────────────────────
+function bdName(item, lang){
+  var base;
+  if(lang==='ja') base=item.bottleJaBase||item.bottleJa||item.bottleEsBase||item.bottleEs||item.name||item.id||'';
+  else base=item.bottleEsBase||item.bottleEs||item.bottleJaBase||item.bottleJa||item.name||item.id||'';
+  var sfx=(item.suffix||'').trim();
+  return sfx?base+' ('+sfx+')':base;
+}
+
 // ── キャッシュ ──────────────────────────────────────────────────
 var cache={distilleries:[],brands:[],classes:[],bottles:[],bdata:[]};
 var editId={brand:null,klass:null,bottle:null,bdata:null};
@@ -1063,7 +1072,7 @@ function renderBdata(){
     var brName=br?(br.brandEs||"")+"("+(r.bottleId?r.bottleId.slice(0,4):r.brandId?r.brandId.slice(0,4):"")+")":(r.brandId||"—");
     var pubBadge=r.visibility==="1"?'<span class="badge bg-gray">CL</span>':'<span class="badge bg-teal">OP</span>';
     return '<tr><td class="mono" style="font-size:10px">'+r.id+'</td>'
-      +'<td>'+(r.bottleJa||r.bottleEs||"—")+'</td>'
+      +'<td>'+bdName(r,'ja')+'</td>'
       +'<td class="dim" style="font-size:11px">'+brName+'</td>'
       +'<td class="mono dim">'+(r.volume||"—")+'</td>'
       +'<td class="mono dim">'+(r.abv!==null&&r.abv!==undefined?parseFloat(r.abv).toFixed(1)+"%":"—")+'</td>'
@@ -1257,29 +1266,25 @@ g("btn-save-bdata").addEventListener("click",function(){
   var bdSuffix=(gv("bd-suffix")||"").trim();
   // 編集時は既存のbottleDataのベース名（suffix除去前）、新規はマスタから取得
   // 入力値をベースとして使用（マスタではなく直接編集値）
-  // bd-esの値からsuffixを除去してBaseを確定（2重付加防止）
-  var _bdEsRaw=(gv("bd-es")||"").trim();
-  var _bdJaRaw=(gv("bd-ja")||"").trim();
-  if(bdSuffix&&(_bdEsRaw.endsWith(" ("+bdSuffix+")")||_bdEsRaw.endsWith("("+bdSuffix+")"))) _bdEsRaw=_bdEsRaw.replace(new RegExp(" ?\\("+bdSuffix.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\)$"),"");
-  if(bdSuffix&&(_bdJaRaw.endsWith(" ("+bdSuffix+")")||_bdJaRaw.endsWith("("+bdSuffix+")"))) _bdJaRaw=_bdJaRaw.replace(new RegExp(" ?\\("+bdSuffix.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\)$"),"");
-  var bdEsBase=_bdEsRaw||null;
-  var bdJaBase=_bdJaRaw||null;
-  var bdEs=bdEsBase?(bdSuffix?bdEsBase+" ("+bdSuffix+")":bdEsBase):null;
-  var bdJa=bdJaBase?(bdSuffix?bdJaBase+" ("+bdSuffix+")":bdJaBase):null;
+  // ベース名のみ保存。表示時にsuffixを付加する
+  var bdEsBase=(gv("bd-es")||"").trim()||null;
+  var bdJaBase=(gv("bd-ja")||"").trim()||null;
+  var bdEs=bdEsBase||null;
+  var bdJa=bdJaBase||null;
   var bdClassId=gv("bd-class")||null;
   var bdAbv=gv("bd-abv")!=""?parseFloat(gv("bd-abv")):null;
   var bdProd=gv("bd-prod")||null;
   var bdFlt=gv("bd-flt")||null;
   db.collection("bottleData").doc(id).set({
     bottleDataId:id, bottleId:bottleId, brandId:b?b.brandId:gv("bd-brand"), seq:seq,
-    bottleEs:bdEs, bottleJa:bdJa, bottleEsBase:bdEsBase||null, bottleJaBase:bdJaBase||null,
+    bottleEs:bdEs, bottleJa:bdJa, bottleEsBase:bdEsBase||null, bottleJaBase:bdJaBase||null, suffix:bdSuffix||null,
     classId:bdClassId, abv:bdAbv,
     production:bdProd, filtration:bdFlt, additive:b?b.additive||null:null,
     lotNo:gv("bd-lot")||"N/A", volume:parseInt(gv("bd-vol"))||750, remaining:parseInt(gv("bd-remain"))||750,
     price:parseInt(gv("bd-price"))||null, visibility:gv("bd-pub")||"0",
     purchaseDate:getDateFromInputs("bd-buy-date")||null, serveStart:getDateFromInputs("bd-start")||null, serveEnd:getDateFromInputs("bd-end")||null,
     cost:parseInt(gv("bd-cost"))||null, importType:gv("bd-import")||"0",
-    suffix:(gv("bd-suffix")||"").trim()||null, note:gv("bd-note")||null
+    note:gv("bd-note")||null
   },{merge:true})
   .then(function(){ toast(editId.bdata?"ボトルデータを更新しました":"ボトルデータを登録しました"); closeM("m-bdata"); loadBdata(); })
   .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
