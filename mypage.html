@@ -819,23 +819,31 @@ function updateSummary(visits){
     .reduce((s,o)=>o.served!==0?s+(o.qty||0):s,0);
   const blindCount=allBlindResults.filter(r=>vIds.has(r.visitKey)).length;
 
-  // 試飲ボトル数（全来場通じてユニークな定番品を何本飲んだか）
+  // 試飲ボトル数（tastinglogと同じくbottleData→bottleIdのIDベース照合）
   const allVIds=new Set(allVisits.map(v=>v.id));
   const allOrdersForMember=allOrders.filter(o=>allVIds.has(o.visitKey||o.visitId));
-  const drunkProductNames=new Set(
+  const bdIds=new Set(
     allOrdersForMember
       .filter(o=>o.productType==='tequila'||o.productType==='other')
-      .map(o=>o.productName)
+      .map(o=>o.productCode||o.productId)
       .filter(Boolean)
   );
-  const regularNames=new Set(allProducts.map(p=>p.bottleJa||p.bottleEs||p.name||p.productName).filter(Boolean));
-  const drunkRegular=allProducts.length
-    ? [...drunkProductNames].filter(n=>regularNames.has(n)).length
-    : drunkProductNames.size;
+  const drunkBottleIds=new Set();
+  if(bdIds.size>0){
+    const bdArr=[...bdIds];
+    for(let bi=0;bi<bdArr.length;bi+=10){
+      try{
+        const bdSnap=await db.collection('bottleData')
+          .where(firebase.firestore.FieldPath.documentId(),'in',bdArr.slice(bi,bi+10)).get();
+        bdSnap.forEach(d=>{if(d.data().bottleId) drunkBottleIds.add(d.data().bottleId);});
+      }catch(e){}
+    }
+  }
+  const drunkRegular=allProducts.filter(p=>drunkBottleIds.has(p.id)).length;
   const totalRegular=allProducts.length;
   document.getElementById('s-bottles').textContent=totalRegular>0
     ? drunkRegular+'('+totalRegular+')'
-    : drunkProductNames.size+'(?)';
+    : drunkBottleIds.size+'(?)';
 
   document.getElementById('s-visits').textContent=visits.length;
   document.getElementById('s-tequila').textContent=totalTq+'ml';
