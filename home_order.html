@@ -420,6 +420,15 @@ input,select{font-family:var(--sans)}
           <div class="ptab" onclick="switchPTab('set',this)">セット</div>
         </div>
         <div id="nom-shortcuts-area" class="nom-shortcuts"></div>
+        <div id="tequila-extra-filters" style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+          <select id="filter-lottype" class="fi" style="width:120px;font-size:12px;padding:4px 6px;" onchange="currentLotType=this.value;filterProducts()">
+            <option value="1">現行ロット</option>
+            <option value="0">全件</option>
+            <option value="2">旧ロット</option>
+            <option value="3">非売品</option>
+          </select>
+          <input type="text" id="filter-initial" class="fi" maxlength="1" placeholder="頭文字" style="width:52px;font-size:12px;padding:4px 6px;text-transform:uppercase;" oninput="currentInitial=this.value.trim().toUpperCase();filterProducts()">
+        </div>
         <input type="text" id="product-search" class="fi" placeholder="商品名・NOMで検索..." oninput="filterProducts()">
         <div class="product-list-wrap" id="product-list-container"><div class="empty">読み込み中...</div></div>
         <div id="cart-section">
@@ -533,7 +542,7 @@ let masterData={tequila:[],other:[],misc:[],set:[]};
 let blindMarks=[];
 let flow={visits:[],cart:[],isBlind:false};
 let resultTarget=null;
-let currentPTab='tequila', currentNOM='', pendingProduct=null;
+let currentPTab='tequila', currentNOM='', currentLotType='1', currentInitial='', pendingProduct=null;
 
 // ━━━ 認証 ━━━
 AuthRole.requireStaff(auth,
@@ -1460,6 +1469,7 @@ function switchPTab(type,el){
   document.querySelectorAll('.ptab').forEach(t=>t.classList.remove('active'));
   if(el)el.classList.add('active');
   document.getElementById('nom-shortcuts-area').style.display=type==='tequila'?'flex':'none';
+  document.getElementById('tequila-extra-filters').style.display=type==='tequila'?'flex':'none';
   document.getElementById('product-search').style.display=type==='set'?'none':'block';
   if(type==='tequila')renderNOMs();
   document.getElementById('product-search').value='';
@@ -1485,6 +1495,18 @@ function filterProducts(){
   }
   let items=[...(masterData[currentPTab]||[])];
   if(currentNOM&&currentPTab==='tequila')items=items.filter(i=>(i.nom||'').startsWith(currentNOM)||(i.brandId||'').startsWith(currentNOM));
+  // ロット区分フィルター（tequilaのみ、0=全件）
+  if(currentPTab==='tequila'&&currentLotType!=='0'){
+    const lt=parseInt(currentLotType)||1;
+    items=items.filter(i=>(i.lotType===lt)||(i.lotType===undefined||i.lotType===null)&&lt===1);
+  }
+  // 頭文字フィルター（tequilaのみ、ES名の先頭1文字）
+  if(currentPTab==='tequila'&&currentInitial){
+    items=items.filter(i=>{
+      const es=(i.bottleEsBase||i.bottleEs||i.name||'').trim().toUpperCase();
+      return es.charAt(0)===currentInitial;
+    });
+  }
   if(q)items=items.filter(i=>(i.bottleJa||i.bottleEs||i.bottleEn||i.name||'').toLowerCase().includes(q)||(i.brandJa||i.brandEs||'').toLowerCase().includes(q)||(i.nom||'').includes(q)||(i.id||'').toLowerCase().includes(q));
   if(!items.length){c.innerHTML='<div class="empty">該当なし</div>';return;}
   c.innerHTML=items.slice(0,200).map(i=>{
