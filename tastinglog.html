@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0">
 <title>試飲ログ - テキーラ道場</title>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=DM+Mono&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Barlow+Condensed:wght@400;600;700&family=DM+Mono&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -55,6 +55,12 @@ input.nom-fi{width:50px;font-family:var(--mono);}
 
 /* グリッド */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:8px;}
+.list-view .card{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;}
+.list-view .card .name{flex:1;font-size:13px;margin:0;}
+.list-view .card .sub{font-size:10px;white-space:nowrap;}
+.list-view .card .chk{margin:0;}
+.view-btn{padding:3px 8px;font-size:11px;border:1px solid var(--border2);border-radius:4px;background:var(--cream);color:var(--ink2);cursor:pointer;}
+.view-btn.on{background:var(--gold-d);color:#fff;border-color:var(--gold-d);}
 /* クラス別カード色 */
 .card{border-radius:8px;padding:6px 8px;border:1.5px solid var(--border);background:var(--cream2);}
 .card.cls-01{background:#f8f8f8;border-color:#ddd;}
@@ -74,7 +80,7 @@ input.nom-fi{width:50px;font-family:var(--mono);}
 .cls-badge.b03{background:#f0a060;color:#5a2000;}
 .cls-badge.b04{background:#e07820;color:#fff;}
 .cls-badge.b05{background:#8b5e2a;color:#fff;}
-.card .name{font-size:12px;font-weight:600;color:var(--ink);line-height:1.4;word-break:break-word;}
+.card .name{font-size:12px;font-weight:600;color:var(--ink);line-height:1.4;word-break:break-word;font-family:'Barlow Condensed','Noto Sans JP',sans-serif;letter-spacing:.01em;}
 .card.cls-05 .name{color:#3a2000;}
 .card.drunk .name{color:var(--teal-d);}
 .card .sub{font-size:10px;color:var(--ink3);margin-top:1px;}
@@ -118,6 +124,10 @@ input.nom-fi{width:50px;font-family:var(--mono);}
     </div>
   </div>
 
+  <div style="display:flex;justify-content:flex-end;margin-bottom:6px;gap:4px;">
+    <button class="view-btn on" id="btn-grid" onclick="setView('grid')">⊞ グリッド</button>
+    <button class="view-btn" id="btn-list" onclick="setView('list')">☰ リスト</button>
+  </div>
   <div class="filter-wrap">
     <div class="frow">
       <span class="fl">並び順</span>
@@ -277,6 +287,14 @@ async function load(user){
   render();
 }
 
+function setView(v){
+  var grid=document.getElementById('grid');
+  document.getElementById('btn-grid').classList.toggle('on',v==='grid');
+  document.getElementById('btn-list').classList.toggle('on',v==='list');
+  if(v==='list') grid.style.gridTemplateColumns='1fr';
+  else grid.style.gridTemplateColumns='';
+  grid.classList.toggle('list-view',v==='list');
+}
 function toggleCls(btn){
   var c=btn.dataset.c;
   if(activeCls.has(c)){activeCls.delete(c);btn.classList.remove('on');}
@@ -289,8 +307,8 @@ function render(){
   var abv=document.getElementById('f-abv').value;
   var add=document.getElementById('f-add').value;
   var undo=document.getElementById('f-undo').checked;
-  var sortKey=document.getElementById('f-sort').value;
   var japan=document.getElementById('f-japan').checked;
+  var sortKey=document.getElementById('f-sort').value;
 
   var list=bottles.slice();
   if(nom) list=list.filter(function(b){return (b.brandId||'').startsWith(nom);});
@@ -298,7 +316,9 @@ function render(){
   if(abv==='n') list=list.filter(function(b){return parseFloat(b.abv||0)<=40;});
   if(abv==='h') list=list.filter(function(b){return parseFloat(b.abv||0)>=41;});
   if(add!=='') list=list.filter(function(b){return String(b.additive||'0')===add;});
+  if(japan) list=list.filter(function(b){return japanIds.has(b.id);});
 
+  // 達成率（undoフィルター前）
   var drunk=list.filter(function(b){return drunkIds.has(b.id);}).length;
   var tot=list.length;
   var pct=tot?Math.round(drunk/tot*100):0;
@@ -307,14 +327,14 @@ function render(){
   document.getElementById('ac-prog').style.width=pct+'%';
   document.getElementById('ac-pct').textContent=pct+'%';
 
-  if(japan) list=list.filter(function(b){return japanIds.has(b.id);});
   if(undo) list=list.filter(function(b){return !drunkIds.has(b.id);});
+
   // ソート
   list.sort(function(a,b){
     var nomA=(a.brandId||'').slice(0,4), nomB=(b.brandId||'').slice(0,4);
     var clsA=String(a.classId||'9'), clsB=String(b.classId||'9');
-    var brA=brands[a.brandId]&&(brands[a.brandId].brandEs||'') || '';
-    var brB=brands[b.brandId]&&(brands[b.brandId].brandEs||'') || '';
+    var brA=(brands[a.brandId]&&(brands[a.brandId].brandEs||brands[a.brandId].brandJa))||'';
+    var brB=(brands[b.brandId]&&(brands[b.brandId].brandEs||brands[b.brandId].brandJa))||'';
     if(sortKey==='cls'){
       if(clsA!==clsB) return clsA.localeCompare(clsB);
       if(nomA!==nomB) return nomA.localeCompare(nomB);
@@ -331,7 +351,9 @@ function render(){
 
   grid.innerHTML=list.map(function(b){
     var d=drunkIds.has(b.id);
-    var cl=CLS[String(b.classId||'')]||'?';
+    var clsCode=String(b.classId||'');
+    var cl=CLS[clsCode]||'?';
+    var badgeCls='cls-badge b'+clsCode;
     var br=brands[b.brandId];
     var brName=br?(br.brandEs||br.brandJa||''):'';
     var nom4=(b.brandId||'').slice(0,4);
@@ -339,8 +361,6 @@ function render(){
     var addS=String(b.additive||'0')==='0'?'無添加':(String(b.additive)==='1'?'添加':'');
     var meta=[abvS,addS].filter(Boolean).join(' · ');
     var es=b.bottleEs||b.bottleJa||b.id;
-    var clsCode=String(b.classId||'');
-    var badgeCls='cls-badge b'+clsCode;
     return '<div class="card'+(d?' drunk':'')+' cls-'+clsCode+'">'
       +(d?'<span class="chk">✓</span>':'')
       +'<div class="name"><span class="'+badgeCls+'">'+cl+'</span>'+esc(es)+'</div>'
@@ -349,6 +369,7 @@ function render(){
     +'</div>';
   }).join('');
 }
+
 
 function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 </script>
