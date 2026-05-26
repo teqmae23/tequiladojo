@@ -32,8 +32,18 @@ var AuthRole = (function() {
    * IDトークンからroleを取得（キャッシュ付き、60秒で再取得）
    */
   async function getRole(user) {
-    const result = await user.getIdTokenResult(true);
-    return result.claims.role || null;
+    // まずCustomClaimsを試みる
+    try {
+      const result = await user.getIdTokenResult(true);
+      if (result.claims.role) return result.claims.role;
+    } catch(e) {}
+    // フォールバック: FirestoreのstaffRolesコレクションを参照
+    try {
+      const db = firebase.firestore();
+      const doc = await db.collection('staffRoles').doc(user.uid).get();
+      if (doc.exists && doc.data().role) return doc.data().role;
+    } catch(e) {}
+    return null;
   }
 
   /**
