@@ -236,7 +236,8 @@ function doLogout(){auth.signOut();}
 // ── 初期化 ──────────────────────────────────────────────────
 async function initTasting(user){
   var grid=document.getElementById('bottle-grid');
-  grid.innerHTML='<div class="loading">読み込み中...</div>';
+  function step(msg){ grid.innerHTML='<div class="loading">'+msg+'</div>'; console.log('[tastinglog]',msg); }
+  step('認証確認中... email='+user.email);
   try{
     // 1. memberId取得
     var email=user.email||'';
@@ -244,19 +245,23 @@ async function initTasting(user){
     if(email.endsWith('@tequiladojo.member')){
       memberId=email.replace('@tequiladojo.member','');
     }else if(email){
+      step('会員情報取得中...');
       try{
         var idxSnap=await db.collection('memberIndex').where('email','==',email).limit(1).get();
         if(!idxSnap.empty) memberId=idxSnap.docs[0].id;
       }catch(e2){
-        // memberIndexがない場合はmembersから
-        var mSnap=await db.collection('members').where('email','==',email).limit(1).get();
-        if(!mSnap.empty) memberId=mSnap.docs[0].id;
+        console.warn('memberIndex失敗、membersで再試行:',e2);
+        try{
+          var mSnap=await db.collection('members').where('email','==',email).limit(1).get();
+          if(!mSnap.empty) memberId=mSnap.docs[0].id;
+        }catch(e3){ console.error('members取得失敗:',e3); }
       }
     }
     if(!memberId){
-      grid.innerHTML='<div class="empty-msg">会員情報が見つかりませんでした</div>';
+      grid.innerHTML='<div class="empty-msg">会員情報が見つかりませんでした（'+esc(email)+'）</div>';
       return;
     }
+    step('会員ID確認: '+memberId);
 
     // 2. 定番品マスタ取得（bottlesコレクション, production==="0"）
     var bSnap=await db.collection('bottles').where('production','==','0').get();
@@ -269,6 +274,7 @@ async function initTasting(user){
         return na.localeCompare(nb);
       });
 
+    step('ボトルマスタ取得完了: '+allBottles.length+'件');
     // 3. ブランドマスタ取得
     var brSnap=await db.collection('brands').get();
     brSnap.forEach(function(d){allBrands[d.id]=d.data();});
@@ -277,6 +283,7 @@ async function initTasting(user){
     var vSnap=await db.collection('visits').where('memberId','==',memberId).get();
     var visitIds=vSnap.docs.map(function(d){return d.id;});
 
+    step('来場履歴取得完了: '+visitIds.length+'件');
     // 5. orders取得（visitIdsが空の場合はスキップ）
     var orders=[];
     if(visitIds.length>0){
@@ -315,10 +322,11 @@ async function initTasting(user){
     // productIdがbottleDataId形式(12桁)の場合、最初8桁がbottleIdの可能性
     // → isDrunk()で名前照合もするので基本OK
 
+    step('注文履歴取得完了: '+orders.length+'件、描画開始...');
     renderList();
   }catch(e){
-    console.error('initTasting error:',e);
-    document.getElementById('bottle-grid').innerHTML='<div class="empty-msg">読み込みエラー: '+esc(e.message)+'</div>';
+    console.error('[tastinglog] initTasting error:',e);
+    document.getElementById('bottle-grid').innerHTML='<div class="empty-msg">読み込みエラー: '+esc(e.message||String(e))+'<br><small>コンソールを確認してください</small></div>';
   }
 }
 
@@ -355,6 +363,7 @@ function toggleCls(btn){
 
 // ── リスト描画 ────────────────────────────────────────────────
 function renderList(){
+  console.log('[renderList] allBottles='+allBottles.length+' drunkIds='+drunkIds.size+' drunkNames='+drunkNames.size);
   var nom=(document.getElementById('f-nom').value||'').trim();
   var abv=document.getElementById('f-abv').value;
   var add=document.getElementById('f-add').value;
