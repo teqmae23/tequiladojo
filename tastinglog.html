@@ -236,7 +236,7 @@ function doLogout(){auth.signOut();}
 // ── 初期化 ──────────────────────────────────────────────────
 async function initTasting(user){
   var grid=document.getElementById('bottle-grid');
-  function step(msg){ grid.innerHTML='<div class="loading">'+msg+'</div>'; console.log('[tastinglog]',msg); }
+  function step(msg){ grid.innerHTML='<div class="loading">'+msg+'</div>'; }
   step('認証確認中... email='+user.email);
   try{
     // 1. memberId取得
@@ -308,19 +308,38 @@ async function initTasting(user){
       }
     }
 
-    // 6. 飲んだbottleId・productNameのセット作成
+    // 6. ordersのproductId（=bottleDataId）を収集
+    var bdIds=new Set();
+    orders.filter(function(o){
+      return (o.productType==='tequila'||o.productType==='other')&&o.productId;
+    }).forEach(function(o){ bdIds.add(o.productId); });
+
+    // 7. bottleDataを取得してbottleIdに変換
     drunkIds=new Set();
     drunkNames=new Set();
-    orders.filter(function(o){
-      return o.productType==='tequila'||o.productType==='other';
-    }).forEach(function(o){
-      if(o.productId) drunkIds.add(o.productId);
-      if(o.productName) drunkNames.add(o.productName);
-    });
-
-    // 7. ブランドIDからordersのproductIdがbottleDataIdの場合、bottleIdに変換
-    // productIdがbottleDataId形式(12桁)の場合、最初8桁がbottleIdの可能性
-    // → isDrunk()で名前照合もするので基本OK
+    if(bdIds.size>0){
+      var bdIdArr=[...bdIds];
+      var bdChunks=[];
+      for(var bi=0;bi<bdIdArr.length;bi+=10) bdChunks.push(bdIdArr.slice(bi,bi+10));
+      for(var bc=0;bc<bdChunks.length;bc++){
+        try{
+          var bdSnap=await db.collection('bottleData').where('bottleDataId','in',bdChunks[bc]).get();
+          bdSnap.forEach(function(d){
+            var bd=d.data();
+            if(bd.bottleId) drunkIds.add(bd.bottleId);
+          });
+        }catch(e5){
+          // bottleDataIdフィールドがない場合はdoc.idで試みる
+          try{
+            var bdSnap2=await db.collection('bottleData').where('__name__','in',bdChunks[bc]).get();
+            bdSnap2.forEach(function(d){
+              var bd=d.data();
+              if(bd.bottleId) drunkIds.add(bd.bottleId);
+            });
+          }catch(e6){ console.warn('bottleData取得失敗:',e6); }
+        }
+      }
+    }
 
     step('注文履歴取得完了: '+orders.length+'件、描画開始...');
     renderList();
@@ -340,16 +359,8 @@ function bNameJa(b){
 
 // ── 飲んだかどうか判定 ────────────────────────────────────────
 function isDrunk(b){
-  // bottleDataのproductIdで照合（直接bottleId or bottleDataId）
-  if(drunkIds.has(b.id)) return true;
-  // productName（表示名）で照合
-  var es=bName(b), ja=bNameJa(b);
-  if(drunkNames.has(es)||drunkNames.has(ja)) return true;
-  // 部分一致（NOM+ボトル名含む）
-  for(var n of drunkNames){
-    if(n&&(n.includes(es)||n.includes(ja)||(es&&es.includes(n)))) return true;
-  }
-  return false;
+  // bottleDataのbottleIdで直接照合
+  return drunkIds.has(b.id);
 }
 
 // ── クラスフィルタートグル ────────────────────────────────────
@@ -363,9 +374,6 @@ function toggleCls(btn){
 
 // ── リスト描画 ────────────────────────────────────────────────
 function renderList(){
-  console.log('[renderList] allBottles='+allBottles.length+' drunkIds='+drunkIds.size+' drunkNames='+drunkNames.size);
-  console.log('[drunkNames]',[...drunkNames].join(' | '));
-  if(allBottles.length) console.log('[bottleEs sample]',allBottles.slice(0,3).map(function(b){return bName(b);}).join(' | '));
   var nom=(document.getElementById('f-nom').value||'').trim();
   var abv=document.getElementById('f-abv').value;
   var add=document.getElementById('f-add').value;
