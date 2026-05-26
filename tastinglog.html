@@ -129,6 +129,9 @@ input.nom-fi{width:50px;font-family:var(--mono);}
       <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--ink2);margin-left:4px;cursor:pointer;">
         <input type="checkbox" id="f-undo" onchange="render()">未飲のみ
       </label>
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--ink2);margin-left:4px;cursor:pointer;">
+        <input type="checkbox" id="f-japan" onchange="render()">国内流通のみ
+      </label>
     </div>
   </div>
 
@@ -150,7 +153,7 @@ firebase.initializeApp({
 var auth=firebase.auth();
 var db=firebase.firestore();
 
-var bottles=[], brands={}, drunkIds=new Set();
+var bottles=[], brands={}, drunkIds=new Set(), japanIds=new Set();
 var CLS={'01':'B','02':'J','03':'R','04':'A','05':'X'};
 var activeCls=new Set(['01','02','03','04','05']);
 
@@ -225,8 +228,19 @@ async function load(user){
     }
   }
 
-  // bottleData→bottleId
+  // bottleData全件→drunkIds + japanIds
   drunkIds=new Set();
+  japanIds=new Set();
+  // 全bottleDataを取得してjapanIds（importType==="0"）を収集
+  try{
+    var allBdSnap=await db.collection('bottleData').get();
+    allBdSnap.forEach(function(d){
+      var bd=d.data();
+      if(!bd.bottleId) return;
+      if(String(bd.importType||'0')==='0') japanIds.add(bd.bottleId);
+    });
+  }catch(e){}
+  // drunkIds
   if(bdIds.size){
     var arr=[...bdIds];
     for(var j=0;j<arr.length;j+=10){
@@ -252,6 +266,7 @@ function render(){
   var abv=document.getElementById('f-abv').value;
   var add=document.getElementById('f-add').value;
   var undo=document.getElementById('f-undo').checked;
+  var japan=document.getElementById('f-japan').checked;
 
   var list=bottles.slice();
   if(nom) list=list.filter(function(b){return (b.brandId||'').startsWith(nom);});
@@ -268,6 +283,7 @@ function render(){
   document.getElementById('ac-prog').style.width=pct+'%';
   document.getElementById('ac-pct').textContent=pct+'%';
 
+  if(japan) list=list.filter(function(b){return japanIds.has(b.id);});
   if(undo) list=list.filter(function(b){return !drunkIds.has(b.id);});
 
   var grid=document.getElementById('grid');
