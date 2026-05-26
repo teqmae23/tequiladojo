@@ -194,9 +194,6 @@ auth.onAuthStateChanged(async function(user){
   if(user){
     document.getElementById('login-screen').style.display='none';
     document.getElementById('main-screen').style.display='block';
-    var ms=document.getElementById('main-screen');
-    console.log('[auth] main-screen display='+ms.style.display+' offsetHeight='+ms.offsetHeight+' scrollHeight='+ms.scrollHeight);
-    console.log('[auth] bottle-grid offsetHeight='+document.getElementById('bottle-grid').offsetHeight);
     await initTasting(user);
   }else{
     document.getElementById('login-screen').style.display='flex';
@@ -253,11 +250,10 @@ async function initTasting(user){
         var idxSnap=await db.collection('memberIndex').where('email','==',email).limit(1).get();
         if(!idxSnap.empty) memberId=idxSnap.docs[0].id;
       }catch(e2){
-        console.warn('memberIndex失敗、membersで再試行:',e2);
         try{
           var mSnap=await db.collection('members').where('email','==',email).limit(1).get();
           if(!mSnap.empty) memberId=mSnap.docs[0].id;
-        }catch(e3){ console.error('members取得失敗:',e3); }
+        }catch(e3){}
       }
     }
     if(!memberId){
@@ -298,7 +294,7 @@ async function initTasting(user){
         try{
           var oSnap=await db.collection('orders').where('visitKey','in',chunks[ci]).get();
           oSnap.forEach(function(d){orders.push(Object.assign({id:d.id},d.data()));});
-        }catch(e3){ console.warn('visitKey query error:',e3); }
+        }catch(_e){}
       }
       // visitIdでも取得（重複除外）
       for(var cj=0;cj<chunks.length;cj++){
@@ -308,7 +304,7 @@ async function initTasting(user){
             if(!orders.find(function(o){return o.id===d.id;}))
               orders.push(Object.assign({id:d.id},d.data()));
           });
-        }catch(e4){ console.warn('visitId query error:',e4); }
+        }catch(_e){}
       }
     }
 
@@ -337,7 +333,7 @@ async function initTasting(user){
             var bd=d.data();
             if(bd.bottleId) drunkIds.add(bd.bottleId);
           });
-        }catch(e5){ console.warn('bottleData取得失敗:',e5); }
+        }catch(_e){}
       }
     }
 
@@ -380,27 +376,14 @@ function renderList(){
   var onlyUndone=document.getElementById('f-only-undone').checked;
 
   var items=allBottles.slice();
-  console.log('[f0] total='+items.length);
 
-  // NOMフィルター
   if(nom) items=items.filter(function(b){return (b.brandId||'').startsWith(nom)||(b.nom||'').startsWith(nom);});
-  console.log('[f1-nom] '+items.length);
-  // クラスフィルター
-  console.log('[activeCls]',[...activeCls],'size='+activeCls.size);
-  console.log('[classId0]='+String(allBottles[0]&&allBottles[0].classId));
-  console.log('[has?]',activeCls.has(String(allBottles[0]&&allBottles[0].classId)));
   if(activeCls.size>0&&activeCls.size<5)
     items=items.filter(function(b){return activeCls.has(String(b.classId||''));});
-  console.log('[f2-cls] '+items.length);
-  // 度数フィルター
   if(abv==='normal') items=items.filter(function(b){return (parseFloat(b.abv)||0)<=40;});
   else if(abv==='hp') items=items.filter(function(b){return (parseFloat(b.abv)||0)>=41;});
-  console.log('[f3-abv] '+items.length);
-  // 添加フィルター
   if(add!=='') items=items.filter(function(b){return String(b.additive||'0')===add;});
-  console.log('[f4-add] '+items.length);
 
-  // 達成率計算
   var drunkInFilter=items.filter(function(b){return isDrunk(b);}).length;
   var total=items.length;
   var pct=total?Math.round(drunkInFilter/total*100):0;
@@ -409,7 +392,6 @@ function renderList(){
   document.getElementById('ach-prog').style.width=pct+'%';
   document.getElementById('ach-pct').textContent=pct+'%';
 
-  // 未飲のみフィルター
   if(onlyUndone) items=items.filter(function(b){return !isDrunk(b);});
 
   var grid=document.getElementById('bottle-grid');
@@ -418,37 +400,29 @@ function renderList(){
     return;
   }
 
-
-  console.log('[before innerHTML] items='+items.length+' grid='+grid.id);
-  var testHtml='<div class="bottle-card undone" style="background:red;width:100px;height:100px;">TEST</div>';
-  grid.innerHTML=testHtml;
-  console.log('[after test] grid.innerHTML length='+grid.innerHTML.length+' children='+grid.children.length);
   grid.innerHTML=items.map(function(b){
     var drunk=isDrunk(b);
     var clsCode=String(b.classId||'');
     var clsLabel=CLS_LABELS[clsCode]||'?';
-    var nom4=b.brandId?(b.brandId.slice(0,4)):'';
+    var nom4=b.brandId?b.brandId.slice(0,4):'';
     var brand=nom4&&allBrands[b.brandId]?(allBrands[b.brandId].brandEs||allBrands[b.brandId].brandJa||''):'';
     var abvStr=b.abv?(parseFloat(b.abv).toFixed(1)+'%'):'';
     var addStr=b.additive==='0'||b.additive===0?'無添加':(b.additive==='1'||b.additive===1?'添加':'');
     var nameEs=bName(b);
     var nameJa=bNameJa(b);
     return '<div class="bottle-card '+(drunk?'drunk':'undone')+'">'
-      +'<div>'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
         +'<span class="bc-cls">'+clsLabel+'</span>'
         +(drunk?'<span class="bc-check">✓</span>':'')
       +'</div>'
       +'<div class="bc-name">'+esc(nameEs)+'</div>'
       +(nameJa&&nameJa!==nameEs?'<div class="bc-name" style="font-size:11px;">'+esc(nameJa)+'</div>':'')
       +(brand?'<div class="bc-brand">'+esc(brand)+(nom4?' NOM'+nom4:'')+'</div>':'')
-      +'<div class="bc-meta">'
-        +(abvStr?abvStr:'')
-        +(abvStr&&addStr?' · ':'')
-        +(addStr?addStr:'')
-      +'</div>'
+      +'<div class="bc-meta">'+(abvStr||'')+(abvStr&&addStr?' · ':'')+( addStr||'')+'</div>'
     +'</div>';
   }).join('');
 }
+
 
 function esc(s){
   return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
