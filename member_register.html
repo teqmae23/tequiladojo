@@ -773,919 +773,184 @@ var storage = firebase.storage();
 
 var currentUser = null;
 var memberDoc   = null;
-function updateToggleLbl(lbl,checked){
-  if(!lbl)return;
-  lbl.textContent=checked?'公開':'非公開';
-  lbl.className='pub-lbl '+(checked?'is-public':'is-private');
-}
-var iconFile    = null;
-var photoFile   = null;
-
-// ── ユーティリティ ──────────────────────────────────────────────
-function g(id){ return document.getElementById(id); }
-function gv(id){ var el=g(id); return el?el.value.trim():''; }
-function sv(id,val){ var el=g(id); if(el) el.value=(val==null?'':val); }
-function toast(msg,type){
-  var el=document.createElement('div');
-  el.className='toast '+(type==='err'?'terr':type==='inf'?'tinf':'tok');
-  el.textContent=msg;
-  g('toasts').appendChild(el);
-  setTimeout(function(){ el.remove(); },(type==='err'?8000:3000));
-}
-
-var GRADE_LABELS=['無料会員','有料会員1','有料会員2','有料会員3'];
-
-// ── 会員番号自動採番 ──────────────────────────────────────────
-async function syncEmailToFirestore(user){
-  if(!user||!memberDoc) return;
-  try{
-    var docId=memberDoc.memberId||user.uid;
-    var isVirtual=user.email&&user.email.indexOf(VIRTUAL_DOMAIN)>=0;
-    var updateData={};
-    var needsUpdate=false;
-
-    if(!isVirtual && user.email && user.emailVerified && memberDoc.email!==user.email){
-      updateData.email=user.email;
-      updateData.status='active';
-      if(memberDoc){ memberDoc.email=user.email; memberDoc.status='active'; }
-      var ped=g('profile-email-disp');
-      if(ped){ ped.textContent=user.email; ped.style.color='rgba(255,255,255,.7)'; }
-      var fed=g('f-email-disp');
-      if(fed){ fed.textContent=user.email; fed.style.color='var(--ink)'; }
-      await db.collection('memberIndex').doc(docId).set({email: user.email}).catch(function(){});
-      needsUpdate=true;
-    }
-
-    if(needsUpdate){
-      await db.collection('members').doc(docId).update(updateData);
-      fillForm(memberDoc);
-    }
-  }catch(e){
-    console.error('syncEmailToFirestore:', e);
-  }
-}
-
-async function fetchNextMemberId(){
-  var year=String(new Date().getFullYear()).slice(2);
-  var db=firebase.firestore();
-  // まずmembersコレクションの最大番号を取得
-  var maxNum=2; // 260002以降
-  try{
-    var snap=await db.collection('members')
-      .orderBy(firebase.firestore.FieldPath.documentId(),'desc').limit(10).get();
-    snap.forEach(function(d){
-      var num=parseInt(d.id.slice(2))||0;
-      if(num>maxNum) maxNum=num;
-    });
-  }catch(e){ console.warn('members scan:',e); }
-  // countersドキュメントで採番（set+mergeでドキュメントがなくても動作）
-  try{
-    var counterRef=db.collection('counters').doc('members');
-    var newId=null;
-    await db.runTransaction(async function(tx){
-      var doc=await tx.get(counterRef);
-      var last=Math.max(doc.exists?(doc.data().lastId||0):0, maxNum);
-      var next=last+1;
-      tx.set(counterRef,{lastId:next},{merge:true});
-      newId=year+String(next).padStart(4,'0');
-    });
-    if(newId) return newId;
-  }catch(e){ console.warn('transaction:',e); }
-  // フォールバック: timestamp+random
-  return year+String(maxNum+1).padStart(4,'0');
-}
-
-function checkRegReady(){
-  var nick=document.getElementById('reg-nick').value.trim();
-  var pass=document.getElementById('reg-pass').value;
-  var pass2=document.getElementById('reg-pass2').value;
-  var ready=nick&&pass&&pass2&&pass===pass2&&pass.length>=8;
-  var btn=document.getElementById('btn-register');
-  var btn2=document.getElementById('btn-register2');
-  if(btn){ btn.disabled=!ready; btn.style.opacity=ready?'1':'.5'; }
-  if(btn2){ btn2.disabled=!ready; btn2.style.opacity=ready?'1':'.5'; }
-}
-
-function switchLoginTab(tab){
-  document.querySelectorAll('.ltab').forEach(function(b,i){
-    b.classList.toggle('active',(i===0&&tab==='login')||(i===1&&tab==='register'));
-  });
-  document.querySelectorAll('.tab-panel').forEach(function(p,i){
-    p.classList.toggle('active',(i===0&&tab==='login')||(i===1&&tab==='register'));
-  });
-}
 
 var VIRTUAL_DOMAIN = '@tequiladojo.member';
 
-function toAuthEmail(input){
-  if(!input) return '';
-  return input.indexOf('@') >= 0 ? input : input + VIRTUAL_DOMAIN;
+function g(id){ return document.getElementById(id); }
+function gv(id){ var el=g(id); return el?el.value.trim():''; }
+function sv(id,v){ var el=g(id); if(el) el.value=v; }
+
+function toast(msg,type){
+  var t=document.createElement('div');
+  t.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:10px 20px;border-radius:8px;font-size:13px;z-index:9999;'+(type==='err'?'background:#3a1a1a;color:#df7a7a;':'background:#1a3a1a;color:#7adf7a;');
+  t.textContent=msg;
+  document.body.appendChild(t);
+  setTimeout(function(){t.remove();},4000);
 }
 
-// ── Firebase Auth ───────────────────────────────────────────────
-auth.onAuthStateChanged(async function(user){
-  if(user){
-    currentUser=user;
-    var _params=new URLSearchParams(window.location.search);
-    if(_params.get('reg')){
-      // 仮会員本会員フロー中 — initTempRegistration が処理するので何もしない
-    } else if(_params.get('edit')){
-      // プロフィール編集モード（mypage.html からの遷移など）
-      g('login-screen').style.display='none';
-      g('app').style.display='block';
-      g('header-email').textContent=user.email||'仮登録会員';
-      // マイページへ戻るボタンを表示
-      var backBtn=g('btn-back-mypage'); if(backBtn) backBtn.style.display='block';
-      loadProfile();
-    } else {
-      // ログイン済みだが新規登録ページに来た → ログアウトして登録フォームを表示
-      auth.signOut();
-      currentUser=null;
-      g('login-screen').style.display='none';
-      g('app').style.display='block';
-    }
-  } else {
-    currentUser=null;
-    // 未ログイン時は直接登録フォームを表示
-    g('login-screen').style.display='none';
-    g('app').style.display='block';
-    var vb=g('verify-banner'); if(vb) vb.style.display='none';
-    var tb=g('temp-banner'); if(tb) tb.style.display='none';
-    var lo=g('loading-overlay'); if(lo) lo.style.display='none';
-    var fa=g('form-area'); if(fa) fa.style.display='block';
-    var params=new URLSearchParams(window.location.search);
-    var regCode=params.get('reg');
-    if(regCode){
-      initTempRegistration(regCode);
-    }
-  }
+function nickByteLen(s){
+  var n=0;
+  for(var i=0;i<s.length;i++) n+=(s.charCodeAt(i)>127)?2:1;
+  return n;
+}
+
+// ── 採番 ──────────────────────────────────────────────────────────
+function fetchNextMemberId(){
+  var year=String(new Date().getFullYear()).slice(2);
+  var db2=firebase.firestore();
+  return db2.collection('members')
+    .orderBy(firebase.firestore.FieldPath.documentId(),'desc').limit(10).get()
+    .then(function(snap){
+      var maxNum=2;
+      snap.forEach(function(d){
+        var num=parseInt(d.id.slice(2))||0;
+        if(num>maxNum) maxNum=num;
+      });
+      var counterRef=db2.collection('counters').doc('members');
+      return db2.runTransaction(function(tx){
+        return tx.get(counterRef).then(function(doc){
+          var last=Math.max(doc.exists?(doc.data().lastId||0):0, maxNum);
+          var next=last+1;
+          tx.set(counterRef,{lastId:next},{merge:true});
+          return year+String(next).padStart(4,'0');
+        });
+      });
+    })
+    .catch(function(){
+      return year+String(Math.floor(Math.random()*9000)+1000);
+    });
+}
+
+// ── 登録ボタン有効化チェック ──────────────────────────────────────
+function checkRegReady(){
+  var nick=gv('reg-nick'), pass=gv('reg-pass'), pass2=gv('reg-pass2');
+  var ready=nick&&pass&&pass2;
+  var btn=g('btn-register'); if(btn) btn.disabled=!ready;
+  var btn2=g('btn-register2'); if(btn2) btn2.disabled=!ready;
+}
+['reg-nick','reg-pass','reg-pass2','reg-email'].forEach(function(id){
+  var el=g(id);
+  if(el) el.addEventListener('input',checkRegReady);
 });
 
-;async function initTempRegistration(code){
-  try{
-    var snap=await db.collection('tempRegistrations').doc(code).get();
-    if(!snap.exists){
-      toast('無効な登録コードです','err'); return;
-    }
-    var data=snap.data();
-    if(data.used){
-      toast('このコードは既に使用済みです','err'); return;
-    }
-    if(data.expiresAt && new Date(data.expiresAt)<new Date()){
-      toast('登録コードの有効期限が切れています','err'); return;
-    }
-    window._tempRegData={ code:code, tempId:data.tempId, nickname:data.nickname };
-    var ls=g('login-screen'); if(ls) ls.style.display='none';
-    showTempRegForm(data.tempId, data.nickname);
-  }catch(e){
-    toast('登録コードの確認に失敗しました: '+e.message,'err');
-  }
-}
-
-function showTempRegForm(tempId, nickname){
-  var app=g('app');
-  if(!app) return;
-  app.style.display='block';
-  app.innerHTML=
-    '<div style="max-width:400px;margin:40px auto;padding:20px">'
-    +'<div style="background:var(--gold-d);border-radius:var(--r);padding:16px;margin-bottom:20px;text-align:center">'
-    +'<div style="font-size:12px;color:var(--cream);opacity:.7;margin-bottom:4px">仮会員ID</div>'
-    +'<div style="font-size:24px;font-weight:700;color:var(--gold);font-family:var(--mono)">'+escH(tempId)+'</div>'
-    +'<div style="font-size:16px;color:var(--cream);margin-top:8px">'+escH(nickname)+'</div>'
-    +'</div>'
-    +'<p style="font-size:13px;color:var(--ink2);margin-bottom:20px">パスワードとメールアドレスを設定して本会員を完了してください。</p>'
-    +'<label class="fl">パスワード <span class="req">*</span></label>'
-    +'<input type="password" class="fi" id="treg-pass" placeholder="8文字以上" style="margin-bottom:12px" autocomplete="new-password">'
-    +'<label class="fl">パスワード（確認） <span class="req">*</span></label>'
-    +'<input type="password" class="fi" id="treg-pass2" placeholder="もう一度入力" style="margin-bottom:12px">'
-    +'<label class="fl">メールアドレス（任意）</label>'
-    +'<input type="email" class="fi" id="treg-email" placeholder="member@example.com" style="margin-bottom:20px">'
-    +'<div id="treg-err" style="color:#e55;font-size:12px;min-height:16px;margin-bottom:8px"></div>'
-    +'<button class="btn-primary" style="width:100%" onclick="doTempRegComplete()">本会員を完了する</button>'
-    +'</div>';
-}
-
-function escH(str){ return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-async function doTempRegComplete(){
-  var trd=window._tempRegData;
-  if(!trd){ toast('登録情報がありません','err'); return; }
-
-  var pass=gv('treg-pass');
-  var pass2=gv('treg-pass2');
-  var email=gv('treg-email')||null;
-  var errEl=g('treg-err');
-  errEl.textContent='';
-
-  if(!pass||pass.length<8){ errEl.textContent='パスワードは8文字以上で入力してください'; return; }
-  if(pass!==pass2){ errEl.textContent='パスワードが一致しません'; return; }
-
-  var btn=document.querySelector('#app button');
-  if(btn){ btn.disabled=true; btn.textContent='登録中...'; }
-
-  try{
-    var newMemberId=await fetchNextMemberId();
-    var authEmail=newMemberId+VIRTUAL_DOMAIN;
-
-    var cred=await auth.createUserWithEmailAndPassword(authEmail, pass);
-    var uid=cred.user.uid;
-
-    if(email){
-      await cred.user.verifyBeforeUpdateEmail(email).catch(function(e){ console.error(e); });
-    }
-
-    var now=new Date().toISOString().slice(0,10);
-    var batch=db.batch();
-
-    var oldSnap=await db.collection('members').doc(trd.tempId).get();
-    var oldData=oldSnap.exists?oldSnap.data():{};
-
-    batch.set(db.collection('members').doc(newMemberId),Object.assign({},oldData,{
-      memberId:newMemberId,
-      authUid:uid,
-      status:email?'pending':'temp',
-      isTemp:!email,
-      isGuest:false,
-      registeredAt:now
-    }));
-
-    batch.delete(db.collection('members').doc(trd.tempId));
-
-    batch.update(db.collection('tempRegistrations').doc(trd.code),{
-      used:true, newMemberId:newMemberId
-    });
-
-    var visitSnap=await db.collection('visits').where('memberId','==',trd.tempId).get();
-    visitSnap.docs.forEach(function(doc){
-      batch.update(doc.ref,{memberId:newMemberId});
-    });
-
-    if(email){
-      batch.set(db.collection('memberIndex').doc(newMemberId),{email:email});
-    }
-
-    await batch.commit();
-
-    // ログイン → onAuthStateChanged 発火 → mypage.html へ自動遷移
-    await auth.signInWithEmailAndPassword(authEmail, pass);
-    toast('本会員が完了しました！会員番号: '+newMemberId);
-  }catch(e){
-    if(btn){ btn.disabled=false; btn.textContent='本会員を完了する'; }
-    if(g('treg-err')) g('treg-err').textContent='登録失敗: '+e.message;
-  }
-}
-
-async function doLogin(){
-  var input=gv('login-email'), pass=gv('login-pass');
-  g('login-err').textContent='';
-  if(!input||!pass){ g('login-err').textContent='会員IDとパスワードを入力してください'; return; }
-  var btn=g('btn-login'); btn.disabled=true; btn.textContent='ログイン中...';
-
-  var isEmail = input.indexOf('@')>=0;
-
-  if(isEmail){
-    auth.signInWithEmailAndPassword(input, pass)
-      .catch(function(e){
-        g('login-err').textContent=
-          e.code==='auth/user-not-found'||e.code==='auth/invalid-credential'||e.code==='auth/invalid-login-credentials'?'メールアドレスまたはパスワードが正しくありません':
-          'ログイン失敗: '+e.message;
-        btn.disabled=false; btn.textContent='ログイン';
-      });
-  } else {
-    try{
-      var idxSnap=await db.collection('memberIndex').doc(input).get();
-      var authEmail = (idxSnap.exists && idxSnap.data().email)
-        ? idxSnap.data().email
-        : input+VIRTUAL_DOMAIN;
-      auth.signInWithEmailAndPassword(authEmail, pass)
-        .catch(function(e){
-          g('login-err').textContent='会員IDまたはパスワードが正しくありません';
-          btn.disabled=false; btn.textContent='ログイン';
-        });
-    }catch(e){
-      auth.signInWithEmailAndPassword(input+VIRTUAL_DOMAIN, pass)
-        .catch(function(e){
-          g('login-err').textContent='会員IDまたはパスワードが正しくありません';
-          btn.disabled=false; btn.textContent='ログイン';
-        });
-    }
-  }
-}
-
-function nickByteLen(str){
-  var len=0;
-  for(var i=0;i<str.length;i++){
-    len+=str.charCodeAt(i)>255?2:1;
-  }
-  return len;
-}
-
-async function doRegister(){
-  var nick=document.getElementById('reg-nick').value.trim();
-  var name=document.getElementById('reg-name').value.trim();
-  var kana=document.getElementById('reg-kana').value.trim();
-  var gender=document.getElementById('reg-gender').value;
-  var birth=document.getElementById('reg-birth').value;
-  var pass=document.getElementById('reg-pass').value;
-  var pass2=document.getElementById('reg-pass2').value;
-  var emailInput=document.getElementById('reg-email').value.trim();
+// ── 新規登録 ──────────────────────────────────────────────────────
+function doRegister(){
+  var nick=gv('reg-nick');
+  var pass=gv('reg-pass');
+  var pass2=gv('reg-pass2');
+  var emailInput=gv('reg-email');
   var errEl=g('reg-err');
   errEl.textContent='';
 
   if(!nick||!pass){ errEl.textContent='ニックネームとパスワードは必須です'; return; }
-  if(nickByteLen(nick)>16){ errEl.textContent='ニックネームは全角8文字（半角16文字）以内にしてください'; return; }
-  if(pass.length<8){ errEl.textContent='パスワードは8文字以上にしてください'; return; }
+  if(nickByteLen(nick)>16){ errEl.textContent='ニックネームは全角8文字以内'; return; }
+  if(pass.length<8){ errEl.textContent='パスワードは8文字以上'; return; }
   if(pass!==pass2){ errEl.textContent='パスワードが一致しません'; return; }
 
-  var memberId=await fetchNextMemberId();
-  if(!memberId){ errEl.textContent='会員番号の採番に失敗しました。もう一度お試しください'; return; }
-  document.getElementById('reg-memberid').value=memberId;
+  var btn=g('btn-register'); if(btn){btn.disabled=true;btn.textContent='登録中...';}
+  var btn2=g('btn-register2'); if(btn2){btn2.disabled=true;btn2.textContent='登録中...';}
 
-  if(!emailInput){
-    if(!confirm('メールアドレスを登録しない場合、仮登録状態となりメンバーポータル機能が利用できませんが、よろしいですか？')){
-      return;
-    }
-  }
-
-  if(emailInput){
-    try{
-      var methods=await auth.fetchSignInMethodsForEmail(emailInput);
-      if(methods.length>0){ errEl.textContent='このメールアドレスは既に登録されています'; return; }
-    }catch(e){
-      if(e.code==='auth/invalid-email'){ errEl.textContent='メールアドレスの形式が正しくありません'; return; }
-      errEl.textContent='メールアドレスの確認に失敗しました: '+e.message; return;
-    }
-  }
-
-  // メールアドレスがある場合はそのメールでAuth登録、なければ仮想メール
-  var authEmail = emailInput ? emailInput : (memberId + VIRTUAL_DOMAIN);
-  var realEmail = emailInput || null;
-  var isTemp = !emailInput;
-
-  var btn=g('btn-register'), btn2=g('btn-register2');
-  if(btn){ btn.disabled=true; btn.textContent='登録中...'; }
-  if(btn2){ btn2.disabled=true; btn2.textContent='登録中...'; }
-
-  try{
-    var cred=await auth.createUserWithEmailAndPassword(authEmail, pass);
-    var uid=cred.user.uid;
-
-    await db.collection('memberIndex').doc(memberId).set({
-      email: authEmail
-    });
-
-    await db.collection('members').doc(memberId).set({
-      authUid: uid,
-      memberId: memberId,
-      email: realEmail,
-      status: isTemp ? 'temp' : 'pending',
-      name: name||null,
-      nameKana: kana||null,
-      nickname: nick,
-      gender: gender,
-      birthday: birth?birth.replace(/-/g,''):null,
-      phone: document.getElementById('reg-tel').value.trim()||null,
-      zipCode: document.getElementById('reg-zip').value.trim()||null,
-      prefecture: document.getElementById('reg-pref').value||null,
-      address: document.getElementById('reg-addr').value.trim()||null,
-      address2: document.getElementById('reg-addr2').value.trim()||null,
-      twitterId: document.getElementById('reg-tw').value.trim()||null,
-      instagramId: document.getElementById('reg-ig').value.trim()||null,
-      facebookId: document.getElementById('reg-fb').value.trim()||null,
-      grade: 0,
-      visibility: 0,
-      visitCount: 0,
-      totalTequila: 0,
-      totalAmount: 0,
-      lang: 0,
-      registeredAt: new Date().toISOString().slice(0,10),
-    });
-
-    var msg=g('reg-info-msg');
-    if(isTemp){
-      if(msg) msg.textContent='仮登録完了しました。会員番号: '+memberId;
-      toast('仮登録完了しました。会員番号: '+memberId);
-    } else {
-      if(msg) msg.textContent='認証メールを送信しました。リンクをクリックして本会員を完了してください。';
-      toast('認証メールを送信しました。メールをご確認ください。','inf');
-    }
-    // 登録完了 → onAuthStateChanged が発火して mypage.html へ自動遷移
-    // （doRegister は createUserWithEmailAndPassword でログイン状態になるため）
-  }catch(e){
-    errEl.textContent=
-      e.code==='auth/email-already-in-use'?'このメールアドレスは既に登録されています':
-      '登録失敗: '+e.message;
-    if(btn){ btn.disabled=false; btn.textContent='会員登録'; }
-    if(btn2){ btn2.disabled=false; btn2.textContent='会員登録'; }
-  }
-}
-
-function doLogout(){
-  auth.signOut();
-}
-
-async function doResetPassword(){
-  var input=gv('login-email').trim();
-  g('login-err').textContent='';
-  if(!input){ g('login-err').textContent='会員IDを入力してください'; return; }
-
-  try{
-    var isEmail = input.indexOf('@')>=0;
-    var realEmail = null;
-
-    if(isEmail){
-      realEmail = input;
-    } else {
-      var idxSnap=await db.collection('memberIndex').doc(input).get();
-      if(idxSnap.exists && idxSnap.data().email){
-        realEmail = idxSnap.data().email;
-      }
-    }
-
-    if(!realEmail){
-      g('login-err').textContent='メールアドレスが登録されていません。店舗スタッフにお問い合わせください';
+  fetchNextMemberId().then(function(memberId){
+    if(!memberId){
+      errEl.textContent='会員番号の採番に失敗しました';
+      if(btn){btn.disabled=false;btn.textContent='会員登録';}
+      if(btn2){btn2.disabled=false;btn2.textContent='会員登録';}
       return;
     }
 
-    await auth.sendPasswordResetEmail(realEmail);
-    g('login-err').style.color='var(--teal)';
-    g('login-err').textContent='パスワードリセットメールを '+realEmail+' に送信しました';
-  }catch(e){
-    g('login-err').textContent='送信失敗: '+e.message;
-  }
-}
+    // メールあり→そのメール、なし→仮想メール
+    var authEmail=emailInput?emailInput:(memberId+VIRTUAL_DOMAIN);
 
-// ── プロフィール読み込み ─────────────────────────────────────────
-async function loadProfile(){
-  g('loading-overlay').style.display='block';
-  g('form-area').style.display='none';
-  try{
-    await currentUser.reload();
-    var memberData=null;
+    auth.createUserWithEmailAndPassword(authEmail,pass)
+      .then(function(cred){
+        var uid=cred.user.uid;
+        var now=new Date().toISOString().slice(0,10);
+        var batch=db.batch();
 
-    var authEmail=currentUser.email||'';
-    // 1. 仮想メール → 会員IDを直接取得
-    if(authEmail.indexOf(VIRTUAL_DOMAIN)>=0){
-      var virtualMid=authEmail.replace(VIRTUAL_DOMAIN,'');
-      var snap0=await db.collection('members').doc(virtualMid).get();
-      if(snap0.exists) memberData=snap0.data();
-    }
-    // 2. 実メール → memberIndexで逆引き
-    if(!memberData&&authEmail&&authEmail.indexOf(VIRTUAL_DOMAIN)<0){
-      var idxSnap=await db.collection('memberIndex').where('email','==',authEmail).limit(1).get();
-      if(!idxSnap.empty){
-        var midFromIdx=idxSnap.docs[0].id;
-        var snap1=await db.collection('members').doc(midFromIdx).get();
-        if(snap1.exists) memberData=snap1.data();
-      }
-    }
-    // 3. authUidで検索
-    if(!memberData){
-      var snap2=await db.collection('members').doc(currentUser.uid).get();
-      if(snap2.exists){ memberData=snap2.data(); }
-      else{
-        var q=await db.collection('members').where('authUid','==',currentUser.uid).limit(1).get();
-        if(!q.empty) memberData=q.docs[0].data();
-      }
-    }
-    memberDoc=memberData;
-    fillForm(memberDoc);
+        batch.set(db.collection('memberIndex').doc(memberId),{
+          email:authEmail
+        });
+        batch.set(db.collection('members').doc(memberId),{
+          authUid:uid,
+          memberId:memberId,
+          email:emailInput||null,
+          status:'active',
+          nickname:nick,
+          name:gv('reg-name')||null,
+          nameKana:gv('reg-kana')||null,
+          gender:gv('reg-gender')||null,
+          birthday:gv('reg-birth')||null,
+          phone:gv('reg-tel')||null,
+          registeredAt:now
+        });
 
-    await syncEmailToFirestore(currentUser);
-
-    var st=memberDoc&&memberDoc.status?memberDoc.status:'guest';
-    var tb=g('temp-banner'); if(tb) tb.style.display=(st==='temp')?'flex':'none';
-    var vb=g('verify-banner'); if(vb) vb.style.display=(st==='pending')?'flex':'none';
-
-  }catch(e){
-    console.error('loadProfile error:', e);
-    fillForm(null);
-    var tb=g('temp-banner'); if(tb) tb.style.display='none';
-    var vb=g('verify-banner'); if(vb) vb.style.display='none';
-  }
-  g('loading-overlay').style.display='none';
-  g('form-area').style.display='block';
-}
-
-function fillForm(d){
-  sv('f-name',    d?d.name||'':'');
-  sv('f-kana',    d?d.nameKana||'':'');
-  var pmid=g('profile-member-id');
-  if(pmid) pmid.textContent=d&&d.memberId?d.memberId:'—';
-  var hmid=g('header-member-id');
-  if(hmid&&d&&d.memberId){
-    hmid.textContent='会員番号: '+d.memberId;
-    hmid.style.display='block';
-  }
-  var ped=g('profile-email-disp');
-  if(ped){
-    var displayEmail=currentUser&&currentUser.email&&currentUser.email.indexOf(VIRTUAL_DOMAIN)<0
-      ?currentUser.email:(d&&d.email?d.email:null);
-    ped.textContent=displayEmail||'未登録';
-    ped.style.color=displayEmail?'rgba(255,255,255,.7)':'rgba(255,255,255,.3)';
-  }
-  var fed=g('f-email-disp');
-  if(fed){
-    var displayEmail2=currentUser&&currentUser.email&&currentUser.email.indexOf(VIRTUAL_DOMAIN)<0
-      ?currentUser.email:(d&&d.email?d.email:null);
-    fed.textContent=displayEmail2||'未登録';
-    fed.style.color=displayEmail2?'var(--ink)':'var(--ink3)';
-  }
-  var psb=g('profile-status-badge');
-  if(psb){
-    var st=d&&d.status?d.status:(d&&d.isGuest?'guest':d&&d.isTemp?'temp':'active');
-    if(st==='guest'){ psb.textContent='ゲスト'; psb.style.color='#cccc44'; }
-    else if(st==='temp'){ psb.textContent='仮登録'; psb.style.color='#cc88cc'; }
-    else if(st==='pending'){ psb.textContent='認証待ち'; psb.style.color='#e8b84a'; }
-    else{ psb.textContent='✓ 本会員'; psb.style.color='#7adf7a'; }
-  }
-
-  sv('f-nick',    d?d.nickname||'':'');
-  sv('f-gender',  d?d.gender||'男':'男');
-  sv('f-birth',   d&&d.birthday?formatDateInput(d.birthday):'');
-  sv('f-zip',     d?d.zipCode||'':'');
-  sv('f-pref',    d?d.prefecture||'':'');
-  sv('f-addr',    d?d.address||'':'');
-  sv('f-addr2',   d?d.address2||'':'');
-  sv('f-tel',     d?d.phone||'':'');
-  sv('f-tw',      d?d.twitterId||'':'');
-  sv('f-ig',      d?d.instagramId||'':'');
-  sv('f-fb',      d?d.facebookId||'':'');
-  sv('f-main-sns',d?String(d.mainSns||0):'0');
-  sv('f-lang', d?String(d.lang||0):'0');
-  // ラジオボタンで公開区分を設定
-  var vis=d?String(d.visibility||0):'0';
-  var visEl=document.getElementById('f-vis-'+vis);
-  if(visEl) visEl.checked=true; else { var v0=document.getElementById('f-vis-0'); if(v0) v0.checked=true; }
-  // 都道府県公開トグル
-  var prefPub=d&&d.prefPublic?true:false;
-  var prefToggle=document.getElementById('f-pref-public');
-  if(prefToggle){ prefToggle.checked=prefPub; updateToggleLbl(document.getElementById('f-pref-public-lbl'),prefPub); }
-  // SNS公開トグル
-  var snsPub=d&&d.snsPublic?true:false;
-  var snsToggle=document.getElementById('f-sns-public');
-  if(snsToggle){ snsToggle.checked=snsPub; updateToggleLbl(document.getElementById('f-sns-public-lbl'),snsPub); }
-  var fmid=g('f-member-id'); if(fmid) fmid.textContent=d&&d.memberId?d.memberId:(d&&d.authUid?d.authUid.slice(0,8)+'...':'—');
-  var fgrd=g('f-grade'); if(fgrd) fgrd.textContent=GRADE_LABELS[d&&d.grade?d.grade:0]||'無料会員';
-  var sv1=g('stat-visits'); if(sv1) sv1.innerHTML=(d?d.visitCount||0:0)+'<span class="stat-unit">回</span>';
-  var sv2=g('stat-tequila'); if(sv2) sv2.innerHTML=(d?d.totalTequila||0:0)+'<span class="stat-unit">ml</span>';
-  var sv3=g('stat-rank'); if(sv3) sv3.textContent=d&&d.rank?d.rank:'—';
-  var sv4=g('stat-amount'); if(sv4) sv4.textContent='¥'+(d?d.totalAmount||0:0).toLocaleString();
-  var iconPrev=g('icon-preview');
-  if(iconPrev){ iconPrev.src=(d&&d.iconUrl)?d.iconUrl:''; iconPrev.style.display=(d&&d.iconUrl)?'block':'none'; }
-  var iconClrBtn=g('icon-clear-btn'); if(iconClrBtn) iconClrBtn.style.display=(d&&d.iconUrl)?'inline-flex':'none';
-  // 値があるフィールドにblue背景を適用
-  document.querySelectorAll('.fi').forEach(function(el){
-    if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){
-      var hasVal=el.value&&el.value.trim().length>0;
-      el.classList.toggle('has-value', !!hasVal);
-      el.addEventListener('input',function(){ this.classList.toggle('has-value', !!(this.value&&this.value.trim().length>0)); });
-    } else if(el.tagName==='SELECT'){
-      var hasVal2=el.value&&el.value!=='';
-      el.classList.toggle('has-value', !!hasVal2);
-      el.addEventListener('change',function(){ this.classList.toggle('has-value', !!(this.value&&this.value!=='')); });
-    }
-  });
-  var iconClr=g('icon-clear'); if(iconClr&&d&&d.iconUrl) iconClr.style.display='inline';
-  var photoPrev=g('photo-preview'); if(photoPrev) photoPrev.src=(d&&d.photoUrl)?d.photoUrl:DEFAULT_PHOTO_SVG;
-  var photoClr=g('photo-clear'); if(photoClr&&d&&d.photoUrl) photoClr.style.display='inline';
-}
-
-function formatDateInput(dateStr){
-  if(!dateStr||dateStr.length<8) return '';
-  return dateStr.slice(0,4)+'-'+dateStr.slice(4,6)+'-'+dateStr.slice(6,8);
-}
-function parseDateInput(dateStr){
-  return dateStr?dateStr.replace(/-/g,''):'';
-}
-
-var DEFAULT_ICON_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><circle cx="40" cy="40" r="40" fill="%23e4ddd0"/><circle cx="40" cy="30" r="14" fill="%239a8470"/><ellipse cx="40" cy="68" rx="22" ry="16" fill="%239a8470"/></svg>';
-var DEFAULT_PHOTO_SVG = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 90"><rect width="120" height="90" fill="%23e4ddd0"/><circle cx="60" cy="34" r="18" fill="%239a8470"/><ellipse cx="60" cy="80" rx="30" ry="18" fill="%239a8470"/></svg>';
-
-function compressImage(file, maxW, maxH, quality){
-  return new Promise(function(resolve){
-    if(file.type==='image/gif'){
-      if(file.size > 2*1024*1024){ alert('GIFは2MB以下にしてください'); resolve(null); return; }
-      resolve(file); return;
-    }
-    var img=new Image();
-    var url=URL.createObjectURL(file);
-    img.onload=function(){
-      var w=img.width, h=img.height;
-      if(w>maxW){ h=Math.round(h*maxW/w); w=maxW; }
-      if(h>maxH){ w=Math.round(w*maxH/h); h=maxH; }
-      var canvas=document.createElement('canvas');
-      canvas.width=w; canvas.height=h;
-      canvas.getContext('2d').drawImage(img,0,0,w,h);
-      URL.revokeObjectURL(url);
-      canvas.toBlob(function(blob){ resolve(blob); }, 'image/jpeg', quality);
-    };
-    img.src=url;
+        return batch.commit().then(function(){
+          toast('登録完了！会員番号: '+memberId);
+          g('reg-info-msg').textContent='登録完了！会員番号: '+memberId;
+          // マイページへ
+          setTimeout(function(){ window.location.href='/mypage.html'; },2000);
+        });
+      })
+      .catch(function(e){
+        errEl.textContent='登録失敗: '+e.message;
+        if(btn){btn.disabled=false;btn.textContent='会員登録';}
+        if(btn2){btn2.disabled=false;btn2.textContent='会員登録';}
+      });
   });
 }
 
-function previewImg(type){
-  var fileEl=g(type+'-file');
-  var file=fileEl.files[0];
-  if(!file) return;
-  handleIconFile(file);
-}
+// ── 登録ボタンイベント ─────────────────────────────────────────────
+['btn-register','btn-register2'].forEach(function(id){
+  var el=g(id);
+  if(el) el.addEventListener('click',doRegister);
+});
 
-function clearImg(type){
-  if(type==='icon'){
-    iconFile=null;
-    var f=g('icon-file'); if(f) f.value='';
-    var p=g('icon-preview'); if(p) p.src=DEFAULT_ICON_SVG;
-    var c=g('icon-clear'); if(c) c.style.display='none';
+// ── Auth状態監視 ──────────────────────────────────────────────────
+auth.onAuthStateChanged(function(user){
+  var params=new URLSearchParams(window.location.search);
+  if(user){
+    currentUser=user;
+    if(params.get('edit')){
+      // 編集モード
+      g('login-screen').style.display='none';
+      g('app').style.display='block';
+      g('loading-overlay').style.display='none';
+      g('form-area').style.display='block';
+      if(g('header-email')) g('header-email').textContent=user.email||'';
+      loadProfile();
+    } else {
+      // ログイン済みで新規登録ページ → サインアウトしてフォーム表示
+      auth.signOut();
+    }
   } else {
-    photoFile=null;
-    var f=g('photo-file'); if(f) f.value='';
-    var p=g('photo-preview'); if(p) p.src=DEFAULT_PHOTO_SVG;
-    var c=g('photo-clear'); if(c) c.style.display='none';
-  }
-}
-
-document.addEventListener('paste', function(e){
-  var items = e.clipboardData && e.clipboardData.items;
-  if(!items) return;
-  for(var i=0;i<items.length;i++){
-    if(items[i].type.indexOf('image')!==-1){
-      var file=items[i].getAsFile();
-      var activeEl=document.activeElement;
-      var type='icon';
-      if(activeEl && (activeEl.id==='photo-drop' || (activeEl.closest && activeEl.closest('#photo-drop')))) type='photo';
-      handleIconFile(file);
-      break;
-    }
+    currentUser=null;
+    g('login-screen').style.display='none';
+    g('app').style.display='block';
+    g('loading-overlay').style.display='none';
+    g('form-area').style.display='block';
   }
 });
 
-['icon','photo'].forEach(function(type){
-  var area=g(type+'-drop');
-  if(!area) return;
-  area.addEventListener('dragover',function(e){ e.preventDefault(); area.style.borderColor='var(--gold)'; });
-  area.addEventListener('dragleave',function(){ area.style.borderColor=''; });
-  area.addEventListener('drop',function(e){
-    e.preventDefault(); area.style.borderColor='';
-    var file=e.dataTransfer.files[0];
-    if(file && file.type.indexOf('image')!==-1) handleIconFile(file);
-  });
-});
-
-// ─── アイコン画像 ───────────────────────────────────────────
-function handleIconFile(file){
-  if(!file)return;
-  Cropper.open(file,{shape:'circle',onCrop:function(blob,ext){
-    iconFile={blob:blob,ext:ext};
-    var url=URL.createObjectURL(blob);
-    var p=g('icon-preview'); if(p){p.src=url;p.style.display='block';}
-    var c=g('icon-clear-btn'); if(c) c.style.display='inline-flex';
-  }});
-}
-
-function openIconCamera(){
-  var inp=g('icon-camera-input'); if(inp) inp.click();
-}
-
-function activatePasteMode(){
-  // paste-receiverにフォーカスしてCtrl+Vを受け付ける状態にする
-  var recv=g('paste-receiver');
-  if(recv){
-    recv.focus();
-    var btn=g('icon-paste-btn');
-    if(btn){
-      btn.textContent='⌨️ 今すぐCtrl+Vを押してください';
-      btn.style.background='#eef4fd';
-      btn.style.borderColor='#90b8e8';
-    }
-  }
-}
-
-function clearIconImage(){
-  iconFile=null;
-  var p=g('icon-preview');
-  if(p){ p.src=memberDoc&&memberDoc.iconUrl?memberDoc.iconUrl:''; }
-  var c=g('icon-clear-btn'); if(c) c.style.display='none';
-}
-
-// ─── クリップボード貼り付け（Ctrl+V）──────────────────────────
-document.addEventListener('paste',function(e){
-  var items=e.clipboardData&&e.clipboardData.items;
-  if(!items)return;
-  for(var i=0;i<items.length;i++){
-    if(items[i].type.indexOf('image')!==-1){
-      var file=items[i].getAsFile();
-      handleIconFile(file);
-      // ボタンを元に戻す
-      var btn=g('icon-paste-btn');
-      if(btn){
-        btn.textContent='📋 Ctrl+V で貼り付け';
-        btn.style.background='var(--white)';
-        btn.style.borderColor='var(--border2)';
+// ── プロフィール読み込み（編集モード用） ──────────────────────────
+function loadProfile(){
+  if(!currentUser) return;
+  db.collection('members')
+    .where('authUid','==',currentUser.uid).limit(1).get()
+    .then(function(snap){
+      if(!snap.empty){
+        var d=snap.docs[0].data();
+        memberDoc=d;
+        sv('reg-nick',d.nickname||'');
+        sv('reg-name',d.name||'');
+        sv('reg-kana',d.nameKana||'');
+        sv('reg-gender',d.gender||'');
+        sv('reg-birth',d.birthday||'');
+        sv('reg-email',d.email||'');
+        sv('reg-tel',d.phone||'');
       }
-      // paste-receiverからフォーカスを外す
-      var recv=g('paste-receiver'); if(recv) recv.blur();
-      e.preventDefault();
-      return;
-    }
-  }
-});
-
-async function uploadImage(file, path){
-  var ref=storage.ref(path);
-  await ref.put(file);
-  return await ref.getDownloadURL();
+    })
+    .catch(function(e){ console.error('loadProfile:',e); });
 }
 
-async function saveProfile(){
-  var nick=gv('f-nick');
-  if(!nick){ toast('ニックネームは必須です','err'); return; }
-  var name=gv('f-name');
-  var btn=g('btn-save'); btn.disabled=true; btn.textContent='保存中...';
-  g('save-status').textContent='保存中...';
-  try{
-    var uid=currentUser.uid;
-    // 会員IDを先に確定（memberDoc.memberId優先、なければuid）
-    var saveMid=memberDoc&&memberDoc.memberId?memberDoc.memberId:uid;
-    var updateData={
-      name:name, nameKana:gv('f-kana')||null, nickname:gv('f-nick')||null,
-      gender:gv('f-gender')||'男',
-      birthday:parseDateInput(gv('f-birth'))||null,
-      zipCode:gv('f-zip')||null, prefecture:gv('f-pref')||null,
-      address:gv('f-addr')||null, address2:gv('f-addr2')||null,
-      phone:gv('f-tel')||null,
-      twitterId:gv('f-tw')||null, instagramId:gv('f-ig')||null, facebookId:gv('f-fb')||null,
-      mainSns:parseInt(gv('f-main-sns'))||0,
-      lang:parseInt(gv('f-lang'))||0,
-      visibility:parseInt((document.querySelector('input[name="f-visibility"]:checked')||{value:'0'}).value),
-      prefPublic:document.getElementById('f-pref-public')&&document.getElementById('f-pref-public').checked?true:false,
-      snsPublic:document.getElementById('f-sns-public')&&document.getElementById('f-sns-public').checked?true:false,
-      email:currentUser.email,
-      authUid:uid,
-      memberId:saveMid,
-    };
-    if(iconFile){
-      var iExt=iconFile.ext||'jpg';
-      var iPath='members/'+saveMid+'/icon.'+iExt;
-      updateData.iconUrl=await uploadImage(iconFile.blob||iconFile, iPath);
-      iconFile=null;
-    }
-    await db.collection('members').doc(saveMid).set(updateData,{merge:true});
-    // publicProfilesにも公開情報を書き込む
-    var pubData={
-      nickname: updateData.nickname||null,
-      visibility: updateData.visibility||0,
-      prefecture: updateData.prefPublic?updateData.prefecture||null:null,
-      snsPublic: updateData.snsPublic||false,
-      twitterId: updateData.snsPublic?updateData.twitterId||null:null,
-      instagramId: updateData.snsPublic?updateData.instagramId||null:null,
-      facebookId: updateData.snsPublic?updateData.facebookId||null:null,
-      mainSns: updateData.snsPublic?updateData.mainSns||0:0,
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    };
-    await db.collection('publicProfiles').doc(saveMid).set(pubData,{merge:true});
-    memberDoc=Object.assign(memberDoc||{},updateData);
-    toast('プロフィールを保存しました');
-    g('save-status').textContent='保存済み';
-  }catch(e){
-    toast('保存失敗: '+e.message,'err');
-    g('save-status').textContent='保存に失敗しました';
-  }
-  btn.disabled=false; btn.textContent='保存する';
-}
-
-function openEmailChange(){
-  g('email-change-modal').style.display='flex';
-  g('new-email-input').value='';
-  g('email-change-err').textContent='';
-  g('new-email-input').focus();
-}
-function closeEmailChange(){
-  g('email-change-modal').style.display='none';
-  var rp=g('reauth-password'); if(rp) rp.value='';
-  var ne=g('new-email-input'); if(ne) ne.value='';
-  var ee=g('email-change-err'); if(ee) ee.textContent='';
-}
-
-async function doEmailChange(){
-  var newEmail=g('new-email-input').value.trim();
-  var password=g('reauth-password').value;
-  var errEl=g('email-change-err');
-  var btn=g('btn-email-change');
-  errEl.textContent='';
-
-  if(!password){ errEl.textContent='現在のパスワードを入力してください'; return; }
-  if(!newEmail){ errEl.textContent='新しいメールアドレスを入力してください'; return; }
-
-  try{
-    var methods=await auth.fetchSignInMethodsForEmail(newEmail);
-    if(methods.length>0){ errEl.textContent='このメールアドレスは既に登録されています'; return; }
-  }catch(e){
-    if(e.code==='auth/invalid-email'){ errEl.textContent='メールアドレスの形式が正しくありません'; return; }
-  }
-
-  btn.disabled=true; btn.textContent='送信中...';
-
-  try{
-    var currentEmail=currentUser.email;
-    var credential=firebase.auth.EmailAuthProvider.credential(currentEmail, password);
-    await currentUser.reauthenticateWithCredential(credential);
-
-    var oldEmail=currentUser.email&&currentUser.email.indexOf(VIRTUAL_DOMAIN)<0
-      ?currentUser.email:null;
-
-    await currentUser.verifyBeforeUpdateEmail(newEmail);
-
-    var docId2=memberDoc&&memberDoc.memberId?memberDoc.memberId:currentUser.uid;
-    await db.collection('members').doc(docId2).update({
-      status: 'pending'
-    }).catch(function(){});
-    if(memberDoc) memberDoc.status='pending';
-
-    await db.collection('memberIndex').doc(docId2).set({email: newEmail}).catch(function(){});
-
-    if(oldEmail){
-      db.collection('emailChangeRequests').add({
-        uid: currentUser.uid,
-        oldEmail: oldEmail,
-        newEmail: newEmail,
-        requestedAt: new Date().toISOString(),
-        status: 'pending'
-      }).catch(function(){});
-    }
-
-    toast('確認メールを '+newEmail+' に送信しました。メール内のリンクをクリックして変更を完了してください。','inf');
-    closeEmailChange();
-    var reloadTimer=setInterval(async function(){
-      await currentUser.reload();
-      if(currentUser.email===newEmail){
-        clearInterval(reloadTimer);
-        var docId=memberDoc&&memberDoc.memberId?memberDoc.memberId:currentUser.uid;
-        await db.collection('members').doc(docId).update({
-          email: newEmail,
-          status: 'active'
-        }).catch(function(){});
-        if(memberDoc){ memberDoc.email=newEmail; memberDoc.status='active'; }
-        await loadProfile();
-        toast('メールアドレスが変更されました','inf');
-      }
-    }, 3000);
-    setTimeout(function(){ clearInterval(reloadTimer); }, 300000);
-  }catch(e){
-    if(e.code==='auth/wrong-password'||e.code==='auth/invalid-credential'){
-      errEl.textContent='パスワードが正しくありません';
-    } else if(e.code==='auth/requires-recent-login'){
-      errEl.textContent='再認証に失敗しました。一度ログアウトして再ログインしてください';
-    } else {
-      errEl.textContent='送信失敗: '+e.message;
-    }
-  }
-  btn.disabled=false; btn.textContent='確認メールを送信';
-}
-
-async function resendVerifyEmail(){
-  try{
-    await currentUser.sendEmailVerification();
-    toast('認証メールを再送しました。メールをご確認ください。','inf');
-  }catch(e){
-    toast('送信失敗: '+e.message,'err');
-  }
-}
-
-async function doChangePassword(){
-  var pass=gv('f-new-pass'), pass2=gv('f-new-pass2');
-  g('pass-err').textContent='';
-  if(!pass){ g('pass-err').textContent='新しいパスワードを入力してください'; return; }
-  if(pass.length<8){ g('pass-err').textContent='パスワードは8文字以上にしてください'; return; }
-  if(pass!==pass2){ g('pass-err').textContent='パスワードが一致しません'; return; }
-  try{
-    await currentUser.updatePassword(pass);
-    sv('f-new-pass',''); sv('f-new-pass2','');
-    toast('パスワードを変更しました');
-  }catch(e){
-    if(e.code==='auth/requires-recent-login'){
-      g('pass-err').textContent='セキュリティのため、一度ログアウトして再ログイン後に変更してください';
-    } else {
-      g('pass-err').textContent='変更失敗: '+e.message;
-    }
-  }
-}
-
-document.getElementById('login-pass').addEventListener('keydown',function(e){ if(e.key==='Enter') doLogin(); });
-document.getElementById('reg-pass2').addEventListener('keydown',function(e){ if(e.key==='Enter') doRegister(); });
-// DOMContentLoaded初期化
-document.addEventListener('DOMContentLoaded',function(){
-  // URLパラメータでタブ切り替え(?tab=register or /member_register.html直リンク)
-  var urlParams=new URLSearchParams(window.location.search);
-  var tabParam=urlParams.get('tab');
-  if(!urlParams.has('edit') && tabParam!=='login'){
-    switchLoginTab('register');
-  }
-  Cropper.initEvents();
-  var pt=document.getElementById('f-pref-public');
-  if(pt) pt.addEventListener('change',function(){ updateToggleLbl(document.getElementById('f-pref-public-lbl'),this.checked); });
-  var st=document.getElementById('f-sns-public');
-  if(st) st.addEventListener('change',function(){ updateToggleLbl(document.getElementById('f-sns-public-lbl'),this.checked); });
-});
 </script>
 </body>
