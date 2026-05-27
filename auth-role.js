@@ -60,6 +60,16 @@ var AuthRole = (function() {
   /**
    * ログイン画面を表示
    */
+  function showDebug(msg) {
+    var dbg = document.getElementById('_auth_debug');
+    if (!dbg) {
+      dbg = document.createElement('div');
+      dbg.id = '_auth_debug';
+      dbg.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#111;color:#0f0;font-size:11px;padding:8px;z-index:99999;word-break:break-all;white-space:pre-wrap;max-height:50vh;overflow:auto;';
+      document.body.appendChild(dbg);
+    }
+    dbg.textContent = '🔍 ' + msg;
+  }
   function showLoginScreen(errorMsg) {
     var ls = document.getElementById('login-screen');
     var app = document.getElementById('app');
@@ -135,21 +145,21 @@ var AuthRole = (function() {
           await new Promise(r => setTimeout(r, 1000));
           try { role = await getRole(user); } catch(e2) { console.error('getRole failed:', e2); }
         }
+        const logMsg = (window._authLog||[]).join(' / ');
+        showDebug('role=' + role + ' / ' + logMsg);
         if (role === 'owner' || role === 'staff') {
           onAllowed(user, role);
         } else if (role === null) {
-          const logMsg = (window._authLog||[]).join(' / ');
           if (onSignedOut) onSignedOut();
-          else showLoginScreen('権限未設定。デバッグ: ' + logMsg);
+          else showLoginScreen('権限未設定。DEBUG: ' + logMsg);
         } else {
           await auth.signOut();
-          showDenied('スタッフ専用ページです（権限がありません）');
+          showDenied('権限がありません（role=' + role + '）DEBUG: ' + logMsg);
         }
       } catch(e) {
-        console.error('AuthRole.requireStaff:', e);
-        // エラー時はログイン画面に戻す（showDeniedで詰まらせない）
+        showDebug('ERROR: ' + e.message + ' / ' + (window._authLog||[]).join(' / '));
         if (onSignedOut) onSignedOut();
-        else showLoginScreen('認証エラー: ' + e.message);
+        else showLoginScreen('認証エラー: ' + e.message + ' / DEBUG: ' + (window._authLog||[]).join(' / '));
       }
     });
   }
