@@ -1173,19 +1173,13 @@ auth.onAuthStateChanged(function(user) {
     user.reload().then(function(){
       currentUser = firebase.auth().currentUser;
       if(g('header-email')) g('header-email').textContent = currentUser.email || '';
-      var email = currentUser.email || '';
-      var isVirtual = email.indexOf('@tequiladojo.member') >= 0;
-      // emailVerified済み・実メール → memberIndexからID取得してstatus更新
-      if(currentUser.emailVerified && !isVirtual && email){
-        db.collection('memberIndex').where('email','==',email).limit(1).get()
+      var isVirtual = (currentUser.email||'').indexOf('@tequiladojo.member') >= 0;
+      // emailVerified済み・実メール → authUidでmembersを検索してstatus更新
+      if(currentUser.emailVerified && !isVirtual){
+        db.collection('members').where('authUid','==',currentUser.uid).limit(1).get()
           .then(function(snap){
-            if(!snap.empty){
-              var mid = snap.docs[0].id;
-              return db.collection('members').doc(mid).get().then(function(doc){
-                if(doc.exists && doc.data().status === 'pending'){
-                  return doc.ref.update({status:'active'});
-                }
-              });
+            if(!snap.empty && snap.docs[0].data().status === 'pending'){
+              return snap.docs[0].ref.update({status:'active'});
             }
           })
           .then(function(){ loadProfile(); })
