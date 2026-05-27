@@ -925,43 +925,41 @@ auth.onAuthStateChanged(function(user){
 // ── プロフィール読み込み（編集モード用） ──────────────────────────
 function loadProfile(){
   if(!currentUser) return;
-  var authEmail=currentUser.email||'';
-  var memberId=null;
+  var email=currentUser.email||'';
+  // 仮想メール → IDを直接抽出、実メール → memberIndex経由
+  var memberId=email.indexOf('@tequiladojo.member')>=0
+    ? email.replace('@tequiladojo.member','')
+    : null;
 
-  // Step1: memberIdを確定
-  var step1;
-  if(authEmail.indexOf('@tequiladojo.member')>=0){
-    memberId=authEmail.replace('@tequiladojo.member','');
-    step1=Promise.resolve();
-  } else if(authEmail){
-    step1=db.collection('memberIndex').where('email','==',authEmail).limit(1).get()
-      .then(function(snap){
-        if(!snap.empty) memberId=snap.docs[0].id;
+  function fetchById(mid){
+    return db.collection('members').doc(mid).get()
+      .then(function(doc){
+        if(!doc.exists) throw new Error('not found');
+        var d=doc.data();
+        memberDoc=d;
+        sv('reg-memberid',doc.id);
+        var midEl=g('header-member-id');
+        if(midEl) midEl.textContent='会員番号: '+doc.id;
+        sv('reg-nick',d.nickname||'');
+        sv('reg-name',d.name||'');
+        sv('reg-kana',d.nameKana||'');
+        sv('reg-gender',d.gender||'');
+        sv('reg-birth',d.birthday||'');
+        sv('reg-email',d.email||'');
+        sv('reg-tel',d.phone||'');
       });
-  } else {
-    step1=Promise.resolve();
   }
 
-  step1.then(function(){
-    if(!memberId) throw new Error('会員IDが取得できませんでした');
-    return db.collection('members').doc(memberId).get();
-  })
-  .then(function(doc){
-    if(!doc.exists) throw new Error('会員情報が見つかりません');
-    var d=doc.data();
-    memberDoc=d;
-    sv('reg-memberid',doc.id);
-    var midEl=g('header-member-id');
-    if(midEl) midEl.textContent='会員番号: '+doc.id;
-    sv('reg-nick',d.nickname||'');
-    sv('reg-name',d.name||'');
-    sv('reg-kana',d.nameKana||'');
-    sv('reg-gender',d.gender||'');
-    sv('reg-birth',d.birthday||'');
-    sv('reg-email',d.email||'');
-    sv('reg-tel',d.phone||'');
-  })
-  .catch(function(e){ console.error('loadProfile error:',e); });
+  if(memberId){
+    fetchById(memberId).catch(function(e){ console.error('loadProfile:',e); });
+  } else if(email){
+    db.collection('memberIndex').where('email','==',email).limit(1).get()
+      .then(function(snap){
+        if(!snap.empty) return fetchById(snap.docs[0].id);
+        throw new Error('memberIndex not found');
+      })
+      .catch(function(e){ console.error('loadProfile:',e); });
+  }
 }
 
 </script>
