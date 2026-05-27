@@ -112,5 +112,24 @@ var AuthRole = (function() {
     });
   }
 
-  return { requireStaff: requireStaff, requireOwner: requireOwner, requireMember: requireMember };
+  // アクティブセッション取得
+  async function getActiveSession(db){
+    try{
+      var snap=await db.collection('sessions').where('status','==','open').orderBy('openTime','desc').limit(1).get();
+      if(!snap.empty) return {id:snap.docs[0].id,...snap.docs[0].data()};
+    }catch(e){}
+    return null;
+  }
+
+  // 営業日付計算（深夜営業対応: openTime基準）
+  function businessDate(openTime, openDate){
+    if(openDate) return openDate;
+    if(!openTime) return null;
+    var d=openTime.toDate?openTime.toDate():new Date(openTime);
+    return String(d.getFullYear()).slice(2).padStart(2,'0')
+      +String(d.getMonth()+1).padStart(2,'0')
+      +String(d.getDate()).padStart(2,'0');
+  }
+
+  return { requireStaff: requireStaff, requireOwner: requireOwner, requireMember: requireMember, getActiveSession: getActiveSession, businessDate: businessDate };
 })();
