@@ -33,38 +33,23 @@ var AuthRole = (function() {
     document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#666;padding:20px;text-align:center;">' + (msg||'アクセス権限がありません') + '</div>';
   }
 
-  // membersコレクションからroleを取得
+  // roleを取得
   async function getRole(user){
-    // 1. Custom Claims確認
+    var db = firebase.firestore();
+    // 1. staffRoles/{uid} を直接取得（最も確実）
+    try {
+      var doc = await db.collection('staffRoles').doc(user.uid).get();
+      if(doc.exists && doc.data().role) return doc.data().role;
+    } catch(e){}
+    // 2. Custom Claims
     try {
       var result = await user.getIdTokenResult(true);
       if(result.claims.role) return result.claims.role;
     } catch(e){}
-    var db = firebase.firestore();
-    // 2. authUidフィールドで検索
+    // 3. members/{memberId} をauthUidで検索
     try {
       var snap = await db.collection('members').where('authUid','==',user.uid).limit(1).get();
       if(!snap.empty && snap.docs[0].data().role) return snap.docs[0].data().role;
-    } catch(e){}
-    // 3. emailフィールドで検索
-    try {
-      var email = user.email || '';
-      if(email){
-        var snap2 = await db.collection('members').where('email','==',email).limit(1).get();
-        if(!snap2.empty && snap2.docs[0].data().role) return snap2.docs[0].data().role;
-      }
-    } catch(e){}
-    // 4. memberIndexからmemberIdを取得してdoc直接参照
-    try {
-      var email = user.email || '';
-      if(email){
-        var idxSnap = await db.collection('memberIndex').where('email','==',email).limit(1).get();
-        if(!idxSnap.empty){
-          var mid = idxSnap.docs[0].id;
-          var mDoc = await db.collection('members').doc(mid).get();
-          if(mDoc.exists && mDoc.data().role) return mDoc.data().role;
-        }
-      }
     } catch(e){}
     return null;
   }
