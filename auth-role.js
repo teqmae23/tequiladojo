@@ -37,23 +37,31 @@ var AuthRole = (function() {
     try {
       const result = await user.getIdTokenResult(true);
       log.push('claims:' + JSON.stringify(result.claims));
-      if (result.claims.role) { log.push('→ claims.role=' + result.claims.role); window._authLog=log; return result.claims.role; }
-    } catch(e) { log.push('claims error:' + e.message); }
-    // フォールバック: membersコレクションをemailで検索してroleを取得
+      if (result.claims.role) {
+        log.push('→ claims.role=' + result.claims.role);
+        window._authLog=log; return result.claims.role;
+      }
+    } catch(e) { log.push('claims_err:' + e.message); }
+    // フォールバック: membersコレクションをemailで検索
     try {
       const db = firebase.firestore();
       const email = user.email || '';
       log.push('email:' + email);
-      if (!email) { window._authLog=log; return null; }
+      if (!email) { window._authLog=log; showDebug(log.join(' | ')); return null; }
+      log.push('querying members...');
+      showDebug(log.join(' | '));
       const snap = await db.collection('members').where('email','==',email).limit(1).get();
-      log.push('members hit:' + snap.size);
+      log.push('hit:' + snap.size);
       if (!snap.empty) {
         const data = snap.docs[0].data();
-        log.push('memberId:' + snap.docs[0].id + ' role:' + data.role);
-        if (data.role) { window._authLog=log; return data.role; }
+        log.push('id:' + snap.docs[0].id + ' role:' + JSON.stringify(data.role));
+        if (data.role) { window._authLog=log; showDebug(log.join(' | ')); return data.role; }
       }
-    } catch(e) { log.push('members error:' + e.message); }
+    } catch(e) {
+      log.push('members_err:' + e.message);
+    }
     window._authLog = log;
+    showDebug(log.join(' | '));
     return null;
   }
 
