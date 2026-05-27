@@ -1173,32 +1173,26 @@ auth.onAuthStateChanged(function(user) {
     user.reload().then(function(){
       currentUser = firebase.auth().currentUser;
       if(g('header-email')) g('header-email').textContent = currentUser.email || '';
-      // emailVerified済みなら即statusをactiveに更新してからloadProfile
-      if(currentUser.emailVerified){
-        var email = currentUser.email || '';
-        var isVirtual = email.indexOf('@tequiladojo.member') >= 0;
-        if(!isVirtual){
-          var memberId = null;
-          if(email) {
-            db.collection('memberIndex').where('email','==',email).limit(1).get()
-              .then(function(snap){
-                if(!snap.empty) memberId = snap.docs[0].id;
-                else memberId = null;
-                if(memberId){
-                  db.collection('members').doc(memberId).get().then(function(doc){
-                    if(doc.exists && doc.data().status === 'pending'){
-                      doc.ref.update({status:'active'}).catch(function(){});
-                    }
-                  });
+      var email = currentUser.email || '';
+      var isVirtual = email.indexOf('@tequiladojo.member') >= 0;
+      // emailVerified済み・実メール → memberIndexからID取得してstatus更新
+      if(currentUser.emailVerified && !isVirtual && email){
+        db.collection('memberIndex').where('email','==',email).limit(1).get()
+          .then(function(snap){
+            if(!snap.empty){
+              var mid = snap.docs[0].id;
+              return db.collection('members').doc(mid).get().then(function(doc){
+                if(doc.exists && doc.data().status === 'pending'){
+                  return doc.ref.update({status:'active'});
                 }
-              })
-              .catch(function(){})
-              .finally(function(){ loadProfile(); });
-            return;
-          }
-        }
+              });
+            }
+          })
+          .then(function(){ loadProfile(); })
+          .catch(function(){ loadProfile(); });
+      } else {
+        loadProfile();
       }
-      loadProfile();
     }).catch(function(){
       currentUser = user;
       if(g('header-email')) g('header-email').textContent = user.email || '';
