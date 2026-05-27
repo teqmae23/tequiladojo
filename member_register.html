@@ -775,20 +775,6 @@ var currentUser = null;
 var memberDoc   = null;
 var VIRTUAL_DOMAIN = '@tequiladojo.member';
 
-// 画面デバッグログ
-var _dbgEl = null;
-function dbg(msg) {
-  if (!_dbgEl) {
-    _dbgEl = document.createElement('div');
-    _dbgEl.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#111;color:#0f0;font-size:11px;padding:6px 8px;z-index:99999;max-height:180px;overflow-y:auto;word-break:break-all;';
-    document.body.appendChild(_dbgEl);
-  }
-  var line = document.createElement('div');
-  line.textContent = new Date().toISOString().slice(11,19) + ' ' + msg;
-  _dbgEl.appendChild(line);
-  _dbgEl.scrollTop = _dbgEl.scrollHeight;
-}
-
 function g(id) { return document.getElementById(id); }
 function gv(id) { var el=g(id); return el ? el.value.trim() : ''; }
 function sv(id, v) { var el=g(id); if(el) el.value = v; }
@@ -851,8 +837,7 @@ function doRegister() {
   var btn2 = g('btn-register2'); if(btn2) { btn2.disabled=true; btn2.textContent='登録中...'; }
   fetchNextMemberId().then(function(memberId) {
     var authEmail = emailInput ? emailInput : (memberId + VIRTUAL_DOMAIN);
-    dbg('doRegister: memberId=' + memberId + ' authEmail=' + authEmail);
-    return auth.createUserWithEmailAndPassword(authEmail, pass)
+      return auth.createUserWithEmailAndPassword(authEmail, pass)
       .then(function(cred) {
         var uid = cred.user.uid;
         var now = new Date().toISOString().slice(0,10);
@@ -984,18 +969,14 @@ function resendVerifyEmail(){
 }
 
 function loadProfile() {
-  dbg('loadProfile called');
   if(!currentUser) { dbg('loadProfile: no currentUser'); return; }
   var email = currentUser.email || '';
-  dbg('loadProfile: email=' + email);
   var memberId = null;
   if(email.indexOf('@tequiladojo.member') >= 0) {
     memberId = email.replace('@tequiladojo.member', '');
-    dbg('loadProfile: virtual email, memberId=' + memberId);
-    db.collection('members').doc(memberId).get()
+      db.collection('members').doc(memberId).get()
       .then(function(doc) {
-        dbg('loadProfile: doc.exists=' + doc.exists);
-        if(!doc.exists) return;
+              if(!doc.exists) return;
         var d = doc.data();
         memberDoc = d;
         var midEl = g('profile-member-id');
@@ -1012,29 +993,27 @@ function loadProfile() {
         sv('f-gender', d.gender || '');
         sv('f-birth', d.birthday || '');
         sv('f-tel', d.phone || '');
-        // emailVerifiedの状態でverify-bannerを表示
+        // pending(認証待ち)ならverify-bannerを表示
         var vb = g('verify-banner');
         var isVirtual = currentUser.email && currentUser.email.indexOf('@tequiladojo.member') >= 0;
         if(vb){
-          if(!isVirtual && d.email && !currentUser.emailVerified){
+          if(d.status === 'pending' && !isVirtual){
             vb.style.display = 'block';
           } else {
             vb.style.display = 'none';
           }
         }
-        // statusが認証済みなのにpendingなら自動でactiveに更新
-        if(!isVirtual && d.email && currentUser.emailVerified && d.status === 'pending'){
+        // emailVerified済みでpendingならactiveに自動更新
+        if(!isVirtual && currentUser.emailVerified && d.status === 'pending'){
           db.collection('members').doc(doc.id).update({status:'active'}).catch(function(){});
+          if(vb) vb.style.display = 'none';
         }
-        dbg('loadProfile: done, nick=' + d.nickname);
-      })
+            })
       .catch(function(e) { dbg('loadProfile error: ' + e.message); });
   } else if(email) {
-    dbg('loadProfile: real email, querying memberIndex');
-    db.collection('memberIndex').where('email','==',email).limit(1).get()
+      db.collection('memberIndex').where('email','==',email).limit(1).get()
       .then(function(snap) {
-        dbg('loadProfile: memberIndex hit=' + snap.size);
-        if(snap.empty) { dbg('loadProfile: not found in memberIndex'); return; }
+              if(snap.empty) { dbg('loadProfile: not found in memberIndex'); return; }
         memberId = snap.docs[0].id;
         return db.collection('members').doc(memberId).get();
       })
@@ -1056,12 +1035,10 @@ function loadProfile() {
         sv('f-gender', d.gender || '');
         sv('f-birth', d.birthday || '');
         sv('f-tel', d.phone || '');
-        dbg('loadProfile: done, nick=' + d.nickname);
-      })
+            })
       .catch(function(e) { dbg('loadProfile error: ' + e.message); });
   } else {
-    dbg('loadProfile: no email');
-  }
+    }
 }
 
 // フォームを表示しつつ、ログイン済みならプロフィールを読み込む
