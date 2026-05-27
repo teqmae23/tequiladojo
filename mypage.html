@@ -408,10 +408,26 @@ async function doLogin(){
   if(!raw||!pw){err.textContent='IDとパスワードを入力してください';return;}
   btn.disabled=true;btn.textContent='ログイン中...';err.textContent='';
   try{
-    // 会員IDの場合はメール形式に変換
     let email=raw;
     if(!raw.includes('@')){
-      email=raw+'@tequiladojo.member';
+      // まず仮想メールで試みる
+      try{
+        await auth.signInWithEmailAndPassword(raw+'@tequiladojo.member',pw);
+        btn.disabled=false;btn.textContent='ログイン';
+        return;
+      }catch(e1){
+        // 失敗したらmembersからメールアドレスを取得して再試行
+        try{
+          var snap=await db.collection('members').doc(raw).get();
+          if(snap.exists && snap.data().email){
+            email=snap.data().email;
+          } else {
+            throw new Error('会員情報が見つかりません');
+          }
+        }catch(e2){
+          throw new Error('IDまたはパスワードが正しくありません');
+        }
+      }
     }
     await auth.signInWithEmailAndPassword(email,pw);
     // onAuthStateChangedが以降を処理
