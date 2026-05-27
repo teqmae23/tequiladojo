@@ -144,30 +144,32 @@ function doRegister(){
 
   btn.disabled=true; btn.textContent='登録中...';
 
-  fetchNextMemberId().then(function(memberId){
-    var authEmail = email ? email : (memberId+VIRTUAL_DOMAIN);
-    return auth.createUserWithEmailAndPassword(authEmail, pass)
-      .then(function(cred){
-        var uid = cred.user.uid;
-        var now = new Date().toISOString().slice(0,10);
-        // メールあり → 認証メール送信・status=pending
-        if(email){
-          var actionSettings2={url:'https://tequiladojo.com/member_register.html',handleCodeInApp:false};
-        cred.user.sendEmailVerification(actionSettings2).catch(function(e){ console.error('verify mail:',e); });
-        }
-        var batch = db.batch();
-        batch.set(db.collection('memberIndex').doc(memberId), { email: authEmail });
-        batch.set(db.collection('members').doc(memberId), {
-          authUid:    uid,
-          memberId:   memberId,
-          email:      email || null,
-          status:     email ? 'pending' : 'active',
-          nickname:   nick,
-          registeredAt: now
+  // Auth登録を先に行い、ログイン済み状態で採番・Firestore書き込み
+  var tempAuthEmail = email || ('tmp_'+Date.now()+VIRTUAL_DOMAIN);
+  auth.createUserWithEmailAndPassword(tempAuthEmail, pass)
+    .then(function(cred){
+      var uid = cred.user.uid;
+      var now = new Date().toISOString().slice(0,10);
+      if(email){
+        var as2={url:'https://tequiladojo.com/member_register.html',handleCodeInApp:false};
+        cred.user.sendEmailVerification(as2).catch(function(){});
+      }
+      // ログイン済みになったので採番可能
+      return fetchNextMemberId().then(function(memberId){
+        var authEmail = email ? email : (memberId+VIRTUAL_DOMAIN);
+        var p2 = email ? Promise.resolve() : cred.user.updateEmail(authEmail).catch(function(){});
+        return p2.then(function(){
+          var batch = db.batch();
+          batch.set(db.collection('memberIndex').doc(memberId),{email:authEmail});
+          batch.set(db.collection('members').doc(memberId),{
+            authUid:uid, memberId:memberId, email:email||null,
+            status:email?'pending':'active', nickname:nick, registeredAt:now
+          });
+          return batch.commit().then(function(){return{memberId:memberId,hasEmail:!!email};});
         });
-        return batch.commit().then(function(){ return { memberId: memberId, hasEmail: !!email }; });
       });
-  }).then(function(result){
+    })
+    .then(function(result){
     document.getElementById('form-area').style.display='none';
     document.getElementById('done-area').style.display='block';
     document.getElementById('done-id').textContent=result.memberId;
