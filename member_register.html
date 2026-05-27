@@ -1023,8 +1023,42 @@ function doEmailChange(){
 function resendVerifyEmail(){
   if(!currentUser){ alert('ログインしてください'); return; }
   currentUser.sendEmailVerification()
-    .then(function(){ alert('認証メールを再送しました。メールをご確認ください。'); })
-    .catch(function(e){ alert('送信失敗: ' + e.message); });
+    .then(function(){
+      toast('認証メールを再送しました。メールをご確認ください。');
+      startVerifyPolling();
+    })
+    .catch(function(e){ toast('送信失敗: ' + e.message, 'err'); });
+}
+
+// 認証完了を定期チェック（30秒ごと・最大10分）
+var _verifyPollTimer = null;
+var _verifyPollCount = 0;
+function startVerifyPolling(){
+  if(_verifyPollTimer) return;
+  _verifyPollCount = 0;
+  _verifyPollTimer = setInterval(function(){
+    _verifyPollCount++;
+    if(_verifyPollCount > 20){ clearInterval(_verifyPollTimer); _verifyPollTimer=null; return; }
+    if(!currentUser) return;
+    currentUser.reload().then(function(){
+      currentUser = firebase.auth().currentUser;
+      if(currentUser.emailVerified){
+        clearInterval(_verifyPollTimer); _verifyPollTimer=null;
+        // Firestoreのstatusをactiveに更新
+        var memberId = g('profile-member-id') ? g('profile-member-id').textContent : '';
+        if(memberId){
+          db.collection('members').doc(memberId).update({status:'active'}).then(function(){
+            var vb = g('verify-banner');
+            if(vb) vb.style.display = 'none';
+            toast('メール認証が完了しました。本会員になりました！');
+            // ステータスバッジ更新
+            var stEl = g('profile-status-badge');
+            if(stEl) stEl.textContent = '本会員';
+          });
+        }
+      }
+    });
+  }, 30000);
 }
 
 function loadProfile() {
@@ -1055,16 +1089,18 @@ function loadProfile() {
         // pending(認証待ち)ならverify-bannerを表示
         var vb = g('verify-banner');
         var isVirtual = currentUser.email && currentUser.email.indexOf('@tequiladojo.member') >= 0;
-        if(vb){
-          if(d.status === 'pending' && !isVirtual){
-            vb.style.display = 'block';
-          } else {
-            vb.style.display = 'none';
-          }
-        }
-        // emailVerified済みでpendingならactiveに自動更新
         if(!isVirtual && currentUser.emailVerified && d.status === 'pending'){
-          db.collection('members').doc(doc.id).update({status:'active'}).catch(function(){});
+          // 認証済みなのにpending → 即activeに更新
+          db.collection('members').doc(doc.id).update({status:'active'}).then(function(){
+            var stEl = g('profile-status-badge');
+            if(stEl) stEl.textContent = '本会員';
+            if(vb) vb.style.display = 'none';
+          }).catch(function(){});
+        } else if(d.status === 'pending' && !isVirtual){
+          if(vb) vb.style.display = 'block';
+          // バックグラウンドでpolling開始
+          startVerifyPolling();
+        } else {
           if(vb) vb.style.display = 'none';
         }
             })
