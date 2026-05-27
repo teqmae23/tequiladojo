@@ -599,6 +599,7 @@ select.fi{cursor:pointer;}
 <div id="toasts"></div>
 
 <script>
+
 // ════════════════════════════════════════════════════════
 // CROPPER — インタラクティブ画像クロッパー
 // 使い方:
@@ -770,195 +771,199 @@ if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
 var auth    = firebase.auth();
 var db      = firebase.firestore();
 var storage = firebase.storage();
-
 var currentUser = null;
 var memberDoc   = null;
-
 var VIRTUAL_DOMAIN = '@tequiladojo.member';
 
-function g(id){ return document.getElementById(id); }
-function gv(id){ var el=g(id); return el?el.value.trim():''; }
-function sv(id,v){ var el=g(id); if(el) el.value=v; }
-
-function toast(msg,type){
-  var t=document.createElement('div');
-  t.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:10px 20px;border-radius:8px;font-size:13px;z-index:9999;'+(type==='err'?'background:#3a1a1a;color:#df7a7a;':'background:#1a3a1a;color:#7adf7a;');
-  t.textContent=msg;
-  document.body.appendChild(t);
-  setTimeout(function(){t.remove();},4000);
+// 画面デバッグログ
+var _dbgEl = null;
+function dbg(msg) {
+  if (!_dbgEl) {
+    _dbgEl = document.createElement('div');
+    _dbgEl.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#111;color:#0f0;font-size:11px;padding:6px 8px;z-index:99999;max-height:200px;overflow-y:auto;word-break:break-all;';
+    document.body.appendChild(_dbgEl);
+  }
+  var line = document.createElement('div');
+  line.textContent = new Date().toISOString().slice(11,19) + ' ' + msg;
+  _dbgEl.appendChild(line);
+  _dbgEl.scrollTop = _dbgEl.scrollHeight;
 }
 
-function nickByteLen(s){
-  var n=0;
-  for(var i=0;i<s.length;i++) n+=(s.charCodeAt(i)>127)?2:1;
+function g(id) { return document.getElementById(id); }
+function gv(id) { var el=g(id); return el ? el.value.trim() : ''; }
+function sv(id, v) { var el=g(id); if(el) el.value = v; }
+
+function toast(msg, type) {
+  var t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:220px;left:50%;transform:translateX(-50%);padding:10px 20px;border-radius:8px;font-size:13px;z-index:9999;background:#1a3a1a;color:#7adf7a;';
+  if(type === 'err') t.style.background = '#3a1a1a'; t.style.color = '#df7a7a';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(function(){ t.remove(); }, 4000);
+}
+
+function nickByteLen(s) {
+  var n = 0;
+  for(var i = 0; i < s.length; i++) n += (s.charCodeAt(i) > 127) ? 2 : 1;
   return n;
 }
 
-// ── 採番 ──────────────────────────────────────────────────────────
-function fetchNextMemberId(){
-  var year=String(new Date().getFullYear()).slice(2);
-  var db2=firebase.firestore();
-  return db2.collection('members')
-    .orderBy(firebase.firestore.FieldPath.documentId(),'desc').limit(10).get()
-    .then(function(snap){
-      var maxNum=2;
-      snap.forEach(function(d){
-        var num=parseInt(d.id.slice(2))||0;
-        if(num>maxNum) maxNum=num;
-      });
-      var counterRef=db2.collection('counters').doc('members');
-      return db2.runTransaction(function(tx){
-        return tx.get(counterRef).then(function(doc){
-          var last=Math.max(doc.exists?(doc.data().lastId||0):0, maxNum);
-          var next=last+1;
-          tx.set(counterRef,{lastId:next},{merge:true});
-          return year+String(next).padStart(4,'0');
-        });
-      });
-    })
-    .catch(function(){
-      return year+String(Math.floor(Math.random()*9000)+1000);
+function fetchNextMemberId() {
+  var year = String(new Date().getFullYear()).slice(2);
+  var ref = db.collection('counters').doc('members');
+  return db.runTransaction(function(tx) {
+    return tx.get(ref).then(function(doc) {
+      var last = doc.exists ? (doc.data().lastId || 0) : 2;
+      var next = last + 1;
+      tx.set(ref, {lastId: next}, {merge: true});
+      return year + String(next).padStart(4, '0');
     });
-}
-
-// ── 登録ボタン有効化チェック ──────────────────────────────────────
-function checkRegReady(){
-  var nick=gv('reg-nick'), pass=gv('reg-pass'), pass2=gv('reg-pass2');
-  var ready=nick&&pass&&pass2;
-  var btn=g('btn-register'); if(btn) btn.disabled=!ready;
-  var btn2=g('btn-register2'); if(btn2) btn2.disabled=!ready;
-}
-['reg-nick','reg-pass','reg-pass2','reg-email'].forEach(function(id){
-  var el=g(id);
-  if(el) el.addEventListener('input',checkRegReady);
-});
-
-// ── 新規登録 ──────────────────────────────────────────────────────
-function doRegister(){
-  var nick=gv('reg-nick');
-  var pass=gv('reg-pass');
-  var pass2=gv('reg-pass2');
-  var emailInput=gv('reg-email');
-  var errEl=g('reg-err');
-  errEl.textContent='';
-
-  if(!nick||!pass){ errEl.textContent='ニックネームとパスワードは必須です'; return; }
-  if(nickByteLen(nick)>16){ errEl.textContent='ニックネームは全角8文字以内'; return; }
-  if(pass.length<8){ errEl.textContent='パスワードは8文字以上'; return; }
-  if(pass!==pass2){ errEl.textContent='パスワードが一致しません'; return; }
-
-  var btn=g('btn-register'); if(btn){btn.disabled=true;btn.textContent='登録中...';}
-  var btn2=g('btn-register2'); if(btn2){btn2.disabled=true;btn2.textContent='登録中...';}
-
-  fetchNextMemberId().then(function(memberId){
-    if(!memberId){
-      errEl.textContent='会員番号の採番に失敗しました';
-      if(btn){btn.disabled=false;btn.textContent='会員登録';}
-      if(btn2){btn2.disabled=false;btn2.textContent='会員登録';}
-      return;
-    }
-
-    // メールあり→そのメール、なし→仮想メール
-    var authEmail=emailInput?emailInput:(memberId+VIRTUAL_DOMAIN);
-
-    auth.createUserWithEmailAndPassword(authEmail,pass)
-      .then(function(cred){
-        var uid=cred.user.uid;
-        var now=new Date().toISOString().slice(0,10);
-        var batch=db.batch();
-
-        batch.set(db.collection('memberIndex').doc(memberId),{
-          email:authEmail
-        });
-        batch.set(db.collection('members').doc(memberId),{
-          authUid:uid,
-          memberId:memberId,
-          email:emailInput||null,
-          status:'active',
-          nickname:nick,
-          name:gv('reg-name')||null,
-          nameKana:gv('reg-kana')||null,
-          gender:gv('reg-gender')||null,
-          birthday:gv('reg-birth')||null,
-          phone:gv('reg-tel')||null,
-          registeredAt:now
-        });
-
-        return batch.commit().then(function(){
-          toast('登録完了！会員番号: '+memberId);
-          g('reg-info-msg').textContent='登録完了！会員番号: '+memberId;
-          // マイページへ
-          setTimeout(function(){ window.location.href='/mypage.html'; },2000);
-        });
-      })
-      .catch(function(e){
-        errEl.textContent='登録失敗: '+e.message;
-        if(btn){btn.disabled=false;btn.textContent='会員登録';}
-        if(btn2){btn2.disabled=false;btn2.textContent='会員登録';}
-      });
   });
 }
 
-// ── 登録ボタンイベント ─────────────────────────────────────────────
-['btn-register','btn-register2'].forEach(function(id){
-  var el=g(id);
-  if(el) el.addEventListener('click',doRegister);
-});
+function checkRegReady() {
+  var nick = gv('reg-nick');
+  var pass = gv('reg-pass');
+  var pass2 = gv('reg-pass2');
+  var ready = nick && pass && pass2;
+  var btn = g('btn-register'); if(btn) btn.disabled = !ready;
+  var btn2 = g('btn-register2'); if(btn2) btn2.disabled = !ready;
+}
 
-// ── Auth状態監視 ──────────────────────────────────────────────────
-// ログイン状態に関係なくフォームを表示
-g('login-screen').style.display='none';
-g('app').style.display='block';
-g('loading-overlay').style.display='none';
-g('form-area').style.display='block';
+var regInputIds = ['reg-nick','reg-pass','reg-pass2','reg-email'];
+for(var ri=0; ri<regInputIds.length; ri++) {
+  var rel = g(regInputIds[ri]);
+  if(rel) rel.addEventListener('input', checkRegReady);
+}
 
-// ログイン済みならプロフィールを読み込む
-auth.onAuthStateChanged(function(user){
-  if(user){
-    currentUser=user;
-    if(g('header-email')) g('header-email').textContent=user.email||'';
-    loadProfile();
-  }
-  // 未ログインの場合はそのまま新規登録フォームを表示
-});
-
-// ── プロフィール読み込み（編集モード用） ──────────────────────────
-function loadProfile(){
-  if(!currentUser) return;
-  var email=currentUser.email||'';
-  var memberId=email.indexOf('@tequiladojo.member')>=0
-    ? email.replace('@tequiladojo.member','')
-    : null;
-
-  function fetchById(mid){
-    return db.collection('members').doc(mid).get()
-      .then(function(doc){
-        if(!doc.exists) return;
-        var d=doc.data();
-        memberDoc=d;
-        sv('reg-memberid',doc.id);
-        var midEl=g('header-member-id');
-        if(midEl) midEl.textContent='会員番号: '+doc.id;
-        sv('reg-nick',d.nickname||'');
-        sv('reg-name',d.name||'');
-        sv('reg-kana',d.nameKana||'');
-        sv('reg-gender',d.gender||'');
-        sv('reg-birth',d.birthday||'');
-        sv('reg-email',d.email||'');
-        sv('reg-tel',d.phone||'');
+function doRegister() {
+  var nick = gv('reg-nick');
+  var pass = gv('reg-pass');
+  var pass2 = gv('reg-pass2');
+  var emailInput = gv('reg-email');
+  var errEl = g('reg-err');
+  errEl.textContent = '';
+  if(!nick || !pass) { errEl.textContent = 'ニックネームとパスワードは必須です'; return; }
+  if(nickByteLen(nick) > 16) { errEl.textContent = 'ニックネームは全角8文字以内'; return; }
+  if(pass.length < 8) { errEl.textContent = 'パスワードは8文字以上'; return; }
+  if(pass !== pass2) { errEl.textContent = 'パスワードが一致しません'; return; }
+  var btn = g('btn-register'); if(btn) { btn.disabled=true; btn.textContent='登録中...'; }
+  var btn2 = g('btn-register2'); if(btn2) { btn2.disabled=true; btn2.textContent='登録中...'; }
+  fetchNextMemberId().then(function(memberId) {
+    var authEmail = emailInput ? emailInput : (memberId + VIRTUAL_DOMAIN);
+    dbg('doRegister: memberId=' + memberId + ' authEmail=' + authEmail);
+    return auth.createUserWithEmailAndPassword(authEmail, pass)
+      .then(function(cred) {
+        var uid = cred.user.uid;
+        var now = new Date().toISOString().slice(0,10);
+        var batch = db.batch();
+        batch.set(db.collection('memberIndex').doc(memberId), {email: authEmail});
+        batch.set(db.collection('members').doc(memberId), {
+          authUid: uid,
+          memberId: memberId,
+          email: emailInput || null,
+          status: 'active',
+          nickname: nick,
+          name: gv('reg-name') || null,
+          nameKana: gv('reg-kana') || null,
+          gender: gv('reg-gender') || null,
+          birthday: gv('reg-birth') || null,
+          phone: gv('reg-tel') || null,
+          registeredAt: now
+        });
+        return batch.commit().then(function(){ return memberId; });
       });
-  }
+  }).then(function(memberId) {
+    var infoEl = g('reg-info-msg'); if(infoEl) infoEl.textContent = '登録完了！会員番号: ' + memberId;
+    toast('登録完了！会員番号: ' + memberId);
+    setTimeout(function(){ window.location.href = '/mypage.html'; }, 2000);
+  }).catch(function(e) {
+    errEl.textContent = '登録失敗: ' + e.message;
+    var btn = g('btn-register'); if(btn) { btn.disabled=false; btn.textContent='会員登録'; }
+    var btn2 = g('btn-register2'); if(btn2) { btn2.disabled=false; btn2.textContent='会員登録'; }
+  });
+}
 
-  if(memberId){
-    fetchById(memberId).catch(function(e){ console.error('loadProfile:',e); });
-  } else if(email){
-    db.collection('memberIndex').where('email','==',email).limit(1).get()
-      .then(function(snap){
-        if(!snap.empty) return fetchById(snap.docs[0].id);
+var bids = ['btn-register','btn-register2'];
+for(var bi=0; bi<bids.length; bi++) {
+  var bel = g(bids[bi]);
+  if(bel) bel.addEventListener('click', doRegister);
+}
+
+function loadProfile() {
+  dbg('loadProfile called');
+  if(!currentUser) { dbg('loadProfile: no currentUser'); return; }
+  var email = currentUser.email || '';
+  dbg('loadProfile: email=' + email);
+  var memberId = null;
+  if(email.indexOf('@tequiladojo.member') >= 0) {
+    memberId = email.replace('@tequiladojo.member', '');
+    dbg('loadProfile: virtual email, memberId=' + memberId);
+    db.collection('members').doc(memberId).get()
+      .then(function(doc) {
+        dbg('loadProfile: doc.exists=' + doc.exists);
+        if(!doc.exists) return;
+        var d = doc.data();
+        memberDoc = d;
+        sv('reg-memberid', doc.id);
+        var midEl = g('header-member-id');
+        if(midEl) midEl.textContent = 'ID: ' + doc.id;
+        sv('reg-nick', d.nickname || '');
+        sv('reg-name', d.name || '');
+        sv('reg-kana', d.nameKana || '');
+        sv('reg-gender', d.gender || '');
+        sv('reg-birth', d.birthday || '');
+        sv('reg-email', d.email || '');
+        sv('reg-tel', d.phone || '');
+        dbg('loadProfile: done, nick=' + d.nickname);
       })
-      .catch(function(e){ console.error('loadProfile:',e); });
+      .catch(function(e) { dbg('loadProfile error: ' + e.message); });
+  } else if(email) {
+    dbg('loadProfile: real email, querying memberIndex');
+    db.collection('memberIndex').where('email','==',email).limit(1).get()
+      .then(function(snap) {
+        dbg('loadProfile: memberIndex hit=' + snap.size);
+        if(snap.empty) { dbg('loadProfile: not found in memberIndex'); return; }
+        memberId = snap.docs[0].id;
+        return db.collection('members').doc(memberId).get();
+      })
+      .then(function(doc) {
+        if(!doc || !doc.exists) { dbg('loadProfile: members doc not found'); return; }
+        var d = doc.data();
+        memberDoc = d;
+        sv('reg-memberid', doc.id);
+        var midEl = g('header-member-id');
+        if(midEl) midEl.textContent = 'ID: ' + doc.id;
+        sv('reg-nick', d.nickname || '');
+        sv('reg-name', d.name || '');
+        sv('reg-kana', d.nameKana || '');
+        sv('reg-gender', d.gender || '');
+        sv('reg-birth', d.birthday || '');
+        sv('reg-email', d.email || '');
+        sv('reg-tel', d.phone || '');
+        dbg('loadProfile: done, nick=' + d.nickname);
+      })
+      .catch(function(e) { dbg('loadProfile error: ' + e.message); });
+  } else {
+    dbg('loadProfile: no email');
   }
 }
+
+// フォームを表示しつつ、ログイン済みならプロフィールを読み込む
+dbg('page loaded');
+g('login-screen').style.display = 'none';
+g('app').style.display = 'block';
+g('loading-overlay').style.display = 'none';
+g('form-area').style.display = 'block';
+
+auth.onAuthStateChanged(function(user) {
+  dbg('onAuthStateChanged: user=' + (user ? user.email : 'null'));
+  if(user) {
+    currentUser = user;
+    if(g('header-email')) g('header-email').textContent = user.email || '';
+    loadProfile();
+  }
+});
 
 </script>
 </body>
