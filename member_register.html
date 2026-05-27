@@ -318,7 +318,7 @@ select.fi{cursor:pointer;}
 <div id="app" style="display:block">
   <div class="page-header">
     <div style="display:flex;align-items:center;gap:12px">
-      <div id="btn-back-mypage" style="display:none">
+      <div id="btn-back-mypage" style="display:block">
         <a href="/mypage.html" style="display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:rgba(255,255,255,.6);font-size:11px;text-decoration:none;">
           ← マイページへ
         </a>
@@ -1027,6 +1027,10 @@ function doEmailChange(){
           status: 'pending'
         }).catch(function(){});
       }
+      var memberId2 = g('profile-member-id') ? g('profile-member-id').textContent : '';
+      if(memberId2){
+        db.collection('members').doc(memberId2).update({pendingEmail:newEmail,status:'pending'}).catch(function(){});
+      }
       closeEmailChange();
       var vb = g('verify-banner');
       if(vb) vb.style.display = 'block';
@@ -1120,7 +1124,8 @@ function loadProfile() {
         if(stEl) stEl.textContent = d.status === 'active' ? '本会員' : d.status === 'pending' ? '認証待ち' : (d.status || '');
         // メールアドレス表示
         var emEl = g('profile-email-disp');
-        if(emEl) emEl.textContent = d.email || '未登録';
+        var _dispEmail=(currentUser&&(currentUser.email||'').indexOf('@tequiladojo.member')<0)?currentUser.email:(d.email||'');
+        if(emEl) emEl.textContent = _dispEmail || '未登録';
         sv('f-nick', d.nickname || '');
         sv('f-name', d.name || '');
         sv('f-kana', d.nameKana || '');
@@ -1176,7 +1181,8 @@ function loadProfile() {
         if(stEl) stEl.textContent = d.status === 'active' ? '本会員' : d.status === 'pending' ? '認証待ち' : (d.status || '');
         // メールアドレス表示
         var emEl = g('profile-email-disp');
-        if(emEl) emEl.textContent = d.email || '未登録';
+        var _dispEmail=(currentUser&&(currentUser.email||'').indexOf('@tequiladojo.member')<0)?currentUser.email:(d.email||'');
+        if(emEl) emEl.textContent = _dispEmail || '未登録';
         sv('f-nick', d.nickname || '');
         sv('f-name', d.name || '');
         sv('f-kana', d.nameKana || '');
@@ -1218,7 +1224,9 @@ auth.onAuthStateChanged(function(user) {
         db.collection('members').where('authUid','==',currentUser.uid).limit(1).get()
           .then(function(snap){
             if(!snap.empty && snap.docs[0].data().status === 'pending'){
-              return snap.docs[0].ref.update({status:'active'});
+              var upd={status:'active'};
+              if(snap.docs[0].data().pendingEmail){upd.email=snap.docs[0].data().pendingEmail;upd.pendingEmail=null;}
+              return snap.docs[0].ref.update(upd);
             }
           })
           .then(function(){ loadProfile(); })
