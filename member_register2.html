@@ -150,22 +150,30 @@ function doRegister(){
       .then(function(cred){
         var uid = cred.user.uid;
         var now = new Date().toISOString().slice(0,10);
+        // メールあり → 認証メール送信・status=pending
+        if(email){
+          cred.user.sendEmailVerification().catch(function(e){ console.error('verify mail:',e); });
+        }
         var batch = db.batch();
         batch.set(db.collection('memberIndex').doc(memberId), { email: authEmail });
         batch.set(db.collection('members').doc(memberId), {
           authUid:    uid,
           memberId:   memberId,
           email:      email || null,
-          status:     emailInput ? 'pending' : 'active',
+          status:     email ? 'pending' : 'active',
           nickname:   nick,
           registeredAt: now
         });
-        return batch.commit().then(function(){ return memberId; });
+        return batch.commit().then(function(){ return { memberId: memberId, hasEmail: !!email }; });
       });
-  }).then(function(memberId){
+  }).then(function(result){
     document.getElementById('form-area').style.display='none';
     document.getElementById('done-area').style.display='block';
-    document.getElementById('done-id').textContent=memberId;
+    document.getElementById('done-id').textContent=result.memberId;
+    if(result.hasEmail){
+      var note=document.getElementById('done-note');
+      if(note) note.innerHTML='認証メールを送信しました。<br>メールのリンクをクリックして認証を完了してください。<br><br>認証後、マイページにログインできます。';
+    }
   }).catch(function(e){
     err.textContent='登録失敗: '+e.message;
     btn.disabled=false; btn.textContent='会員登録';
