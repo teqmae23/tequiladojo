@@ -188,156 +188,114 @@ input{font-family:var(--sans)}
 if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
 var auth      = firebase.auth();
 var functions = firebase.app().functions('asia-northeast1');
+var db        = firebase.firestore();
 
-// 今日の日付表示
+// 今日の日付
 (function(){
-  var d=new Date();
-  var wdays=["日","月","火","水","木","金","土"];
+  var d=new Date(), wdays=["日","月","火","水","木","金","土"];
   var el=document.getElementById("today-label");
   if(el) el.textContent=d.getFullYear()+"年"+(d.getMonth()+1)+"月"+d.getDate()+"日（"+wdays[d.getDay()]+"）";
 })();
 
-// ── 認証 / role チェック ───────────────────────────────────────
-var currentRole = null;
-
-</script>
-<script>
+// ── 認証 ─────────────────────────────────────────────────────
 auth.onAuthStateChanged(function(user){
   if(user){
-    document.getElementById("login-screen").style.display = "none";
-    document.getElementById("app").style.display = "block";
-    document.getElementById("user-email").textContent = user.email;
-
-    // roleバッジ表示（membersコレクションからrole取得）
-    var badge = document.getElementById("role-badge");
-    var db = firebase.firestore();
-    db.collection("members").where("email","==",user.email).limit(1).get().then(function(snap){
-      var role = "staff";
-      if(!snap.empty && snap.docs[0].data().role) role = snap.docs[0].data().role;
-      if(badge){
-        badge.style.display = "inline-block";
-        if(role === "owner"){
-          badge.textContent = "OWNER";
-          badge.className = "role-badge badge-owner";
-          document.querySelectorAll(".owner-only").forEach(function(el){ el.style.display="block"; });
-        } else {
-          badge.textContent = "STAFF";
-          badge.className = "role-badge badge-staff";
+    document.getElementById("login-screen").style.display="none";
+    document.getElementById("app").style.display="block";
+    document.getElementById("user-email").textContent=user.email;
+    // roleをmembersから取得
+    db.collection("members").where("email","==",user.email).limit(1).get()
+      .then(function(snap){
+        var role=(!snap.empty&&snap.docs[0].data().role)||"staff";
+        var badge=document.getElementById("role-badge");
+        if(badge){
+          badge.style.display="inline-block";
+          badge.textContent=role==="owner"?"OWNER":"STAFF";
+          badge.className="role-badge "+(role==="owner"?"badge-owner":"badge-staff");
         }
-      }
-    }).catch(function(){ });
+        if(role==="owner"){
+          document.querySelectorAll(".owner-only").forEach(function(el){el.style.display="block";});
+        }
+      }).catch(function(){});
   } else {
-    document.getElementById("login-screen").style.display = "flex";
-    document.getElementById("app").style.display = "none";
+    document.getElementById("login-screen").style.display="flex";
+    document.getElementById("app").style.display="none";
   }
 });
 
-document.getElementById("lpass").addEventListener("keydown", function(e){
-  if(e.key === "Enter") document.getElementById("lbtn").click();
+// ログインボタン
+document.getElementById("lbtn").addEventListener("click", function(){
+  var email=document.getElementById("lemail").value.trim();
+  var pass=document.getElementById("lpass").value;
+  var err=document.getElementById("lerr");
+  err.textContent="";
+  if(!email||!pass){ err.textContent="入力してください"; return; }
+  this.textContent="ログイン中...";
+  var self=this;
+  auth.signInWithEmailAndPassword(email,pass)
+    .then(function(){ self.textContent="ログイン"; })
+    .catch(function(e){ err.textContent="ログイン失敗: "+e.message; self.textContent="ログイン"; });
 });
-document.getElementById("btn-logout").addEventListener("click", function(){ auth.signOut(); });
+document.getElementById("lpass").addEventListener("keydown",function(e){ if(e.key==="Enter") document.getElementById("lbtn").click(); });
+document.getElementById("btn-logout").addEventListener("click",function(){ auth.signOut(); });
 
-// ── スタッフ管理（ownerのみ） ───────────────────────────────────
-function openStaffModal(){
-  document.getElementById("modal-staff").classList.add("open");
-  loadStaffList();
-}
-function closeStaffModal(){
-  document.getElementById("modal-staff").classList.remove("open");
-}
-document.getElementById("modal-staff").addEventListener("click", function(e){
-  if(e.target === this) closeStaffModal();
-});
+// ── スタッフ管理 ───────────────────────────────────────────────
+function openStaffModal(){ document.getElementById("modal-staff").classList.add("open"); loadStaffList(); }
+function closeStaffModal(){ document.getElementById("modal-staff").classList.remove("open"); }
+document.getElementById("modal-staff").addEventListener("click",function(e){ if(e.target===this) closeStaffModal(); });
 
 async function loadStaffList(){
-  var area = document.getElementById("staff-list-area");
-  area.textContent = "読み込み中...";
+  var area=document.getElementById("staff-list-area");
+  area.textContent="読み込み中...";
   try{
-    var fn = functions.httpsCallable("getStaffList");
-    var result = await fn({});
-    var staffList = result.data.staff || [];
-    if(!staffList.length){
-      area.innerHTML = '<div style="color:var(--ink3);padding:12px 0">スタッフが登録されていません</div>';
-      return;
-    }
-    area.innerHTML = staffList.map(function(s){
-      return '<div class="staff-row">' +
-        '<span class="staff-email">' + esc(s.email||s.uid) + '</span>' +
-        '<select class="staff-role-sel" data-uid="' + esc(s.uid) + '" onchange="updateStaffRole(this)">' +
-          '<option value="staff"' + (s.role==="staff"?" selected":"") + '>staff</option>' +
-          '<option value="owner"' + (s.role==="owner"?" selected":"") + '>owner</option>' +
-        '</select>' +
-        '<button class="btn-sm btn-danger" data-uid="' + esc(s.uid) + '" data-email="' + esc(s.email||'') + '" onclick="removeStaffByAttr(this)">削除</button>' +
+    var result=await functions.httpsCallable("getStaffList")({});
+    var list=result.data.staff||[];
+    if(!list.length){ area.innerHTML='<div style="color:var(--ink3);padding:12px 0">スタッフが登録されていません</div>'; return; }
+    area.innerHTML=list.map(function(s){
+      return '<div class="staff-row">'+
+        '<span class="staff-email">'+esc(s.email||s.uid)+'</span>'+
+        '<select class="staff-role-sel" data-uid="'+esc(s.uid)+'" onchange="updateStaffRole(this)">'+
+          '<option value="staff"'+(s.role==="staff"?" selected":"")+'>staff</option>'+
+          '<option value="owner"'+(s.role==="owner"?" selected":"")+'>owner</option>'+
+        '</select>'+
+        '<button class="btn-sm btn-danger" data-uid="'+esc(s.uid)+'" data-email="'+esc(s.email||'')+'" onclick="removeStaffByAttr(this)">削除</button>'+
       '</div>';
     }).join('');
-  }catch(e){
-    area.innerHTML = '<div style="color:var(--red)">読み込み失敗: '+esc(e.message)+'</div>';
-  }
+  }catch(e){ area.innerHTML='<div style="color:var(--red)">読み込み失敗: '+esc(e.message)+'</div>'; }
 }
-
 async function updateStaffRole(sel){
-  var uid  = sel.dataset.uid;
-  var role = sel.value;
-  try{
-    var fn = functions.httpsCallable("setUserRole");
-    await fn({ uid: uid, role: role });
-    showToast("役割を " + role + " に変更しました");
-  }catch(e){
-    showToast("変更失敗: " + e.message, true);
-    loadStaffList();
-  }
+  try{ await functions.httpsCallable("setUserRole")({uid:sel.dataset.uid,role:sel.value}); showToast("変更しました"); }
+  catch(e){ showToast("失敗: "+e.message,true); loadStaffList(); }
 }
-
-function removeStaffByAttr(btn){
-  var uid   = btn.dataset.uid;
-  var email = btn.dataset.email;
-  removeStaff(uid, email);
+function removeStaffByAttr(btn){ removeStaff(btn.dataset.uid,btn.dataset.email); }
+async function removeStaff(uid,email){
+  if(!confirm((email||uid)+" をスタッフから削除しますか？")) return;
+  try{ await functions.httpsCallable("setUserRole")({uid:uid,role:null}); showToast("削除しました"); loadStaffList(); }
+  catch(e){ showToast("失敗: "+e.message,true); }
 }
-async function removeStaff(uid, email){
-  if(!confirm((email||uid) + " をスタッフから削除しますか？")) return;
-  try{
-    var fn = functions.httpsCallable("setUserRole");
-    await fn({ uid: uid, role: null });
-    showToast("削除しました");
-    loadStaffList();
-  }catch(e){
-    showToast("削除失敗: " + e.message, true);
-  }
-}
-
 async function addStaff(){
-  var email = document.getElementById("new-staff-email").value.trim();
-  var pass  = document.getElementById("new-staff-pass").value;
-  var role  = document.getElementById("new-staff-role").value;
-  var err   = document.getElementById("add-staff-err");
-  err.textContent = "";
-  if(!email || !pass){ err.textContent = "メールとパスワードを入力してください"; return; }
-  if(pass.length < 8){ err.textContent = "パスワードは8文字以上"; return; }
+  var email=document.getElementById("new-staff-email").value.trim();
+  var pass=document.getElementById("new-staff-pass").value;
+  var role=document.getElementById("new-staff-role").value;
+  var err=document.getElementById("add-staff-err");
+  err.textContent="";
+  if(!email||!pass){ err.textContent="メールとパスワードを入力してください"; return; }
+  if(pass.length<8){ err.textContent="パスワードは8文字以上"; return; }
   try{
-    var createFn = functions.httpsCallable("adminAuthOperation");
-    var res = await createFn({ operation: "create", email: email, password: pass });
-    var uid = res.data.uid;
-    var roleFn = functions.httpsCallable("setUserRole");
-    await roleFn({ uid: uid, role: role });
-    document.getElementById("new-staff-email").value = "";
-    document.getElementById("new-staff-pass").value  = "";
-    showToast(email + " を " + role + " として追加しました");
+    var res=await functions.httpsCallable("adminAuthOperation")({operation:"create",email:email,password:pass});
+    await functions.httpsCallable("setUserRole")({uid:res.data.uid,role:role});
+    document.getElementById("new-staff-email").value="";
+    document.getElementById("new-staff-pass").value="";
+    showToast(email+" を "+role+" として追加しました");
     loadStaffList();
-  }catch(e){
-    err.textContent = "追加失敗: " + e.message;
-  }
+  }catch(e){ err.textContent="失敗: "+e.message; }
 }
-
-function esc(str){ return String(str||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
-
-function showToast(msg, isErr){
-  var t = document.createElement("div");
-  t.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:10px 20px;border-radius:8px;font-size:13px;z-index:9999;" +
-    (isErr ? "background:#3a1a1a;color:#df7a7a;border:1px solid #6a2d2d" : "background:#1a3a1a;color:#7adf7a;border:1px solid #2d6a2d");
-  t.textContent = msg;
+function esc(s){ return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function showToast(msg,isErr){
+  var t=document.createElement("div");
+  t.style.cssText="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:10px 20px;border-radius:8px;font-size:13px;z-index:9999;"+(isErr?"background:#3a1a1a;color:#df7a7a;border:1px solid #6a2d2d":"background:#1a3a1a;color:#7adf7a;border:1px solid #2d6a2d");
+  t.textContent=msg;
   document.body.appendChild(t);
-  setTimeout(function(){ t.remove(); }, 3000);
+  setTimeout(function(){ t.remove(); },3000);
 }
 </script>
-</body>
-</html>
