@@ -934,36 +934,43 @@ if(params.get('edit')){
 // ── プロフィール読み込み（編集モード用） ──────────────────────────
 function loadProfile(){
   if(!currentUser) return;
-  var email=currentUser.email||'';
-  // memberIndexはpublic readなのでルール不要
-  // emailから会員IDを取得 → members/{id}を直接参照
-  db.collection('memberIndex').where('email','==',email).limit(1).get()
-    .then(function(idxSnap){
-      var memberId=null;
-      if(!idxSnap.empty){
-        memberId=idxSnap.docs[0].id;
-      } else if(email.indexOf('@tequiladojo.member')>=0){
-        memberId=email.replace('@tequiladojo.member','');
-      }
-      if(!memberId) throw new Error('会員IDが見つかりません');
-      return db.collection('members').doc(memberId).get();
-    })
-    .then(function(doc){
-      if(!doc.exists) throw new Error('会員情報が見つかりません');
-      var d=doc.data();
-      memberDoc=d;
-      sv('reg-memberid',doc.id);
-      var midEl=g('header-member-id');
-      if(midEl) midEl.textContent='会員番号: '+doc.id;
-      sv('reg-nick',d.nickname||'');
-      sv('reg-name',d.name||'');
-      sv('reg-kana',d.nameKana||'');
-      sv('reg-gender',d.gender||'');
-      sv('reg-birth',d.birthday||'');
-      sv('reg-email',d.email||'');
-      sv('reg-tel',d.phone||'');
-    })
-    .catch(function(e){ console.error('loadProfile:',e); });
+  var authEmail=currentUser.email||'';
+  var memberId=null;
+
+  // Step1: memberIdを確定
+  var step1;
+  if(authEmail.indexOf('@tequiladojo.member')>=0){
+    memberId=authEmail.replace('@tequiladojo.member','');
+    step1=Promise.resolve();
+  } else if(authEmail){
+    step1=db.collection('memberIndex').where('email','==',authEmail).limit(1).get()
+      .then(function(snap){
+        if(!snap.empty) memberId=snap.docs[0].id;
+      });
+  } else {
+    step1=Promise.resolve();
+  }
+
+  step1.then(function(){
+    if(!memberId) throw new Error('会員IDが取得できませんでした');
+    return db.collection('members').doc(memberId).get();
+  })
+  .then(function(doc){
+    if(!doc.exists) throw new Error('会員情報が見つかりません');
+    var d=doc.data();
+    memberDoc=d;
+    sv('reg-memberid',doc.id);
+    var midEl=g('header-member-id');
+    if(midEl) midEl.textContent='会員番号: '+doc.id;
+    sv('reg-nick',d.nickname||'');
+    sv('reg-name',d.name||'');
+    sv('reg-kana',d.nameKana||'');
+    sv('reg-gender',d.gender||'');
+    sv('reg-birth',d.birthday||'');
+    sv('reg-email',d.email||'');
+    sv('reg-tel',d.phone||'');
+  })
+  .catch(function(e){ console.error('loadProfile error:',e); });
 }
 
 </script>
