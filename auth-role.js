@@ -67,7 +67,20 @@ var AuthRole = (function() {
     if (app) app.style.display = 'none';
     if (errorMsg) {
       var err = document.getElementById('lerr');
-      if (err) err.textContent = errorMsg;
+      if (err) {
+        err.style.cssText='color:red;font-size:11px;margin-top:8px;word-break:break-all;white-space:pre-wrap;';
+        err.textContent = errorMsg;
+      }
+      // フォールバック: body直下にdebug表示
+      var dbg = document.getElementById('_auth_debug');
+      if (!dbg) {
+        dbg = document.createElement('div');
+        dbg.id = '_auth_debug';
+        dbg.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#000;color:#0f0;font-size:11px;padding:8px;z-index:99999;word-break:break-all;white-space:pre-wrap;max-height:40vh;overflow:auto;';
+        document.body.appendChild(dbg);
+      }
+      dbg.textContent = '🔍 AUTH DEBUG:
+' + errorMsg;
     }
   }
 
