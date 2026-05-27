@@ -32,19 +32,28 @@ var AuthRole = (function() {
    * IDトークンからroleを取得（キャッシュ付き、60秒で再取得）
    */
   async function getRole(user) {
+    const log = [];
     // まずCustomClaimsを試みる
     try {
       const result = await user.getIdTokenResult(true);
-      if (result.claims.role) return result.claims.role;
-    } catch(e) {}
+      log.push('claims:' + JSON.stringify(result.claims));
+      if (result.claims.role) { log.push('→ claims.role=' + result.claims.role); window._authLog=log; return result.claims.role; }
+    } catch(e) { log.push('claims error:' + e.message); }
     // フォールバック: membersコレクションをemailで検索してroleを取得
     try {
       const db = firebase.firestore();
       const email = user.email || '';
-      if (!email) return null;
+      log.push('email:' + email);
+      if (!email) { window._authLog=log; return null; }
       const snap = await db.collection('members').where('email','==',email).limit(1).get();
-      if (!snap.empty && snap.docs[0].data().role) return snap.docs[0].data().role;
-    } catch(e) {}
+      log.push('members hit:' + snap.size);
+      if (!snap.empty) {
+        const data = snap.docs[0].data();
+        log.push('memberId:' + snap.docs[0].id + ' role:' + data.role);
+        if (data.role) { window._authLog=log; return data.role; }
+      }
+    } catch(e) { log.push('members error:' + e.message); }
+    window._authLog = log;
     return null;
   }
 
@@ -116,9 +125,9 @@ var AuthRole = (function() {
         if (role === 'owner' || role === 'staff') {
           onAllowed(user, role);
         } else if (role === null) {
-          // role未設定：ログイン画面に戻す（エラー扱いにしない）
+          const logMsg = (window._authLog||[]).join(' / ');
           if (onSignedOut) onSignedOut();
-          else showLoginScreen('権限が設定されていません。管理者にお問い合わせください。');
+          else showLoginScreen('権限未設定。デバッグ: ' + logMsg);
         } else {
           await auth.signOut();
           showDenied('スタッフ専用ページです（権限がありません）');
