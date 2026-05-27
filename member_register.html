@@ -875,6 +875,65 @@ for(var bi=0; bi<bids.length; bi++) {
   if(bel) bel.addEventListener('click', doRegister);
 }
 
+// ── アイコン画像 ──────────────────────────────────────────────────
+function handleIconFile(input){
+  var file = input.files[0];
+  if(!file) return;
+  Cropper.open(file, {shape:'circle', onCrop: function(blob, ext){
+    uploadIconBlob(blob, ext);
+  }});
+}
+
+function handleIconCamera(input){
+  var file = input.files[0];
+  if(!file) return;
+  Cropper.open(file, {shape:'circle', onCrop: function(blob, ext){
+    uploadIconBlob(blob, ext);
+  }});
+}
+
+function handleIconPaste(){
+  navigator.clipboard.read().then(function(items){
+    for(var i=0;i<items.length;i++){
+      var types=items[i].types;
+      for(var j=0;j<types.length;j++){
+        if(types[j].startsWith('image/')){
+          items[i].getType(types[j]).then(function(blob){
+            var ext=blob.type.includes('png')?'png':'jpg';
+            Cropper.open(new File([blob],'paste.'+ext,{type:blob.type}),{shape:'circle',onCrop:function(b,e){
+              uploadIconBlob(b,e);
+            }});
+          });
+          return;
+        }
+      }
+    }
+    toast('クリップボードに画像がありません','err');
+  }).catch(function(){ toast('クリップボードへのアクセスが拒否されました','err'); });
+}
+
+function uploadIconBlob(blob, ext){
+  var memberId = g('profile-member-id') ? g('profile-member-id').textContent : '';
+  if(!memberId){ toast('会員情報が読み込まれていません','err'); return; }
+  // プレビュー表示
+  var url = URL.createObjectURL(blob);
+  var prev = g('icon-preview');
+  if(prev){ prev.src=url; prev.style.display='block'; }
+  // Storageにアップロード
+  var path = 'icons/' + memberId + '.' + ext;
+  var ref = storage.ref(path);
+  ref.put(blob, {contentType: blob.type}).then(function(){
+    return ref.getDownloadURL();
+  }).then(function(downloadUrl){
+    // Firestoreに保存
+    return db.collection('members').doc(memberId).update({iconUrl: downloadUrl});
+  }).then(function(){
+    toast('アイコンを保存しました');
+  }).catch(function(e){
+    toast('アップロード失敗: '+e.message,'err');
+  });
+}
+
 function doLogout(){
   auth.signOut().then(function(){ window.location.href = '/mypage.html'; });
 }
