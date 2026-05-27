@@ -37,23 +37,13 @@ var AuthRole = (function() {
       const result = await user.getIdTokenResult(true);
       if (result.claims.role) return result.claims.role;
     } catch(e) {}
-    // フォールバック: membersコレクションのroleフィールドを参照
+    // フォールバック: membersコレクションをemailで検索してroleを取得
     try {
       const db = firebase.firestore();
       const email = user.email || '';
-      let memberId = null;
-      // @tequiladojo.memberの仮想メールからmemberIdを取得
-      if (email.endsWith('@tequiladojo.member')) {
-        memberId = email.replace('@tequiladojo.member', '');
-      } else {
-        // memberIndexからemailでmemberIdを逆引き
-        const idxSnap = await db.collection('memberIndex').where('email','==',email).limit(1).get();
-        if (!idxSnap.empty) memberId = idxSnap.docs[0].id;
-      }
-      if (memberId) {
-        const mDoc = await db.collection('members').doc(memberId).get();
-        if (mDoc.exists && mDoc.data().role) return mDoc.data().role;
-      }
+      if (!email) return null;
+      const snap = await db.collection('members').where('email','==',email).limit(1).get();
+      if (!snap.empty && snap.docs[0].data().role) return snap.docs[0].data().role;
     } catch(e) {}
     return null;
   }
