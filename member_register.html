@@ -911,21 +911,35 @@ function doEmailChange(){
   if(!currentUser){ if(errEl) errEl.textContent = 'ログインしてください'; return; }
   var btn = g('btn-email-change');
   if(btn){ btn.disabled=true; btn.textContent='送信中...'; }
+  // Firebase Authで新メールに確認メールを送信（認証完了でemailVerified=true）
   currentUser.verifyBeforeUpdateEmail(newEmail)
     .then(function(){
-      closeEmailChange();
-      // Firestoreのstatusをpendingに
-      if(memberDoc){
-        var memberId = g('profile-member-id') ? g('profile-member-id').textContent : '';
-        if(memberId) db.collection('members').doc(memberId).update({status:'pending'}).catch(function(){});
+      // Firestoreにemailをpending状態で保存
+      var memberId = g('profile-member-id') ? g('profile-member-id').textContent : '';
+      if(memberId){
+        db.collection('members').doc(memberId).update({
+          email: newEmail,
+          status: 'pending'
+        }).catch(function(){});
       }
+      closeEmailChange();
+      var vb = g('verify-banner');
+      if(vb) vb.style.display = 'block';
       alert('確認メールを ' + newEmail + ' に送信しました。
-メールのリンクをクリックして認証を完了してください。');
+メールのリンクをクリックして認証を完了してください。
+認証が完了すると本会員になります。');
     })
     .catch(function(e){
       if(errEl) errEl.textContent = '送信失敗: ' + e.message;
       if(btn){ btn.disabled=false; btn.textContent='変更する'; }
     });
+}
+
+function resendVerifyEmail(){
+  if(!currentUser){ alert('ログインしてください'); return; }
+  currentUser.sendEmailVerification()
+    .then(function(){ alert('認証メールを再送しました。メールをご確認ください。'); })
+    .catch(function(e){ alert('送信失敗: ' + e.message); });
 }
 
 function loadProfile() {
@@ -957,6 +971,20 @@ function loadProfile() {
         sv('f-gender', d.gender || '');
         sv('f-birth', d.birthday || '');
         sv('f-tel', d.phone || '');
+        // emailVerifiedの状態でverify-bannerを表示
+        var vb = g('verify-banner');
+        var isVirtual = currentUser.email && currentUser.email.indexOf('@tequiladojo.member') >= 0;
+        if(vb){
+          if(!isVirtual && d.email && !currentUser.emailVerified){
+            vb.style.display = 'block';
+          } else {
+            vb.style.display = 'none';
+          }
+        }
+        // statusが認証済みなのにpendingなら自動でactiveに更新
+        if(!isVirtual && d.email && currentUser.emailVerified && d.status === 'pending'){
+          db.collection('members').doc(doc.id).update({status:'active'}).catch(function(){});
+        }
         dbg('loadProfile: done, nick=' + d.nickname);
       })
       .catch(function(e) { dbg('loadProfile error: ' + e.message); });
