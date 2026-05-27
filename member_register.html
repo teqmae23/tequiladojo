@@ -829,21 +829,32 @@ async function syncEmailToFirestore(user){
 
 async function fetchNextMemberId(){
   var year=String(new Date().getFullYear()).slice(2);
+  var db=firebase.firestore();
+  // まずmembersコレクションの最大番号を取得
+  var maxNum=2; // 260002以降
   try{
-    var counterRef=firebase.firestore().collection('counters').doc('members');
+    var snap=await db.collection('members')
+      .orderBy(firebase.firestore.FieldPath.documentId(),'desc').limit(10).get();
+    snap.forEach(function(d){
+      var num=parseInt(d.id.slice(2))||0;
+      if(num>maxNum) maxNum=num;
+    });
+  }catch(e){ console.warn('members scan:',e); }
+  // countersドキュメントで採番（set+mergeでドキュメントがなくても動作）
+  try{
+    var counterRef=db.collection('counters').doc('members');
     var newId=null;
-    await firebase.firestore().runTransaction(async function(tx){
+    await db.runTransaction(async function(tx){
       var doc=await tx.get(counterRef);
-      var last=doc.exists?doc.data().lastId||0:0;
+      var last=Math.max(doc.exists?(doc.data().lastId||0):0, maxNum);
       var next=last+1;
-      tx.update(counterRef,{lastId:next});
+      tx.set(counterRef,{lastId:next},{merge:true});
       newId=year+String(next).padStart(4,'0');
     });
-    return newId;
-  }catch(e){
-    console.error('fetchNextMemberId:', e);
-    return null;
-  }
+    if(newId) return newId;
+  }catch(e){ console.warn('transaction:',e); }
+  // フォールバック: timestamp+random
+  return year+String(maxNum+1).padStart(4,'0');
 }
 
 function checkRegReady(){
