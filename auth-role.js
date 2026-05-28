@@ -131,5 +131,37 @@ var AuthRole = (function() {
       +String(d.getDate()).padStart(2,'0');
   }
 
-  return { requireStaff: requireStaff, requireOwner: requireOwner, requireMember: requireMember, getActiveSession: getActiveSession, businessDate: businessDate };
+  // 現在時刻をHHMMSS文字列で返す
+  function nowBusinessTime(openTime){
+    var now=new Date();
+    return String(now.getHours()).padStart(2,'0')
+      +String(now.getMinutes()).padStart(2,'0')
+      +String(now.getSeconds()).padStart(2,'0');
+  }
+
+  // HHMMSS → HH:MM 表示用フォーマット
+  function formatBusinessTime(t){
+    if(!t||t.length<4) return t||'';
+    return t.slice(0,2)+':'+t.slice(2,4);
+  }
+
+  // visitが現セッションに属するか判定
+  function isVisitInSession(v, session){
+    if(!session) return true;
+    var sessionDate=session.openDate||session.date||businessDate(session.openTime,null);
+    var visitDate=v.visitDate||(v.id?v.id.slice(0,6):'');
+    if(!sessionDate||!visitDate) return true;
+    if(visitDate!==sessionDate) return false;
+    // 同一営業日: openTime以降のvisitのみ
+    var visitTime=v.visitTime||'';
+    if(!visitTime||!session.openTime) return true;
+    var openTs=session.openTime.toDate?session.openTime.toDate():new Date(session.openTime);
+    var openHHMM=String(openTs.getHours()).padStart(2,'0')+String(openTs.getMinutes()).padStart(2,'0');
+    return visitTime.slice(0,4)>=openHHMM;
+  }
+
+  return { requireStaff: requireStaff, requireOwner: requireOwner, requireMember: requireMember,
+           getActiveSession: getActiveSession, businessDate: businessDate,
+           nowBusinessTime: nowBusinessTime, formatBusinessTime: formatBusinessTime,
+           isVisitInSession: isVisitInSession };
 })();
