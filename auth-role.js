@@ -145,6 +145,22 @@ var AuthRole = (function() {
     return t.slice(0,2)+':'+t.slice(2,4);
   }
 
+  // masterMeta: Rev.+最終更新日時をアトミックにインクリメント
+  async function bumpMeta(db, name){
+    var ref=db.collection('masterMeta').doc(name);
+    return db.runTransaction(async function(t){
+      var snap=await t.get(ref);
+      var rev=snap.exists?(snap.data().rev||0)+1:1;
+      t.set(ref,{rev:rev,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+      return rev;
+    });
+  }
+
+  async function getMeta(db, name){
+    var snap=await db.collection('masterMeta').doc(name).get();
+    return snap.exists?snap.data():null;
+  }
+
   // ボトル名にsuffixを付加して返す
   function bdName(item, lang){
     var base;
@@ -174,5 +190,6 @@ var AuthRole = (function() {
   return { requireStaff: requireStaff, requireOwner: requireOwner, requireMember: requireMember,
            getActiveSession: getActiveSession, businessDate: businessDate,
            nowBusinessTime: nowBusinessTime, formatBusinessTime: formatBusinessTime,
-           isVisitInSession: isVisitInSession, bdName: bdName };
+           isVisitInSession: isVisitInSession, bdName: bdName,
+           bumpMeta: bumpMeta, getMeta: getMeta };
 })();

@@ -191,6 +191,11 @@ select.fi{min-width:80px}
 .empty{text-align:center;padding:40px 20px;color:var(--ink3);font-size:14px}
 .empty-icon{font-size:32px;margin-bottom:10px}
 
+/* 来店ステータスチップ */
+.vstatus{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;font-size:13px;font-weight:500;white-space:nowrap}
+.vstatus-active{background:#fff0d8;color:#9a5c00;border:1px solid #e8b84a}
+.vstatus-last{background:var(--cream2);color:var(--ink3);border:1px solid var(--border)}
+.vstatus-none{background:var(--cream2);color:var(--ink3);border:1px solid var(--border)}
 /* データ確認バナー */
 .debug-banner{background:#fff8e1;border:1px solid #f0c040;border-radius:var(--r);padding:10px 14px;margin-bottom:12px;font-size:12px;color:#7a5610;display:none}
 .debug-banner.show{display:block}
@@ -268,6 +273,9 @@ select.fi{min-width:80px}
       </div>
     </div>
 
+
+    <!-- 来店ステータス -->
+    <div id="visit-status-bar" style="margin-bottom:12px;min-height:28px"></div>
 
     <!-- データ確認バナー -->
     <div class="debug-banner" id="debug-banner"></div>
@@ -519,6 +527,7 @@ async function initMyPage(user){
       allProducts=bSnap.docs.map(d=>({id:d.id,...d.data()}))
         .filter(p=>p.servingStatus!==1&&p.servingStatus!=='1');
     }catch(e){ allProducts=[]; }
+    loadVisitStatus(memberId||memberDoc?.memberId);  // non-blocking
     await loadMyData(memberDoc?.memberId||memberId);
 
     // 5. フィルター初期化
@@ -1135,6 +1144,38 @@ function openBlindModal(gid, visitId){
     <div class="bpop-table-wrap"><table class="bpop-table">${thead}<tbody>${tbody}</tbody></table></div>
     <div class="bpop-legend"><div class="bpop-legend-title">マーク対応表</div>${legendRows}</div>`;
   document.getElementById('blind-modal').classList.add('open');
+}
+
+async function loadVisitStatus(memberId){
+  var el=document.getElementById('visit-status-bar');
+  if(!el||!memberId)return;
+  try{
+    var snap=await db.collection('visits').where('memberId','==',memberId).get();
+    var vs=snap.docs.map(d=>d.data());
+    var active=vs.find(v=>!v.checkoutTime);
+    if(active){
+      var t=active.visitTime||'';
+      var tStr=t.length>=4?t.slice(0,2)+':'+t.slice(2,4):'';
+      el.innerHTML='<div class="vstatus vstatus-active">🏮 来店中'+(tStr?' '+tStr+'～':'')+'</div>';
+      return;
+    }
+    if(!vs.length){
+      el.innerHTML='<div class="vstatus vstatus-none">まだ来店記録がありません</div>';
+      return;
+    }
+    vs.sort((a,b)=>(b.visitDate||'').localeCompare(a.visitDate||''));
+    var last=vs[0];
+    var vd=last.visitDate||'';
+    if(vd.length>=6){
+      var y=2000+parseInt(vd.slice(0,2),10),m=parseInt(vd.slice(2,4),10),d=parseInt(vd.slice(4,6),10);
+      var vDate=new Date(y,m-1,d);
+      var today=new Date();today.setHours(0,0,0,0);
+      var daysAgo=Math.round((today-vDate)/(864e5));
+      var mmdd=m+'/'+d;
+      var dStr=daysAgo===0?'本日':(daysAgo+'日前');
+      el.innerHTML='<div class="vstatus vstatus-last">📅 最終来店 '+dStr+' ('+mmdd+')</div>';
+    }
+  }catch(e){console.warn('loadVisitStatus:',e);}
 }
 
 function closeBlindModal(){

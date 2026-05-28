@@ -81,6 +81,9 @@ input,select,textarea{font-family:var(--sans)}
 .phead{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:22px;padding-bottom:16px;border-bottom:1px solid var(--border)}
 .ptitle{font-family:var(--serif);font-size:28px;font-weight:500;color:var(--gold-d)}
 .pdesc{font-size:11px;color:var(--ink3);margin-top:2px}
+.meta-bar{font-size:11px;color:var(--ink3);margin-bottom:6px;font-family:var(--mono);display:none}
+.meta-bar.loaded{display:block}
+.meta-rev{color:var(--gold-d);font-weight:700;margin-right:6px}
 .card{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shadow)}
 .toolbar{display:flex;gap:8px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
 .sbox{display:flex;align-items:center;gap:6px;border:1px solid var(--border2);border-radius:var(--r);padding:6px 10px;flex:1;min-width:160px;background:var(--cream)}
@@ -203,6 +206,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 
     <!-- クラスページ -->
     <div class="page active" id="page-classes">
+      <div class="meta-bar" id="meta-classes"></div>
       <div class="phead"><div><div class="ptitle">クラスマスタ</div><div class="pdesc">classId 2桁 = カテゴリ1 + クラス1</div></div><button class="btn bp" id="btn-open-class">＋ クラス登録</button></div>
       <div class="card">
         <div class="toolbar">
@@ -224,6 +228,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 
     <!-- ブランドページ -->
     <div class="page" id="page-brands">
+      <div class="meta-bar" id="meta-brands"></div>
       <div class="phead"><div><div class="ptitle">ブランドマスタ</div><div class="pdesc">brandId 7桁 = 蒸留所ID4桁 + 連番3桁</div></div><button class="btn bp" id="btn-open-brand">＋ ブランド登録</button></div>
       <div class="card">
         <div class="toolbar">
@@ -247,6 +252,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 
     <!-- ボトルマスタページ -->
     <div class="page" id="page-bottles">
+      <div class="meta-bar" id="meta-bottles"></div>
       <div class="phead"><div><div class="ptitle">ボトルマスタ</div><div class="pdesc">bottleId 12桁 = brandId7 + classId2 + 連番3 ／ ABV・生産区分・色素濾過・添加物</div></div>
         <div style="display:flex;gap:8px">
           <button class="btn bs" id="btn-migrate-bottles" style="font-size:11px;color:var(--ink3)">⚙ IDを12桁に修正</button>
@@ -277,6 +283,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 
     <!-- ボトルデータページ -->
     <div class="page" id="page-bdata">
+      <div class="meta-bar" id="meta-bottleData"></div>
       <div class="phead">
         <div><div class="ptitle">ボトルデータ</div><div class="pdesc">bottleDataId = "T" + 連番5桁</div></div>
         <button class="btn bp" id="btn-open-bdata">＋ ボトルデータ登録</button>
@@ -627,8 +634,22 @@ document.querySelector('[data-page="bdata"]').addEventListener("click",function(
 });
 
 // ── データ読み込み ──────────────────────────────────────────────
+function renderMeta(col){
+  AuthRole.getMeta(db,col).then(function(meta){
+    var el=document.getElementById('meta-'+col);
+    if(!el) return;
+    if(!meta){el.classList.remove('loaded');return;}
+    var d=meta.updatedAt?meta.updatedAt.toDate():null;
+    var ds=d?d.getFullYear()+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'):'—';
+    el.innerHTML='<span class="meta-rev">Rev.'+meta.rev+'</span>最終更新: '+ds;
+    el.classList.add('loaded');
+  });
+}
+function bumpAndRender(col){AuthRole.bumpMeta(db,col).then(function(){renderMeta(col);});}
+
 function loadAll(){
   ["distilleries","brands","classes","bottles"].forEach(loadCol);
+  ["classes","brands","bottles","bottleData"].forEach(renderMeta);
 }
 
 function loadCol(col){
@@ -827,7 +848,7 @@ document.addEventListener("click",function(e){
     var col=btn.dataset.del,id=btn.dataset.delId,label=btn.dataset.delLabel;
     confirmDel("「"+id+"」の"+label+"データを削除しますか？",function(){
       db.collection(col).doc(id).delete()
-        .then(function(){ toast(label+"を削除しました"); loadCol(col==="bottleData"?"bdata":col); if(col==="bottleData"){ cache.bdata=cache.bdata.filter(function(d){return d.id!==id;}); renderBdata(); } else { loadCol(col); } })
+        .then(function(){ toast(label+"を削除しました"); bumpAndRender(col); if(col==="bottleData"){ cache.bdata=cache.bdata.filter(function(d){return d.id!==id;}); renderBdata(); } else { loadCol(col); } })
         .catch(function(e){ toast("削除失敗: "+e.message,"err"); });
     });
   }
@@ -866,7 +887,7 @@ g("btn-save-class").addEventListener("click",function(){
   var cat=gv("cl-cat")||"0",cls=gv("cl-cls")||"1";
   var id=editId.klass||(cat+cls);
   db.collection("classes").doc(id).set({classId:id,classNameJa:gv("cl-name-ja")||null,abbr:gv("cl-abbr")||null},{merge:true})
-    .then(function(){ toast(editId.klass?"クラスを更新しました":"クラスを登録しました"); closeM("m-class"); loadCol("classes"); })
+    .then(function(){ toast(editId.klass?"クラスを更新しました":"クラスを登録しました"); closeM("m-class"); bumpAndRender("classes"); loadCol("classes"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
@@ -931,7 +952,7 @@ g("btn-save-brand").addEventListener("click",function(){
     toast("ブランドID「"+id+"」は既に存在します。連番を変更してください","err"); return;
   }
   db.collection("brands").doc(id).set({brandId:id,distilleryId:dis,seq:seq,brandType:gv("br-type")||"0",brandStatus:gv("br-st")||"0",brandEs:es,brandJa:gv("br-ja")||null,foundedYear:parseInt(gv("br-year"))||null,infoUrl:gv("br-info")||null,ammUrl:gv("br-amm")||null},{merge:true})
-    .then(function(){ toast(editId.brand?"ブランドを更新しました":"ブランドを登録しました"); closeM("m-brand"); loadCol("brands"); })
+    .then(function(){ toast(editId.brand?"ブランドを更新しました":"ブランドを登録しました"); closeM("m-brand"); bumpAndRender("brands"); loadCol("brands"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
@@ -1045,7 +1066,7 @@ g("btn-save-bottle").addEventListener("click",function(){
   var btEs=(gv("bt-es")||"").trim()||null;
   var btJa=(gv("bt-ja")||"").trim()||null;
   db.collection("bottles").doc(id).set({bottleId:id,brandId:brandId,classId:classId,seq:seq,bottleEs:btEs,bottleJa:btJa,abv:parseFloat(gv("bt-abv"))||null,production:gv("bt-prod")||"0",filtration:gv("bt-flt")||"0",additive:gv("bt-add")||"0",servingStatus:parseInt(gv("bt-serving")||"0")},{merge:true})
-    .then(function(){ toast(editId.bottle?"ボトルを更新しました":"ボトルを登録しました"); closeM("m-bottle"); loadCol("bottles"); })
+    .then(function(){ toast(editId.bottle?"ボトルを更新しました":"ボトルを登録しました"); closeM("m-bottle"); bumpAndRender("bottles"); loadCol("bottles"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
@@ -1332,7 +1353,7 @@ g("btn-save-bdata").addEventListener("click",function(){
     cost:parseInt(gv("bd-cost"))||null, importType:gv("bd-import")||"0",
     lotType:parseInt(gv("bd-lottype")||"1")||1, note:gv("bd-note")||null
   },{merge:true})
-  .then(function(){ toast(editId.bdata?"ボトルデータを更新しました":"ボトルデータを登録しました"); closeM("m-bdata"); loadBdata(); })
+  .then(function(){ toast(editId.bdata?"ボトルデータを更新しました":"ボトルデータを登録しました"); closeM("m-bdata"); bumpAndRender("bottleData"); loadBdata(); })
   .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 </script>

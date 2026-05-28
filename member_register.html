@@ -1022,14 +1022,7 @@ function doEmailChange(){
     .then(function(){
       var memberId = g('profile-member-id') ? g('profile-member-id').textContent : '';
       if(memberId){
-        db.collection('members').doc(memberId).update({
-          email: newEmail,
-          status: 'pending'
-        }).catch(function(){});
-      }
-      var memberId2 = g('profile-member-id') ? g('profile-member-id').textContent : '';
-      if(memberId2){
-        db.collection('members').doc(memberId2).update({pendingEmail:newEmail,status:'pending'}).catch(function(){});
+        db.collection('members').doc(memberId).update({pendingEmail:newEmail,status:'pending'}).catch(function(){});
       }
       closeEmailChange();
       var vb = g('verify-banner');
@@ -1063,15 +1056,25 @@ function checkVerified(){
     }
     var memberId = g('profile-member-id') ? g('profile-member-id').textContent : '';
     if(!memberId){ toast('会員情報が読み込まれていません','err'); return; }
-    db.collection('members').doc(memberId).update({status:'active'})
-      .then(function(){
-        var vb = g('verify-banner');
-        if(vb) vb.style.display = 'none';
-        var stEl = g('profile-status-badge');
-        if(stEl) stEl.textContent = '本会員';
-        toast('メール認証が完了しました！本会員になりました。');
-      })
-      .catch(function(e){ toast('更新失敗: '+e.message,'err'); });
+    db.collection('members').doc(memberId).get().then(function(doc){
+      if(!doc.exists){ toast('会員情報が見つかりません','err'); return; }
+      var d = doc.data();
+      var batch = db.batch();
+      var upd = {status:'active'};
+      if(d.pendingEmail){
+        upd.email = d.pendingEmail;
+        upd.pendingEmail = firebase.firestore.FieldValue.delete();
+        batch.update(db.collection('memberIndex').doc(memberId), {email: d.pendingEmail});
+      }
+      batch.update(db.collection('members').doc(memberId), upd);
+      return batch.commit();
+    }).then(function(){
+      var vb = g('verify-banner');
+      if(vb) vb.style.display = 'none';
+      var stEl = g('profile-status-badge');
+      if(stEl) stEl.textContent = '本会員';
+      toast('メール認証が完了しました！本会員になりました。');
+    }).catch(function(e){ toast('更新失敗: '+e.message,'err'); });
   }).catch(function(e){ toast('確認失敗: '+e.message,'err'); });
 }
 
@@ -1092,11 +1095,22 @@ function startVerifyPolling(){
         // Firestoreのstatusをactiveに更新
         var memberId = g('profile-member-id') ? g('profile-member-id').textContent : '';
         if(memberId){
-          db.collection('members').doc(memberId).update({status:'active'}).then(function(){
+          db.collection('members').doc(memberId).get().then(function(doc){
+            if(!doc.exists) return;
+            var d = doc.data();
+            var batch = db.batch();
+            var upd = {status:'active'};
+            if(d.pendingEmail){
+              upd.email = d.pendingEmail;
+              upd.pendingEmail = firebase.firestore.FieldValue.delete();
+              batch.update(db.collection('memberIndex').doc(memberId), {email: d.pendingEmail});
+            }
+            batch.update(db.collection('members').doc(memberId), upd);
+            return batch.commit();
+          }).then(function(){
             var vb = g('verify-banner');
             if(vb) vb.style.display = 'none';
             toast('メール認証が完了しました。本会員になりました！');
-            // ステータスバッジ更新
             var stEl = g('profile-status-badge');
             if(stEl) stEl.textContent = '本会員';
           });
@@ -1224,9 +1238,17 @@ auth.onAuthStateChanged(function(user) {
         db.collection('members').where('authUid','==',currentUser.uid).limit(1).get()
           .then(function(snap){
             if(!snap.empty && snap.docs[0].data().status === 'pending'){
-              var upd={status:'active'};
-              if(snap.docs[0].data().pendingEmail){upd.email=snap.docs[0].data().pendingEmail;upd.pendingEmail=null;}
-              return snap.docs[0].ref.update(upd);
+              var _doc=snap.docs[0];
+              var _d=_doc.data();
+              var _upd={status:'active'};
+              var _batch=db.batch();
+              if(_d.pendingEmail){
+                _upd.email=_d.pendingEmail;
+                _upd.pendingEmail=firebase.firestore.FieldValue.delete();
+                _batch.update(db.collection('memberIndex').doc(_doc.id),{email:_d.pendingEmail});
+              }
+              _batch.update(_doc.ref,_upd);
+              return _batch.commit();
             }
           })
           .then(function(){ loadProfile(); })

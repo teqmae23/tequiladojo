@@ -89,3 +89,42 @@ exports.getStaffList = functions.region('asia-northeast1')
       }));
     return { staff };
   });
+
+// ── オーナーによる会員メールアドレス変更 ──────────────────────────
+exports.adminUpdateEmail = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    if (!context.auth || context.auth.token.role !== 'owner') {
+      throw new functions.https.HttpsError('permission-denied', 'オーナー権限が必要です');
+    }
+    const { memberId, newEmail } = data;
+    if (!memberId) throw new functions.https.HttpsError('invalid-argument', 'memberIdが必要です');
+    if (!newEmail || !newEmail.includes('@')) throw new functions.https.HttpsError('invalid-argument', '有効なメールアドレスを入力してください');
+
+    const memberDoc = await db.collection('members').doc(memberId).get();
+    if (!memberDoc.exists) throw new functions.https.HttpsError('not-found', '会員が見つかりません');
+    const memberData = memberDoc.data();
+    if (!memberData.authUid) throw new functions.https.HttpsError('failed-precondition', 'Auth連携がありません');
+
+    // メールアドレスの重複確認
+    try {
+      const existing = await auth.getUserByEmail(newEmail);
+      if (existing.uid !== memberData.authUid) {
+        throw new functions.https.HttpsError('already-exists', 'そのメールアドレスは既に使用されています');
+      }
+    } catch (e) {
+      if (e.code !== 'auth/user-not-found') throw e;
+    }
+
+    await auth.updateUser(memberData.authUid, { email: newEmail, emailVerified: true });
+
+    const batch = db.batch();
+    batch.update(db.collection('members').doc(memberId), {
+      email: newEmail,
+      pendingEmail: admin.firestore.FieldValue.delete(),
+      status: 'active'
+    });
+    batch.set(db.collection('memberIndex').doc(memberId), { email: newEmail });
+    await batch.commit();
+
+    return { ok: true };
+  });
