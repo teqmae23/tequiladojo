@@ -472,46 +472,56 @@ function idxBuildSchedule(){
 
 </script>
 <script>
-var NEWS_TYPES={info:'お知らせ',event:'イベント',feature:'新機能',menu:'メニュー',other:'その他'};
-var NEWS_TYPE_COLORS={info:'#378ADD',event:'#D4730A',feature:'#2CA44E',menu:'#8B5CF6',other:'#64748B'};
+var NEWS_TYPES={info:'お知らせ',event:'イベント',feature:'新機能',menu:'メニュー',arrival:'入荷情報',other:'その他'};
+var NEWS_TYPE_COLORS={info:'#378ADD',event:'#D4730A',feature:'#2CA44E',menu:'#8B5CF6',arrival:'#E8850A',other:'#64748B'};
 function g(id){return document.getElementById(id);}
 function loadIndexNews(){
   if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
   var db=firebase.firestore();
-  var now=new Date().toISOString();
-  // where+orderByの複合インデックス不要にするため全件取得してクライアント側でフィルタ
+  var now=new Date();
+  var nowIso=now.toISOString();
+  var threeDaysAgo=new Date(now.getTime()-3*24*60*60*1000).toISOString();
   db.collection('news').get()
   .then(function(snap){
     var list=g('news-list'); if(!list) return;
     var rows=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());})
       .filter(function(r){
         if(!r.published) return false;
-        if(r.publishStart && r.publishStart > now) return false;
-        if(r.publishEnd && r.publishEnd < now) return false;
+        if(r.publishStart && r.publishStart > nowIso) return false;
+        if(r.publishEnd && r.publishEnd < nowIso) return false;
         return true;
       })
       .sort(function(a,b){
         var as=a.publishStart||a.createdAt||'';
         var bs=b.publishStart||b.createdAt||'';
         return bs.localeCompare(as);
-      })
-      .slice(0,10);
+      });
     if(!rows.length){list.innerHTML='<div class="news-empty">現在お知らせはありません</div>';return;}
-    // キャッシュに保存しておく（モーダル表示用）
-    window._newsRows=rows;
-    list.innerHTML=rows.map(function(r,i){
+    // 3日以内は全表示、それ以外は5件まで
+    var newRows=rows.filter(function(r){return (r.publishStart||r.createdAt||'')>=threeDaysAgo;});
+    var oldRows=rows.filter(function(r){return (r.publishStart||r.createdAt||'')<threeDaysAgo;});
+    var displayRows=newRows.concat(oldRows.slice(0,Math.max(0,5-newRows.length)));
+    window._newsRows=rows; // 全件キャッシュ（モーダル用）
+    window._newsDisplayRows=displayRows;
+    list.innerHTML=displayRows.map(function(r,i){
       var tc=NEWS_TYPE_COLORS[r.type]||'#64748B';
       var tl=NEWS_TYPES[r.type]||r.type||'その他';
       var dateStr=r.publishStart?r.publishStart.slice(0,10):'';
+      var isNew=(r.publishStart||r.createdAt||'')>=threeDaysAgo;
       var hasBody=!!(r.body&&r.body.replace(/<[^>]*>/g,'').trim());
-      return '<div class="news-item" onclick="nmOpen('+i+')" style="'+(hasBody?'':'cursor:default')+'">'
+      var globalIdx=rows.indexOf(r);
+      return '<div class="news-item" onclick="nmOpen('+globalIdx+')" style="'+(hasBody?'':'cursor:default')+'">'
         +'<span class="news-badge" style="background:'+tc+'">'+tl+'</span>'
         +'<div class="news-text">'
           +'<div class="news-title">'+(r.title||'')+(hasBody?' <span style="font-size:10px;color:#3a7d5e;margin-left:4px;">▶</span>':'')+'</div>'
-          +(dateStr?'<div class="news-date">'+dateStr+'</div>':'')
+          +'<div style="display:flex;align-items:center;gap:6px;margin-top:2px;">'
+            +(isNew?'<span style="font-size:10px;font-weight:700;color:#fff;background:#E8450A;padding:1px 6px;border-radius:3px;">NEW</span>':'')
+            +(dateStr?'<span class="news-date">'+dateStr+'</span>':'')
+          +'</div>'
         +'</div>'
       +'</div>';
-    }).join('');
+    }).join('')
+    +(rows.length>displayRows.length?'<a href="/news.html" style="display:block;text-align:right;margin-top:8px;font-size:12px;color:#1a5e3a;text-decoration:none;">過去のニュースをすべて見る →</a>':'');
   }).catch(function(e){
     console.error('news load error:',e);
     var list=g('news-list');
@@ -551,18 +561,19 @@ function loadStoreStatus(){
   var nowHHMM=String(now.getHours()).padStart(2,'0')+String(now.getMinutes()).padStart(2,'0');
 
   function fmtT(hhmm){return hhmm?hhmm.slice(0,2)+':'+hhmm.slice(2,4):'';}
-  function openHtml(body){return '<div style="text-align:center;line-height:1.5;">'+body+'</div>';}
-  function lbl(txt,color){return '<div style="font-size:15px;font-weight:700;letter-spacing:.04em;color:'+(color||'#fff')+';">'+txt+'</div>';}
-  function sub(txt){return '<div style="font-size:11px;color:rgba(255,255,255,.7);margin-top:2px;">'+txt+'</div>';}
-  function cnt(txt){return '<div style="font-size:12px;font-weight:600;color:#7dd8a8;margin-top:3px;">'+txt+'</div>';}
+  function lbl(txt,color){return '<div style="font-size:12px;font-weight:700;color:'+(color||'rgba(255,255,255,.9)')+';">'+txt+'</div>';}
+  function sub(txt){return '<div style="font-size:10px;color:rgba(255,255,255,.65);margin-top:1px;">'+txt+'</div>';}
+  function cnt(txt){return '<div style="font-size:11px;font-weight:600;color:#7dd8a8;margin-top:1px;">'+txt+'</div>';}
 
-  var p1=db.collection('sessions').where('date','==',yymmdd).limit(1).get();
-  var p2=db.collection('schedules').get();
+  // Individual catches prevent one failure from killing everything
+  var p1=db.collection('sessions').where('date','==',yymmdd).limit(1).get()
+    .catch(function(){return {empty:true,docs:[]};});
+  var p2=db.collection('schedules').get()
+    .catch(function(){return {docs:[]};});
 
   Promise.all([p1,p2]).then(function(results){
     var sessSnap=results[0], schSnap=results[1];
 
-    // Build schedule map using scheduleId field (same as idxBuildSchedule)
     var schMap={};
     schSnap.docs.forEach(function(d){
       var key=(d.data().scheduleId)||d.id;
@@ -573,15 +584,42 @@ function loadStoreStatus(){
       var sess=sessSnap.docs[0].data();
       var openT=sess.openTime||'';
       var closeT=sess.closeTime||'';
-
-      // Check break windows
       for(var b=1;b<=3;b++){
         var bs=sess['breakStart'+b]||'';
         var be_=sess['breakEnd'+b]||'';
         if(bs&&be_&&nowHHMM>=bs&&nowHHMM<be_){
-          el.innerHTML=openHtml(lbl('☕ 休憩中','#d4c4ff')+sub('再開予定 '+fmtT(be_)));
+          el.innerHTML=lbl('☕ 休憩中')+sub('再開 '+fmtT(be_));
           return;
         }
+      }
+      if(openT&&closeT&&nowHHMM>=openT&&nowHHMM<closeT){
+        var pv=db.collection('visits').where('visitDate','==',yymmdd).get().catch(function(){return {docs:[]};});
+        var pl=sess.layoutId?db.collection('layouts').doc(sess.layoutId).get().catch(function(){return null;}):Promise.resolve(null);
+        Promise.all([pv,pl]).then(function(r2){
+          var visSnap=r2[0]||{docs:[]}, layoutDoc=r2[1];
+          var active=(visSnap.docs||[]).filter(function(d){return !d.data().checkoutTime;}).length;
+          var seats=layoutDoc&&layoutDoc.exists?layoutDoc.data().seats:'?';
+          el.innerHTML=lbl('🏮 開店中','#ffd98a')+sub(fmtT(openT)+'～'+fmtT(closeT))+cnt(active+'/'+seats+'名');
+        });
+        return;
+      }
+    }
+
+    var nextStr='';
+    for(var i=1;i<=14&&!nextStr;i++){
+      var fd=new Date(yr,mo,dy+i);
+      var fk=String(fd.getFullYear())+String(fd.getMonth()+1).padStart(2,'0')+String(fd.getDate()).padStart(2,'0');
+      var sch=schMap[fk];
+      if(sch&&sch.openTime){
+        var bt=parseInt(sch.businessType)||0;
+        if(bt!==4&&bt!==5&&bt!==8){
+          nextStr=(fd.getMonth()+1)+'/'+fd.getDate()+' '+fmtT(sch.openTime);
+        }
+      }
+    }
+    el.innerHTML=lbl('🌙 閉店中')+(nextStr?sub('次回 '+nextStr):sub('次回未定'));
+  });
+}
       }
 
       if(openT&&closeT&&nowHHMM>=openT&&nowHHMM<closeT){
