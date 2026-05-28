@@ -73,6 +73,9 @@ input,select,textarea{font-family:var(--sans)}
 .content{padding:28px;max-width:1280px;margin:0 auto}
 .page{display:none}.page.active{display:block}
 .phead{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:22px;padding-bottom:16px;border-bottom:1px solid var(--border)}
+.meta-bar{font-size:11px;color:var(--ink3);margin-bottom:6px;font-family:var(--mono);display:none}
+.meta-bar.loaded{display:block}
+.meta-rev{color:var(--gold-d);font-weight:700;margin-right:6px}
 .ptitle{font-family:var(--serif);font-size:28px;font-weight:500;color:var(--gold-d)}
 .pdesc{font-size:11px;color:var(--ink3);margin-top:2px}
 .card{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shadow)}
@@ -180,6 +183,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 
     <!-- 顧客マスタ -->
     <div class="page active" id="page-members">
+      <div class="meta-bar" id="meta-members"></div>
       <div class="phead">
         <div><div class="ptitle">顧客マスタ</div><div class="pdesc">顧客番号 6桁 = 西暦下2桁 + 通番4桁</div></div>
         <button class="btn bp" id="btn-open-member">＋ 顧客登録</button>
@@ -205,6 +209,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 
     <!-- 座席レイアウトマスタ -->
     <div class="page" id="page-layouts">
+      <div class="meta-bar" id="meta-layouts"></div>
       <div class="phead">
         <div><div class="ptitle">座席レイアウトマスタ</div><div class="pdesc">座席ID 2桁</div></div>
         <button class="btn bp" id="btn-open-layout">＋ レイアウト登録</button>
@@ -636,9 +641,24 @@ document.addEventListener('paste',function(e){
   }
 });
 
+function renderMeta(col){
+  AuthRole.getMeta(db,col).then(function(meta){
+    var el=document.getElementById('meta-'+col);
+    if(!el) return;
+    if(!meta){el.classList.remove('loaded');return;}
+    var d=meta.updatedAt?meta.updatedAt.toDate():null;
+    var ds=d?d.getFullYear()+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'):'—';
+    el.innerHTML='<span class="meta-rev">Rev.'+meta.rev+'</span>最終更新: '+ds;
+    el.classList.add('loaded');
+  });
+}
+function bumpAndRender(col){AuthRole.bumpMeta(db,col).then(function(){renderMeta(col);});}
+
 function loadAll(){
   loadMembers();
   loadLayouts();
+  renderMeta('members');
+  renderMeta('layouts');
   // 会員名入力時のエラー解除
   var memNameEl=g("mem-name");
   if(memNameEl){
@@ -726,7 +746,7 @@ document.addEventListener("click",function(e){
     var col=btn.dataset.del, id=btn.dataset.delId, label=btn.dataset.delLabel;
     confirmDel("「"+id+"」の"+label+"データを削除しますか？",function(){
       db.collection(col).doc(id).delete()
-        .then(function(){ toast(label+"を削除しました"); if(col==="members") loadMembers(); else loadLayouts(); })
+        .then(function(){ toast(label+"を削除しました"); bumpAndRender(col); if(col==="members") loadMembers(); else loadLayouts(); })
         .catch(function(e){ toast("削除失敗: "+e.message,"err"); });
     });
   }
@@ -871,7 +891,7 @@ g("btn-save-member").addEventListener("click",async function(){
     visitCount:parseInt(gv("mem-visits"))||0, rank:gv("mem-rank")||null,
     note:noteEl?noteEl.value||null:null
   },{merge:true})
-  .then(function(){ toast(editId.member?"顧客を更新しました":"顧客を登録しました"); closeM("m-member"); loadMembers(); })
+  .then(function(){ toast(editId.member?"顧客を更新しました":"顧客を登録しました"); closeM("m-member"); bumpAndRender("members"); loadMembers(); })
   .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
@@ -944,7 +964,7 @@ g("btn-save-layout").addEventListener("click",function(){
   if(!name){ toast("名称は必須です","err"); return; }
   if(!seats){ toast("座席数は必須です","err"); return; }
   db.collection("layouts").doc(id).set({layoutId:id,name:name,seats:seats,imageData:layImgData||null},{merge:true})
-    .then(function(){ toast(editId.layout?"レイアウトを更新しました":"レイアウトを登録しました"); closeM("m-layout"); loadLayouts(); })
+    .then(function(){ toast(editId.layout?"レイアウトを更新しました":"レイアウトを登録しました"); closeM("m-layout"); bumpAndRender("layouts"); loadLayouts(); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 document.addEventListener('DOMContentLoaded',function(){ Cropper.initEvents(); });

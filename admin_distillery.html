@@ -72,6 +72,9 @@ input,select,textarea{font-family:var(--sans)}
 .phead{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:22px;padding-bottom:16px;border-bottom:1px solid var(--border)}
 .ptitle{font-family:var(--serif);font-size:28px;font-weight:500;color:var(--gold-d)}
 .pdesc{font-size:11px;color:var(--ink3);margin-top:2px}
+.meta-bar{font-size:11px;color:var(--ink3);margin-bottom:6px;font-family:var(--mono);display:none}
+.meta-bar.loaded{display:block}
+.meta-rev{color:var(--gold-d);font-weight:700;margin-right:6px}
 .card{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shadow)}
 .toolbar{display:flex;gap:8px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
 .sbox{display:flex;align-items:center;gap:6px;border:1px solid var(--border2);border-radius:var(--r);padding:6px 10px;flex:1;min-width:160px;background:var(--cream)}
@@ -173,6 +176,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 
     <!-- 地区マスタ -->
     <div class="page active" id="page-districts">
+      <div class="meta-bar" id="meta-districts"></div>
       <div class="phead"><div><div class="ptitle">地区マスタ</div><div class="pdesc">districtId 2桁 — 7地区</div></div><button class="btn bp" id="btn-open-district">＋ 地区登録</button></div>
       <div class="card">
         <div style="margin-left:auto;display:flex;gap:4px;align-items:center;padding:12px 14px">
@@ -186,6 +190,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 
     <!-- 所在地マスタ -->
     <div class="page" id="page-locations">
+      <div class="meta-bar" id="meta-locations"></div>
       <div class="phead"><div><div class="ptitle">所在地マスタ</div><div class="pdesc">locationId 4桁 = 地区2桁 + 連番2桁</div></div><button class="btn bp" id="btn-open-location">＋ 所在地登録</button></div>
       <div class="card">
         <div class="toolbar">
@@ -203,6 +208,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 
     <!-- 蒸留所マスタ -->
     <div class="page" id="page-distilleries">
+      <div class="meta-bar" id="meta-distilleries"></div>
       <div class="phead"><div><div class="ptitle">蒸留所マスタ</div><div class="pdesc">distilleryId = NOM番号 4桁</div></div><button class="btn bp" id="btn-open-distillery">＋ 蒸留所登録</button></div>
       <div class="card">
         <div class="toolbar">
@@ -428,8 +434,22 @@ document.querySelectorAll(".tab").forEach(function(tab){
 });
 
 // ── データロード ─────────────────────────────────────────────────
+function renderMeta(col){
+  AuthRole.getMeta(db,col).then(function(meta){
+    var el=document.getElementById('meta-'+col);
+    if(!el) return;
+    if(!meta){el.classList.remove('loaded');return;}
+    var d=meta.updatedAt?meta.updatedAt.toDate():null;
+    var ds=d?d.getFullYear()+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'):'—';
+    el.innerHTML='<span class="meta-rev">Rev.'+meta.rev+'</span>最終更新: '+ds;
+    el.classList.add('loaded');
+  });
+}
+function bumpAndRender(col){AuthRole.bumpMeta(db,col).then(function(){renderMeta(col);});}
+
 function loadAll(){
   ["districts","locations","distilleries"].forEach(loadCol);
+  ["districts","locations","distilleries"].forEach(renderMeta);
 }
 function loadCol(col){
   db.collection(col).get()
@@ -522,7 +542,7 @@ document.addEventListener("click",function(e){
     var col=btn.dataset.del, id=btn.dataset.delId, label=btn.dataset.delLabel;
     confirmDel("「"+id+"」の"+label+"データを削除しますか？",function(){
       db.collection(col).doc(id).delete()
-        .then(function(){ toast(label+"を削除しました"); loadCol(col); })
+        .then(function(){ toast(label+"を削除しました"); bumpAndRender(col); loadCol(col); })
         .catch(function(e){ toast("削除失敗: "+e.message,"err"); });
     });
   }
@@ -549,7 +569,7 @@ g("btn-save-district").addEventListener("click",function(){
   if(!id||id.length!==2){ toast("地区IDは2桁で入力してください","err"); return; }
   if(!name){ toast("地区名を入力してください","err"); return; }
   db.collection("districts").doc(id).set({districtId:id,districtName:name})
-    .then(function(){ toast(editId.district?"地区を更新しました":"地区を登録しました"); closeM("m-district"); loadCol("districts"); })
+    .then(function(){ toast(editId.district?"地区を更新しました":"地区を登録しました"); closeM("m-district"); bumpAndRender("districts"); loadCol("districts"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
@@ -596,7 +616,7 @@ g("btn-save-location").addEventListener("click",function(){
   if(lng) data.longitude=parseFloat(lng);
   if(url) data.infoUrl=url;
   db.collection("locations").doc(id).set(data)
-    .then(function(){ toast(editId.location?"所在地を更新しました":"所在地を登録しました"); closeM("m-location"); loadCol("locations"); })
+    .then(function(){ toast(editId.location?"所在地を更新しました":"所在地を登録しました"); closeM("m-location"); bumpAndRender("locations"); loadCol("locations"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
@@ -667,7 +687,7 @@ g("btn-save-distillery").addEventListener("click",function(){
     ferMethod:cbToStr("dis-fer-",4),yeastType:cbToStr("dis-yea-",3),stillType:cbToStr("dis-sti-",5)
   };
   db.collection("distilleries").doc(nom).set(data)
-    .then(function(){ toast(editId.distillery?"蒸留所を更新しました":"蒸留所を登録しました"); closeM("m-distillery"); loadCol("distilleries"); })
+    .then(function(){ toast(editId.distillery?"蒸留所を更新しました":"蒸留所を登録しました"); closeM("m-distillery"); bumpAndRender("distilleries"); loadCol("distilleries"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 </script>
