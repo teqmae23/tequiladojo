@@ -566,25 +566,43 @@ function loadStoreStatus(){
   function sub(txt){return '<div style="font-size:10px;color:#4a7060;margin-top:1px;">'+txt+'</div>';}
   function cnt(txt){return '<div style="font-size:11px;font-weight:600;color:#1a5e3a;margin-top:1px;">'+txt+'</div>';}
 
+  // p1=今日のセッション p2=全スケジュール p3=今日のスケジュール直接取得
   var p1=db.collection('sessions').where('date','==',yymmdd).limit(1).get()
     .catch(function(){return {empty:true,docs:[]};});
   var p2=db.collection('schedules').get()
     .catch(function(){return {docs:[]};});
+  var p3=db.collection('schedules').doc(todayFk).get()
+    .catch(function(){return null;});
 
-  Promise.all([p1,p2]).then(function(results){
-    var sessSnap=results[0], schSnap=results[1];
+  Promise.all([p1,p2,p3]).then(function(results){
+    var sessSnap=results[0], schSnap=results[1], todaySchDoc=results[2];
 
+    // 将来日程用のschMap（doc.idとscheduleIdの両方でキー）
     var schMap={};
     schSnap.docs.forEach(function(d){
-      var key=(d.data().scheduleId)||d.id;
-      schMap[key]=d.data();
+      schMap[d.id]=d.data();
+      if(d.data().scheduleId) schMap[d.data().scheduleId]=d.data();
     });
 
-    // セッションが取得できた場合（認証済みアクセス）
+    // 今日のopenTime/closeTimeをセッション優先、なければスケジュールから取得
+    var openT='', closeT='', sess=null, layoutId='';
+    var ts=(todaySchDoc&&todaySchDoc.exists)?todaySchDoc.data():(schMap[todayFk]||null);
+    if(ts){
+      var tsBt=parseInt(ts.businessType)||0;
+      if(tsBt!==4&&tsBt!==5&&tsBt!==8){
+        openT=ts.openTime||'';
+        closeT=ts.closeTime||'';
+      }
+    }
     if(!sessSnap.empty){
-      var sess=sessSnap.docs[0].data();
-      var openT=sess.openTime||'';
-      var closeT=sess.closeTime||'';
+      sess=sessSnap.docs[0].data();
+      if(sess.openTime) openT=sess.openTime;
+      if(sess.closeTime) closeT=sess.closeTime;
+      if(sess.layoutId) layoutId=sess.layoutId;
+    }
+
+    // 休憩チェック（セッションのみ）
+    if(sess){
       for(var b=1;b<=3;b++){
         var bs=sess['breakStart'+b]||'';
         var be_=sess['breakEnd'+b]||'';
@@ -593,37 +611,26 @@ function loadStoreStatus(){
           return;
         }
       }
-      if(openT&&closeT&&nowHHMM>=openT&&nowHHMM<closeT){
+    }
+
+    if(openT&&nowHHMM<openT){
+      el.innerHTML=lbl('🌙 閉店中')+sub('本日 '+fmtT(openT)+'〜');
+      return;
+    }
+    if(openT&&closeT&&nowHHMM>=openT&&nowHHMM<closeT){
+      if(sess){
         var pv=db.collection('visits').where('visitDate','==',yymmdd).get().catch(function(){return {docs:[]};});
-        var pl=sess.layoutId?db.collection('layouts').doc(sess.layoutId).get().catch(function(){return null;}):Promise.resolve(null);
+        var pl=layoutId?db.collection('layouts').doc(layoutId).get().catch(function(){return null;}):Promise.resolve(null);
         Promise.all([pv,pl]).then(function(r2){
           var visSnap=r2[0]||{docs:[]}, layoutDoc=r2[1];
           var active=(visSnap.docs||[]).filter(function(d){return !d.data().checkoutTime;}).length;
           var seats=layoutDoc&&layoutDoc.exists?layoutDoc.data().seats:'?';
           el.innerHTML=lbl('🏮 開店中','#c07800')+sub(fmtT(openT)+'～'+fmtT(closeT))+cnt(active+'/'+seats+'名');
         });
-        return;
+      } else {
+        el.innerHTML=lbl('🏮 開店中','#c07800')+sub(fmtT(openT)+'～'+fmtT(closeT));
       }
-      if(openT&&nowHHMM<openT){
-        el.innerHTML=lbl('🌙 閉店中')+sub('本日 '+fmtT(openT)+'〜');
-        return;
-      }
-    } else {
-      // セッション未取得時はスケジュールで開閉判断
-      var ts=schMap[todayFk];
-      if(ts&&ts.openTime&&ts.closeTime){
-        var bt0=parseInt(ts.businessType)||0;
-        if(bt0!==4&&bt0!==5&&bt0!==8){
-          if(nowHHMM>=ts.openTime&&nowHHMM<ts.closeTime){
-            el.innerHTML=lbl('🏮 開店中','#c07800')+sub(fmtT(ts.openTime)+'～'+fmtT(ts.closeTime));
-            return;
-          }
-          if(nowHHMM<ts.openTime){
-            el.innerHTML=lbl('🌙 閉店中')+sub('本日 '+fmtT(ts.openTime)+'〜');
-            return;
-          }
-        }
-      }
+      return;
     }
 
     var nextStr='';
