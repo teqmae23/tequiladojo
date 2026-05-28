@@ -427,6 +427,7 @@ input,select{font-family:var(--sans)}
           <div class="ptab" onclick="switchPTab('other',this)">他酒</div>
           <div class="ptab" onclick="switchPTab('misc',this)">その他</div>
           <div class="ptab" onclick="switchPTab('set',this)">セット</div>
+          <div class="ptab" onclick="switchPTab('cocktail',this)">カクテル</div>
         </div>
         <div id="nom-shortcuts-area" class="nom-shortcuts"></div>
         <div id="tequila-extra-filters" style="display:flex;gap:4px;align-items:flex-start;margin-bottom:6px;flex-wrap:wrap;flex-direction:column;">
@@ -464,6 +465,20 @@ input,select{font-family:var(--sans)}
           </div>
         </div>
         <input type="text" id="product-search"<input type="text" id="product-search" class="fi" placeholder="商品名・NOMで検索..." oninput="filterProducts()">
+        <!-- カクテルパネル（ソーダ割り選択） -->
+        <div id="cocktail-panel" style="display:none;">
+          <div style="margin-bottom:10px;">
+            <button class="btn bg" id="btn-soda-wari" onclick="startSodaWari()" style="width:100%;padding:12px;font-size:14px;font-weight:700;background:var(--teal-l);color:var(--teal);border:1.5px solid var(--teal);">
+              🥤 ソーダ割り（340ml）<span style="font-size:11px;font-weight:400;margin-left:8px;">テキーラ 30ml使用</span>
+            </button>
+          </div>
+          <!-- テキーラ選択サブパネル -->
+          <div id="soda-tequila-picker" style="display:none;border:1px solid var(--border2);border-radius:var(--r);padding:10px;background:var(--cream2);">
+            <div style="font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:8px;">使用するテキーラを選択</div>
+            <input type="text" id="soda-tequila-search" class="fi" placeholder="テキーラ名で検索..." oninput="filterSodaTequila()" style="margin-bottom:8px;">
+            <div id="soda-tequila-list" style="max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;"></div>
+          </div>
+        </div>
         <div class="product-list-wrap" id="product-list-container"><div class="empty">読み込み中...</div></div>
         <div id="cart-section">
           <div class="cart-header">
@@ -1505,12 +1520,15 @@ function switchPTab(type,el){
   currentPTab=type;currentNOM='';
   document.querySelectorAll('.ptab').forEach(t=>t.classList.remove('active'));
   if(el)el.classList.add('active');
+  const isCocktail=type==='cocktail';
   document.getElementById('nom-shortcuts-area').style.display=type==='tequila'?'flex':'none';
   document.getElementById('tequila-extra-filters').style.display=type==='tequila'?'flex':'none';
-  document.getElementById('product-search').style.display=type==='set'?'none':'block';
+  document.getElementById('product-search').style.display=(type==='set'||isCocktail)?'none':'block';
+  document.getElementById('cocktail-panel').style.display=isCocktail?'block':'none';
+  document.getElementById('product-list-container').style.display=isCocktail?'none':'block';
   if(type==='tequila')renderNOMs();
   document.getElementById('product-search').value='';
-  filterProducts();
+  if(!isCocktail)filterProducts();
 }
 function renderNOMs(){
   document.getElementById('nom-shortcuts-area').innerHTML=
@@ -1678,6 +1696,49 @@ function _doAddSet(setId){
   showToast('セット商品を追加しました','info');
 }
 
+// ━━━ ソーダ割り ━━━
+function startSodaWari(){
+  document.getElementById('soda-tequila-picker').style.display='block';
+  document.getElementById('soda-tequila-search').value='';
+  filterSodaTequila();
+  document.getElementById('soda-tequila-search').focus();
+}
+function filterSodaTequila(){
+  const q=(document.getElementById('soda-tequila-search').value||'').toLowerCase();
+  const list=document.getElementById('soda-tequila-list');
+  const items=masterData.tequila.filter(t=>{
+    if(!q)return true;
+    const name=(AuthRole.bdName(t,'es')+' '+(t.bottleJa||'')).toLowerCase();
+    return name.includes(q);
+  });
+  list.innerHTML=items.slice(0,50).map(t=>{
+    const name=AuthRole.bdName(t,'es');
+    const ja=t.bottleJa?`<span style="font-size:10px;color:var(--ink3);display:block;">${t.bottleJa}</span>`:'';
+    return`<div onclick="addSodaWariToCart('${esc(t.id)}')" style="padding:7px 10px;border-radius:4px;cursor:pointer;background:var(--white);border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--ink);" onmouseover="this.style.background='var(--cream2)'" onmouseout="this.style.background='var(--white)'"><span>${esc(name)}</span>${ja}</div>`;
+  }).join('');
+}
+function addSodaWariToCart(bottleId){
+  const t=masterData.tequila.find(x=>x.id===bottleId);
+  if(!t){showToast('テキーラが見つかりません','error');return;}
+  flow.cart.push({
+    productId:'cocktail_soda_wari',
+    productName:'ソーダ割り (340ml)',
+    productType:'cocktail',
+    qty:1,
+    unit:'杯',
+    unitPrice:0,
+    blindMarkId:null,
+    cocktailBaseId:t.id,
+    cocktailBaseName:AuthRole.bdName(t,'es'),
+    cocktailBaseQty:30
+  });
+  document.getElementById('soda-tequila-picker').style.display='none';
+  renderCart();
+  document.getElementById('btn-to-step2').disabled=false;
+  showToast('ソーダ割りをカートに追加しました（'+AuthRole.bdName(t,'es')+'）','info');
+}
+// ━━━ ソーダ割り end ━━━
+
 // カート内ml商品の共通ml数を返す（なければ10）
 function getCartMl(){
   const ml=flow.cart.find(o=>o.productType==='tequila'||o.productType==='other');
@@ -1756,7 +1817,7 @@ function renderCart(){
     if(isBlind&&isMl) markPicker=buildMarkPicker(idx,o.blindMarkId);
     return`<div class="cart-item">
       ${markPicker}
-      <span class="cart-item-name">${esc(o.productName)}</span>
+      <span class="cart-item-name">${esc(o.productName)}${o.cocktailBaseName?`<div style="font-size:10px;color:var(--ink3);margin-left:4px;">🍶 ${esc(o.cocktailBaseName)} 30ml</div>`:''}</span>
       <span class="cart-item-qty" style="font-size:12px;color:var(--ink3)">${o.qty}${o.unit}</span>
       <span class="cart-item-price">¥${cartAmt(o).toLocaleString()}</span>
       <button class="cart-item-del" onclick="removeCartItem(${idx})">✕</button>
@@ -1834,7 +1895,10 @@ async function confirmOrder(){
           orderTime,customerId:visit.memberId||null,visitKey:visit.id,orderGroupId,batchId,
           itemSeq:i+1,productCode:item.productId,productName:saveName,productType:item.productType,
           qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,
-          blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:1
+          blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:1,
+          cocktailBaseId:item.cocktailBaseId||null,
+          cocktailBaseName:item.cocktailBaseName||null,
+          cocktailBaseQty:item.cocktailBaseQty||null
         });
       });
     }
