@@ -150,7 +150,7 @@ body::before{
       <a class="nav-link" href="#access">アクセス</a>
     </div>
     <div class="nav-item-wrap">
-      <div id="store-status-content" style="width:100%;padding:7px 6px;background:rgba(30,100,65,.15);border:1px solid rgba(30,100,65,.45);border-radius:8px;font-size:11px;text-align:center;color:rgba(255,255,255,.85);line-height:1.4;display:flex;align-items:center;justify-content:center;flex-direction:column;flex:1;"></div>
+      <div id="store-status-content" style="width:100%;padding:7px 6px;background:rgba(30,100,65,.12);border:1.5px solid rgba(30,100,65,.32);border-radius:8px;font-size:11px;text-align:center;color:#1a3e28;line-height:1.4;display:flex;align-items:center;justify-content:center;flex-direction:column;flex:1;"></div>
     </div>
   </div>
   <!-- ニュース -->
@@ -559,13 +559,13 @@ function loadStoreStatus(){
   var yr=now.getFullYear(),mo=now.getMonth(),dy=now.getDate();
   var yymmdd=String(yr).slice(2)+String(mo+1).padStart(2,'0')+String(dy).padStart(2,'0');
   var nowHHMM=String(now.getHours()).padStart(2,'0')+String(now.getMinutes()).padStart(2,'0');
+  var todayFk=String(yr)+String(mo+1).padStart(2,'0')+String(dy).padStart(2,'0');
 
   function fmtT(hhmm){return hhmm?hhmm.slice(0,2)+':'+hhmm.slice(2,4):'';}
-  function lbl(txt,color){return '<div style="font-size:12px;font-weight:700;color:'+(color||'rgba(255,255,255,.9)')+';">'+txt+'</div>';}
-  function sub(txt){return '<div style="font-size:10px;color:rgba(255,255,255,.65);margin-top:1px;">'+txt+'</div>';}
-  function cnt(txt){return '<div style="font-size:11px;font-weight:600;color:#7dd8a8;margin-top:1px;">'+txt+'</div>';}
+  function lbl(txt,color){return '<div style="font-size:12px;font-weight:700;color:'+(color||'#1a3e28')+';">'+txt+'</div>';}
+  function sub(txt){return '<div style="font-size:10px;color:#4a7060;margin-top:1px;">'+txt+'</div>';}
+  function cnt(txt){return '<div style="font-size:11px;font-weight:600;color:#1a5e3a;margin-top:1px;">'+txt+'</div>';}
 
-  // Individual catches prevent one failure from killing everything
   var p1=db.collection('sessions').where('date','==',yymmdd).limit(1).get()
     .catch(function(){return {empty:true,docs:[]};});
   var p2=db.collection('schedules').get()
@@ -580,6 +580,7 @@ function loadStoreStatus(){
       schMap[key]=d.data();
     });
 
+    // セッションが取得できた場合（認証済みアクセス）
     if(!sessSnap.empty){
       var sess=sessSnap.docs[0].data();
       var openT=sess.openTime||'';
@@ -588,7 +589,7 @@ function loadStoreStatus(){
         var bs=sess['breakStart'+b]||'';
         var be_=sess['breakEnd'+b]||'';
         if(bs&&be_&&nowHHMM>=bs&&nowHHMM<be_){
-          el.innerHTML=lbl('☕ 休憩中')+sub('再開 '+fmtT(be_));
+          el.innerHTML=lbl('☕ 休憩中','#7a4010')+sub('再開 '+fmtT(be_));
           return;
         }
       }
@@ -599,28 +600,41 @@ function loadStoreStatus(){
           var visSnap=r2[0]||{docs:[]}, layoutDoc=r2[1];
           var active=(visSnap.docs||[]).filter(function(d){return !d.data().checkoutTime;}).length;
           var seats=layoutDoc&&layoutDoc.exists?layoutDoc.data().seats:'?';
-          el.innerHTML=lbl('🏮 開店中','#ffd98a')+sub(fmtT(openT)+'～'+fmtT(closeT))+cnt(active+'/'+seats+'名');
+          el.innerHTML=lbl('🏮 開店中','#c07800')+sub(fmtT(openT)+'～'+fmtT(closeT))+cnt(active+'/'+seats+'名');
         });
         return;
       }
-      // 今日のセッションがあるが開店前
       if(openT&&nowHHMM<openT){
         el.innerHTML=lbl('🌙 閉店中')+sub('本日 '+fmtT(openT)+'〜');
         return;
       }
+    } else {
+      // セッション未取得時はスケジュールで開閉判断
+      var ts=schMap[todayFk];
+      if(ts&&ts.openTime&&ts.closeTime){
+        var bt0=parseInt(ts.businessType)||0;
+        if(bt0!==4&&bt0!==5&&bt0!==8){
+          if(nowHHMM>=ts.openTime&&nowHHMM<ts.closeTime){
+            el.innerHTML=lbl('🏮 開店中','#c07800')+sub(fmtT(ts.openTime)+'～'+fmtT(ts.closeTime));
+            return;
+          }
+          if(nowHHMM<ts.openTime){
+            el.innerHTML=lbl('🌙 閉店中')+sub('本日 '+fmtT(ts.openTime)+'〜');
+            return;
+          }
+        }
+      }
     }
 
     var nextStr='';
-    for(var i=0;i<=14&&!nextStr;i++){
+    for(var i=1;i<=14&&!nextStr;i++){
       var fd=new Date(yr,mo,dy+i);
       var fk=String(fd.getFullYear())+String(fd.getMonth()+1).padStart(2,'0')+String(fd.getDate()).padStart(2,'0');
       var sch=schMap[fk];
       if(sch&&sch.openTime){
         var bt=parseInt(sch.businessType)||0;
         if(bt!==4&&bt!==5&&bt!==8){
-          if(i===0&&nowHHMM>=sch.openTime) continue;
-          var dayLbl=i===0?'本日':(fd.getMonth()+1)+'/'+fd.getDate();
-          nextStr=dayLbl+' '+fmtT(sch.openTime);
+          nextStr=(fd.getMonth()+1)+'/'+fd.getDate()+' '+fmtT(sch.openTime);
         }
       }
     }
