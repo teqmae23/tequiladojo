@@ -145,6 +145,17 @@ var AuthRole = (function() {
     return t.slice(0,2)+':'+t.slice(2,4);
   }
 
+  // ボトル名にsuffixを付加して返す
+  function bdName(item, lang){
+    var base;
+    if(lang==='ja') base=item.bottleJaBase||item.bottleJa||item.bottleEsBase||item.bottleEs||item.bottleEn||item.name||item.id||'';
+    else base=item.bottleEsBase||item.bottleEs||item.bottleJaBase||item.bottleJa||item.bottleEn||item.name||item.id||'';
+    var sfx=(item.suffix||'').trim();
+    if(!sfx) return base;
+    base=base.replace(new RegExp(' ?\\('+sfx.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\)$'),'');
+    return base+' ('+sfx+')';
+  }
+
   // visitが現セッションに属するか判定
   function isVisitInSession(v, session){
     if(!session) return true;
@@ -163,5 +174,5 @@ var AuthRole = (function() {
   return { requireStaff: requireStaff, requireOwner: requireOwner, requireMember: requireMember,
            getActiveSession: getActiveSession, businessDate: businessDate,
            nowBusinessTime: nowBusinessTime, formatBusinessTime: formatBusinessTime,
-           isVisitInSession: isVisitInSession };
+           isVisitInSession: isVisitInSession, bdName: bdName };
 })();
