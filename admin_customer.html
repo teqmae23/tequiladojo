@@ -320,6 +320,16 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         </div>
       </div>
     </div>
+    <!-- メールアドレス変更（owner専用） -->
+    <div class="fg" id="m-email-section" style="border-top:1px solid var(--border);padding-top:10px;display:none">
+      <label class="fl" style="font-weight:600;margin-bottom:4px">メールアドレス変更 <span style="font-size:10px;color:var(--red)">🔒 OWNER</span></label>
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:6px">現在: <span id="m-email-current" class="mono" style="color:var(--ink)">—</span></div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input class="fi" id="m-email-new" type="email" placeholder="新しいメールアドレス" style="flex:1">
+        <button class="btn bp sm" id="btn-change-email" onclick="doOwnerEmailChange()" style="white-space:nowrap;padding:6px 12px;font-size:12px">変更</button>
+      </div>
+      <div id="m-email-err" style="font-size:11px;color:var(--red);margin-top:4px;min-height:14px"></div>
+    </div>
     <div class="mfoot"><button class="btn bg2" data-close="m-member">キャンセル</button><button class="btn bp" id="btn-save-member">保存</button></div>
   </div>
 </div>
@@ -364,6 +374,7 @@ if (!firebase.apps.length) { firebase.initializeApp(FIREBASE_CONFIG); }
 var storage = firebase.storage();
 var auth = firebase.auth();
 var db   = firebase.firestore();
+var functions = firebase.app().functions('asia-northeast1');
 
 // ── ユーティリティ ────────────────────────────────────────────────
 function g(id)      { return document.getElementById(id); }
@@ -799,11 +810,43 @@ function openMemberModal(id){
   if(id){
     sv("mem-id",id); idEl.readOnly=true; idEl.style.background="var(--cream2)";
     var r=cache.members.find(function(m){return m.id===id;}); setMemberFields(r);
+    // owner専用: メール変更セクション
+    var emailSec=g("m-email-section");
+    if(emailSec && _currentRole==="owner"){
+      emailSec.style.display="block";
+      var cur=r&&r.email&&r.email.indexOf("@tequiladojo.member")<0?r.email:(r&&r.pendingEmail?r.pendingEmail+"（確認待ち）":"未登録");
+      var curEl=g("m-email-current"); if(curEl) curEl.textContent=cur;
+      sv("m-email-new","");
+      var errEl=g("m-email-err"); if(errEl) errEl.textContent="";
+    } else if(emailSec){ emailSec.style.display="none"; }
   } else {
     var newId=genMemberId(); sv("mem-id",newId); idEl.readOnly=false; idEl.style.background=""; setMemberFields(null);
+    var emailSec2=g("m-email-section"); if(emailSec2) emailSec2.style.display="none";
   }
   g("kb-member").innerHTML='<span class="keypart kp-nom">'+gv("mem-id")+'</span><span class="klabel">顧客番号</span>';
   openM("m-member");
+}
+
+async function doOwnerEmailChange(){
+  var memberId=gv("mem-id");
+  var newEmail=(g("m-email-new")?g("m-email-new").value.trim():"");
+  var errEl=g("m-email-err");
+  if(errEl) errEl.textContent="";
+  if(!newEmail){ if(errEl) errEl.textContent="メールアドレスを入力してください"; return; }
+  var btn=g("btn-change-email"); if(btn){ btn.disabled=true; btn.textContent="変更中..."; }
+  try{
+    await functions.httpsCallable("adminUpdateEmail")({memberId:memberId,newEmail:newEmail});
+    toast("メールアドレスを変更しました");
+    var curEl=g("m-email-current"); if(curEl) curEl.textContent=newEmail;
+    sv("m-email-new","");
+    // キャッシュ更新
+    var r=cache.members.find(function(m){return m.id===memberId;});
+    if(r){ r.email=newEmail; r.pendingEmail=null; }
+    loadMembers();
+  }catch(e){
+    if(errEl) errEl.textContent="失敗: "+e.message;
+  }
+  if(btn){ btn.disabled=false; btn.textContent="変更"; }
 }
 
 var memIdEl=g("mem-id"); if(memIdEl) memIdEl.addEventListener("input",function(){

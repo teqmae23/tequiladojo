@@ -284,7 +284,14 @@ async function addStaff(){
   if(pass.length<8){ err.textContent="パスワードは8文字以上"; return; }
   try{
     var res=await functions.httpsCallable("adminAuthOperation")({operation:"create",email:email,password:pass});
-    await functions.httpsCallable("setUserRole")({uid:res.data.uid,role:role});
+    var uid=res.data.uid;
+    // 本登録アカウント（status:'active'）のみスタッフ設定可
+    var memSnap=await db.collection("members").where("authUid","==",uid).limit(1).get();
+    if(memSnap.empty||memSnap.docs[0].data().status!=="active"){
+      err.textContent="スタッフ登録は本会員（active）のみ可能です。先に会員登録を完了してください。";
+      return;
+    }
+    await functions.httpsCallable("setUserRole")({uid:uid,role:role});
     document.getElementById("new-staff-email").value="";
     document.getElementById("new-staff-pass").value="";
     showToast(email+" を "+role+" として追加しました");

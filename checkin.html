@@ -693,6 +693,9 @@ function renderVisitorList(){
   el.querySelectorAll('[data-orders-visit]').forEach(function(btn){
     btn.addEventListener('click',function(){ openOrdersModal(btn.dataset.ordersVisit, btn.dataset.ordersName); });
   });
+  el.querySelectorAll('[data-transfer-mid]').forEach(function(btn){
+    btn.addEventListener('click',function(){ printTransferReceipt(btn.dataset.transferMid, btn.dataset.transferName); });
+  });
 
 }
 
@@ -726,6 +729,11 @@ function renderVisCard(v, status){
       ?'<span class="badge" style="background:#e8b84b;color:#5a3800;font-size:9px">会計済</span>'
       :'';
 
+  // 引継ボタン（ゲスト・来場中のみ）
+  var transferBtn=(st==='guest'&&!isDone)
+    ?'<button class="btn bs sm" data-transfer-mid="'+v.memberId+'" data-transfer-name="'+escHtml(name)+'" style="padding:4px 8px;font-size:11px;white-space:nowrap;color:var(--teal);border-color:var(--teal)">引継</button>'
+    :'';
+
   // 1行レイアウト: 名前 会員区分 注文X品 テキーラXml 合計¥X [注文詳細]
   var row='<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;flex-wrap:nowrap;min-width:0">'
     +chk
@@ -735,6 +743,7 @@ function renderVisCard(v, status){
     +'<span style="margin-left:auto;font-size:11px;color:var(--ink3);white-space:nowrap">注文 '+orderCount+'品</span>'
     +'<span style="font-size:11px;color:var(--ink3);white-space:nowrap">テキーラ '+totalTq+' ml</span>'
     +'<span style="font-size:12px;font-weight:500;color:var(--ink);white-space:nowrap">合計 ¥'+totalAmt.toLocaleString()+'</span>'
+    +transferBtn
     +'<button class="btn bs sm" data-orders-visit="'+v.id+'" data-orders-name="'+escHtml(name)+'" style="padding:4px 8px;font-size:11px;white-space:nowrap">詳細</button>'
     +'</div>';
 
@@ -1814,6 +1823,120 @@ async function printReceipt(mode){
   }
 }
 
+
+// ── 引継レシート印刷 ───────────────────────────────────────────────
+async function printTransferReceipt(memberId, nickname){
+  toast('引継コードを準備中...','inf');
+  try{
+    // 既存の有効なregCodeを検索
+    var now=new Date().toISOString();
+    var snap=await db.collection('tempRegistrations')
+      .where('tempId','==',memberId)
+      .where('used','==',false)
+      .get();
+    var regCode=null;
+    snap.forEach(function(doc){
+      var d=doc.data();
+      if(d.expiresAt>now) regCode=doc.id;
+    });
+    // なければ新規生成
+    if(!regCode){
+      regCode=generateRegCode();
+      var expiresAt=new Date();
+      expiresAt.setDate(expiresAt.getDate()+30);
+      await db.collection('tempRegistrations').doc(regCode).set({
+        tempId:memberId, nickname:nickname,
+        createdAt:new Date().toISOString(), expiresAt:expiresAt.toISOString(), used:false
+      });
+    }
+    // プリンター接続
+    if(!receiptDevice || !receiptDevice.gatt.connected){
+      var knownDevices=[];
+      try{ knownDevices=await navigator.bluetooth.getDevices(); }catch(e){}
+      var printer=knownDevices.find(function(d){ return d.name&&(d.name.indexOf('Printer')>=0||d.name.indexOf('RPP')>=0||d.name.indexOf('Tenz')>=0); });
+      if(printer){
+        try{ receiptDevice=printer; await receiptDevice.gatt.connect(); }catch(e){ printer=null; }
+      }
+      if(!printer){
+        toast('プリンターを選択してください...','inf');
+        receiptDevice=await navigator.bluetooth.requestDevice({
+          filters:[{services:['000018f0-0000-1000-8000-00805f9b34fb']}],
+          optionalServices:['000018f0-0000-1000-8000-00805f9b34fb']
+        });
+        await receiptDevice.gatt.connect();
+      }
+      var server=receiptDevice.gatt;
+      var service=await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
+      receiptCharacteristic=await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+    }
+    var data=buildTransferReceiptData(nickname, regCode);
+    await sendToPrinter(receiptCharacteristic, data);
+    toast('引継レシートを印刷しました');
+  }catch(e){
+    console.error('引継レシート印刷エラー:', e);
+    toast('印刷失敗: '+e.message,'err');
+    receiptDevice=null; receiptCharacteristic=null;
+  }
+}
+
+function buildTransferReceiptData(nickname, regCode){
+  var ESC=0x1B, GS=0x1D;
+  var SEP='================================';
+  var parts=[];
+
+  parts.push([ESC,0x40]);
+  parts.push([0x1C,0x26]);
+  parts.push([ESC,0x61,0x01]); // 中央揃え
+
+  // 店名
+  parts.push([ESC,0x21,0x30]);
+  parts.push(sjisBytes('テキーラ道場\n'));
+  parts.push([ESC,0x21,0x00]);
+  parts.push(sjisBytes(SEP+'\n'));
+
+  // タイトル
+  parts.push([ESC,0x21,0x10]);
+  parts.push(sjisBytes('会員引継のご案内\n'));
+  parts.push([ESC,0x21,0x00]);
+  parts.push(sjisBytes(SEP+'\n'));
+
+  // 左揃え
+  parts.push([ESC,0x61,0x00]);
+  parts.push(sjisBytes('ゲスト名: '+nickname+'\n\n'));
+  parts.push(sjisBytes('下記コードまたはQRコードから\n'));
+  parts.push(sjisBytes('会員登録して来場履歴を引継ぎ\n'));
+  parts.push(sjisBytes('できます。\n\n'));
+
+  // 引継コード（大文字・目立たせる）
+  parts.push([ESC,0x61,0x01]);
+  parts.push([ESC,0x21,0x10]);
+  parts.push(sjisBytes('引継コード\n'));
+  parts.push([ESC,0x21,0x30]);
+  parts.push(sjisBytes(regCode+'\n'));
+  parts.push([ESC,0x21,0x00]);
+  parts.push(sjisBytes('\n'));
+
+  // QRコード
+  var transferUrl='https://tequiladojo.com/member_register2.html?transfer='+regCode;
+  var qrParts=makeQR(transferUrl);
+  qrParts.forEach(function(p){ parts.push(p); });
+  parts.push(sjisBytes('\n'));
+
+  parts.push([ESC,0x61,0x00]);
+  parts.push(sjisBytes(SEP+'\n'));
+  parts.push(sjisBytes('有効期限: 30日間\n'));
+  parts.push(sjisBytes('\n\n'));
+
+  // カット
+  parts.push([GS,0x56,0x41,0x10]);
+
+  var totalLen=0;
+  parts.forEach(function(p){ totalLen+=p.length; });
+  var buf=new Uint8Array(totalLen);
+  var pos=0;
+  parts.forEach(function(p){ buf.set(p instanceof Uint8Array?p:new Uint8Array(p),pos); pos+=p.length; });
+  return buf;
+}
 
 function makeQR(url){
   var ESC=0x1B, GS=0x1D;
