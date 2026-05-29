@@ -186,9 +186,17 @@ var storeStatus="closed";
 var currentSessionId=null;
 var currentOpenTime=null;   // 開店時刻（HHMMSS形式）
 var currentSessionDate=null; // 開店日付（YYMMDD形式）
+var currentLayoutId=null;   // レイアウトID
 var breakIndex=0;
 var layouts=[];
 var members=[];
+
+// 公開用ステータスドキュメントを書き込む（index.htmlが参照）
+function writePublicStatus(status, extra){
+  var data=Object.assign({status:status,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},extra||{});
+  db.collection('storeStatus').doc('current').set(data)
+    .catch(function(e){console.warn('storeStatus write failed:',e.message);});
+}
 
 var STATUS_LABEL={closed:"閉店中",open:"開店中",break:"休憩中"};
 var STATUS_COLOR={closed:"color:#e44",open:"color:#2a9",break:"color:#c80"};
@@ -317,8 +325,10 @@ g("btn-open-store").addEventListener("click",function(){
         currentSessionId=sessionId;
         currentOpenTime=openTime;
         currentSessionDate=today;
+        currentLayoutId=layoutId;
         breakIndex=0;
         applyStoreStatus("open");
+        writePublicStatus('open',{layoutId:layoutId,sessionDate:today});
         toast("開店しました（"+openTime+"）");
         sv("oc-memo","");
       });
@@ -345,12 +355,20 @@ g("btn-break-store").addEventListener("click",function(){
         var upd={};upd["breakStart"+idx]=t;
         if(resumeTime) upd["breakResumeTime"+idx]=resumeTime;
         return db.collection("sessions").doc(currentSessionId).update(upd)
-          .then(function(){applyStoreStatus("break");toast("休憩開始（"+t+(resumeTime?" 再開予定:"+resumeTime.slice(0,2)+":"+resumeTime.slice(2,4):"")+"）");});
+          .then(function(){
+            applyStoreStatus("break");
+            writePublicStatus('break',{breakResumeTime:resumeTime||null,sessionDate:currentSessionDate});
+            toast("休憩開始（"+t+(resumeTime?" 再開予定:"+resumeTime.slice(0,2)+":"+resumeTime.slice(2,4):"")+"）");
+          });
       }).catch(function(e){toast("休憩処理失敗: "+e.message,"err");});
   } else if(storeStatus==="break"){
     var upd={};upd["breakEnd"+breakIndex]=t;
     db.collection("sessions").doc(currentSessionId).update(upd)
-      .then(function(){applyStoreStatus("open");toast("休憩終了（"+t+"）");})
+      .then(function(){
+        applyStoreStatus("open");
+        writePublicStatus('open',{layoutId:currentLayoutId,sessionDate:currentSessionDate});
+        toast("休憩終了（"+t+"）");
+      })
       .catch(function(e){toast("休憩終了処理失敗: "+e.message,"err");});
   }
 });
@@ -363,7 +381,9 @@ g("btn-close-store").addEventListener("click",function(){
     .then(function(){
       toast("閉店しました（"+closeTime+"）");
       currentSessionId=null;
+      currentLayoutId=null;
       applyStoreStatus("closed");
+      writePublicStatus('closed',{});
     }).catch(function(e){toast("閉店処理失敗: "+e.message,"err");});
 });
 
@@ -377,7 +397,7 @@ g("btn-oc-save-memo").addEventListener("click",function(){
 function restoreStoreState(){
   db.collection("sessions").get()
     .then(function(snap){
-      if(snap.empty){applyStoreStatus("closed");return;}
+      if(snap.empty){applyStoreStatus("closed");writePublicStatus('closed',{});return;}
       var docs=snap.docs.map(function(d){return d.data();});
       docs.sort(function(a,b){
         var ka=(a.date||"")+(a.openTime||"");
@@ -385,10 +405,11 @@ function restoreStoreState(){
         return kb.localeCompare(ka);
       });
       var d=docs[0];
-      if(d.closeTime){currentSessionId=null;currentOpenTime=null;currentSessionDate=null;applyStoreStatus("closed");return;}
+      if(d.closeTime){currentSessionId=null;currentOpenTime=null;currentSessionDate=null;currentLayoutId=null;applyStoreStatus("closed");writePublicStatus('closed',{});return;}
       currentSessionDate=d.date||null;
       currentSessionId=d.sessionId||d.date+(d.seq!==undefined?String(d.seq):"0");
       currentOpenTime=d.openTime||null;
+      currentLayoutId=d.layoutId||null;
       var memoEl=g("oc-memo");if(memoEl)memoEl.value=d.memo||"";
       var fields=[d.breakStart1,d.breakEnd1,d.breakStart2,d.breakEnd2,d.breakStart3,d.breakEnd3];
       var filled=fields.filter(function(f){return f;}).length;
@@ -397,8 +418,11 @@ function restoreStoreState(){
         else if(filled>=2)breakIndex=2;
         else breakIndex=1;
         applyStoreStatus("break");
+        var bResume=d['breakResumeTime'+breakIndex]||null;
+        writePublicStatus('break',{breakResumeTime:bResume,sessionDate:currentSessionDate});
       } else {
         applyStoreStatus("open");
+        writePublicStatus('open',{layoutId:currentLayoutId,sessionDate:currentSessionDate});
       }
     }).catch(function(e){console.error("restoreStoreState error:",e);});
 }
