@@ -558,14 +558,8 @@ function loadStoreStatus(){
   var yr=now.getFullYear(),mo=now.getMonth(),dy=now.getDate();
   var nowHHMM=String(now.getHours()).padStart(2,'0')+String(now.getMinutes()).padStart(2,'0');
 
-  // デバッグログ（画面に小さく表示）
-  var _dbg=[];
-  function dbg(msg){ _dbg.push(msg); console.log('[status]',msg); }
-  function showDebug(){ return '<div id="status-dbg" style="flex:0 0 100%;font-size:10px;color:rgba(255,255,255,.45);margin-top:2px;word-break:break-all;text-align:right;">'+_dbg.join(' | ')+'</div>'; }
-
   function fmtT(t){return t?t.slice(0,2)+':'+t.slice(2,4):'';}
 
-  // 右詰め・テキスト幅に合わせた白いボックス
   function box(dotColor, label, detail){
     return '<div style="display:inline-flex;align-items:center;padding:7px 14px;background:#fff;border-radius:8px;gap:6px;">'
       +'<span style="color:'+dotColor+';font-size:12px;flex-shrink:0;">●</span>'
@@ -574,7 +568,7 @@ function loadStoreStatus(){
       +'</div>';
   }
 
-  function render(html){ el.innerHTML=html+showDebug(); }
+  function render(html){ el.innerHTML=html; }
 
   function showClosed(schMap){
     var nextStr='';
@@ -594,23 +588,19 @@ function loadStoreStatus(){
     render(box('#999','閉店中',nextStr?'次回：'+nextStr:'次回未定'));
   }
 
-  function doFetch(authStep){
-    dbg('fetch start('+authStep+')');
-    // storeStatus/current を直接読む（エラーも捕捉して表示）
+  function doFetch(){
     db.collection('storeStatus').doc('current').get()
     .then(function(statusDoc){
-      dbg('storeStatus exists='+statusDoc.exists);
-      var p2=db.collection('schedules').get().catch(function(e){dbg('sch err:'+e.code);return {docs:[]};});
+      var p2=db.collection('schedules').get().catch(function(){return {docs:[]};});
       p2.then(function(schSnap){
         var schMap={};
         (schSnap.docs||[]).forEach(function(d){
           schMap[d.id]=d.data();
           if(d.data().scheduleId) schMap[d.data().scheduleId]=d.data();
         });
-        if(!statusDoc.exists){dbg('no doc→closed');showClosed(schMap);return;}
+        if(!statusDoc.exists){showClosed(schMap);return;}
         var sd=statusDoc.data();
         var status=sd.status||'closed';
-        dbg('status='+status+' date='+sd.sessionDate);
         if(status==='closed'){showClosed(schMap);return;}
         if(status==='break'){
           var resumeT=sd.breakResumeTime||'';
@@ -634,12 +624,9 @@ function loadStoreStatus(){
         });
       });
     })
-    .catch(function(e){
-      dbg('storeStatus READ ERR: code='+e.code+' msg='+e.message);
-      // 読み取り失敗 → sessionsで再試行
+    .catch(function(){
       db.collection('sessions').get()
       .then(function(snap){
-        dbg('sessions fallback: '+snap.docs.length+'件');
         var schP=db.collection('schedules').get().catch(function(){return {docs:[]};});
         schP.then(function(schSnap){
           var schMap={};
@@ -648,7 +635,6 @@ function loadStoreStatus(){
           var docs=snap.docs.map(function(d){return d.data();});
           docs.sort(function(a,b){return((b.date||'')+(b.openTime||'')).localeCompare((a.date||'')+(a.openTime||''));});
           var d=docs[0];
-          dbg('latestSession: date='+d.date+' close='+d.closeTime);
           if(d.closeTime){showClosed(schMap);return;}
           var fields=[d.breakStart1,d.breakEnd1,d.breakStart2,d.breakEnd2,d.breakStart3,d.breakEnd3];
           var filled=fields.filter(function(f){return f;}).length;
@@ -669,8 +655,7 @@ function loadStoreStatus(){
           });
         });
       })
-      .catch(function(e2){
-        dbg('sessions ERR: '+e2.code);
+      .catch(function(){
         db.collection('schedules').get().catch(function(){return {docs:[]};}).then(function(schSnap){
           var schMap={};(schSnap.docs||[]).forEach(function(d){schMap[d.id]=d.data();if(d.data().scheduleId)schMap[d.data().scheduleId]=d.data();});
           showClosed(schMap);
@@ -679,19 +664,12 @@ function loadStoreStatus(){
     });
   }
 
-  // まず匿名認証してから読み取り
   if(auth.currentUser){
-    dbg('already auth uid='+auth.currentUser.uid.slice(0,6));
-    doFetch('cached');
+    doFetch();
   } else {
     auth.signInAnonymously()
-    .then(function(r){
-      dbg('anon ok uid='+r.user.uid.slice(0,6));
-      doFetch('anon');
-    })
-    .catch(function(e){
-      dbg('anon FAIL: '+e.code);
-      doFetch('no-auth');
+    .then(function(){ doFetch(); })
+    .catch(function(){ doFetch();
     });
   }
 }
