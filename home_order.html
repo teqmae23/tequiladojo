@@ -465,18 +465,19 @@ input,select{font-family:var(--sans)}
           </div>
         </div>
         <input type="text" id="product-search"<input type="text" id="product-search" class="fi" placeholder="商品名・NOMで検索..." oninput="filterProducts()">
-        <!-- カクテルパネル（ソーダ割り選択） -->
+        <!-- カクテルパネル -->
         <div id="cocktail-panel" style="display:none;">
-          <div style="margin-bottom:10px;">
-            <button class="btn bg" id="btn-soda-wari" onclick="startSodaWari()" style="width:100%;padding:12px;font-size:14px;font-weight:700;background:var(--teal-l);color:var(--teal);border:1.5px solid var(--teal);">
-              🥤 ソーダ割り（340ml）<span style="font-size:11px;font-weight:400;margin-left:8px;">テキーラ 30ml使用</span>
-            </button>
-          </div>
-          <!-- テキーラ選択サブパネル -->
-          <div id="soda-tequila-picker" style="display:none;border:1px solid var(--border2);border-radius:var(--r);padding:10px;background:var(--cream2);">
-            <div style="font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:8px;">使用するテキーラを選択</div>
-            <input type="text" id="soda-tequila-search" class="fi" placeholder="テキーラ名で検索..." oninput="filterSodaTequila()" style="margin-bottom:8px;">
-            <div id="soda-tequila-list" style="max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;"></div>
+          <input type="text" id="cocktail-search" class="fi" placeholder="カクテル名で検索..." oninput="filterCocktailList()" style="margin-bottom:8px;">
+          <div id="cocktail-list" style="display:flex;flex-direction:column;gap:4px;margin-bottom:4px;"></div>
+          <!-- スピリッツ選択サブパネル -->
+          <div id="cocktail-spirit-picker" style="display:none;border:1px solid var(--border2);border-radius:var(--r);padding:10px;background:var(--cream2);margin-top:8px;">
+            <div style="font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:6px;" id="cocktail-spirit-label">ベーススピリッツを選択</div>
+            <div style="display:flex;gap:4px;margin-bottom:8px;">
+              <button onclick="setCocktailSpiritTab('tequila',this)" id="csp-tab-tequila" class="btn bp sm">テキーラ</button>
+              <button onclick="setCocktailSpiritTab('other',this)" id="csp-tab-other" class="btn bs sm">他酒</button>
+            </div>
+            <input type="text" id="cocktail-spirit-search" class="fi" placeholder="銘柄名で検索..." oninput="filterCocktailSpirit()" style="margin-bottom:8px;">
+            <div id="cocktail-spirit-list" style="max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;"></div>
           </div>
         </div>
         <div class="product-list-wrap" id="product-list-container"><div class="empty">読み込み中...</div></div>
@@ -580,7 +581,7 @@ const db = firebase.firestore();
 let todayStr='', allGroups=[], allBatchGroups=[], allVisits=[], allMembers={};
 let currentSessionBT=null; // 営業時刻用セッション情報
 let blindResultsSet=new Set();
-let masterData={tequila:[],other:[],misc:[],set:[]};
+let masterData={tequila:[],other:[],misc:[],set:[],cocktail:[],subMaterials:[]};
 let blindMarks=[];
 let flow={visits:[],cart:[],isBlind:false};
 let resultTarget=null;
@@ -646,14 +647,16 @@ async function init(){
 
 // ━━━ マスタ ━━━
 async function loadMasters(){
-  const [membSnap_arr,blindSnap,bottleSnap,miscSnap,setSnap,otherSnap]=await Promise.all([
+  const [membSnap_arr,blindSnap,bottleSnap,miscSnap,setSnap,otherSnap,cocktailSnap,subMatSnap]=await Promise.all([
     // publicProfilesとmembersを両方取得（移行期）
     Promise.all([db.collection('publicProfiles').get(),db.collection('members').get()]),
     db.collection('blindMarks').get(),
     db.collection('bottleData').get(),
     db.collection('miscProducts').get(),
     db.collection('setProducts').get(),
-    db.collection('otherBottles').get()
+    db.collection('otherBottles').get(),
+    db.collection('cocktailMaster').get(),
+    db.collection('subMaterials').get()
   ]);
   allMembers={};
   // publicProfilesとmembersをマージ（publicProfiles優先）
@@ -676,6 +679,10 @@ async function loadMasters(){
   miscSnap.forEach(d=>masterData.misc.push({id:d.id,...d.data(),type:'misc'}));
   masterData.set=[];
   setSnap.forEach(d=>masterData.set.push({id:d.id,...d.data(),type:'set'}));
+  masterData.cocktail=[];
+  cocktailSnap.forEach(d=>masterData.cocktail.push({id:d.id,...d.data()}));
+  masterData.subMaterials=[];
+  subMatSnap.forEach(d=>masterData.subMaterials.push({id:d.id,...d.data()}));
 }
 
 // ━━━ 当日データ ━━━
@@ -1528,7 +1535,8 @@ function switchPTab(type,el){
   document.getElementById('product-list-container').style.display=isCocktail?'none':'block';
   if(type==='tequila')renderNOMs();
   document.getElementById('product-search').value='';
-  if(!isCocktail)filterProducts();
+  if(isCocktail) renderCocktailPanel();
+  else filterProducts();
 }
 function renderNOMs(){
   document.getElementById('nom-shortcuts-area').innerHTML=
@@ -1696,48 +1704,95 @@ function _doAddSet(setId){
   showToast('セット商品を追加しました','info');
 }
 
-// ━━━ ソーダ割り ━━━
-function startSodaWari(){
-  document.getElementById('soda-tequila-picker').style.display='block';
-  document.getElementById('soda-tequila-search').value='';
-  filterSodaTequila();
-  document.getElementById('soda-tequila-search').focus();
+// ━━━ カクテル ━━━
+var _selCocktail=null;
+var _cocktailSpiritTab='tequila';
+
+function renderCocktailPanel(){
+  document.getElementById('cocktail-spirit-picker').style.display='none';
+  _selCocktail=null;
+  filterCocktailList();
 }
-function filterSodaTequila(){
-  const q=(document.getElementById('soda-tequila-search').value||'').toLowerCase();
-  const list=document.getElementById('soda-tequila-list');
-  const items=masterData.tequila.filter(t=>{
+function filterCocktailList(){
+  const q=(document.getElementById('cocktail-search').value||'').toLowerCase();
+  const list=masterData.cocktail.filter(c=>{
+    if(!c.active)return false;
+    if(q&&!(c.name||'').toLowerCase().includes(q))return false;
+    return true;
+  });
+  document.getElementById('cocktail-list').innerHTML=list.length
+    ?list.map(c=>`<div onclick="selectCocktail('${esc(c.id)}')" style="padding:10px 12px;border-radius:4px;cursor:pointer;background:var(--white);border:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;" onmouseover="this.style.background='var(--cream2)'" onmouseout="this.style.background='var(--white)'"><span style="font-size:13px;font-weight:600;">${esc(c.name)}</span><span style="font-size:11px;color:var(--ink3);">ベース ${c.spiritMl||'?'}ml</span></div>`).join('')
+    :'<div style="text-align:center;color:var(--ink3);padding:20px;font-size:12px;">カクテルマスタが空です</div>';
+}
+function selectCocktail(cocktailId){
+  _selCocktail=masterData.cocktail.find(c=>c.id===cocktailId);
+  if(!_selCocktail)return;
+  document.getElementById('cocktail-spirit-label').textContent=`「${_selCocktail.name}」のベーススピリッツを選択`;
+  document.getElementById('cocktail-spirit-picker').style.display='block';
+  _cocktailSpiritTab='tequila';
+  document.getElementById('csp-tab-tequila').className='btn bp sm';
+  document.getElementById('csp-tab-other').className='btn bs sm';
+  document.getElementById('cocktail-spirit-search').value='';
+  filterCocktailSpirit();
+  document.getElementById('cocktail-spirit-search').focus();
+}
+function setCocktailSpiritTab(type){
+  _cocktailSpiritTab=type;
+  document.getElementById('csp-tab-tequila').className=type==='tequila'?'btn bp sm':'btn bs sm';
+  document.getElementById('csp-tab-other').className=type==='other'?'btn bp sm':'btn bs sm';
+  filterCocktailSpirit();
+}
+function filterCocktailSpirit(){
+  const q=(document.getElementById('cocktail-spirit-search').value||'').toLowerCase();
+  const pool=_cocktailSpiritTab==='tequila'?masterData.tequila:masterData.other;
+  const items=pool.filter(t=>{
     if(!q)return true;
-    const name=(AuthRole.bdName(t,'es')+' '+(t.bottleJa||'')).toLowerCase();
+    const name=(AuthRole.bdName(t,'es')+' '+(t.bottleJa||'')+(t.name||'')).toLowerCase();
     return name.includes(q);
   });
-  list.innerHTML=items.slice(0,50).map(t=>{
-    const name=AuthRole.bdName(t,'es');
-    const ja=t.bottleJa?`<span style="font-size:10px;color:var(--ink3);display:block;">${t.bottleJa}</span>`:'';
-    return`<div onclick="addSodaWariToCart('${esc(t.id)}')" style="padding:7px 10px;border-radius:4px;cursor:pointer;background:var(--white);border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--ink);" onmouseover="this.style.background='var(--cream2)'" onmouseout="this.style.background='var(--white)'"><span>${esc(name)}</span>${ja}</div>`;
+  document.getElementById('cocktail-spirit-list').innerHTML=items.slice(0,60).map(t=>{
+    const name=_cocktailSpiritTab==='tequila'?AuthRole.bdName(t,'es'):(t.name||t.bottleEs||t.bottleJa||t.id);
+    const sub=_cocktailSpiritTab==='tequila'?(t.bottleJa||''):'';
+    const price=t.unitPrice!=null?`¥${t.unitPrice}/10ml`:'';
+    return`<div onclick="addCocktailToCart('${esc(t.id)}')" style="padding:7px 10px;border-radius:4px;cursor:pointer;background:var(--white);border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--ink);" onmouseover="this.style.background='var(--cream2)'" onmouseout="this.style.background='var(--white)'"><div style="display:flex;justify-content:space-between;"><span>${esc(name)}</span><span style="font-size:10px;color:var(--ink3);">${esc(price)}</span></div>${sub?`<span style="font-size:10px;color:var(--ink3);">${esc(sub)}</span>`:''}</div>`;
   }).join('');
 }
-function addSodaWariToCart(bottleId){
-  const t=masterData.tequila.find(x=>x.id===bottleId);
-  if(!t){showToast('テキーラが見つかりません','error');return;}
+function addCocktailToCart(spiritId){
+  if(!_selCocktail)return;
+  const cocktail=_selCocktail;
+  const pool=[...masterData.tequila,...masterData.other];
+  const spirit=pool.find(x=>x.id===spiritId);
+  if(!spirit){showToast('スピリッツが見つかりません','error');return;}
+  const basePrice10ml=spirit.unitPrice||0;
+  const spiritCost=Math.round(((cocktail.spiritMl||0)/10)*basePrice10ml);
+  let subCost=0;
+  for(let i=1;i<=5;i++){
+    const sid=cocktail['sub'+i+'Id'],qty=cocktail['sub'+i+'Qty']||0;
+    if(sid&&qty){const sub=masterData.subMaterials.find(s=>s.id===sid);if(sub&&sub.unitPrice)subCost+=Math.round(sub.unitPrice*qty);}
+  }
+  const total=spiritCost+subCost;
+  const spiritName=spirit.type==='tequila'?AuthRole.bdName(spirit,'es'):(spirit.name||spirit.bottleEs||spirit.id);
   flow.cart.push({
-    productId:'cocktail_soda_wari',
-    productName:'ソーダ割り (340ml)',
+    productId:cocktail.id,
+    productName:cocktail.name,
     productType:'cocktail',
     qty:1,
     unit:'杯',
-    unitPrice:0,
+    unitPrice:total,
     blindMarkId:null,
-    cocktailBaseId:t.id,
-    cocktailBaseName:AuthRole.bdName(t,'es'),
-    cocktailBaseQty:30
+    _cocktailId:cocktail.id,
+    _baseProductCode:spirit.id,
+    _baseUnitPrice10ml:basePrice10ml,
+    _totalAmount:total,
+    _spiritName:spiritName
   });
-  document.getElementById('soda-tequila-picker').style.display='none';
+  document.getElementById('cocktail-spirit-picker').style.display='none';
+  _selCocktail=null;
   renderCart();
   document.getElementById('btn-to-step2').disabled=false;
-  showToast('ソーダ割りをカートに追加しました（'+AuthRole.bdName(t,'es')+'）','info');
+  showToast(`${cocktail.name}をカートに追加しました（${spiritName}）`,'info');
 }
-// ━━━ ソーダ割り end ━━━
+// ━━━ カクテル end ━━━
 
 // カート内ml商品の共通ml数を返す（なければ10）
 function getCartMl(){
@@ -1817,7 +1872,7 @@ function renderCart(){
     if(isBlind&&isMl) markPicker=buildMarkPicker(idx,o.blindMarkId);
     return`<div class="cart-item">
       ${markPicker}
-      <span class="cart-item-name">${esc(o.productName)}${o.cocktailBaseName?`<div style="font-size:10px;color:var(--ink3);margin-left:4px;">🍶 ${esc(o.cocktailBaseName)} 30ml</div>`:''}</span>
+      <span class="cart-item-name">${esc(o.productName)}${o._spiritName?`<div style="font-size:10px;color:var(--ink3);margin-left:4px;">🍶 ${esc(o._spiritName)} ${o._cocktailId&&masterData.cocktail.find(c=>c.id===o._cocktailId)?masterData.cocktail.find(c=>c.id===o._cocktailId).spiritMl+'ml':''}</div>`:''}</span>
       <span class="cart-item-qty" style="font-size:12px;color:var(--ink3)">${o.qty}${o.unit}</span>
       <span class="cart-item-price">¥${cartAmt(o).toLocaleString()}</span>
       <button class="cart-item-del" onclick="removeCartItem(${idx})">✕</button>
@@ -1895,11 +1950,18 @@ async function confirmOrder(){
           orderTime,customerId:visit.memberId||null,visitKey:visit.id,orderGroupId,batchId,
           itemSeq:i+1,productCode:item.productId,productName:saveName,productType:item.productType,
           qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,
-          blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:1,
-          cocktailBaseId:item.cocktailBaseId||null,
-          cocktailBaseName:item.cocktailBaseName||null,
-          cocktailBaseQty:item.cocktailBaseQty||null
+          blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:1
         });
+        if(item.productType==='cocktail'&&item._cocktailId){
+          const coId=todayStr+String(maxSeq).padStart(3,'0');
+          batch.set(db.collection('cocktailOrders').doc(coId),{
+            orderId:coId,
+            cocktailId:item._cocktailId,
+            baseProductCode:item._baseProductCode||null,
+            baseUnitPrice10ml:item._baseUnitPrice10ml||0,
+            totalAmount:item._totalAmount||0
+          });
+        }
       });
     }
     await batch.commit();
