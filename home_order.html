@@ -692,15 +692,9 @@ async function loadMasters(){
     db.collection('subMaterials').get()
   ]);
   allMembers={};
-  // publicProfilesとmembersをマージ（publicProfiles優先）
-  const ppSnap2=membSnap_arr[0]; const mSnap2=membSnap_arr[1];
-  const ppMap2={};
-  ppSnap2.forEach(d=>{ppMap2[d.id]=d.data();});
-  mSnap2.forEach(d=>{
-    const m=d.data();
-    if(ppMap2[d.id]&&ppMap2[d.id].nickname) m.nickname=ppMap2[d.id].nickname;
-    allMembers[d.id]=m;
-  });
+  // membersを正とする（publicProfilesは参照しない）
+  const mSnap2=membSnap_arr[1];
+  mSnap2.forEach(d=>{ allMembers[d.id]=d.data(); });
   blindMarks=[];
   blindSnap.forEach(d=>blindMarks.push({id:d.id,...d.data()}));
   blindMarks.sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0));
@@ -1771,11 +1765,11 @@ function selectCocktail(cocktailId){
   document.getElementById('csp-tab-tequila').className='btn bp sm';
   document.getElementById('csp-tab-other').className='btn bs sm';
   document.getElementById('csp-cls-wrap').style.display='flex';
-  _cspClasses=new Set(); // 空=全表示
+  _cspClasses=new Set(['B','J','R','X','A']); // 全選択=全表示
   _cspSort='';
   document.getElementById('csp-sort-asc').classList.remove('active');
   document.getElementById('csp-sort-desc').classList.remove('active');
-  document.querySelectorAll('#csp-cls-wrap .nom-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('#csp-cls-wrap .nom-btn[onclick^="cspToggleCls"]').forEach(b=>b.classList.add('active'));
   document.getElementById('cocktail-spirit-search').value='';
   filterCocktailSpirit();
   document.getElementById('cocktail-spirit-search').focus();
@@ -1786,8 +1780,8 @@ function setCocktailSpiritTab(type){
   document.getElementById('csp-tab-tequila').className=type==='tequila'?'btn bp sm':'btn bs sm';
   document.getElementById('csp-tab-other').className=type==='other'?'btn bp sm':'btn bs sm';
   document.getElementById('csp-cls-wrap').style.display=type==='tequila'?'flex':'none';
-  _cspClasses=new Set(); // タブ切り替えでクラスフィルタをリセット
-  document.querySelectorAll('#csp-cls-wrap .nom-btn').forEach(b=>b.classList.remove('active'));
+  _cspClasses=new Set(['B','J','R','X','A']); // タブ切り替えで全選択にリセット
+  document.querySelectorAll('#csp-cls-wrap .nom-btn[onclick^="cspToggleCls"]').forEach(b=>b.classList.add('active'));
   filterCocktailSpirit();
 }
 function cspToggleCls(cls,el){
@@ -1796,8 +1790,8 @@ function cspToggleCls(cls,el){
   filterCocktailSpirit();
 }
 function cspResetCls(){
-  _cspClasses=new Set(); // 空=全解除
-  document.querySelectorAll('#csp-cls-wrap .nom-btn').forEach(b=>b.classList.remove('active'));
+  _cspClasses=new Set(['B','J','R','X','A']); // 全選択に戻す
+  document.querySelectorAll('#csp-cls-wrap .nom-btn[onclick^="cspToggleCls"]').forEach(b=>b.classList.add('active'));
   filterCocktailSpirit();
 }
 function cspSetSort(dir){
@@ -1828,19 +1822,20 @@ function filterCocktailSpirit(){
     const nameJa=(t.bottleJa||t.name||'').toLowerCase();
     return nameEs.startsWith(q)||nameJa.startsWith(q);
   });
-  if(_cocktailSpiritTab==='tequila'&&_cspClasses.size>0){
+  if(_cocktailSpiritTab==='tequila' && _cspClasses.size>0 && _cspClasses.size<5){
     items=items.filter(t=>{
       const code=String(t.classId||'');
       const clsKey=Object.keys(CLS_MAP).find(k=>CLS_MAP[k]===code);
       return clsKey?_cspClasses.has(clsKey):false;
     });
   }
-  if(_cspSort==='asc') items=[...items].sort((a,b)=>(a.unitPrice||0)-(b.unitPrice||0));
-  else if(_cspSort==='desc') items=[...items].sort((a,b)=>(b.unitPrice||0)-(a.unitPrice||0));
+  const priceOf=t=>parseFloat(t.price!=null?t.price:t.unitPrice)||0;
+  if(_cspSort==='asc') items=[...items].sort((a,b)=>priceOf(a)-priceOf(b));
+  else if(_cspSort==='desc') items=[...items].sort((a,b)=>priceOf(b)-priceOf(a));
   document.getElementById('cocktail-spirit-list').innerHTML=items.slice(0,60).map(t=>{
     const name=_cocktailSpiritTab==='tequila'?AuthRole.bdName(t,'es'):(t.name||t.bottleEs||t.bottleJa||t.id);
     const sub=_cocktailSpiritTab==='tequila'?(t.bottleJa||''):'';
-    const price=t.unitPrice!=null?`¥${t.unitPrice}/10ml`:'';
+    const up=priceOf(t); const price=up?`¥${up}/10ml`:'';
     const isSel=_pendingSpirit&&_pendingSpirit.id===t.id;
     const bg=isSel?'var(--teal-l)':'var(--white)';
     const border=isSel?'var(--teal)':'var(--border)';
@@ -1848,7 +1843,7 @@ function filterCocktailSpirit(){
   }).join('');
 }
 function calcCocktailTotal(cocktail,spirit){
-  const basePrice10ml=spirit.unitPrice||0;
+  const basePrice10ml=parseFloat(spirit.price!=null?spirit.price:spirit.unitPrice)||0;
   const spiritCost=Math.round(((cocktail.spiritMl||0)/10)*basePrice10ml);
   let subCost=0;
   for(let i=1;i<=5;i++){
@@ -1866,8 +1861,9 @@ function previewCocktailSpirit(spiritId){
   const spiritName=spirit.type==='tequila'?AuthRole.bdName(spirit,'es'):(spirit.name||spirit.bottleEs||spirit.id);
   const{total,spiritCost,subCost}=calcCocktailTotal(_selCocktail,spirit);
   document.getElementById('csp-sel-name').textContent=spiritName;
+  const dispUp=parseFloat(spirit.price!=null?spirit.price:spirit.unitPrice)||0;
   document.getElementById('csp-sel-detail').textContent=
-    `${_selCocktail.spiritMl||0}ml × ¥${spirit.unitPrice||0}/10ml = ¥${spiritCost}`
+    `${_selCocktail.spiritMl||0}ml × ¥${dispUp}/10ml = ¥${spiritCost}`
     +(subCost?` ＋ 副材料 ¥${subCost}`:'');
   document.getElementById('csp-sel-total').textContent='¥'+total.toLocaleString();
   document.getElementById('csp-preview').style.display='block';
@@ -1880,7 +1876,7 @@ function commitCocktailToCart(){
   const spiritName=spirit.type==='tequila'?AuthRole.bdName(spirit,'es'):(spirit.name||spirit.bottleEs||spirit.id);
   flow.cart.push({
     productId:cocktail.id,
-    productName:cocktail.name+'（'+spiritName+'）',
+    productName:cocktail.name+'（'+spiritName+'×'+(cocktail.spiritMl||'?')+'ml）',
     productType:'cocktail',
     qty:1,unit:'杯',unitPrice:total,blindMarkId:null,
     _cocktailId:cocktail.id,_baseProductCode:spirit.id,
