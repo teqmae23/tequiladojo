@@ -553,15 +553,15 @@ function loadStoreStatus(){
   if(!el)return;
   if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
   var db=firebase.firestore();
+  var auth=firebase.auth();
   var now=new Date();
   var yr=now.getFullYear(),mo=now.getMonth(),dy=now.getDate();
   var nowHHMM=String(now.getHours()).padStart(2,'0')+String(now.getMinutes()).padStart(2,'0');
 
   function fmtT(t){return t?t.slice(0,2)+':'+t.slice(2,4):'';}
 
-  // 白背景枠スタイルのラッパー
   function box(dotColor, label, detail){
-    return '<div style="width:100%;padding:9px 16px;background:#fff;border-radius:8px;text-align:left;display:flex;align-items:center;gap:0;">'
+    return '<div style="width:100%;padding:9px 16px;background:#fff;border-radius:8px;text-align:left;display:flex;align-items:center;">'
       +'<span style="color:'+dotColor+';font-size:13px;margin-right:6px;flex-shrink:0;">●</span>'
       +'<span style="color:#1a1a1a;font-size:15px;font-weight:700;letter-spacing:.03em;flex-shrink:0;">'+label+'</span>'
       +(detail?'<span style="color:#555;font-size:13px;margin-left:10px;">'+detail+'</span>':'')
@@ -577,61 +577,58 @@ function loadStoreStatus(){
       if(sch&&sch.openTime){
         var bt=parseInt(sch.businessType)||0;
         if(bt!==4&&bt!==5&&bt!==8){
-          // 今日（i=0）は開店時刻が現在より未来のものだけ表示
           if(i===0&&sch.openTime.slice(0,4)<=nowHHMM) continue;
-          var label=i===0?'本日':(fd.getMonth()+1)+'/'+fd.getDate()+'('+['日','月','火','水','木','金','土'][fd.getDay()]+')';
-          nextStr=label+' '+fmtT(sch.openTime)+'〜';
+          var dlabel=i===0?'本日':(fd.getMonth()+1)+'/'+fd.getDate()+'('+['日','月','火','水','木','金','土'][fd.getDay()]+')';
+          nextStr=dlabel+' '+fmtT(sch.openTime)+'〜';
         }
       }
     }
     el.innerHTML=box('#999','閉店中',nextStr?'次回：'+nextStr:'次回未定');
   }
 
-  // storeStatus/current ドキュメント（openclose.htmlが書き込む）を優先参照
-  var p1=db.collection('storeStatus').doc('current').get().catch(function(){return null;});
-  var p2=db.collection('schedules').get().catch(function(){return {docs:[]};});
-
-  Promise.all([p1,p2]).then(function(results){
-    var statusDoc=results[0], schSnap=results[1];
-
-    var schMap={};
-    (schSnap.docs||[]).forEach(function(d){
-      schMap[d.id]=d.data();
-      if(d.data().scheduleId) schMap[d.data().scheduleId]=d.data();
+  function doFetch(){
+    var p1=db.collection('storeStatus').doc('current').get().catch(function(){return null;});
+    var p2=db.collection('schedules').get().catch(function(){return {docs:[]};});
+    Promise.all([p1,p2]).then(function(results){
+      var statusDoc=results[0], schSnap=results[1];
+      var schMap={};
+      (schSnap.docs||[]).forEach(function(d){
+        schMap[d.id]=d.data();
+        if(d.data().scheduleId) schMap[d.data().scheduleId]=d.data();
+      });
+      if(!statusDoc||!statusDoc.exists){showClosed(schMap);return;}
+      var sd=statusDoc.data();
+      var status=sd.status||'closed';
+      if(status==='closed'){showClosed(schMap);return;}
+      if(status==='break'){
+        var resumeT=sd.breakResumeTime||'';
+        el.innerHTML=box('#9B59B6','休憩中',resumeT?fmtT(resumeT)+'再開予定':'');
+        return;
+      }
+      // open
+      var sessionDate=sd.sessionDate||'';
+      var layoutId=sd.layoutId||'';
+      var pv=sessionDate
+        ?db.collection('visits').where('visitDate','==',sessionDate).get().catch(function(){return {docs:[]};})
+        :Promise.resolve({docs:[]});
+      var pl=layoutId
+        ?db.collection('layouts').doc(layoutId).get().catch(function(){return null;})
+        :Promise.resolve(null);
+      Promise.all([pv,pl]).then(function(r2){
+        var visSnap=r2[0]||{docs:[]}, layoutDoc=r2[1];
+        var active=(visSnap.docs||[]).filter(function(vd){return !vd.data().checkoutTime;}).length;
+        var seats=layoutDoc&&layoutDoc.exists?layoutDoc.data().seats:'?';
+        el.innerHTML=box('#2CA44E','営業中','来店：'+active+'/'+seats+'人');
+      });
     });
+  }
 
-    // storeStatus未作成またはドキュメント不在 → 閉店扱い
-    if(!statusDoc||!statusDoc.exists){showClosed(schMap);return;}
-    var sd=statusDoc.data();
-    var status=sd.status||'closed';
-
-    if(status==='closed'){
-      showClosed(schMap);
-      return;
-    }
-
-    if(status==='break'){
-      var resumeT=sd.breakResumeTime||'';
-      el.innerHTML=box('#9B59B6','休憩中',resumeT?fmtT(resumeT)+'再開予定':'');
-      return;
-    }
-
-    // status === 'open'
-    var sessionDate=sd.sessionDate||'';
-    var layoutId=sd.layoutId||'';
-    var pv=sessionDate
-      ?db.collection('visits').where('visitDate','==',sessionDate).get().catch(function(){return {docs:[]};})
-      :Promise.resolve({docs:[]});
-    var pl=layoutId
-      ?db.collection('layouts').doc(layoutId).get().catch(function(){return null;})
-      :Promise.resolve(null);
-    Promise.all([pv,pl]).then(function(r2){
-      var visSnap=r2[0]||{docs:[]}, layoutDoc=r2[1];
-      var active=(visSnap.docs||[]).filter(function(vd){return !vd.data().checkoutTime;}).length;
-      var seats=layoutDoc&&layoutDoc.exists?layoutDoc.data().seats:'?';
-      el.innerHTML=box('#2CA44E','営業中','来店：'+active+'/'+seats+'人');
-    });
-  });
+  // Firestoreルールが認証必須の場合に備えて匿名ログイン後に読み取り
+  if(auth.currentUser){
+    doFetch();
+  } else {
+    auth.signInAnonymously().then(doFetch).catch(function(){doFetch();});
+  }
 }
 
 window.addEventListener('DOMContentLoaded',function(){
