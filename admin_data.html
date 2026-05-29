@@ -370,8 +370,8 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           </div>
         </div>
         <div class="tw"><table id="tbl-orders">
-          <colgroup><col style="width:110px"><col style="width:50px"><col style="width:70px"><col style="width:80px"><col style="width:44px"><col style="width:90px"><col style="width:80px"><col style="width:120px"><col style="width:44px"><col style="width:50px"><col style="width:60px"><col style="width:36px"><col style="width:100px"></colgroup>
-          <thead><tr><th>注文ID</th><th>時間</th><th>顧客ID</th><th>来店キー</th><th>種別</th><th>商品名</th><th>数量</th><th>単価</th><th>提供</th><th>グループID</th><th>盲</th><th>✏️ 操作</th></tr></thead>
+          <colgroup><col style="width:120px"><col style="width:70px"><col style="width:80px"><col style="width:36px"><col style="width:140px"><col style="width:60px"><col style="width:70px"><col style="width:44px"><col style="width:80px"><col style="width:30px"><col style="width:100px"></colgroup>
+          <thead><tr><th>注文ID / 時間</th><th>顧客ID</th><th>来店キー</th><th>種</th><th>商品名 / コード</th><th>数量</th><th>単価</th><th>提供</th><th>グループID</th><th>盲</th><th>✏️ 操作</th></tr></thead>
           <tbody id="tb-orders"><tr><td colspan="11" class="ec">読み込み中...</td></tr></tbody>
         </table></div>
       </div>
@@ -598,6 +598,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <option value="tequila">テキーラ</option>
             <option value="other">他酒</option>
             <option value="misc">その他</option>
+            <option value="cocktail">カクテル</option>
           </select>
         </div>
         <div class="fg"><label class="fl">商品コード</label><input class="fi mono" id="ord-product-code" placeholder="ボトルID等"></div>
@@ -617,7 +618,8 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         <div class="fg"><label class="fl">提供フラグ（served）</label>
           <select class="fs" id="ord-served">
             <option value="1">1: 未提供</option>
-            <option value="2">2: 提供済</option>
+            <option value="2">2: 提供中</option>
+            <option value="3">3: 提供済</option>
             <option value="0">0: キャンセル</option>
           </select>
         </div>
@@ -632,6 +634,12 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <div class="frow">
         <div class="fg"><label class="fl">セットID</label><input class="fi mono" id="ord-set-id" placeholder="01"></div>
         <div class="fg"><label class="fl">visitId（来店ID）</label><input class="fi mono" id="ord-visit-id" maxlength="13" placeholder="2604281017011"></div>
+      </div>
+      <hr class="fsep">
+      <div class="frow">
+        <div class="fg"><label class="fl">カクテルベースID</label><input class="fi mono" id="ord-cocktail-base-id" placeholder="ボトルID"></div>
+        <div class="fg"><label class="fl">カクテルベース名</label><input class="fi" id="ord-cocktail-base-name" placeholder="テキーラ名"></div>
+        <div class="fg"><label class="fl">ベース使用量（ml）</label><input class="fi" id="ord-cocktail-base-qty" type="number" min="0" placeholder="30"></div>
       </div>
     </div>
     <div class="mfoot"><button class="btn bg2" data-close="m-order">キャンセル</button><button class="btn bp" id="btn-save-order">保存</button></div>
@@ -1924,8 +1932,8 @@ function autoPublishCalForMonth(yymmdd,statusMsg){
 // ════════════════════════════════════════════════════════════════
 setCnt("orders","—");
 
-var TYPE_LABEL={"tequila":"テキーラ","other":"他酒","misc":"その他"};
-var TYPE_BADGE_CLS={"tequila":"bg-gold","other":"bg-blue","misc":"bg-teal"};
+var TYPE_LABEL={"tequila":"テ","other":"他","misc":"そ","cocktail":"カ"};
+var TYPE_BADGE_CLS={"tequila":"bg-gold","other":"bg-blue","misc":"bg-teal","cocktail":"bg-teal"};
 
 function loadOrders(){
   db.collection("orders").get()
@@ -1977,16 +1985,19 @@ function renderOrders(){
     var rowStyle=isDeleted?'style="opacity:.4;background:var(--cream2)"':'';
     var delBadge=isDeleted?'<span class="badge bg-red" style="font-size:9px">削除</span>':'';
     var servedNum=parseInt(r.served!=null?r.served:1);
-    var servedLabel=servedNum===0?'<span class="badge bg-red">取消</span>':servedNum===2?'<span class="badge bg-teal">提供済</span>':'<span class="dim" style="font-size:11px">未提供</span>';
+    var servedLabel=servedNum===0?'<span class="badge bg-red">取消</span>':(servedNum===2||servedNum===3)?'<span class="badge bg-teal">提供済</span>':'<span class="dim" style="font-size:11px">未提供</span>';
     return '<tr '+rowStyle+'>'
-      +'<td class="mono" style="font-size:10px">'+r.id+' '+delBadge+'</td>'
-      +'<td class="mono dim">'+fmtHHMM(r.orderTime||"")+'</td>'
+      +'<td class="mono" style="font-size:10px;white-space:nowrap">'+r.id+' '+delBadge+'<br><span class="dim" style="font-size:9px">'+fmtHHMM(r.orderTime||"")+'</span></td>'
       +'<td class="mono dim" style="font-size:11px">'+(r.customerId||"—")+'</td>'
       +'<td class="mono dim" style="font-size:10px">'+(r.visitKey||r.visitId||"—")+'</td>'
       +'<td>'+typeBadge+'</td>'
-      +'<td style="font-size:12px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(r.productName||"—")+'</td>'
-      +'<td class="mono dim" style="text-align:right">'+(r.qty!=null?r.qty+(r.unit||""):"—")+'</td>'
-      +'<td class="mono" style="text-align:right">'+(r.unitPrice!=null?"¥"+Number(r.unitPrice).toLocaleString():"—")+'</td>'
+      +'<td style="font-size:12px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+        +(r.productCode?'<span class="mono" style="font-size:9px;color:var(--ink3)">'+r.productCode+'</span> ':'')
+        +(r.productName||"—")
+        +(r.cocktailBaseName?'<span style="font-size:9px;color:var(--ink3);display:block;">🍶'+r.cocktailBaseName+'</span>':'')
+      +'</td>'
+      +'<td class="mono dim" style="text-align:left">'+(r.qty!=null?r.qty+(r.unit||""):"—")+'</td>'
+      +'<td class="mono" style="text-align:left">'+(r.unitPrice!=null?"¥"+Number(r.unitPrice).toLocaleString():"—")+'</td>'
       +'<td style="text-align:center">'+servedLabel+'</td>'
       +'<td class="mono dim" style="font-size:10px">'+(r.orderGroupId||"—")+'</td>'
       +'<td style="text-align:center">'+blindBadge+'</td>'
@@ -2071,6 +2082,9 @@ function openOrderModal(id){
     sv("ord-blind-mark",r?r.blindMarkId||"":"");
     sv("ord-set-id",r?r.setId||"":"");
     sv("ord-visit-id",r?r.visitId||r.visitKey||"":"");
+    sv("ord-cocktail-base-id",r?r.cocktailBaseId||"":"");
+    sv("ord-cocktail-base-name",r?r.cocktailBaseName||"":"");
+    sv("ord-cocktail-base-qty",r&&r.cocktailBaseQty!=null?r.cocktailBaseQty:"");
     if(dEl){dEl.readOnly=true; dEl.style.background="var(--cream2)";}
     if(sEl){sEl.readOnly=true; sEl.style.background="var(--cream2)";}
   } else {
@@ -2083,6 +2097,7 @@ function openOrderModal(id){
     sv("ord-group-id",""); sv("ord-batch-id",""); sv("ord-item-seq",1);
     sv("ord-served","1"); sv("ord-blind","0"); sv("ord-blind-mark","");
     sv("ord-set-id",""); sv("ord-visit-id","");
+    sv("ord-cocktail-base-id",""); sv("ord-cocktail-base-name",""); sv("ord-cocktail-base-qty","");
     if(dEl){dEl.readOnly=false; dEl.style.background="";}
     if(sEl){sEl.readOnly=false; sEl.style.background="";}
     autoSetOrderSeq(today);
@@ -2126,6 +2141,9 @@ if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
     blindId:parseInt(gv("ord-blind"))||0,
     blindMarkId:gv("ord-blind-mark")||null,
     setId:gv("ord-set-id")||null,
+    cocktailBaseId:gv("ord-cocktail-base-id")||null,
+    cocktailBaseName:gv("ord-cocktail-base-name")||null,
+    cocktailBaseQty:gv("ord-cocktail-base-qty")!==""?parseFloat(gv("ord-cocktail-base-qty")):null,
     deleted:0
   },{merge:true})
   .then(function(){ toast(editId.order?"注文データを更新しました":"注文データを登録しました"); closeM("m-order"); loadOrders(); })
