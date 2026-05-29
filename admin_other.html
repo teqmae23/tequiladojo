@@ -437,6 +437,15 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <tbody id="tbody-news"></tbody>
         </table>
       </div>
+      <!-- 種別カラー設定 -->
+      <details id="news-type-config" style="margin-top:14px;border:1px solid #2a2a2a;border-radius:6px;overflow:hidden;">
+        <summary style="padding:9px 14px;background:#1e1e1e;cursor:pointer;font-size:12px;font-weight:600;color:rgba(255,255,255,.6);user-select:none;list-style:none;display:flex;align-items:center;gap:6px;">⚙️ 種別カラー設定</summary>
+        <div style="padding:12px 14px;background:#181818;">
+          <div id="news-type-colors" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;"></div>
+          <button class="btn bp sm" id="btn-save-type-colors">保存</button>
+          <span id="type-colors-status" style="font-size:11px;color:#888;margin-left:8px;"></span>
+        </div>
+      </details>
     </div>
 
   </div><!-- .content -->
@@ -673,6 +682,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <option value="event">イベント</option>
           <option value="feature">新機能</option>
           <option value="menu">メニュー</option>
+          <option value="newarrival">新入荷</option>
           <option value="other">その他</option>
         </select>
       </div>
@@ -875,7 +885,7 @@ function loadAll(){
   loadCol("mproducts","miscProducts",function(){ updateMiscFilters(); });
   loadCol("ssets","setProducts",function(){});
   loadCol("blindmarks","blindMarks",function(){});
-  loadNews();
+  loadNewsTypeConfig(loadNews);
   ["otherCat1","otherCat2","otherCat3","otherBottles","miscKinds","miscProducts","setProducts","blindMarks","news"].forEach(renderMeta);
   // テキーラ・他酒マスタ（セット商品ピッカー用）
   loadColSilent("distilleries","distilleries");
@@ -1787,8 +1797,8 @@ function openBlindmarkModal(id){
 })();
 
 // ── ニュース管理 ─────────────────────────────────────────────
-var NEWS_TYPES={info:'お知らせ',event:'イベント',feature:'新機能',menu:'メニュー',other:'その他'};
-var NEWS_TYPE_COLORS={info:'#378ADD',event:'#D4730A',feature:'#2CA44E',menu:'#8B5CF6',other:'#64748B'};
+var NEWS_TYPES={info:'お知らせ',event:'イベント',feature:'新機能',menu:'メニュー',newarrival:'新入荷',other:'その他'};
+var NEWS_TYPE_COLORS={info:'#378ADD',event:'#D4730A',feature:'#2CA44E',menu:'#8B5CF6',newarrival:'#F87171',other:'#64748B'};
 var nwSrcMode=false;
 
 // ── エディタ操作 ──
@@ -1929,7 +1939,7 @@ function renderNews(rows){
     var endStr=r.publishEnd?r.publishEnd.slice(0,16).replace('T',' '):'（無期限）';
     var eid=r.id.replace(/"/g,'&quot;');
     return '<tr>'
-      +'<td><span style="background:'+tc+';color:#fff;border-radius:3px;padding:1px 6px;font-size:11px;font-weight:600">'+tl+'</span></td>'
+      +'<td><span style="background:'+tc+';color:#fff;border-radius:3px;padding:1px 6px;font-size:11px;font-weight:600;display:inline-block;min-width:52px;text-align:center;">'+tl+'</span></td>'
       +'<td style="font-weight:500">'+(r.title||'—')+'</td>'
       +'<td style="font-family:var(--mono);font-size:11px">'+startStr+'</td>'
       +'<td style="font-family:var(--mono);font-size:11px">'+endStr+'</td>'
@@ -2010,6 +2020,74 @@ function delNews(id){
 (function(){
   var btn=g('btn-open-news'); if(!btn) return;
   btn.addEventListener('click',function(){openNewsModal(null);});
+})();
+
+// ── 種別カラー管理 ──────────────────────────────────────────────
+function renderTypeColorConfig(){
+  var el=document.getElementById('news-type-colors'); if(!el) return;
+  el.innerHTML=Object.keys(NEWS_TYPES).map(function(k){
+    return '<label style="display:flex;align-items:center;gap:5px;background:#252525;border-radius:4px;padding:5px 8px;cursor:pointer;">'
+      +'<input type="color" id="tc-'+k+'" value="'+NEWS_TYPE_COLORS[k]+'" style="width:28px;height:22px;border:none;padding:0;cursor:pointer;">'
+      +'<span style="background:'+NEWS_TYPE_COLORS[k]+';color:#fff;border-radius:3px;font-size:10px;font-weight:600;padding:2px 6px;display:inline-block;min-width:52px;text-align:center;" id="tc-badge-'+k+'">'+NEWS_TYPES[k]+'</span>'
+      +'</label>';
+  }).join('');
+  Object.keys(NEWS_TYPES).forEach(function(k){
+    var inp=document.getElementById('tc-'+k);
+    if(!inp) return;
+    inp.addEventListener('input',function(){
+      var badge=document.getElementById('tc-badge-'+k);
+      if(badge) badge.style.background=this.value;
+    });
+  });
+}
+
+function loadNewsTypeConfig(cb){
+  db.collection('newsConfig').doc('types').get().then(function(doc){
+    if(doc.exists&&doc.data()&&doc.data().colors) Object.assign(NEWS_TYPE_COLORS,doc.data().colors);
+    renderTypeColorConfig();
+    if(cb) cb();
+  }).catch(function(){ renderTypeColorConfig(); if(cb) cb(); });
+}
+
+(function(){
+  var btn=document.getElementById('btn-save-type-colors'); if(!btn) return;
+  btn.addEventListener('click',function(){
+    var colors={};
+    Object.keys(NEWS_TYPES).forEach(function(k){
+      var inp=document.getElementById('tc-'+k);
+      if(inp){ NEWS_TYPE_COLORS[k]=inp.value; colors[k]=inp.value; }
+    });
+    db.collection('newsConfig').doc('types').set({colors:colors},{merge:true})
+    .then(function(){
+      var st=document.getElementById('type-colors-status');
+      if(st){ st.textContent='保存しました'; setTimeout(function(){ st.textContent=''; },2000); }
+      renderNews(cache.news||[]);
+    })
+    .catch(function(e){ toast('保存失敗: '+e.message,'err'); });
+  });
+})();
+
+// ── Ctrl+V 画像ペースト ──────────────────────────────────────────
+(function(){
+  var ed=document.getElementById('nw-editor'); if(!ed) return;
+  ed.addEventListener('paste',function(e){
+    var items=((e.clipboardData||e.originalEvent&&e.originalEvent.clipboardData)||{}).items||[];
+    for(var i=0;i<items.length;i++){
+      if(items[i].type.indexOf('image')===0){
+        e.preventDefault();
+        var file=items[i].getAsFile();
+        var reader=new FileReader();
+        reader.onload=function(ev){
+          var html='<img src="'+ev.target.result+'" style="max-width:100%;display:block;margin:.4em auto;" alt="">';
+          ed.focus();
+          document.execCommand('insertHTML',false,html);
+          toast('画像を貼り付けました');
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+    }
+  });
 })();
 </script>
 </body>
