@@ -471,13 +471,45 @@ input,select{font-family:var(--sans)}
           <div id="cocktail-list" style="display:flex;flex-direction:column;gap:4px;margin-bottom:4px;"></div>
           <!-- スピリッツ選択サブパネル -->
           <div id="cocktail-spirit-picker" style="display:none;border:1px solid var(--border2);border-radius:var(--r);padding:10px;background:var(--cream2);margin-top:8px;">
-            <div style="font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:6px;" id="cocktail-spirit-label">ベーススピリッツを選択</div>
-            <div style="display:flex;gap:4px;margin-bottom:8px;">
-              <button onclick="setCocktailSpiritTab('tequila',this)" id="csp-tab-tequila" class="btn bp sm">テキーラ</button>
-              <button onclick="setCocktailSpiritTab('other',this)" id="csp-tab-other" class="btn bs sm">他酒</button>
+            <div style="font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:8px;" id="cocktail-spirit-label">ベーススピリッツを選択</div>
+            <!-- タブ + BJRXA + ソート -->
+            <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;align-items:center;">
+              <button onclick="setCocktailSpiritTab('tequila')" id="csp-tab-tequila" class="btn bp sm">テキーラ</button>
+              <button onclick="setCocktailSpiritTab('other')" id="csp-tab-other" class="btn bs sm">他酒</button>
+              <span style="width:1px;background:var(--border2);margin:0 2px;align-self:stretch;display:inline-block;"></span>
+              <div id="csp-cls-wrap" style="display:flex;gap:2px;">
+                <button onclick="cspToggleCls('B',this)" class="nom-btn active">B</button>
+                <button onclick="cspToggleCls('J',this)" class="nom-btn active">J</button>
+                <button onclick="cspToggleCls('R',this)" class="nom-btn active">R</button>
+                <button onclick="cspToggleCls('X',this)" class="nom-btn active">X</button>
+                <button onclick="cspToggleCls('A',this)" class="nom-btn active">A</button>
+                <button onclick="cspResetCls()" class="nom-btn" style="font-size:9px;">全</button>
+              </div>
+              <span style="width:1px;background:var(--border2);margin:0 2px;align-self:stretch;display:inline-block;"></span>
+              <button onclick="cspSetSort('asc')" id="csp-sort-asc" class="nom-btn" title="価格昇順">↑¥</button>
+              <button onclick="cspSetSort('desc')" id="csp-sort-desc" class="nom-btn" title="価格降順">↓¥</button>
             </div>
-            <input type="text" id="cocktail-spirit-search" class="fi" placeholder="銘柄名で検索..." oninput="filterCocktailSpirit()" style="margin-bottom:8px;">
-            <div id="cocktail-spirit-list" style="max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;"></div>
+            <!-- 検索 + ハウス -->
+            <div style="display:flex;gap:4px;margin-bottom:8px;">
+              <input type="text" id="cocktail-spirit-search" class="fi" placeholder="銘柄名 or NOM4桁..." oninput="filterCocktailSpirit()" style="flex:1;">
+              <button onclick="cspSetHouse()" class="btn bs sm">ハウス</button>
+            </div>
+            <!-- スピリッツリスト -->
+            <div id="cocktail-spirit-list" style="max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;margin-bottom:8px;"></div>
+            <!-- 選択中プレビュー + 決定 -->
+            <div id="csp-preview" style="display:none;border:1px solid var(--teal);border-radius:var(--r);padding:8px 10px;background:var(--teal-l);">
+              <div style="font-size:10px;color:var(--teal);font-weight:700;margin-bottom:4px;">✓ 選択中</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:13px;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" id="csp-sel-name">—</div>
+                  <div style="font-size:10px;color:var(--ink3);margin-top:2px;" id="csp-sel-detail">—</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;">
+                  <div style="font-size:16px;font-weight:700;color:var(--teal);" id="csp-sel-total">¥0</div>
+                  <button onclick="commitCocktailToCart()" style="margin-top:4px;padding:6px 14px;background:var(--teal);color:#fff;border:none;border-radius:var(--r);font-size:12px;font-weight:600;cursor:pointer;">決定 →</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         <div class="product-list-wrap" id="product-list-container"><div class="empty">読み込み中...</div></div>
@@ -1706,11 +1738,14 @@ function _doAddSet(setId){
 
 // ━━━ カクテル ━━━
 var _selCocktail=null;
+var _cspClasses=new Set(['B','J','R','A','X']);
+var _cspSort='';
 var _cocktailSpiritTab='tequila';
+var _pendingSpirit=null;
 
 function renderCocktailPanel(){
   document.getElementById('cocktail-spirit-picker').style.display='none';
-  _selCocktail=null;
+  _selCocktail=null; _pendingSpirit=null;
   filterCocktailList();
 }
 function filterCocktailList(){
@@ -1727,42 +1762,84 @@ function filterCocktailList(){
 function selectCocktail(cocktailId){
   _selCocktail=masterData.cocktail.find(c=>c.id===cocktailId);
   if(!_selCocktail)return;
+  _pendingSpirit=null;
   document.getElementById('cocktail-spirit-label').textContent=`「${_selCocktail.name}」のベーススピリッツを選択`;
   document.getElementById('cocktail-spirit-picker').style.display='block';
+  document.getElementById('csp-preview').style.display='none';
   _cocktailSpiritTab='tequila';
   document.getElementById('csp-tab-tequila').className='btn bp sm';
   document.getElementById('csp-tab-other').className='btn bs sm';
+  document.getElementById('csp-cls-wrap').style.display='flex';
+  _cspClasses=new Set(['B','J','R','A','X']);
+  _cspSort='';
+  document.getElementById('csp-sort-asc').classList.remove('active');
+  document.getElementById('csp-sort-desc').classList.remove('active');
+  document.querySelectorAll('#csp-cls-wrap .nom-btn').forEach(b=>{if(b.textContent!=='全')b.classList.add('active');});
   document.getElementById('cocktail-spirit-search').value='';
   filterCocktailSpirit();
   document.getElementById('cocktail-spirit-search').focus();
 }
 function setCocktailSpiritTab(type){
-  _cocktailSpiritTab=type;
+  _cocktailSpiritTab=type; _pendingSpirit=null;
+  document.getElementById('csp-preview').style.display='none';
   document.getElementById('csp-tab-tequila').className=type==='tequila'?'btn bp sm':'btn bs sm';
   document.getElementById('csp-tab-other').className=type==='other'?'btn bp sm':'btn bs sm';
+  document.getElementById('csp-cls-wrap').style.display=type==='tequila'?'flex':'none';
   filterCocktailSpirit();
 }
+function cspToggleCls(cls,el){
+  if(_cspClasses.has(cls))_cspClasses.delete(cls); else _cspClasses.add(cls);
+  el.classList.toggle('active',_cspClasses.has(cls));
+  filterCocktailSpirit();
+}
+function cspResetCls(){
+  _cspClasses=new Set(['B','J','R','A','X']);
+  document.querySelectorAll('#csp-cls-wrap .nom-btn').forEach(b=>{if(b.textContent!=='全')b.classList.add('active');});
+  filterCocktailSpirit();
+}
+function cspSetSort(dir){
+  _cspSort=_cspSort===dir?'':dir;
+  document.getElementById('csp-sort-asc').classList.toggle('active',_cspSort==='asc');
+  document.getElementById('csp-sort-desc').classList.toggle('active',_cspSort==='desc');
+  filterCocktailSpirit();
+}
+function cspSetHouse(){
+  document.getElementById('cocktail-spirit-search').value='Agavales';
+  filterCocktailSpirit();
+  document.getElementById('cocktail-spirit-search').focus();
+}
 function filterCocktailSpirit(){
-  const q=(document.getElementById('cocktail-spirit-search').value||'').toLowerCase();
-  const pool=_cocktailSpiritTab==='tequila'?masterData.tequila:masterData.other;
-  const items=pool.filter(t=>{
+  const raw=document.getElementById('cocktail-spirit-search').value||'';
+  const isNOM=/^\d{4}$/.test(raw.trim());
+  const q=raw.trim().toLowerCase();
+  let pool=_cocktailSpiritTab==='tequila'?masterData.tequila:masterData.other;
+  let items=pool.filter(t=>{
     if(!q)return true;
-    const name=(AuthRole.bdName(t,'es')+' '+(t.bottleJa||'')+(t.name||'')).toLowerCase();
-    return name.includes(q);
+    if(isNOM) return (t.nom||t.id||'').toLowerCase().startsWith(q);
+    const nameEs=(AuthRole.bdName(t,'es')||'').toLowerCase();
+    const nameJa=(t.bottleJa||t.name||'').toLowerCase();
+    return nameEs.startsWith(q)||nameJa.startsWith(q);
   });
+  if(_cocktailSpiritTab==='tequila'&&_cspClasses.size>0&&_cspClasses.size<5){
+    items=items.filter(t=>{
+      const code=String(t.classId||'');
+      const clsKey=Object.keys(CLS_MAP).find(k=>CLS_MAP[k]===code);
+      return clsKey?_cspClasses.has(clsKey):false;
+    });
+  }
+  if(_cspSort==='asc') items=[...items].sort((a,b)=>(a.unitPrice||0)-(b.unitPrice||0));
+  else if(_cspSort==='desc') items=[...items].sort((a,b)=>(b.unitPrice||0)-(a.unitPrice||0));
   document.getElementById('cocktail-spirit-list').innerHTML=items.slice(0,60).map(t=>{
     const name=_cocktailSpiritTab==='tequila'?AuthRole.bdName(t,'es'):(t.name||t.bottleEs||t.bottleJa||t.id);
     const sub=_cocktailSpiritTab==='tequila'?(t.bottleJa||''):'';
     const price=t.unitPrice!=null?`¥${t.unitPrice}/10ml`:'';
-    return`<div onclick="addCocktailToCart('${esc(t.id)}')" style="padding:7px 10px;border-radius:4px;cursor:pointer;background:var(--white);border:1px solid var(--border);font-size:12px;font-weight:600;color:var(--ink);" onmouseover="this.style.background='var(--cream2)'" onmouseout="this.style.background='var(--white)'"><div style="display:flex;justify-content:space-between;"><span>${esc(name)}</span><span style="font-size:10px;color:var(--ink3);">${esc(price)}</span></div>${sub?`<span style="font-size:10px;color:var(--ink3);">${esc(sub)}</span>`:''}</div>`;
+    const isSel=_pendingSpirit&&_pendingSpirit.id===t.id;
+    const bg=isSel?'var(--teal-l)':'var(--white)';
+    const border=isSel?'var(--teal)':'var(--border)';
+    return`<div onclick="previewCocktailSpirit('${esc(t.id)}')" style="padding:7px 10px;border-radius:4px;cursor:pointer;background:${bg};border:1px solid ${border};font-size:12px;font-weight:600;color:var(--ink);"><div style="display:flex;justify-content:space-between;"><span>${esc(name)}</span><span style="font-size:10px;color:var(--ink3);">${esc(price)}</span></div>${sub?`<span style="font-size:10px;color:var(--ink3);">${esc(sub)}</span>`:''}</div>`;
   }).join('');
 }
-function addCocktailToCart(spiritId){
-  if(!_selCocktail)return;
-  const cocktail=_selCocktail;
-  const pool=[...masterData.tequila,...masterData.other];
-  const spirit=pool.find(x=>x.id===spiritId);
-  if(!spirit){showToast('スピリッツが見つかりません','error');return;}
+function calcCocktailTotal(cocktail,spirit){
   const basePrice10ml=spirit.unitPrice||0;
   const spiritCost=Math.round(((cocktail.spiritMl||0)/10)*basePrice10ml);
   let subCost=0;
@@ -1770,24 +1847,37 @@ function addCocktailToCart(spiritId){
     const sid=cocktail['sub'+i+'Id'],qty=cocktail['sub'+i+'Qty']||0;
     if(sid&&qty){const sub=masterData.subMaterials.find(s=>s.id===sid);if(sub&&sub.unitPrice)subCost+=Math.round(sub.unitPrice*qty);}
   }
-  const total=spiritCost+subCost;
+  return{total:spiritCost+subCost,spiritCost,subCost};
+}
+function previewCocktailSpirit(spiritId){
+  if(!_selCocktail)return;
+  const pool=[...masterData.tequila,...masterData.other];
+  const spirit=pool.find(x=>x.id===spiritId);
+  if(!spirit)return;
+  _pendingSpirit=spirit;
+  const spiritName=spirit.type==='tequila'?AuthRole.bdName(spirit,'es'):(spirit.name||spirit.bottleEs||spirit.id);
+  const{total,spiritCost,subCost}=calcCocktailTotal(_selCocktail,spirit);
+  document.getElementById('csp-sel-name').textContent=spiritName;
+  document.getElementById('csp-sel-detail').textContent=
+    `${_selCocktail.spiritMl||0}ml × ¥${spirit.unitPrice||0}/10ml = ¥${spiritCost}`
+    +(subCost?` ＋ 副材料 ¥${subCost}`:'');
+  document.getElementById('csp-sel-total').textContent='¥'+total.toLocaleString();
+  document.getElementById('csp-preview').style.display='block';
+  filterCocktailSpirit(); // ハイライト更新
+}
+function commitCocktailToCart(){
+  if(!_selCocktail||!_pendingSpirit)return;
+  const cocktail=_selCocktail,spirit=_pendingSpirit;
+  const{total}=calcCocktailTotal(cocktail,spirit);
   const spiritName=spirit.type==='tequila'?AuthRole.bdName(spirit,'es'):(spirit.name||spirit.bottleEs||spirit.id);
   flow.cart.push({
-    productId:cocktail.id,
-    productName:cocktail.name,
-    productType:'cocktail',
-    qty:1,
-    unit:'杯',
-    unitPrice:total,
-    blindMarkId:null,
-    _cocktailId:cocktail.id,
-    _baseProductCode:spirit.id,
-    _baseUnitPrice10ml:basePrice10ml,
-    _totalAmount:total,
-    _spiritName:spiritName
+    productId:cocktail.id,productName:cocktail.name,productType:'cocktail',
+    qty:1,unit:'杯',unitPrice:total,blindMarkId:null,
+    _cocktailId:cocktail.id,_baseProductCode:spirit.id,
+    _baseUnitPrice10ml:spirit.unitPrice||0,_totalAmount:total,_spiritName:spiritName
   });
   document.getElementById('cocktail-spirit-picker').style.display='none';
-  _selCocktail=null;
+  _selCocktail=null; _pendingSpirit=null;
   renderCart();
   document.getElementById('btn-to-step2').disabled=false;
   showToast(`${cocktail.name}をカートに追加しました（${spiritName}）`,'info');
@@ -1874,10 +1964,28 @@ function renderCart(){
       ${markPicker}
       <span class="cart-item-name">${esc(o.productName)}${o._spiritName?`<div style="font-size:10px;color:var(--ink3);margin-left:4px;">🍶 ${esc(o._spiritName)} ${o._cocktailId&&masterData.cocktail.find(c=>c.id===o._cocktailId)?masterData.cocktail.find(c=>c.id===o._cocktailId).spiritMl+'ml':''}</div>`:''}</span>
       <span class="cart-item-qty" style="font-size:12px;color:var(--ink3)">${o.qty}${o.unit}</span>
-      <span class="cart-item-price">¥${cartAmt(o).toLocaleString()}</span>
+      <span class="cart-item-price" id="cart-price-${idx}" onclick="editCartPrice(${idx})" title="クリックで価格変更" style="cursor:pointer;">¥${cartAmt(o).toLocaleString()}</span>
       <button class="cart-item-del" onclick="removeCartItem(${idx})">✕</button>
     </div>`;
   }).join('');
+}
+
+function editCartPrice(idx){
+  const o=flow.cart[idx]; if(!o)return;
+  const span=document.getElementById('cart-price-'+idx); if(!span)return;
+  const cur=cartAmt(o);
+  span.outerHTML=`<input id="cart-price-edit-${idx}" type="number" min="0" value="${cur}" style="width:70px;font-size:12px;padding:2px 4px;border:1px solid var(--gold);border-radius:4px;text-align:right;font-family:var(--mono);" onblur="saveCartPrice(${idx},this.value)" onkeydown="if(event.key==='Enter')this.blur();if(event.key==='Escape'){flow.cart[${idx}];renderCart();}">`;
+  const inp=document.getElementById('cart-price-edit-'+idx);
+  if(inp){inp.focus();inp.select();}
+}
+function saveCartPrice(idx,val){
+  const o=flow.cart[idx]; if(!o)return;
+  const newAmt=Math.round(parseFloat(val)||0);
+  const isMl=o.productType==='tequila'||o.productType==='other';
+  if(isMl&&o.qty) o.unitPrice=Math.round(newAmt*10/o.qty);
+  else o.unitPrice=newAmt;
+  o._totalAmount=newAmt;
+  renderCart();
 }
 
 // STEP2（バリデーション付き）
