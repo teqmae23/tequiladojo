@@ -888,6 +888,8 @@ function renderBatchSec(containerId,batches,mode){
 
 function buildBatchCard(b,mode){
   const isDone=mode==='done';
+  const isPending=mode==='pending';
+  const showActions=isDone||isPending;
   const showCb=mode==='pending'||mode==='blind-pending';
   const showResult=mode==='blind-pending';
   const isCancelled=b.served===0;
@@ -909,7 +911,7 @@ function buildBatchCard(b,mode){
     const valid=rep.orders.filter(o=>o.served!==0);
     const itemsHtml=valid.map(o=>{
       const mk=o.blindId===1&&o.blindMarkId?`<span style="font-size:14px;margin-right:4px">${markDisplay(o.blindMarkId)}</span>`:'';
-      const actBtns=isDone?`<button class="srv-edit-btn" onclick="event.stopPropagation();editServedItem('${esc(o.id)}')">編集</button><button class="srv-cancel-btn" onclick="event.stopPropagation();cancelServedItem('${esc(o.id)}')">✕</button>`:'';
+      const actBtns=showActions?`<button class="srv-edit-btn" onclick="event.stopPropagation();editOrderItem('${esc(o.id)}')">編集</button><button class="srv-cancel-btn" onclick="event.stopPropagation();cancelOrderItem('${esc(o.id)}')">✕</button>`:'';
       return`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span>${actBtns}</div>`;
     }).join('');
     memberRows=`<div class="batch-member-items open" id="bmi-${rep.gid}">${itemsHtml}</div>`;
@@ -921,7 +923,7 @@ function buildBatchCard(b,mode){
       const gTotal=g.total;
       const itemsHtml=valid.map(o=>{
         const mk=o.blindId===1&&o.blindMarkId?`<span style="font-size:14px;margin-right:4px">${markDisplay(o.blindMarkId)}</span>`:'';
-        const actBtns=isDone?`<button class="srv-edit-btn" onclick="event.stopPropagation();editServedItem('${esc(o.id)}')">編集</button><button class="srv-cancel-btn" onclick="event.stopPropagation();cancelServedItem('${esc(o.id)}')">✕</button>`:'';
+        const actBtns=showActions?`<button class="srv-edit-btn" onclick="event.stopPropagation();editOrderItem('${esc(o.id)}')">編集</button><button class="srv-cancel-btn" onclick="event.stopPropagation();cancelOrderItem('${esc(o.id)}')">✕</button>`:'';
         return`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span>${actBtns}</div>`;
       }).join('');
       return`<div class="batch-member">
@@ -1046,40 +1048,60 @@ async function cancelChecked(section){
   }catch(e){showToast('キャンセル失敗: '+e.message,'error');}
 }
 
-// ━━━ 提供済みアイテム：個別キャンセル・編集 ━━━
-async function cancelServedItem(orderId){
-  if(!confirm('この商品をキャンセルしますか？'))return;
-  try{
-    await db.collection('orders').doc(orderId).update({served:0});
-    for(const b of allBatchGroups){
-      for(const g of b.groups){
-        const o=g.orders.find(x=>x.id===orderId);
-        if(o)o.served=0;
-      }
-    }
-    recomputeBatchTotals();
-    renderOrderList();
-    showToast('キャンセルしました','info');
-  }catch(e){showToast('キャンセル失敗: '+e.message,'error');}
-}
+// ━━━ 個別キャンセル・編集（pending/done 共通・バッチ対応） ━━━
 
-var _editTarget=null;
-function editServedItem(orderId){
-  let found=null;
+function _findOrderById(orderId){
   for(const b of allBatchGroups){
     for(const g of b.groups){
       const o=g.orders.find(x=>x.id===orderId);
-      if(o){found=o;break;}
+      if(o)return{order:o,batch:b};
     }
-    if(found)break;
   }
+  return null;
+}
+
+// 同一バッチ内で同じ itemSeq を持つ有効オーダーをまとめて返す
+function _batchEquivOrders(order,batch){
+  const result=[];
+  for(const g of batch.groups){
+    const eq=g.orders.find(x=>x.itemSeq===order.itemSeq&&x.served!==0);
+    if(eq)result.push(eq);
+  }
+  return result.length?result:[order];
+}
+
+async function cancelOrderItem(orderId){
+  const found=_findOrderById(orderId);
   if(!found)return;
-  _editTarget=found;
-  const isMl=found.productType==='tequila'||found.productType==='other';
-  document.getElementById('edit-served-name').textContent=found.productName;
-  document.getElementById('edit-served-qty').value=found.qty;
-  document.getElementById('edit-served-qty-label').textContent=`数量（${found.unit||'個'}）`;
-  document.getElementById('edit-served-price').value=found.unitPrice||0;
+  const{order,batch}=found;
+  const equivs=_batchEquivOrders(order,batch);
+  const n=equivs.length;
+  const msg=n>1
+    ?`${n}人分の同時注文です。全員分キャンセルしますか？`
+    :'この商品をキャンセルしますか？';
+  if(!confirm(msg))return;
+  try{
+    const fb=db.batch();
+    for(const o of equivs){fb.update(db.collection('orders').doc(o.id),{served:0});o.served=0;}
+    await fb.commit();
+    recomputeBatchTotals();
+    renderOrderList();
+    showToast(`${n}件キャンセルしました`,'info');
+  }catch(e){showToast('キャンセル失敗: '+e.message,'error');}
+}
+
+var _editTarget=null,_editTargetBatch=null;
+function editOrderItem(orderId){
+  const found=_findOrderById(orderId);
+  if(!found)return;
+  const{order,batch}=found;
+  _editTarget=order;_editTargetBatch=batch;
+  const isMl=order.productType==='tequila'||order.productType==='other';
+  const n=_batchEquivOrders(order,batch).length;
+  document.getElementById('edit-served-name').textContent=order.productName+(n>1?` (${n}人分)`:'');
+  document.getElementById('edit-served-qty').value=order.qty;
+  document.getElementById('edit-served-qty-label').textContent=`数量（${order.unit||'個'}）`;
+  document.getElementById('edit-served-price').value=order.unitPrice||0;
   document.getElementById('edit-served-price-label').textContent=isMl?'単価（円/10ml）':'単価（円）';
   document.getElementById('m-edit-served').classList.add('open');
 }
@@ -1089,15 +1111,16 @@ async function saveEditServed(){
   const qty=parseInt(document.getElementById('edit-served-qty').value)||0;
   const unitPrice=parseInt(document.getElementById('edit-served-price').value)||0;
   if(qty<=0){showToast('数量を入力してください','error');return;}
+  const equivs=_batchEquivOrders(_editTarget,_editTargetBatch);
   try{
-    await db.collection('orders').doc(_editTarget.id).update({qty,unitPrice});
-    _editTarget.qty=qty;
-    _editTarget.unitPrice=unitPrice;
+    const fb=db.batch();
+    for(const o of equivs){fb.update(db.collection('orders').doc(o.id),{qty,unitPrice});o.qty=qty;o.unitPrice=unitPrice;}
+    await fb.commit();
     recomputeBatchTotals();
     renderOrderList();
     document.getElementById('m-edit-served').classList.remove('open');
-    showToast('更新しました','info');
-    _editTarget=null;
+    showToast(`${equivs.length}件更新しました`,'info');
+    _editTarget=null;_editTargetBatch=null;
   }catch(e){showToast('更新失敗: '+e.message,'error');}
 }
 
