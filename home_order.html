@@ -271,7 +271,13 @@ input,select{font-family:var(--sans)}
 /* ── batchカード（同時注文グループ） ── */
 .batch-card{background:var(--white);border:1px solid var(--border);border-radius:var(--r);margin-bottom:10px;overflow:hidden;transition:box-shadow .15s}
 .batch-card:hover{box-shadow:var(--shadow)}
-.batch-card.done{opacity:.45}
+.batch-card.done{opacity:.65}
+.batch-card.done:hover{opacity:1}
+.srv-edit-btn{font-size:10px;padding:2px 6px;background:var(--cream2);border:1px solid var(--border2);border-radius:3px;cursor:pointer;color:var(--ink2);margin-left:6px;white-space:nowrap;flex-shrink:0}
+.srv-cancel-btn{font-size:10px;padding:2px 6px;background:var(--red-l);border:1px solid var(--red);border-radius:3px;cursor:pointer;color:var(--red);margin-left:3px;white-space:nowrap;flex-shrink:0}
+#m-edit-served{display:none;position:fixed;inset:0;background:rgba(24,17,10,.6);z-index:300;align-items:center;justify-content:center;padding:20px}
+#m-edit-served.open{display:flex}
+#edit-served-panel{background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:20px;min-width:280px;box-shadow:var(--shadow-lg)}
 .batch-header{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--cream2);border-bottom:1px solid var(--border);cursor:pointer}
 .batch-id{font-family:var(--mono);font-size:10px;color:var(--ink3)}
 .batch-names{font-size:13px;font-weight:700;color:var(--ink);flex:1}
@@ -570,6 +576,25 @@ input,select{font-family:var(--sans)}
     <div class="qty-buttons">
       <button class="btn bs" onclick="closeQtyModal()">キャンセル</button>
       <button class="btn bp" onclick="confirmQty()">追加</button>
+    </div>
+  </div>
+</div>
+
+<!-- 提供済み編集モーダル -->
+<div id="m-edit-served">
+  <div id="edit-served-panel">
+    <h3 id="edit-served-name" style="font-family:var(--serif);font-size:15px;color:var(--gold-d);margin-bottom:14px"></h3>
+    <div style="margin-bottom:10px">
+      <div class="qty-unit" style="margin-bottom:4px" id="edit-served-qty-label">数量</div>
+      <input type="number" id="edit-served-qty" min="1" style="width:100%;padding:10px;border:1px solid var(--border2);border-radius:var(--r);font-size:18px;text-align:center;outline:none;background:var(--cream);color:var(--ink);box-sizing:border-box">
+    </div>
+    <div style="margin-bottom:14px">
+      <div class="qty-unit" style="margin-bottom:4px" id="edit-served-price-label">単価（円）</div>
+      <input type="number" id="edit-served-price" min="0" style="width:100%;padding:10px;border:1px solid var(--border2);border-radius:var(--r);font-size:18px;text-align:center;outline:none;background:var(--cream);color:var(--ink);box-sizing:border-box">
+    </div>
+    <div class="qty-buttons">
+      <button class="btn bs" onclick="document.getElementById('m-edit-served').classList.remove('open');_editTarget=null">キャンセル</button>
+      <button class="btn bp" onclick="saveEditServed()">保存</button>
     </div>
   </div>
 </div>
@@ -884,7 +909,8 @@ function buildBatchCard(b,mode){
     const valid=rep.orders.filter(o=>o.served!==0);
     const itemsHtml=valid.map(o=>{
       const mk=o.blindId===1&&o.blindMarkId?`<span style="font-size:14px;margin-right:4px">${markDisplay(o.blindMarkId)}</span>`:'';
-      return`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span></div>`;
+      const actBtns=isDone?`<button class="srv-edit-btn" onclick="event.stopPropagation();editServedItem('${esc(o.id)}')">編集</button><button class="srv-cancel-btn" onclick="event.stopPropagation();cancelServedItem('${esc(o.id)}')">✕</button>`:'';
+      return`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span>${actBtns}</div>`;
     }).join('');
     memberRows=`<div class="batch-member-items open" id="bmi-${rep.gid}">${itemsHtml}</div>`;
   }else{
@@ -895,7 +921,8 @@ function buildBatchCard(b,mode){
       const gTotal=g.total;
       const itemsHtml=valid.map(o=>{
         const mk=o.blindId===1&&o.blindMarkId?`<span style="font-size:14px;margin-right:4px">${markDisplay(o.blindMarkId)}</span>`:'';
-        return`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span></div>`;
+        const actBtns=isDone?`<button class="srv-edit-btn" onclick="event.stopPropagation();editServedItem('${esc(o.id)}')">編集</button><button class="srv-cancel-btn" onclick="event.stopPropagation();cancelServedItem('${esc(o.id)}')">✕</button>`:'';
+        return`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span>${actBtns}</div>`;
       }).join('');
       return`<div class="batch-member">
         <div class="batch-member-header" onclick="toggleMemberItems('bmi-${g.gid}')">
@@ -1017,6 +1044,70 @@ async function cancelChecked(section){
     renderOrderList();
     showToast(`${bids.length}グループをキャンセルしました`,'info');
   }catch(e){showToast('キャンセル失敗: '+e.message,'error');}
+}
+
+// ━━━ 提供済みアイテム：個別キャンセル・編集 ━━━
+async function cancelServedItem(orderId){
+  if(!confirm('この商品をキャンセルしますか？'))return;
+  try{
+    await db.collection('orders').doc(orderId).update({served:0});
+    for(const b of allBatchGroups){
+      for(const g of b.groups){
+        const o=g.orders.find(x=>x.id===orderId);
+        if(o)o.served=0;
+      }
+    }
+    recomputeBatchTotals();
+    renderOrderList();
+    showToast('キャンセルしました','info');
+  }catch(e){showToast('キャンセル失敗: '+e.message,'error');}
+}
+
+var _editTarget=null;
+function editServedItem(orderId){
+  let found=null;
+  for(const b of allBatchGroups){
+    for(const g of b.groups){
+      const o=g.orders.find(x=>x.id===orderId);
+      if(o){found=o;break;}
+    }
+    if(found)break;
+  }
+  if(!found)return;
+  _editTarget=found;
+  const isMl=found.productType==='tequila'||found.productType==='other';
+  document.getElementById('edit-served-name').textContent=found.productName;
+  document.getElementById('edit-served-qty').value=found.qty;
+  document.getElementById('edit-served-qty-label').textContent=`数量（${found.unit||'個'}）`;
+  document.getElementById('edit-served-price').value=found.unitPrice||0;
+  document.getElementById('edit-served-price-label').textContent=isMl?'単価（円/10ml）':'単価（円）';
+  document.getElementById('m-edit-served').classList.add('open');
+}
+
+async function saveEditServed(){
+  if(!_editTarget)return;
+  const qty=parseInt(document.getElementById('edit-served-qty').value)||0;
+  const unitPrice=parseInt(document.getElementById('edit-served-price').value)||0;
+  if(qty<=0){showToast('数量を入力してください','error');return;}
+  try{
+    await db.collection('orders').doc(_editTarget.id).update({qty,unitPrice});
+    _editTarget.qty=qty;
+    _editTarget.unitPrice=unitPrice;
+    recomputeBatchTotals();
+    renderOrderList();
+    document.getElementById('m-edit-served').classList.remove('open');
+    showToast('更新しました','info');
+    _editTarget=null;
+  }catch(e){showToast('更新失敗: '+e.message,'error');}
+}
+
+function recomputeBatchTotals(){
+  for(const b of allBatchGroups){
+    for(const g of b.groups){
+      g.total=g.orders.filter(o=>o.served!==0).reduce((s,o)=>s+calcAmt(o),0);
+    }
+    b.total=b.groups.reduce((s,g)=>s+g.total,0);
+  }
 }
 
 // ━━━ 結果入力（表形式） ━━━
@@ -1699,7 +1790,7 @@ function addToCart(pid){
     productType:p.type,
     qty:isMl?getCartMl():1,
     unit:isMl?'ml':'個',
-    unitPrice:p.price||p.unitPrice||0,
+    unitPrice:p.price||p.unitPrice||p.price10||0,
     blindMarkId:null
   });
   if(isBlind)assignBlindMarks();
