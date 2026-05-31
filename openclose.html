@@ -340,6 +340,7 @@ g("btn-open-store").addEventListener("click",function(){
         writePublicStatus('open',{layoutId:layoutId,sessionDate:today});
         toast("開店しました（"+openTime+"）");
         sv("oc-memo","");
+        autoCheckinStaff(today, openTime);
       });
     }).catch(function(e){toast("開店処理失敗: "+e.message,"err");});
 });
@@ -389,6 +390,7 @@ g("btn-close-store").addEventListener("click",function(){
   db.collection("sessions").doc(currentSessionId).update({closeTime:closeTime})
     .then(function(){
       toast("閉店しました（"+closeTime+"）");
+      autoCheckoutStaff(closeTime);
       currentSessionId=null;
       currentLayoutId=null;
       applyStoreStatus("closed");
@@ -482,9 +484,10 @@ async function loadAttendance(){
 
 function renderOcList(list){
   var tb=g("tb-oc-checkin");if(!tb)return;
-  if(!list||!list.length){tb.innerHTML='<tr><td colspan="4" class="ec">本日の来店者はいません</td></tr>';return;}
-  var active=list.filter(function(r){return !r.checkoutTime;});
-  var done=list.filter(function(r){return !!r.checkoutTime;});
+  var regular=list.filter(function(r){return !r.isStaff;});
+  if(!regular.length){tb.innerHTML='<tr><td colspan="4" class="ec">本日の来店者はいません</td></tr>';return;}
+  var active=regular.filter(function(r){return !r.checkoutTime;});
+  var done=regular.filter(function(r){return !!r.checkoutTime;});
   var sorted=active.concat(done);
   tb.innerHTML=sorted.map(function(r){
     var style=r.checkoutTime?"opacity:.4":"";
@@ -495,6 +498,61 @@ function renderOcList(list){
       +'<td style="text-align:center;font-family:var(--mono);font-size:11px">'+(r.checkinGroupId||"—")+'</td>'
     +'</tr>';
   }).join("");
+}
+
+async function autoCheckinStaff(today, openTime){
+  try{
+    var attSnap=await db.collection('attendance').where('date','==',today).get();
+    var checkedInIds=[];
+    attSnap.forEach(function(d){
+      var a=d.data();
+      if(a.checkInTime&&!a.checkOutTime)checkedInIds.push(a.memberId);
+    });
+    if(!checkedInIds.length)return;
+    // 既存のスタッフvisitを確認（重複防止）
+    var existSnap=await db.collection('visits')
+      .where('visitDate','==',today).where('isStaff','==',true).get();
+    var existIds=new Set();
+    existSnap.forEach(function(d){var v=d.data();if(v.memberId)existIds.add(v.memberId);});
+    var batch=db.batch();
+    var cnt=0;
+    checkedInIds.forEach(function(mid,idx){
+      if(existIds.has(mid))return;
+      var docId=today+'s'+mid;
+      batch.set(db.collection('visits').doc(docId),{
+        visitKey:docId,visitDate:today,visitTime:openTime,
+        seq:9990+idx,memberId:mid,isStaff:true,
+        tequilaAmount:0,amount:0,checkoutTime:null,checkoutPayTime:null
+      });
+      cnt++;
+    });
+    if(cnt>0){
+      await batch.commit();
+      toast('スタッフ'+cnt+'名を自動チェックイン','inf');
+      loadTodayVisits();
+    }
+  }catch(e){toast('スタッフ自動チェックイン失敗: '+e.message,'err');}
+}
+
+async function autoCheckoutStaff(closeTime){
+  var today=todayStr6();
+  try{
+    var snap=await db.collection('visits')
+      .where('visitDate','==',today).where('isStaff','==',true).get();
+    var batch=db.batch();
+    var cnt=0;
+    snap.forEach(function(d){
+      var v=d.data();
+      if(!v.checkoutTime){
+        batch.update(db.collection('visits').doc(d.id),{checkoutTime:closeTime});
+        cnt++;
+      }
+    });
+    if(cnt>0){
+      await batch.commit();
+      toast('スタッフ'+cnt+'名を自動退場','inf');
+    }
+  }catch(e){toast('スタッフ自動退場失敗: '+e.message,'err');}
 }
 </script>
 </body>

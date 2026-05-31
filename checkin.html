@@ -493,7 +493,8 @@ function calcAmount(orders){
     if(o.served===0) return s;
     var qty=parseFloat(o.qty)||0, price=parseFloat(o.unitPrice||o.price||0);
     var t=o.productType||o.type||'';
-    return s + (t==='tequila'||t==='spirits'
+    var mult=o.isGiftPayer?((o.giftCount||0)+(o.giftPayerDrinks?1:0)):1;
+    return s + mult*(t==='tequila'||t==='spirits'||t==='other'
       ? Math.round(price*qty/10) : Math.round(price*qty));
   },0);
 }
@@ -502,7 +503,11 @@ function calcTequila(orders){
     if(o.served===0) return false;
     var t=o.productType||o.type||'';
     return t==='tequila';
-  }).reduce(function(s,o){ return s+(parseFloat(o.qty)||0); },0);
+  }).reduce(function(s,o){
+    var qty=parseFloat(o.qty)||0;
+    if(o.isGiftPayer) return s+(o.giftPayerDrinks?qty:0);
+    return s+qty;
+  },0);
 }
 
 // ── キャッシュ ──────────────────────────────────────────────────
@@ -651,12 +656,12 @@ function renderVisitorList(){
     }
   });
 
-  // 来場中: 会計時間も退場時間も未セット
-  var active=cache.visits.filter(function(v){ return !v.checkoutPayTime && !v.checkoutTime; });
+  // 来場中: 会計時間も退場時間も未セット（スタッフ自動visit除く）
+  var active=cache.visits.filter(function(v){ return !v.checkoutPayTime && !v.checkoutTime && !v.isStaff; });
   // 会計済: 会計時間がセット・退場時間は未セット
-  var paid=cache.visits.filter(function(v){ return !!v.checkoutPayTime && !v.checkoutTime; });
+  var paid=cache.visits.filter(function(v){ return !!v.checkoutPayTime && !v.checkoutTime && !v.isStaff; });
   // 退場済: 退場時間がセット
-  var done=cache.visits.filter(function(v){ return !!v.checkoutTime; });
+  var done=cache.visits.filter(function(v){ return !!v.checkoutTime && !v.isStaff; });
   active.sort(function(a,b){ return (a.visitTime||a.id).localeCompare(b.visitTime||b.id); });
   paid.sort(function(a,b){ return (a.visitTime||a.id).localeCompare(b.visitTime||b.id); });
   done.sort(function(a,b){ return (b.checkoutTime||'').localeCompare(a.checkoutTime||''); });
