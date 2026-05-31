@@ -47,9 +47,9 @@ input,select{font-family:var(--sans)}
 
 /* ── アプリ ── */
 #app{display:none;flex-direction:column;min-height:100vh}
-.topbar{background:var(--ink);padding:10px 16px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:100}
+.topbar{background:var(--ink);padding:8px 16px 10px;display:flex;flex-direction:column;align-items:stretch;gap:3px;position:sticky;top:0;z-index:100}
 .top-brand{font-family:var(--serif);font-size:17px;color:var(--gold-l);letter-spacing:.08em}
-.top-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.top-right{display:flex;gap:8px;align-items:center}
 .top-back{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:rgba(255,255,255,.7);padding:5px 10px;border-radius:var(--r);font-size:11px;text-decoration:none}
 .top-logout{background:none;border:1px solid rgba(255,255,255,.14);color:rgba(255,255,255,.38);padding:5px 10px;border-radius:var(--r);font-size:11px}
 
@@ -329,16 +329,24 @@ input,select{font-family:var(--sans)}
 <!-- アプリ -->
 <div id="app">
   <div class="topbar">
-    <span class="top-brand">🥃 テキーラ道場</span>
+    <div style="text-align:center;font-family:var(--serif);font-size:17px;color:var(--gold-l);letter-spacing:.1em">🥃 テキーラ道場</div>
     <div class="top-right">
-      <a href="checkin.html" class="top-back">👥 来場者一覧</a>
-      <a href="admin.html" class="top-back">⚙ 管理</a>
-      <a href="home.html" class="top-back">🏠 ホーム</a>
-      <button class="top-logout" onclick="auth.signOut()">ログアウト</button>
+      <a href="home.html" class="top-back">← ホーム</a>
+      <a href="checkin.html" class="top-back">来場一覧</a>
+      <button class="top-logout" onclick="auth.signOut()" style="margin-left:auto">ログアウト</button>
     </div>
   </div>
 
   <div class="content">
+    <!-- 来場者クイック選択 -->
+    <div id="vis-quick-bar" style="display:none;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:12px 14px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:11px;font-weight:600;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase">来場者一覧</div>
+        <button class="btn bp sm" id="btn-quick-order" onclick="openOrderWithSelected()">＋ 新規注文</button>
+      </div>
+      <div id="vis-quick-list"></div>
+    </div>
+
     <div class="page-title">注文一覧</div>
     <div id="loading"><div class="spinner"></div><div>読み込み中...</div></div>
 
@@ -683,6 +691,7 @@ async function init(){
   document.getElementById('loading').style.display='none';
   document.getElementById('content-area').style.display='block';
   renderOrderList();
+  renderQuickVisitorList();
 
   // checkin.htmlから来場者指定で遷移してきた場合はSTEP1へ直接ジャンプ
   var params=new URLSearchParams(window.location.search);
@@ -2248,6 +2257,45 @@ async function confirmOrder(){
       `${flow.visits.length}人 × ${flow.cart.length}品 登録完了 (batch: ${batchId})`;
     await loadTodayData();renderOrderList();
   }catch(e){showToast('エラー: '+e.message,'error');}
+}
+
+function renderQuickVisitorList(){
+  var bar=document.getElementById('vis-quick-bar');
+  var el=document.getElementById('vis-quick-list');
+  if(!bar||!el)return;
+  var active=allVisits.filter(function(v){return !v.checkoutTime;});
+  if(!active.length){bar.style.display='none';return;}
+  bar.style.display='block';
+  el.innerHTML=active.map(function(v){
+    var m=v.memberId&&allMembers[v.memberId];
+    var name=m?(m.nickname||m.name||v.memberId):'ゲスト';
+    return '<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--cream);border:1px solid var(--border);border-radius:var(--r);margin-bottom:4px;cursor:pointer">'
+      +'<input type="checkbox" class="qv-cb" data-vid="'+v.id+'" style="width:16px;height:16px;accent-color:var(--gold-d);flex-shrink:0">'
+      +'<span style="font-size:13px;font-weight:500;flex:1">'+esc(name)+'</span>'
+      +'<span style="font-size:11px;color:var(--ink3)">'+(v.visitTime?v.visitTime.slice(0,2)+':'+v.visitTime.slice(2,4):'')+'</span>'
+      +'</label>';
+  }).join('');
+}
+
+function openOrderWithSelected(){
+  var cbs=document.querySelectorAll('.qv-cb:checked');
+  if(cbs.length===0){openOrderModal();return;}
+  flow={visits:[],cart:[],isBlind:false};
+  document.getElementById('blind-check').checked=false;
+  Array.prototype.forEach.call(cbs,function(cb){
+    var v=allVisits.find(function(x){return x.id===cb.dataset.vid;});
+    if(v&&!flow.visits.find(function(x){return x.id===v.id;}))flow.visits.push(v);
+  });
+  if(!flow.visits.length){openOrderModal();return;}
+  document.getElementById('order-modal').classList.add('open');
+  showStep(1);
+  renderCart();
+  if(!masterData.tequila.length){
+    document.getElementById('product-list-container').innerHTML='<div class="empty">読み込み中...</div>';
+    loadMasters().then(function(){switchPTab('tequila',document.querySelectorAll('.ptab')[0]);});
+  }else{
+    switchPTab('tequila',document.querySelectorAll('.ptab')[0]);
+  }
 }
 
 // ━━━ ユーティリティ ━━━
