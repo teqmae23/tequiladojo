@@ -47,9 +47,9 @@ input,select{font-family:var(--sans)}
 
 /* ── アプリ ── */
 #app{display:none;flex-direction:column;min-height:100vh}
-.topbar{background:var(--ink);padding:10px 16px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:100}
+.topbar{background:var(--ink);padding:8px 16px 10px;display:flex;flex-direction:column;align-items:stretch;gap:3px;position:sticky;top:0;z-index:100}
 .top-brand{font-family:var(--serif);font-size:17px;color:var(--gold-l);letter-spacing:.08em}
-.top-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.top-right{display:flex;gap:8px;align-items:center}
 .top-back{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:rgba(255,255,255,.7);padding:5px 10px;border-radius:var(--r);font-size:11px;text-decoration:none}
 .top-logout{background:none;border:1px solid rgba(255,255,255,.14);color:rgba(255,255,255,.38);padding:5px 10px;border-radius:var(--r);font-size:11px}
 
@@ -107,6 +107,17 @@ input,select{font-family:var(--sans)}
 .item-qty{color:var(--ink3);min-width:50px;text-align:right;font-size:12px}
 .item-price{color:var(--gold-d);min-width:60px;text-align:right;font-weight:600;font-size:12px}
 
+/* ── 奢りバッジ ── */
+.gift-badge{display:inline-block;background:#fdf0d0;color:var(--gold-d);border:1px solid rgba(200,146,30,.35);font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;white-space:nowrap;vertical-align:middle;margin-left:3px}
+.gift-recv-badge{display:inline-block;background:var(--teal-l);color:var(--teal);border:1px solid rgba(26,110,88,.3);font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;white-space:nowrap;vertical-align:middle;margin-left:3px}
+#gift-modal-overlay{display:none;position:fixed;inset:0;background:rgba(24,17,10,.65);z-index:600;align-items:center;justify-content:center;padding:16px}
+#gift-modal-overlay.open{display:flex}
+#gift-modal-panel{background:var(--white);border-radius:var(--rl);width:100%;max-width:460px;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-lg)}
+.gift-recipient-item{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none}
+.gift-recipient-item:hover{background:var(--cream2)}
+.gift-recipient-item.selected{background:#fdf8ea}
+.gift-recipient-item input[type="checkbox"]{width:16px;height:16px;accent-color:var(--gold-d);flex-shrink:0;pointer-events:none}
+#gift-setting-bar{border-radius:var(--r);padding:7px 12px;margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px solid var(--border)}
 /* ── ローディング・空 ── */
 #loading{text-align:center;padding:48px;color:var(--ink3)}
 .spinner{width:32px;height:32px;border:3px solid var(--cream3);border-top-color:var(--gold);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px}
@@ -329,16 +340,24 @@ input,select{font-family:var(--sans)}
 <!-- アプリ -->
 <div id="app">
   <div class="topbar">
-    <span class="top-brand">🥃 テキーラ道場</span>
+    <div style="text-align:center;font-family:var(--serif);font-size:17px;color:var(--gold-l);letter-spacing:.1em">🥃 テキーラ道場</div>
     <div class="top-right">
-      <a href="checkin.html" class="top-back">👥 来場者一覧</a>
-      <a href="admin.html" class="top-back">⚙ 管理</a>
-      <a href="home.html" class="top-back">🏠 ホーム</a>
-      <button class="top-logout" onclick="auth.signOut()">ログアウト</button>
+      <a href="home.html" class="top-back">← ホーム</a>
+      <a href="checkin.html" class="top-back">来場一覧</a>
+      <button class="top-logout" onclick="auth.signOut()" style="margin-left:auto">ログアウト</button>
     </div>
   </div>
 
   <div class="content">
+    <!-- 来場者クイック選択 -->
+    <div id="vis-quick-bar" style="display:none;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:12px 14px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:11px;font-weight:600;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase">来場者一覧</div>
+        <button class="btn bp sm" id="btn-quick-order" onclick="openOrderWithSelected()">＋ 新規注文</button>
+      </div>
+      <div id="vis-quick-list"></div>
+    </div>
+
     <div class="page-title">注文一覧</div>
     <div id="loading"><div class="spinner"></div><div>読み込み中...</div></div>
 
@@ -424,6 +443,11 @@ input,select{font-family:var(--sans)}
 
       <!-- STEP1 -->
       <div id="step1" style="display:none">
+        <!-- 奢り設定バー -->
+        <div id="gift-setting-bar">
+          <span id="gift-info-text" style="font-size:12px;flex:1;color:var(--ink3)">奢りなし（通常注文）</span>
+          <button class="btn bs sm" onclick="openGiftModal()">🎁 奢り設定</button>
+        </div>
         <div class="blind-check-area">
           <input type="checkbox" id="blind-check" onchange="toggleBlindMode()" disabled>
           <label for="blind-check">🎭 ブラインドテイスティング</label>
@@ -547,8 +571,9 @@ input,select{font-family:var(--sans)}
           <input type="checkbox" id="blind-check-s2" onchange="toggleBlindModeS2()" style="width:16px;height:16px;accent-color:var(--purple);">
           <label for="blind-check-s2" style="font-size:13px;color:var(--ink2);cursor:pointer;">🎭 ブラインドテイスティング</label>
         </div>
+        <div id="confirm-gift-info" style="display:none;background:#fdf0d0;border-radius:var(--r);padding:8px 12px;margin:6px 0;font-size:12px;color:var(--gold-d)"></div>
         <div class="confirm-total">
-          <span style="font-size:13px;color:var(--ink3)">合計（1人分）</span>
+          <span style="font-size:13px;color:var(--ink3)" id="confirm-total-label">合計（1人分）</span>
           <span style="font-size:16px;font-weight:600;color:var(--gold-d)" id="confirm-total"></span>
         </div>
         <div class="nav-buttons">
@@ -566,6 +591,39 @@ input,select{font-family:var(--sans)}
         </div>
         <button class="btn bp btn-full" onclick="closeOrderModal()">注文一覧に戻る</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- 奢り相手選択モーダル -->
+<div id="gift-modal-overlay">
+  <div id="gift-modal-panel">
+    <div style="padding:14px 16px 10px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--white);z-index:1">
+      <div style="font-size:15px;font-weight:600;color:var(--gold-d)">🎁 奢り相手を選択</div>
+      <div style="font-size:11px;color:var(--ink3);margin-top:3px">複数選択可。選択した全員に、同じ商品を奢ります。</div>
+    </div>
+    <div style="overflow-y:auto;flex:1">
+      <div id="gift-visitor-section">
+        <div style="font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--ink3);padding:7px 14px 4px;text-transform:uppercase;background:var(--cream2);border-bottom:1px solid var(--border)">来場中の来場者</div>
+        <div id="gift-visitor-list"></div>
+      </div>
+      <div id="gift-staff-section" style="display:none">
+        <div style="font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--ink3);padding:7px 14px 4px;text-transform:uppercase;background:var(--cream2);border-bottom:1px solid var(--border)">出勤中のスタッフ（来場外）</div>
+        <div id="gift-staff-list"></div>
+      </div>
+      <div id="gift-empty-msg" style="display:none;padding:24px;text-align:center;font-size:13px;color:var(--ink3)">奢り相手となる来場者・スタッフがいません</div>
+    </div>
+    <div style="padding:8px 14px;border-top:1px solid var(--border);background:var(--cream2)">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink2)">
+        <input type="checkbox" id="gift-payer-drinks" checked style="width:15px;height:15px;accent-color:var(--gold-d)">
+        奢り主も同じ商品を飲む
+      </label>
+    </div>
+    <div style="padding:12px 14px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center">
+      <button class="btn bs sm" onclick="clearGiftModal()">選択クリア</button>
+      <div style="flex:1"></div>
+      <button class="btn bs" onclick="closeGiftModal()">キャンセル</button>
+      <button class="btn bp" onclick="applyGift()">決定</button>
     </div>
   </div>
 </div>
@@ -645,7 +703,7 @@ let currentSessionBT=null; // 営業時刻用セッション情報
 let blindResultsSet=new Set();
 let masterData={tequila:[],other:[],misc:[],set:[],cocktail:[],subMaterials:[]};
 let blindMarks=[];
-let flow={visits:[],cart:[],isBlind:false};
+let flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false,giftPayerDrinks:true};
 let resultTarget=null;
 let currentPTab='tequila', currentNOM='', currentLotType='1', currentInitial='', currentClasses=new Set(), currentAbv='', currentAdditive='', pendingProduct=null, currentProductSort='';
 
@@ -683,6 +741,7 @@ async function init(){
   document.getElementById('loading').style.display='none';
   document.getElementById('content-area').style.display='block';
   renderOrderList();
+  renderQuickVisitorList();
 
   // checkin.htmlから来場者指定で遷移してきた場合はSTEP1へ直接ジャンプ
   var params=new URLSearchParams(window.location.search);
@@ -825,8 +884,9 @@ async function loadTodayData(){
 }
 
 function calcAmt(o){
-  if(o.productType==='tequila'||o.productType==='other')return Math.round((o.unitPrice*o.qty)/10);
-  return(o.unitPrice||0)*(o.qty||0);
+  const mult=o.isGiftPayer?(((o.giftCount||0))+(o.giftPayerDrinks?1:0)):1;
+  if(o.productType==='tequila'||o.productType==='other')return Math.round((o.unitPrice*o.qty)/10)*mult;
+  return(o.unitPrice||0)*(o.qty||0)*mult;
 }
 
 // ━━━ 一覧描画 ━━━
@@ -915,8 +975,10 @@ function buildBatchCard(b,mode){
     const valid=rep.orders.filter(o=>o.served!==0);
     const itemsHtml=valid.map(o=>{
       const mk=o.blindId===1&&o.blindMarkId?`<span style="font-size:14px;margin-right:4px">${markDisplay(o.blindMarkId)}</span>`:'';
-      const actBtns=showActions?`<button class="srv-edit-btn" onclick="event.stopPropagation();editOrderItem('${esc(o.id)}')">編集</button><button class="srv-cancel-btn" onclick="event.stopPropagation();cancelOrderItem('${esc(o.id)}')">✕</button>`:'';
-      return`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span>${actBtns}</div>`;
+      const giftBadge=o.isGiftPayer?`<span class="gift-badge">奢</span>`:o.isGiftRecipient?`<span class="gift-recv-badge">奢られ</span>`:'';
+      const editBtn=showActions?(o.isGiftPayer||o.isGiftRecipient?`<button class="srv-edit-btn" disabled style="opacity:.3" title="奢り注文は編集不可">編集</button>`:`<button class="srv-edit-btn" onclick="event.stopPropagation();editOrderItem('${esc(o.id)}')">編集</button>`):'';
+      const cancelBtn=showActions?`<button class="srv-cancel-btn" onclick="event.stopPropagation();cancelOrderItem('${esc(o.id)}')">✕</button>`:'';
+      return`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}${giftBadge}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span>${editBtn}${cancelBtn}</div>`;
     }).join('');
     memberRows=`<div class="batch-member-items open" id="bmi-${rep.gid}">${itemsHtml}</div>`;
   }else{
@@ -927,8 +989,10 @@ function buildBatchCard(b,mode){
       const gTotal=g.total;
       const itemsHtml=valid.map(o=>{
         const mk=o.blindId===1&&o.blindMarkId?`<span style="font-size:14px;margin-right:4px">${markDisplay(o.blindMarkId)}</span>`:'';
-        const actBtns=showActions?`<button class="srv-edit-btn" onclick="event.stopPropagation();editOrderItem('${esc(o.id)}')">編集</button><button class="srv-cancel-btn" onclick="event.stopPropagation();cancelOrderItem('${esc(o.id)}')">✕</button>`:'';
-        return`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span>${actBtns}</div>`;
+        const giftBadge=o.isGiftPayer?`<span class="gift-badge">奢</span>`:o.isGiftRecipient?`<span class="gift-recv-badge">奢られ</span>`:'';
+        const editBtn=showActions?(o.isGiftPayer||o.isGiftRecipient?`<button class="srv-edit-btn" disabled style="opacity:.3" title="奢り注文は編集不可">編集</button>`:`<button class="srv-edit-btn" onclick="event.stopPropagation();editOrderItem('${esc(o.id)}')">編集</button>`):'';
+        const cancelBtn=showActions?`<button class="srv-cancel-btn" onclick="event.stopPropagation();cancelOrderItem('${esc(o.id)}')">✕</button>`:'';
+        return`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}${giftBadge}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span>${editBtn}${cancelBtn}</div>`;
       }).join('');
       return`<div class="batch-member">
         <div class="batch-member-header" onclick="toggleMemberItems('bmi-${g.gid}')">
@@ -1605,8 +1669,9 @@ async function saveResult(){
 
 // ━━━ 注文作成 ━━━
 function openOrderModal(){
-  flow={visits:[],cart:[],isBlind:false};
+  flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false,giftPayerDrinks:true};
   document.getElementById('blind-check').checked=false;
+  updateGiftBar();
   document.getElementById('order-modal').classList.add('open');
   showStep(0);
   // allVisitsが未ロードの場合は再ロードしてから表示
@@ -1626,7 +1691,7 @@ function showStep(n){
 // STEP0
 function renderVisitors(){
   const c=document.getElementById('visitor-list-container');
-  const active=allVisits.filter(v=>!v.checkoutTime);
+  const active=allVisits.filter(v=>!v.checkoutTime&&!v.isStaff);
   if(!active.length){c.innerHTML='<div class="empty">在店中の来場者がいません</div>';return;}
   c.innerHTML=active.map(v=>{
     const m=v.memberId&&allMembers[v.memberId];
@@ -1659,6 +1724,9 @@ function goStep0(){showStep(0);renderVisitors();}
 // STEP1
 async function goStep1(){
   if(!flow.visits.length)return;
+  // 奢りリセット（payerが変わった場合に備えて）
+  flow.giftTo=[];flow.isGift=false;flow.giftPayerDrinks=true;
+  updateGiftBar();
   // DOMを先に表示してからデータロード・リスト描画
   showStep(1);
   renderCart();
@@ -2096,9 +2164,13 @@ function cartAmt(o){
 
 function renderCart(){
   const items=flow.cart;
-  const total=items.reduce((s,o)=>s+cartAmt(o),0);
+  const perPersonTotal=items.reduce((s,o)=>s+cartAmt(o),0);
+  const giftPeople=flow.isGift&&flow.giftTo.length>0
+    ?(flow.giftTo.length+(flow.giftPayerDrinks?1:0)):0;
   document.getElementById('cart-count').textContent=items.length+'件';
-  document.getElementById('cart-total').textContent='¥'+total.toLocaleString();
+  document.getElementById('cart-total').textContent=giftPeople>0
+    ?`¥${perPersonTotal.toLocaleString()}×${giftPeople}人=¥${(perPersonTotal*giftPeople).toLocaleString()}`
+    :'¥'+perPersonTotal.toLocaleString();
   const el=document.getElementById('cart-items');
   if(!items.length){el.innerHTML='';return;}
   const isBlind=document.getElementById('blind-check').checked;
@@ -2188,20 +2260,33 @@ function goStep2(){
     const mark=o.blindMarkId?`<span style="font-size:15px;margin-right:2px">${markDisplay(o.blindMarkId)}</span>`:'';
     return`<div class="confirm-item">${mark}<span style="flex:1;font-size:13px">${esc(o.productName)}</span><span style="font-size:12px;color:var(--ink3)">${o.qty}${o.unit}</span><span style="font-size:13px;color:var(--gold-d);min-width:55px;text-align:right;font-weight:600">¥${cartAmt(o).toLocaleString()}</span></div>`;
   }).join('');
-  const suffix=flow.visits.length>1?` <span style="font-size:12px;color:var(--ink3)">（×${flow.visits.length}人分 = ¥${(total*flow.visits.length).toLocaleString()}）</span>`:'';
-  document.getElementById('confirm-total').innerHTML=`¥${total.toLocaleString()}${suffix}`;
+  const giftInfoEl=document.getElementById('confirm-gift-info');
+  const totalLabelEl=document.getElementById('confirm-total-label');
+  if(flow.isGift&&flow.giftTo.length>0){
+    const giftN=flow.giftTo.length;
+    const totalPeople=giftN+(flow.giftPayerDrinks?1:0);
+    const giftNames=flow.giftTo.map(r=>r.name).join('、');
+    const payerNote=flow.giftPayerDrinks?'（奢り主含む合計'+totalPeople+'人）':'（奢り主分除く）';
+    giftInfoEl.style.display='block';
+    giftInfoEl.textContent=`🎁 ${giftN}人への奢り: ${giftNames} ${payerNote}`;
+    totalLabelEl.textContent='合計（1人分）';
+    document.getElementById('confirm-total').innerHTML=`¥${total.toLocaleString()}<span style="font-size:12px;color:var(--ink3)">×${totalPeople}人=¥${(total*totalPeople).toLocaleString()}</span>`;
+  }else{
+    giftInfoEl.style.display='none';
+    const suffix=flow.visits.length>1?` <span style="font-size:12px;color:var(--ink3)">（×${flow.visits.length}人分 = ¥${(total*flow.visits.length).toLocaleString()}）</span>`:'';
+    totalLabelEl.textContent='合計（1人分）';
+    document.getElementById('confirm-total').innerHTML=`¥${total.toLocaleString()}${suffix}`;
+  }
 }
 
 // 確定
 async function confirmOrder(){
   if(!flow.visits.length||!flow.cart.length)return;
-  // 営業時刻でorderTimeを記録（日またぎ対応）
   const orderTime=AuthRole.nowBusinessTime(currentSessionBT&&currentSessionBT.openTime);
   const isBlind=document.getElementById('blind-check').checked;
   const todayOrders=allGroups.flatMap(g=>g.orders);
   let maxSeq=todayOrders.reduce((m,o)=>{const s=parseInt(o.id.slice(6))||0;return Math.max(m,s);},0);
 
-  // batchId採番（当日最大+1、3桁）
   const maxBatch=allGroups.reduce((m,g)=>{
     const bid=g.batchId||'';
     if(bid.slice(0,6)!==todayStr)return m;
@@ -2209,45 +2294,112 @@ async function confirmOrder(){
   },0);
   const batchId=todayStr+String(maxBatch+1).padStart(3,'0');
 
+  const isGift=flow.isGift&&flow.giftTo.length>0;
+  const giftRecipients=isGift?flow.giftTo.filter(r=>r.visitKey):[];
+  const giftCount=isGift?flow.giftTo.length:0;
+  const giftPayerDrinks=isGift?!!flow.giftPayerDrinks:false;
+
   try{
-    const batch=db.batch();
-    // 同時注文の全員・全アイテムで共通のorderGroupIdを使う（= batchId）
-    for(const visit of flow.visits){
-      // 各人ごとに個別のorderGroupIdを採番（visitKey + 当日グループ連番2桁）
+    const fsBatch=db.batch();
+
+    // orderGroupIdを全参加者分まとめて採番（書き込み前に確定）
+    const orderGroupIdMap={};
+    const allParticipants=[...flow.visits.map(v=>v.id),...giftRecipients.map(r=>r.visitKey)];
+    for(const vk of allParticipants){
       const usedSeqs=allGroups.flatMap(g=>g.orders||[])
-        .filter(o=>o.visitKey===visit.id)
-        .map(o=>parseInt((o.orderGroupId||'').slice(visit.id.length))||0);
+        .filter(o=>o.visitKey===vk)
+        .map(o=>parseInt((o.orderGroupId||'').slice(vk.length))||0);
       const maxGSeq=usedSeqs.length?Math.max(...usedSeqs):0;
-      const orderGroupId=visit.id+String(maxGSeq+1).padStart(2,'0');
+      orderGroupIdMap[vk]=vk+String(maxGSeq+1).padStart(2,'0');
+    }
+
+    for(const visit of flow.visits){
+      const orderGroupId=orderGroupIdMap[visit.id];
       flow.cart.forEach((item,i)=>{
         maxSeq++;
-        // テキーラはbottleEs優先で保存
         const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
         const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):item.productName;
-        batch.set(db.collection('orders').doc(todayStr+String(maxSeq).padStart(3,'0')),{
+        const docId=todayStr+String(maxSeq).padStart(3,'0');
+        fsBatch.set(db.collection('orders').doc(docId),{
           orderTime,customerId:visit.memberId||null,visitKey:visit.id,orderGroupId,batchId,
           itemSeq:i+1,productCode:item.productId,productName:saveName,productType:item.productType,
           qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,
-          blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:1
+          blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:1,
+          ...(isGift?{isGiftPayer:true,giftCount,giftPayerDrinks,giftTo:flow.giftTo}:{})
         });
         if(item.productType==='cocktail'&&item._cocktailId){
-          const coId=todayStr+String(maxSeq).padStart(3,'0');
-          batch.set(db.collection('cocktailOrders').doc(coId),{
-            orderId:coId,
-            cocktailId:item._cocktailId,
+          fsBatch.set(db.collection('cocktailOrders').doc(docId),{
+            orderId:docId,cocktailId:item._cocktailId,
             baseProductCode:item._baseProductCode||null,
             baseUnitPrice10ml:item._baseUnitPrice10ml||0,
             totalAmount:item._totalAmount||0
           });
         }
+        // 奢り受取人レコード（visitKeyある人のみ）
+        for(const recipient of giftRecipients){
+          maxSeq++;
+          const recDocId=todayStr+String(maxSeq).padStart(3,'0');
+          const recVisit=allVisits.find(v=>v.id===recipient.visitKey);
+          fsBatch.set(db.collection('orders').doc(recDocId),{
+            orderTime,customerId:recVisit?.memberId||null,
+            visitKey:recipient.visitKey,
+            orderGroupId:orderGroupIdMap[recipient.visitKey],
+            batchId,itemSeq:i+1,
+            productCode:item.productId,productName:saveName,productType:item.productType,
+            qty:item.qty,unit:item.unit,unitPrice:0,
+            blindId:0,blindMarkId:null,served:1,
+            isGiftRecipient:true,giftFromVisitKey:visit.id
+          });
+        }
       });
     }
-    await batch.commit();
+    await fsBatch.commit();
     showStep(3);
+    const giftSuffix=isGift?` (+奢り${giftCount}人)`:'';
     document.getElementById('complete-sub').textContent=
-      `${flow.visits.length}人 × ${flow.cart.length}品 登録完了 (batch: ${batchId})`;
+      `${flow.visits.length}人 × ${flow.cart.length}品 登録完了 (batch: ${batchId})${giftSuffix}`;
     await loadTodayData();renderOrderList();
   }catch(e){showToast('エラー: '+e.message,'error');}
+}
+
+function renderQuickVisitorList(){
+  var bar=document.getElementById('vis-quick-bar');
+  var el=document.getElementById('vis-quick-list');
+  if(!bar||!el)return;
+  var active=allVisits.filter(function(v){return !v.checkoutTime&&!v.isStaff;});
+  if(!active.length){bar.style.display='none';return;}
+  bar.style.display='block';
+  el.innerHTML=active.map(function(v){
+    var m=v.memberId&&allMembers[v.memberId];
+    var name=m?(m.nickname||m.name||v.memberId):'ゲスト';
+    return '<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--cream);border:1px solid var(--border);border-radius:var(--r);margin-bottom:4px;cursor:pointer">'
+      +'<input type="checkbox" class="qv-cb" data-vid="'+v.id+'" style="width:16px;height:16px;accent-color:var(--gold-d);flex-shrink:0">'
+      +'<span style="font-size:13px;font-weight:500;flex:1">'+esc(name)+'</span>'
+      +'<span style="font-size:11px;color:var(--ink3)">'+(v.visitTime?v.visitTime.slice(0,2)+':'+v.visitTime.slice(2,4):'')+'</span>'
+      +'</label>';
+  }).join('');
+}
+
+function openOrderWithSelected(){
+  var cbs=document.querySelectorAll('.qv-cb:checked');
+  if(cbs.length===0){openOrderModal();return;}
+  flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false,giftPayerDrinks:true};
+  document.getElementById('blind-check').checked=false;
+  Array.prototype.forEach.call(cbs,function(cb){
+    var v=allVisits.find(function(x){return x.id===cb.dataset.vid;});
+    if(v&&!flow.visits.find(function(x){return x.id===v.id;}))flow.visits.push(v);
+  });
+  if(!flow.visits.length){openOrderModal();return;}
+  document.getElementById('order-modal').classList.add('open');
+  updateGiftBar();
+  showStep(1);
+  renderCart();
+  if(!masterData.tequila.length){
+    document.getElementById('product-list-container').innerHTML='<div class="empty">読み込み中...</div>';
+    loadMasters().then(function(){switchPTab('tequila',document.querySelectorAll('.ptab')[0]);});
+  }else{
+    switchPTab('tequila',document.querySelectorAll('.ptab')[0]);
+  }
 }
 
 // ━━━ ユーティリティ ━━━
@@ -2313,6 +2465,113 @@ function togglePicker(panelId){
 document.addEventListener('click',()=>{
   document.querySelectorAll('.mark-picker-panel.open').forEach(p=>p.classList.remove('open'));
 });
+// ━━━ 奢りシステム ━━━
+function updateGiftBar(){
+  const bar=document.getElementById('gift-setting-bar');
+  const txt=document.getElementById('gift-info-text');
+  if(!bar||!txt)return;
+  if(flow.isGift&&flow.giftTo.length>0){
+    const names=flow.giftTo.map(r=>r.name).join('、');
+    const totalPeople=flow.giftTo.length+(flow.giftPayerDrinks?1:0);
+    const drinkNote=flow.giftPayerDrinks?'':'・奢り主分除く';
+    txt.textContent=`🎁 奢り: ${names}（合計${totalPeople}人${drinkNote}）`;
+    txt.style.color='var(--gold-d)';
+    bar.style.background='#fdf8ea';
+    bar.style.borderColor='rgba(200,146,30,.4)';
+  }else{
+    txt.textContent='奢りなし（通常注文）';
+    txt.style.color='var(--ink3)';
+    bar.style.background='';
+    bar.style.borderColor='';
+  }
+}
+
+async function openGiftModal(){
+  document.getElementById('gift-modal-overlay').classList.add('open');
+  await renderGiftModal();
+}
+
+async function renderGiftModal(){
+  const payerVisitKeys=new Set(flow.visits.map(v=>v.id));
+  const otherVisitors=allVisits.filter(v=>!v.checkoutTime&&!payerVisitKeys.has(v.id));
+  const visitorSec=document.getElementById('gift-visitor-section');
+  const visitorListEl=document.getElementById('gift-visitor-list');
+  if(otherVisitors.length){
+    visitorSec.style.display='block';
+    visitorListEl.innerHTML=otherVisitors.map(v=>{
+      const m=v.memberId&&allMembers[v.memberId];
+      const name=m?(m.nickname||m.name):`ゲスト（${v.id}）`;
+      const isSel=flow.giftTo.some(r=>r.visitKey===v.id);
+      return`<div class="gift-recipient-item${isSel?' selected':''}" onclick="toggleGiftItem(this)" data-visit-key="${esc(v.id)}" data-member-id="${esc(v.memberId||'')}" data-name="${esc(name)}">
+        <input type="checkbox"${isSel?' checked':''}>
+        <span style="flex:1;font-size:13px;font-weight:500">${esc(name)}</span>
+        <span style="font-size:11px;color:var(--ink3)">${v.visitTime?v.visitTime.slice(0,2)+':'+v.visitTime.slice(2,4):''}</span>
+      </div>`;
+    }).join('');
+  }else{
+    visitorSec.style.display='none';
+  }
+
+  // 出勤中スタッフ（isStaff visitがある人・payer除く）
+  const staffVisitors=allVisits.filter(v=>v.isStaff&&!v.checkoutTime&&!payerVisitKeys.has(v.id));
+  const staffSec=document.getElementById('gift-staff-section');
+  const staffListEl=document.getElementById('gift-staff-list');
+  if(staffVisitors.length){
+    staffSec.style.display='block';
+    staffListEl.innerHTML=staffVisitors.map(v=>{
+      const m=v.memberId&&allMembers[v.memberId];
+      const name=m?(m.nickname||m.name||v.memberId):v.memberId||v.id;
+      const isSel=flow.giftTo.some(r=>r.visitKey===v.id);
+      return`<div class="gift-recipient-item${isSel?' selected':''}" onclick="toggleGiftItem(this)" data-visit-key="${esc(v.id)}" data-member-id="${esc(v.memberId||'')}" data-name="${esc(name)}">
+        <input type="checkbox"${isSel?' checked':''}>
+        <span style="flex:1;font-size:13px;font-weight:500">${esc(name)}</span>
+        <span style="font-size:11px;color:var(--ink3)">スタッフ</span>
+      </div>`;
+    }).join('');
+  }else{
+    staffSec.style.display='none';
+  }
+
+  // 奢り主が飲むかチェックボックスを現在の状態に同期
+  const pdCb=document.getElementById('gift-payer-drinks');
+  if(pdCb)pdCb.checked=flow.giftPayerDrinks!==false;
+
+  document.getElementById('gift-empty-msg').style.display=(otherVisitors.length||staffVisitors.length)?'none':'block';
+}
+
+function closeGiftModal(){
+  document.getElementById('gift-modal-overlay').classList.remove('open');
+}
+
+function clearGiftModal(){
+  document.querySelectorAll('#gift-modal-overlay .gift-recipient-item').forEach(el=>{
+    el.classList.remove('selected');
+    const cb=el.querySelector('input[type="checkbox"]');
+    if(cb)cb.checked=false;
+  });
+}
+
+function toggleGiftItem(itemEl){
+  const isSel=itemEl.classList.contains('selected');
+  itemEl.classList.toggle('selected',!isSel);
+  const cb=itemEl.querySelector('input[type="checkbox"]');
+  if(cb)cb.checked=!isSel;
+}
+
+function applyGift(){
+  const selected=[];
+  document.querySelectorAll('#gift-modal-overlay .gift-recipient-item.selected').forEach(el=>{
+    selected.push({visitKey:el.dataset.visitKey||'',memberId:el.dataset.memberId||'',name:el.dataset.name||''});
+  });
+  flow.giftTo=selected;
+  flow.isGift=selected.length>0;
+  const pdCb=document.getElementById('gift-payer-drinks');
+  flow.giftPayerDrinks=pdCb?pdCb.checked:true;
+  closeGiftModal();
+  updateGiftBar();
+  renderCart();
+}
+
 let toastTimer;
 function showToast(msg,type='info'){
   const el=document.getElementById('toast');
