@@ -216,13 +216,21 @@ async function loadAttendance(){
       if(ra!==rb)return ra-rb;
       return (a.nickname||a.name||'').localeCompare(b.nickname||b.name||'');
     });
-    // ログイン中ユーザーを特定（uid or email で照合）
+    // ログイン中ユーザーを特定（authUid / uid / email → staffRoles の順で照合）
     selfMemberId=null;
     if(currentUser){
       var selfMatch=allStaff.find(function(m){
-        return m.uid===currentUser.uid || m.email===currentUser.email;
+        return m.authUid===currentUser.uid || m.uid===currentUser.uid || m.email===currentUser.email;
       });
-      if(selfMatch) selfMemberId=selfMatch.id||selfMatch.memberId;
+      if(selfMatch){
+        selfMemberId=selfMatch.id||selfMatch.memberId;
+      } else {
+        // staffRoles/{uid} に memberId が入っている場合のフォールバック
+        try{
+          var srDoc=await db.collection('staffRoles').doc(currentUser.uid).get();
+          if(srDoc.exists&&srDoc.data().memberId) selfMemberId=srDoc.data().memberId;
+        }catch(e){}
+      }
     }
     todayAtts={};
     attSnap.docs.forEach(function(d){
@@ -240,8 +248,7 @@ function renderSelfCard(){
   var wrap=g('self-card-wrap');
   if(!selfMemberId){wrap.innerHTML='';return;}
   var selfMem=allStaff.find(function(m){return (m.id||m.memberId)===selfMemberId;});
-  if(!selfMem){wrap.innerHTML='';return;}
-  var name=selfMem.nickname||selfMem.name||selfMemberId;
+  var name=selfMem?(selfMem.nickname||selfMem.name||selfMemberId):(currentUser&&currentUser.email?currentUser.email:selfMemberId);
   var att=todayAtts[selfMemberId];
   var aData=att?att.data:null;
   var statusHtml,btnHtml;
