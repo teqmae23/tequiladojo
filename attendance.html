@@ -70,6 +70,10 @@ input{font-family:var(--sans)}
 .sm{padding:5px 10px;font-size:11px}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 
+.self-card{background:var(--white);border:2px solid var(--gold);border-radius:var(--rl);margin-bottom:16px;overflow:hidden;box-shadow:0 2px 12px rgba(200,146,30,.12)}
+.self-card-head{padding:10px 14px 0;font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--gold-d);text-transform:uppercase}
+.self-btn-row{display:flex;gap:8px;padding:10px 14px 14px}
+.self-btn{flex:1;padding:12px;font-size:15px;font-weight:600;border-radius:var(--r)}
 .att-card{background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);margin-bottom:8px;overflow:hidden}
 .att-main{display:flex;align-items:center;gap:10px;padding:12px 14px}
 .att-name{font-size:15px;font-weight:500;color:var(--ink);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -124,6 +128,7 @@ input{font-family:var(--sans)}
         <button class="btn bs sm" style="margin-left:8px" onclick="loadAttendance()">🔄 更新</button>
       </div>
     </div>
+    <div id="self-card-wrap"></div>
     <div id="att-list">
       <div style="text-align:center;padding:32px;color:var(--ink3);font-size:13px">読み込み中...</div>
     </div>
@@ -166,6 +171,7 @@ function toast(msg,type){
 // ── 認証 ─────────────────────────────────────────────────────────
 AuthRole.requireStaff(auth,
   function(user, role){
+    currentUser=user;
     g('login-screen').style.display='none';
     g('app').style.display='flex';
     var d=new Date();
@@ -193,6 +199,8 @@ g('btn-logout').addEventListener('click',function(){auth.signOut();});
 // ── データ ───────────────────────────────────────────────────────
 var allStaff=[];
 var todayAtts={};  // memberId → attendance doc data & id
+var currentUser=null;
+var selfMemberId=null;
 
 async function loadAttendance(){
   var today=todayStr6();
@@ -208,15 +216,53 @@ async function loadAttendance(){
       if(ra!==rb)return ra-rb;
       return (a.nickname||a.name||'').localeCompare(b.nickname||b.name||'');
     });
+    // ログイン中ユーザーを特定（uid or email で照合）
+    selfMemberId=null;
+    if(currentUser){
+      var selfMatch=allStaff.find(function(m){
+        return m.uid===currentUser.uid || m.email===currentUser.email;
+      });
+      if(selfMatch) selfMemberId=selfMatch.id||selfMatch.memberId;
+    }
     todayAtts={};
     attSnap.docs.forEach(function(d){
       var dd=d.data();
       todayAtts[dd.memberId]={id:d.id,data:dd};
     });
+    renderSelfCard();
     renderList();
   }catch(e){
     list.innerHTML='<div style="color:var(--red);padding:16px">読み込み失敗: '+esc(e.message)+'</div>';
   }
+}
+
+function renderSelfCard(){
+  var wrap=g('self-card-wrap');
+  if(!selfMemberId){wrap.innerHTML='';return;}
+  var selfMem=allStaff.find(function(m){return (m.id||m.memberId)===selfMemberId;});
+  if(!selfMem){wrap.innerHTML='';return;}
+  var name=selfMem.nickname||selfMem.name||selfMemberId;
+  var att=todayAtts[selfMemberId];
+  var aData=att?att.data:null;
+  var statusHtml,btnHtml;
+  if(aData&&aData.checkInTime&&!aData.checkOutTime){
+    var inT=fmtTime(aData.checkInTime);
+    statusHtml='<span style="color:var(--teal);font-size:13px;font-weight:500">出勤中</span>'
+      +'<span style="color:var(--ink3);font-size:12px;font-family:var(--mono);margin-left:6px">'+esc(inT)+'〜</span>';
+    btnHtml='<button class="btn bs self-btn" onclick="checkOut(\''+esc(selfMemberId)+'\');renderSelfCard()">退勤する</button>';
+  }else if(aData&&aData.checkOutTime){
+    var inT2=fmtTime(aData.checkInTime),outT=fmtTime(aData.checkOutTime);
+    statusHtml='<span style="color:var(--ink3);font-size:13px;font-weight:500">退勤済</span>'
+      +'<span style="color:var(--ink3);font-size:12px;font-family:var(--mono);margin-left:6px">'+esc(inT2)+'→'+esc(outT)+'</span>';
+    btnHtml='<span style="font-size:12px;color:var(--ink3);padding:12px 0">本日の勤務は終了しています</span>';
+  }else{
+    statusHtml='<span style="color:var(--ink3);font-size:13px">未出勤</span>';
+    btnHtml='<button class="btn bt self-btn" onclick="checkIn(\''+esc(selfMemberId)+'\');renderSelfCard()">出勤する</button>';
+  }
+  wrap.innerHTML='<div class="self-card">'
+    +'<div class="self-card-head">👤 '+esc(name)+'　'+statusHtml+'</div>'
+    +'<div class="self-btn-row">'+btnHtml+'</div>'
+    +'</div>';
 }
 
 function renderList(){
@@ -280,6 +326,7 @@ async function checkIn(memberId){
       checkOutTime:null
     });
     todayAtts[memberId]={id:docId,data:{memberId:memberId,date:today,checkInTime:now,checkOutTime:null}};
+    renderSelfCard();
     renderList();
     toast('出勤しました（'+fmtTime(now)+'）');
   }catch(e){toast('出勤処理失敗: '+e.message,'err');}
@@ -292,6 +339,7 @@ async function checkOut(memberId){
   try{
     await db.collection('attendance').doc(att.id).update({checkOutTime:now});
     todayAtts[memberId].data.checkOutTime=now;
+    renderSelfCard();
     renderList();
     toast('退勤しました（'+fmtTime(now)+'）');
   }catch(e){toast('退勤処理失敗: '+e.message,'err');}
