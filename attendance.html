@@ -172,6 +172,7 @@ function toast(msg,type){
 AuthRole.requireStaff(auth,
   function(user, role){
     currentUser=user;
+    currentRole=role;
     g('login-screen').style.display='none';
     g('app').style.display='flex';
     var d=new Date();
@@ -200,6 +201,7 @@ g('btn-logout').addEventListener('click',function(){auth.signOut();});
 var allStaff=[];
 var todayAtts={};  // memberId → attendance doc data & id
 var currentUser=null;
+var currentRole=null;
 var selfMemberId=null;
 
 async function loadAttendance(){
@@ -274,12 +276,17 @@ function renderSelfCard(){
 
 function renderList(){
   var list=g('att-list');
+  var isOwner=currentRole==='owner';
   if(!allStaff.length){
     list.innerHTML='<div style="text-align:center;padding:32px;color:var(--ink3)">スタッフが登録されていません</div>';
     return;
   }
-  list.innerHTML=allStaff.map(function(m){
+  var header=isOwner
+    ?'<div style="font-size:11px;color:var(--ink3);margin-bottom:8px;padding-left:2px">スタッフ全員の出退勤を管理できます</div>'
+    :'<div style="font-size:11px;color:var(--ink3);margin-bottom:8px;padding-left:2px">本日の出勤状況（自分の操作は上のカードから）</div>';
+  list.innerHTML=header+allStaff.map(function(m){
     var mid=m.id||m.memberId;
+    var isSelf=mid===selfMemberId;
     var name=m.nickname||m.name||mid;
     var roleLabel=(m.role||'').toLowerCase()==='owner'?'OWNER':'STAFF';
     var roleClass=(m.role||'').toLowerCase()==='owner'?'role-owner':'role-staff';
@@ -300,13 +307,18 @@ function renderList(){
     if(inTime&&outTime) timeStr=inTime+'→'+outTime;
     else if(inTime) timeStr=inTime+'〜';
 
+    // ownerは全員操作可能、staffは自分以外操作不可
     var actions='';
-    if(!aData||(!aData.checkInTime)){
-      actions='<button class="btn bt sm" onclick="checkIn(\''+esc(mid)+'\')">出勤</button>';
-    }else if(!aData.checkOutTime){
-      actions='<button class="btn bs sm" onclick="checkOut(\''+esc(mid)+'\')">退勤</button>';
+    if(isOwner||isSelf){
+      if(!aData||(!aData.checkInTime)){
+        actions='<button class="btn bt sm" onclick="checkIn(\''+esc(mid)+'\')">出勤</button>';
+      }else if(!aData.checkOutTime){
+        actions='<button class="btn bs sm" onclick="checkOut(\''+esc(mid)+'\')">退勤</button>';
+      }else{
+        actions='<span style="font-size:11px;color:var(--ink3)">退勤済</span>';
+      }
     }else{
-      actions='<span style="font-size:11px;color:var(--ink3)">退勤済</span>';
+      actions='<span style="font-size:11px;color:var(--ink3)">—</span>';
     }
 
     return '<div class="att-card">'
@@ -316,7 +328,7 @@ function renderList(){
         +(timeStr?'<span class="att-time">'+esc(timeStr)+'</span>':'')
         +'<span class="att-status '+statusClass+'">'+status+'</span>'
       +'</div>'
-      +'<div class="att-actions">'+actions+'</div>'
+      +(actions?'<div class="att-actions">'+actions+'</div>':'')
       +'</div>';
   }).join('');
 }
