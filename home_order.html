@@ -470,7 +470,11 @@ input,select{font-family:var(--sans)}
             </select>
           </div>
         </div>
-        <input type="text" id="product-search"<input type="text" id="product-search" class="fi" placeholder="商品名・NOMで検索..." oninput="filterProducts()">
+        <div id="product-search-row" style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
+          <input type="text" id="product-search" class="fi" placeholder="商品名・NOMで検索..." oninput="filterProducts()" style="flex:1">
+          <button class="nom-btn" id="sort-name-btn" onclick="setProductSort('name')" title="名前順">名前</button>
+          <button class="nom-btn" id="sort-nom-btn" onclick="setProductSort('nom')" title="NOM番号順">NOM</button>
+        </div>
         <!-- カクテルパネル -->
         <div id="cocktail-panel" style="display:none;">
           <input type="text" id="cocktail-search" class="fi" placeholder="カクテル名で検索..." oninput="filterCocktailList()" style="margin-bottom:8px;">
@@ -643,7 +647,7 @@ let masterData={tequila:[],other:[],misc:[],set:[],cocktail:[],subMaterials:[]};
 let blindMarks=[];
 let flow={visits:[],cart:[],isBlind:false};
 let resultTarget=null;
-let currentPTab='tequila', currentNOM='', currentLotType='1', currentInitial='', currentClasses=new Set(), currentAbv='', currentAdditive='', pendingProduct=null;
+let currentPTab='tequila', currentNOM='', currentLotType='1', currentInitial='', currentClasses=new Set(), currentAbv='', currentAdditive='', pendingProduct=null, currentProductSort='';
 
 // ━━━ 認証 ━━━
 AuthRole.requireStaff(auth,
@@ -1664,14 +1668,23 @@ async function goStep1(){
   }
   switchPTab('tequila',document.querySelectorAll('.ptab')[0]);
 }
+function setProductSort(s){
+  currentProductSort=currentProductSort===s?'':s;
+  document.getElementById('sort-name-btn').classList.toggle('active',currentProductSort==='name');
+  document.getElementById('sort-nom-btn').classList.toggle('active',currentProductSort==='nom');
+  filterProducts();
+}
 function switchPTab(type,el){
-  currentPTab=type;currentNOM='';
+  currentPTab=type;currentNOM='';currentProductSort='';
+  document.getElementById('sort-name-btn').classList.remove('active');
+  document.getElementById('sort-nom-btn').classList.remove('active');
   document.querySelectorAll('.ptab').forEach(t=>t.classList.remove('active'));
   if(el)el.classList.add('active');
   const isCocktail=type==='cocktail';
+  const showSortRow=type!=='set'&&!isCocktail;
   document.getElementById('nom-shortcuts-area').style.display=type==='tequila'?'flex':'none';
   document.getElementById('tequila-extra-filters').style.display=type==='tequila'?'flex':'none';
-  document.getElementById('product-search').style.display=(type==='set'||isCocktail)?'none':'block';
+  document.getElementById('product-search-row').style.display=(type==='set'||isCocktail)?'none':'flex';
   document.getElementById('cocktail-panel').style.display=isCocktail?'block':'none';
   document.getElementById('product-list-container').style.display=isCocktail?'none':'block';
   if(type==='tequila')renderNOMs();
@@ -1744,7 +1757,32 @@ function filterProducts(){
       return (parseFloat(a.price)||0)-(parseFloat(b.price)||0);
     });
   }
-  if(q)items=items.filter(i=>(i.bottleJa||i.bottleEs||i.bottleEn||i.name||'').toLowerCase().includes(q)||(i.brandJa||i.brandEs||'').toLowerCase().includes(q)||(i.nom||'').includes(q)||(i.id||'').toLowerCase().includes(q));
+  // 検索：数字始まり→NOM前方一致、それ以外→商品名前方一致
+  if(q){
+    if(/^\d/.test(q)){
+      items=items.filter(i=>(i.nom||'').startsWith(q));
+    }else{
+      items=items.filter(i=>{
+        const name=(i.bottleJa||i.bottleEs||i.bottleEn||i.name||'').toLowerCase();
+        const brand=(i.brandJa||i.brandEs||'').toLowerCase();
+        return name.startsWith(q)||brand.startsWith(q)||(i.id||'').toLowerCase().startsWith(q);
+      });
+    }
+  }
+  // ユーザー指定ソート（指定があればデフォルトソートを上書き）
+  if(currentProductSort==='name'){
+    items.sort((a,b)=>{
+      const na=(a.bottleEs||a.bottleJa||a.name||''),nb=(b.bottleEs||b.bottleJa||b.name||'');
+      if(na!==nb)return na.localeCompare(nb);
+      return(a.nom||'zzz').localeCompare(b.nom||'zzz',undefined,{numeric:true});
+    });
+  }else if(currentProductSort==='nom'){
+    items.sort((a,b)=>{
+      const na=a.nom||'',nb=b.nom||'';
+      if(na!==nb)return na.localeCompare(nb,undefined,{numeric:true});
+      return(a.bottleEs||a.bottleJa||a.name||'').localeCompare(b.bottleEs||b.bottleJa||b.name||'');
+    });
+  }
   if(!items.length){c.innerHTML='<div class="empty">該当なし</div>';return;}
   c.innerHTML=items.slice(0,200).map(i=>{
     const isTequila=i.type==='tequila';
