@@ -429,6 +429,15 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div style="font-size:11px;color:var(--ink3);margin-bottom:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase">コレクション別ダウンロード</div>
             <div id="backup-collection-list" style="display:flex;flex-wrap:wrap;gap:8px"></div>
           </div>
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="font-size:11px;color:var(--ink3);margin-bottom:6px;font-weight:500;letter-spacing:.06em;text-transform:uppercase">データメンテナンス</div>
+            <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#5a4000;margin-bottom:10px">
+              <strong>不要フィールド削除</strong> — セッション（sessionId・seq）、来場（visitKey）、注文（visitId）の廃止済フィールドをFirestoreから削除します。<br>
+              <span style="font-size:11px">一度のみ実行。実行前にCSVバックアップを取ることを推奨します。</span>
+            </div>
+            <button class="btn bd" style="width:fit-content" onclick="runFieldMigration()">🗑 廃止フィールドを一括削除</button>
+            <div id="migration-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -1307,7 +1316,7 @@ function doSaveVisit(onSuccess){
   var id=editId.visit||makeVisitKey(date,seq);
   if(!editId.visit&&(cache.visits.some(function(v){return v.id===id;})||_treeCurrentVisits.some(function(v){return v.id===id;}))){ toast("キー重複: visitKey「"+id+"」は既に存在します","err"); return; }
   db.collection("visits").doc(id).set({
-    visitKey:id, visitDate:date, visitTime:time||null,
+    visitDate:date, visitTime:time||null,
     seq:seq,
     memberId:gv("vis-member")||null,
     tequilaAmount:gv("vis-tequila")!==""?parseFloat(gv("vis-tequila")):null,
@@ -2311,7 +2320,6 @@ if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
     orderTime:gv("ord-time")||null,
     customerId:gv("ord-customer")||null,
     visitKey:gv("ord-visit")||null,
-    visitId:gv("ord-visit-id")||gv("ord-visit")||null,
     productType:gv("ord-type")||"tequila",
     productCode:gv("ord-product-code")||null,
     productName:gv("ord-product-name")||null,
@@ -2904,6 +2912,58 @@ async function exportAllCSV(){
   toast('全データCSVバックアップ完了（'+done+'ファイル）','success');
 }
 
+// 廃止フィールド一括削除マイグレーション
+async function runFieldMigration(){
+  if(!confirm('セッション（sessionId・seq）、来場（visitKey）、注文（visitId）の廃止フィールドをFirestoreから削除します。\n\n事前にCSVバックアップを取ることを推奨します。\n実行しますか？')) return;
+  var prog=document.getElementById('migration-progress');
+  var FD=firebase.firestore.FieldValue.delete();
+  var total={sessions:0,visits:0,orders:0};
+  try{
+    prog.textContent='セッション処理中...';
+    var sesSnap=await db.collection('sessions').get();
+    var b=db.batch(),bc=0;
+    for(var i=0;i<sesSnap.docs.length;i++){
+      var d=sesSnap.docs[i],dd=d.data();
+      if(dd.sessionId!==undefined||dd.seq!==undefined){
+        b.update(d.ref,{sessionId:FD,seq:FD});bc++;total.sessions++;
+      }
+      if(bc>=500){await b.commit();b=db.batch();bc=0;}
+    }
+    if(bc>0)await b.commit();
+
+    prog.textContent='来場データ処理中...';
+    var visSnap=await db.collection('visits').get();
+    b=db.batch();bc=0;
+    for(var j=0;j<visSnap.docs.length;j++){
+      var dv=visSnap.docs[j];
+      if(dv.data().visitKey!==undefined){
+        b.update(dv.ref,{visitKey:FD});bc++;total.visits++;
+      }
+      if(bc>=500){await b.commit();b=db.batch();bc=0;}
+    }
+    if(bc>0)await b.commit();
+
+    prog.textContent='注文データ処理中...';
+    var ordSnap=await db.collection('orders').get();
+    b=db.batch();bc=0;
+    for(var k=0;k<ordSnap.docs.length;k++){
+      var dor=ordSnap.docs[k];
+      if(dor.data().visitId!==undefined){
+        b.update(dor.ref,{visitId:FD});bc++;total.orders++;
+      }
+      if(bc>=500){await b.commit();b=db.batch();bc=0;}
+    }
+    if(bc>0)await b.commit();
+
+    var msg='完了: セッション'+total.sessions+'件 / 来場'+total.visits+'件 / 注文'+total.orders+'件から廃止フィールドを削除しました';
+    prog.textContent=msg;
+    toast(msg);
+  }catch(e){
+    prog.textContent='エラー: '+e.message;
+    toast('マイグレーション失敗: '+e.message,'err');
+  }
+}
+
 // バックアップページ表示時にボタン一覧を描画
 document.querySelector('[data-page="backup"]').addEventListener('click',function(){
   setTimeout(renderBackupCollectionList,50);
@@ -3264,7 +3324,7 @@ async function treeDoAddCompanion(batchId, templateOrd, vis){
   var newId=date+String(maxSeq+1).padStart(3,"0");
   var newOrd={
     orderDate:date, orderTime:templateOrd.orderTime||null,
-    customerId:vis.memberId||null, visitKey:vis.id, visitId:vis.id,
+    customerId:vis.memberId||null, visitKey:vis.id,
     productType:templateOrd.productType||"tequila",
     productCode:templateOrd.productCode||null, productName:templateOrd.productName||null,
     qty:templateOrd.qty||null, unit:templateOrd.unit||"ml",
