@@ -2903,14 +2903,37 @@ function renderTogetherModal(){
       }
     });
   }
-  var available=_treeCurrentVisits.filter(function(v){return usedVids.indexOf(v.id)<0;});
+  // 注文時間に来場中の来場者に絞り込む
+  var thisOrd=_treeCurrentOrders.find(function(o){return o.id===ordId;});
+  var orderHHMM=thisOrd&&thisOrd.orderTime?thisOrd.orderTime.slice(0,4):'';
+  var available=_treeCurrentVisits.filter(function(v){
+    if(usedVids.indexOf(v.id)>=0) return false;
+    if(!orderHHMM) return true; // 注文時間不明なら全員表示
+    var vt=(v.visitTime||'').slice(0,4);
+    var ct=(v.checkoutTime||'').slice(0,4);
+    if(vt&&vt>orderHHMM) return false; // 注文時間より後に来場
+    if(ct&&ct<orderHHMM) return false; // 注文時間より前に退場済み
+    return true;
+  });
+  var allOthers=_treeCurrentVisits.filter(function(v){return usedVids.indexOf(v.id)<0&&!available.some(function(a){return a.id===v.id;});});
   var sel=g("together-add-sel");
   if(sel){
-    sel.innerHTML='<option value="">選択...</option>'+
-      available.map(function(v){
+    var opts='<option value="">選択...</option>';
+    if(available.length){
+      opts+=available.map(function(v){
         var nm=treeMemName(v.memberId)||v.id;
         return '<option value="'+v.id+'">'+escHtml(nm)+' ('+v.id+')</option>';
       }).join("");
+    }
+    if(allOthers.length){
+      opts+='<optgroup label="── 注文時間外の来場者 ──">'
+        +allOthers.map(function(v){
+          var nm=treeMemName(v.memberId)||v.id;
+          return '<option value="'+v.id+'">'+escHtml(nm)+' ('+v.id+')</option>';
+        }).join("")
+        +'</optgroup>';
+    }
+    sel.innerHTML=opts;
   }
 }
 
