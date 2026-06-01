@@ -1744,6 +1744,7 @@ function setProductSort(s){
 }
 function switchPTab(type,el){
   currentPTab=type;currentNOM='';currentProductSort='';
+  if(type==='other') _defaultMl=10; // 他酒タブへ切り替え時は容量を10mlにリセット
   document.getElementById('sort-name-btn').classList.remove('active');
   document.getElementById('sort-nom-btn').classList.remove('active');
   document.querySelectorAll('.ptab').forEach(t=>t.classList.remove('active'));
@@ -1854,9 +1855,11 @@ function filterProducts(){
   if(!items.length){c.innerHTML='<div class="empty">該当なし</div>';return;}
   c.innerHTML=items.slice(0,200).map(i=>{
     const isTequila=i.type==='tequila';
-    const name=isTequila?AuthRole.bdName(i,'es'):AuthRole.bdName(i,'ja');
+    const isOther=i.type==='other';
+    const name=isTequila?AuthRole.bdName(i,'es'):isOther?(i.bottleEn||i.bottleName||i.name||AuthRole.bdName(i,'ja')||i.id):AuthRole.bdName(i,'ja');
     const sub=i.nom?`NOM ${i.nom}`:'';
-    const price=i.price?`¥${i.price}/10ml`:i.unitPrice?`¥${i.unitPrice}`:'-';
+    const priceNum=i.price||i.unitPrice||(isOther?i.price10:null);
+    const price=(isTequila||isOther)?(priceNum?`¥${priceNum}/10ml`:'-'):i.price?`¥${i.price}/10ml`:i.unitPrice?`¥${i.unitPrice}`:'-';
     return`<div class="product-item" onclick="addToCart('${esc(i.id)}')">
       <div><div class="product-item-name">${esc(name)}</div>${sub?`<div class="product-item-sub">${esc(sub)}</div>`:''}</div>
       <span class="product-item-price">${esc(price)}</span>
@@ -1915,7 +1918,7 @@ function addToCart(pid){
   const isBlind=document.getElementById('blind-check').checked;
   flow.cart.push({
     productId:p.id,
-    productName:p.type==='tequila'?AuthRole.bdName(p,'es'):AuthRole.bdName(p,'ja'),
+    productName:p.type==='tequila'?AuthRole.bdName(p,'es'):p.type==='other'?(p.bottleEn||p.bottleName||p.name||AuthRole.bdName(p,'ja')):AuthRole.bdName(p,'ja'),
     productType:p.type,
     qty:isMl?getCartMl():1,
     unit:isMl?'ml':'個',
@@ -2048,11 +2051,11 @@ function filterCocktailSpirit(){
       return clsKey?_cspClasses.has(clsKey):false;
     });
   }
-  const priceOf=t=>parseFloat(t.price!=null?t.price:t.unitPrice)||0;
+  const priceOf=t=>parseFloat(t.price!=null?t.price:t.unitPrice!=null?t.unitPrice:t.price10)||0;
   if(_cspSort==='asc') items=[...items].sort((a,b)=>priceOf(a)-priceOf(b));
   else if(_cspSort==='desc') items=[...items].sort((a,b)=>priceOf(b)-priceOf(a));
   document.getElementById('cocktail-spirit-list').innerHTML=items.slice(0,60).map(t=>{
-    const name=_cocktailSpiritTab==='tequila'?AuthRole.bdName(t,'es'):(t.name||t.bottleEs||t.bottleJa||t.id);
+    const name=_cocktailSpiritTab==='tequila'?AuthRole.bdName(t,'es'):(t.bottleEn||t.bottleName||t.name||t.bottleEs||t.bottleJa||t.id);
     const sub=_cocktailSpiritTab==='tequila'?(t.bottleJa||''):'';
     const up=priceOf(t); const price=up?`¥${up}/10ml`:'';
     const isSel=_pendingSpirit&&_pendingSpirit.id===t.id;
@@ -2062,7 +2065,7 @@ function filterCocktailSpirit(){
   }).join('');
 }
 function calcCocktailTotal(cocktail,spirit){
-  const basePrice10ml=parseFloat(spirit.price!=null?spirit.price:spirit.unitPrice)||0;
+  const basePrice10ml=parseFloat(spirit.price!=null?spirit.price:spirit.unitPrice!=null?spirit.unitPrice:spirit.price10)||0;
   const spiritCost=Math.round(((cocktail.spiritMl||0)/10)*basePrice10ml);
   let subCost=0;
   for(let i=1;i<=5;i++){
@@ -2077,10 +2080,10 @@ function previewCocktailSpirit(spiritId){
   const spirit=pool.find(x=>x.id===spiritId);
   if(!spirit)return;
   _pendingSpirit=spirit;
-  const spiritName=spirit.type==='tequila'?AuthRole.bdName(spirit,'es'):(spirit.name||spirit.bottleEs||spirit.id);
+  const spiritName=spirit.type==='tequila'?AuthRole.bdName(spirit,'es'):(spirit.bottleEn||spirit.bottleName||spirit.name||spirit.bottleEs||spirit.id);
   const{total,spiritCost,subCost}=calcCocktailTotal(_selCocktail,spirit);
   document.getElementById('csp-sel-name').textContent=spiritName;
-  const dispUp=parseFloat(spirit.price!=null?spirit.price:spirit.unitPrice)||0;
+  const dispUp=parseFloat(spirit.price!=null?spirit.price:spirit.unitPrice!=null?spirit.unitPrice:spirit.price10)||0;
   document.getElementById('csp-sel-detail').textContent=
     `${_selCocktail.spiritMl||0}ml × ¥${dispUp}/10ml = ¥${spiritCost}`
     +(subCost?` ＋ 副材料 ¥${subCost}`:'');
@@ -2092,14 +2095,14 @@ function commitCocktailToCart(){
   if(!_selCocktail||!_pendingSpirit)return;
   const cocktail=_selCocktail,spirit=_pendingSpirit;
   const{total}=calcCocktailTotal(cocktail,spirit);
-  const spiritName=spirit.type==='tequila'?AuthRole.bdName(spirit,'es'):(spirit.name||spirit.bottleEs||spirit.id);
+  const spiritName=spirit.type==='tequila'?AuthRole.bdName(spirit,'es'):(spirit.bottleEn||spirit.bottleName||spirit.name||spirit.bottleEs||spirit.id);
   flow.cart.push({
     productId:cocktail.id,
     productName:cocktail.name+'（'+spiritName+'×'+(cocktail.spiritMl||'?')+'ml）',
     productType:'cocktail',
     qty:1,unit:'杯',unitPrice:total,blindMarkId:null,
     _cocktailId:cocktail.id,_baseProductCode:spirit.id,
-    _baseUnitPrice10ml:spirit.unitPrice||0,_totalAmount:total,_spiritName:spiritName
+    _baseUnitPrice10ml:spirit.price||spirit.unitPrice||spirit.price10||0,_totalAmount:total,_spiritName:spiritName
   });
   document.getElementById('cocktail-spirit-picker').style.display='none';
   _selCocktail=null; _pendingSpirit=null;
@@ -2315,7 +2318,7 @@ async function confirmOrder(){
       flow.cart.forEach((item,i)=>{
         maxSeq++;
         const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
-        const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):item.productName;
+        const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):p&&p.type==='other'?(p.bottleEn||p.bottleName||p.name||item.productName):item.productName;
         const docId=todayStr+String(maxSeq).padStart(3,'0');
         fsBatch.set(db.collection('orders').doc(docId),{
           orderTime,customerId:visit.memberId||null,visitKey:visit.id,orderGroupId,batchId,
