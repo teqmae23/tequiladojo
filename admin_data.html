@@ -2376,6 +2376,17 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
     return;
   }
 
+  // 孤立来場（どのセッション時間帯にも属さない）を事前計算
+  var assignedVisitIds={};
+  if(sessions.length>1){
+    sessions.forEach(function(ses){
+      getSessionVisits(ses,visits).forEach(function(v){assignedVisitIds[v.id]=true;});
+    });
+  } else {
+    visits.forEach(function(v){assignedVisitIds[v.id]=true;});
+  }
+  var orphanVisits=visits.filter(function(v){return !assignedVisitIds[v.id];});
+
   // セッションブロック
   sessions.forEach(function(ses,si){
     var sesVisits = (sessions.length>1)?getSessionVisits(ses,visits):visits;
@@ -2415,7 +2426,8 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
     html+='<div class="tree-node snode">'
       +'<span class="tree-toggle" onclick="treeToggle(\''+sesId+'\',this)">▲</span>'
       +'<span class="tree-tag tag-session">セッション</span>'
-      +'<span class="tree-label"><strong>'+escHtml(ses.id)+'</strong>'+(sesDet.length?' &nbsp;'+sesDet.join(' / '):'')+'</span>'
+      +'<span class="tree-label"><strong>'+escHtml(ses.id)+'</strong>'+(sesDet.length?' &nbsp;'+sesDet.join(' / '):'')
+      +' <button class="btn bp sm" style="font-size:11px;margin-left:6px;vertical-align:middle" data-tree-add-visit="'+yymmdd+'">＋ 来場追加</button></span>'
       +'<div class="tree-acts">'
       +'<button class="btn bs sm" data-edit-session="'+escHtml(ses.id)+'">編集</button>'
       +'<button class="btn bd sm" data-tree-del-session="'+escHtml(ses.id)+'" data-date="'+yymmdd+'" title="セッション＋来場＋注文を全削除">削除</button>'
@@ -2514,11 +2526,31 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
         html+='</div></div>';
       });
     }
-    html+='<div class="tree-add-row" style="padding-left:20px">'
-      +'<button class="btn bs sm" style="font-size:11px" data-tree-add-visit="'+yymmdd+'">＋ 来場追加</button>'
-      +'</div>';
     html+='</div></div>';
   });
+
+  // 孤立来場（セッション時間帯外）があれば警告表示
+  if(orphanVisits.length){
+    html+='<div class="tree-block" style="border-color:var(--red);background:#fff8f7">'
+      +'<div class="tree-node" style="background:#fee8e4">'
+      +'<span class="tree-tag" style="background:var(--red);color:#fff">未割当</span>'
+      +'<span class="tree-label" style="color:var(--red)"><strong>⚠ セッション時間帯外の来場 '+orphanVisits.length+'件</strong>'
+      +' <span style="font-size:11px;font-weight:normal">visitTimeがどのセッションの時間帯にも該当しません。来場データを編集して時間を修正してください。</span></span>'
+      +'</div>';
+    orphanVisits.forEach(function(vis){
+      var name=treeMemName(vis.memberId)||'ゲスト ('+vis.id+')';
+      var timeDisp=vis.visitTime?fmtHHMM(vis.visitTime):'時間なし';
+      html+='<div class="tree-node vnode" style="padding-left:20px">'
+        +'<span class="tree-tag tag-visit">来場</span>'
+        +'<span class="tree-label"><strong>'+escHtml(name)+'</strong> &nbsp;来場時間: '+timeDisp
+        +' <span style="font-size:10px;color:var(--ink3)">'+escHtml(vis.id)+'</span></span>'
+        +'<div class="tree-acts">'
+        +'<button class="btn bs sm" data-edit-visit="'+escHtml(vis.id)+'">編集</button>'
+        +'<button class="btn bd sm" data-tree-del-visit="'+escHtml(vis.id)+'">削除</button>'
+        +'</div></div>';
+    });
+    html+='</div>';
+  }
 
   html+='</div>';
   cont.innerHTML=html;
