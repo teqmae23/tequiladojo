@@ -268,6 +268,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <button class="tab" data-page="orders">注文データ <span class="cnt" id="cnt-orders">—</span></button>
       <button class="tab" data-page="calendar">カレンダー</button>
       <button class="tab" data-page="tree">🌲 ツリー</button>
+      <button class="tab" data-page="backup">💾 バックアップ</button>
     </div>
   </div>
   <div class="content">
@@ -405,6 +406,30 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <thead><tr><th>注文ID・時間</th><th>顧客ID</th><th>来店キー</th><th>種別</th><th>コード / 商品名</th><th>数量</th><th>単価</th><th>提供</th><th>グループID</th><th>盲</th><th>✏️ 操作</th></tr></thead>
           <tbody id="tb-orders"><tr><td colspan="11" class="ec">読み込み中...</td></tr></tbody>
         </table></div>
+      </div>
+    </div>
+
+    <!-- バックアップページ -->
+    <div class="page" id="page-backup">
+      <div class="phead">
+        <div>
+          <div class="ptitle">CSVバックアップ</div>
+          <div class="pdesc">Firestoreの全コレクションをCSVファイルとしてダウンロードします。</div>
+        </div>
+      </div>
+      <div style="padding:20px;max-width:680px">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div style="background:var(--cream2);border:1px solid var(--border2);border-radius:var(--r);padding:14px 16px;font-size:12px;color:var(--ink2)">
+            <strong>全データバックアップ</strong> — 以下の全コレクションをまとめてダウンロードします。<br>
+            データ量によっては完了まで数十秒かかります。ダウンロードが順次始まります。
+          </div>
+          <button class="btn bp" style="width:fit-content" onclick="exportAllCSV()">💾 全データをCSVバックアップ</button>
+          <div id="backup-progress" style="font-size:12px;color:var(--ink3);min-height:20px"></div>
+          <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
+            <div style="font-size:11px;color:var(--ink3);margin-bottom:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase">コレクション別ダウンロード</div>
+            <div id="backup-collection-list" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -2701,6 +2726,97 @@ function exportTreeCSV(yymmdd){
 
   toast('CSVをダウンロードしています（3ファイル）','success');
 }
+
+// ── 全データCSVバックアップ ──────────────────────────────
+var BACKUP_COLLECTIONS=[
+  {id:'members',        label:'会員マスタ'},
+  {id:'blindMarks',     label:'ブラインドマーク'},
+  {id:'bottleData',     label:'ボトルデータ'},
+  {id:'cocktailMaster', label:'カクテルマスタ'},
+  {id:'miscProducts',   label:'その他商品'},
+  {id:'otherBottles',   label:'その他ボトル'},
+  {id:'setProducts',    label:'セット商品'},
+  {id:'subMaterials',   label:'副材料'},
+  {id:'schedules',      label:'スケジュール'},
+  {id:'reservations',   label:'予約'},
+  {id:'publicProfiles', label:'公開プロフィール'},
+  {id:'sessions',       label:'営業セッション'},
+  {id:'visits',         label:'来場データ'},
+  {id:'orders',         label:'注文データ'},
+  {id:'blindResults',   label:'ブラインド結果'},
+  {id:'cocktailOrders', label:'カクテル注文'}
+];
+
+function renderBackupCollectionList(){
+  var el=document.getElementById('backup-collection-list'); if(!el)return;
+  el.innerHTML=BACKUP_COLLECTIONS.map(function(c){
+    return '<button class="btn bs sm" onclick="exportCollectionCSV(\''+c.id+'\',\''+c.label+'\')" title="'+c.label+'">'
+      +c.label+'</button>';
+  }).join('');
+}
+
+async function exportCollectionCSV(colId,label){
+  var prog=document.getElementById('backup-progress');
+  if(prog) prog.textContent=label+'を取得中...';
+  try{
+    var snap=await db.collection(colId).get();
+    if(snap.empty){toast(label+'にデータがありません','err');if(prog)prog.textContent='';return;}
+    var rows=colToRows(snap);
+    var ts=new Date().toISOString().slice(0,10).replace(/-/g,'');
+    csvDownload(colId+'_'+ts+'.csv',rows);
+    toast(label+' '+snap.size+'件をダウンロードしました','success');
+    if(prog) prog.textContent='';
+  }catch(e){
+    toast(label+'の取得失敗: '+e.message,'err');
+    if(prog) prog.textContent='';
+  }
+}
+
+function colToRows(snap){
+  // フィールド名をすべてのドキュメントの和集合で決定
+  var keySet={id:0};
+  snap.docs.forEach(function(d){Object.keys(d.data()).forEach(function(k){if(!(k in keySet))keySet[k]=Object.keys(keySet).length;});});
+  var headers=Object.keys(keySet);
+  var rows=[headers];
+  snap.docs.forEach(function(d){
+    var data=d.data();
+    rows.push(headers.map(function(h){
+      if(h==='id') return d.id;
+      var v=data[h];
+      if(v==null) return '';
+      if(typeof v==='object') return JSON.stringify(v);
+      return v;
+    }));
+  });
+  return rows;
+}
+
+async function exportAllCSV(){
+  var prog=document.getElementById('backup-progress');
+  var ts=new Date().toISOString().slice(0,10).replace(/-/g,'');
+  var total=BACKUP_COLLECTIONS.length;
+  var done=0;
+  for(var i=0;i<BACKUP_COLLECTIONS.length;i++){
+    var c=BACKUP_COLLECTIONS[i];
+    if(prog) prog.textContent='('+( i+1)+'/'+total+') '+c.label+'を取得中...';
+    try{
+      var snap=await db.collection(c.id).get();
+      if(!snap.empty){
+        var rows=colToRows(snap);
+        csvDownload(c.id+'_'+ts+'.csv',rows);
+        done++;
+        await new Promise(function(r){setTimeout(r,400);});
+      }
+    }catch(e){toast(c.label+'スキップ: '+e.message,'err');}
+  }
+  if(prog) prog.textContent='完了: '+done+'/'+total+'コレクションをダウンロードしました';
+  toast('全データCSVバックアップ完了（'+done+'ファイル）','success');
+}
+
+// バックアップページ表示時にボタン一覧を描画
+document.querySelector('[data-page="backup"]').addEventListener('click',function(){
+  setTimeout(renderBackupCollectionList,50);
+});
 
 function treeToggle(id,btn){
   var el=document.getElementById(id);
