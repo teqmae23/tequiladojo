@@ -148,7 +148,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 .cbg{position:fixed;inset:0;background:rgba(24,17,10,.52);z-index:2000;display:none;align-items:center;justify-content:center}
 .cbg.open{display:flex}
 .ccard{background:var(--white);border-radius:var(--rl);padding:28px;max-width:340px;width:100%;box-shadow:var(--shadow-lg);text-align:center}
-.cmsg{font-size:14px;margin-bottom:20px;color:var(--ink2);line-height:1.7}
+.cmsg{font-size:14px;margin-bottom:20px;color:var(--ink2);line-height:1.7;white-space:pre-wrap}
 .cacts{display:flex;gap:8px;justify-content:center}
 
 /* ── カレンダー ─────────────────────────────── */
@@ -2548,7 +2548,8 @@ async function treeCascadeDelDate(yymmdd){
     }
   }
   var msg='【'+fmtDate(yymmdd)+'】のデータを全削除します。\n'
-    +'セッション '+sesSnap.docs.length+'件 / 来場 '+visSnap.docs.length+'件 / 注文 '+ordDocs.length+'件\nこの操作は元に戻せません。';
+    +'同時に削除: セッション '+sesSnap.docs.length+'件・来場 '+visSnap.docs.length+'件・注文 '+ordDocs.length+'件\n'
+    +'この操作は元に戻せません。';
   confirmDel(msg,async function(){
     try{
       var batch=db.batch();
@@ -2563,7 +2564,22 @@ async function treeCascadeDelDate(yymmdd){
 }
 
 async function treeCascadeDelSession(sessionId){
-  var msg='セッション「'+sessionId+'」を削除します。\n※来場・注文データは削除されません。\nこの操作は元に戻せません。';
+  var sesDoc=await db.collection('sessions').doc(sessionId).get().catch(function(){return{exists:false};});
+  var yymmdd=sesDoc.exists?(sesDoc.data().date||''):'';
+  var visSnap=yymmdd?await db.collection('visits').where('visitDate','==',yymmdd).get().catch(function(){return{docs:[]};}):{docs:[]};
+  var ordCount=0;
+  if(visSnap.docs.length){
+    var vkeys=visSnap.docs.map(function(d){return d.id;});
+    var chunks=[];
+    for(var i=0;i<vkeys.length;i+=30)chunks.push(vkeys.slice(i,i+30));
+    for(var ci=0;ci<chunks.length;ci++){
+      var snap=await db.collection('orders').where('visitKey','in',chunks[ci]).get().catch(function(){return{docs:[]};});
+      ordCount+=snap.docs.length;
+    }
+  }
+  var msg='セッション「'+sessionId+'」を削除します。\n'
+    +'同日の来場 '+visSnap.docs.length+'件・注文 '+ordCount+'件は削除されません。\n'
+    +'この操作は元に戻せません。';
   confirmDel(msg,async function(){
     try{
       await db.collection('sessions').doc(sessionId).delete();
@@ -2575,7 +2591,7 @@ async function treeCascadeDelSession(sessionId){
 
 async function treeCascadeDelVisit(visitId){
   var ordSnap=await db.collection('orders').where('visitKey','==',visitId).get().catch(function(){return{docs:[]};});
-  var msg='来場「'+visitId+'」と関連する注文'+ordSnap.docs.length+'件を削除します。\nこの操作は元に戻せません。';
+  var msg='来場「'+visitId+'」を削除します。\n同時に削除: 注文 '+ordSnap.docs.length+'件\nこの操作は元に戻せません。';
   confirmDel(msg,async function(){
     try{
       var batch=db.batch();
