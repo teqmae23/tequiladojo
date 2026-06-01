@@ -1264,6 +1264,30 @@ async function fetchNextTempMemberId(){
   return String(next);
 }
 
+// ゲスト会員用72h引継コード取得または新規発行
+async function getOrCreate72hCode(memberId, nickname){
+  var now=new Date();
+  var snap=await db.collection('tempRegistrations')
+    .where('tempId','==',memberId)
+    .where('used','==',false)
+    .get();
+  var code=null;
+  snap.forEach(function(doc){
+    var d=doc.data();
+    if(d.expiresAt>now.toISOString()) code=doc.id;
+  });
+  if(!code){
+    code=generateRegCode();
+    var expiresAt=new Date(now.getTime()+72*60*60*1000);
+    await db.collection('tempRegistrations').doc(code).set({
+      tempId:memberId, nickname:nickname,
+      createdAt:now.toISOString(), expiresAt:expiresAt.toISOString(),
+      used:false, issuedBy:'receipt'
+    });
+  }
+  return code;
+}
+
 // ランダム8桁認証コード生成
 function generateRegCode(){
   var chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 紛らわしい文字除外
@@ -1814,6 +1838,12 @@ async function printReceipt(mode){
       var origKeys=bulkCheckoutVisitKeys.slice();
       for(var i=0;i<origKeys.length;i++){
         bulkCheckoutVisitKeys=[origKeys[i]];
+        var vk=origKeys[i];
+        var vObj=cache.visits.find(function(v){ return v.id===vk; });
+        var mObj=vObj&&vObj.memberId&&cache.members.find(function(m){ return m.id===vObj.memberId; });
+        if(mObj&&mObj.isGuest){
+          window._pendingTransferCode=await getOrCreate72hCode(mObj.id,mObj.nickname||mObj.name||'');
+        }
         var data=buildReceiptData();
         await sendToPrinter(receiptCharacteristic, data);
         await new Promise(function(r){ setTimeout(r, 1500); }); // 間隔
@@ -1821,6 +1851,14 @@ async function printReceipt(mode){
       bulkCheckoutVisitKeys=origKeys; // 元に戻す
       toast(origKeys.length+'名分印刷しました');
     } else {
+      var svk=bulkCheckoutVisitKeys[0];
+      if(svk){
+        var svObj=cache.visits.find(function(v){ return v.id===svk; });
+        var smObj=svObj&&svObj.memberId&&cache.members.find(function(m){ return m.id===svObj.memberId; });
+        if(smObj&&smObj.isGuest){
+          window._pendingTransferCode=await getOrCreate72hCode(smObj.id,smObj.nickname||smObj.name||'');
+        }
+      }
       var data = buildReceiptData();
       await sendToPrinter(receiptCharacteristic, data);
       toast('印刷しました');
@@ -1974,6 +2012,28 @@ function buildReceiptData(){
 
   // 初期化
   parts.push([ESC,0x40]);
+
+  // ゲスト引継QRセクション（先頭に挿入）
+  if(window._pendingTransferCode){
+    var tCode=window._pendingTransferCode;
+    window._pendingTransferCode=null;
+    parts.push([0x1C,0x26]);
+    parts.push([ESC,0x61,0x01]);
+    parts.push([ESC,0x21,0x10]);
+    parts.push(sjisBytes('本登録のご案内\n'));
+    parts.push([ESC,0x21,0x00]);
+    parts.push(sjisBytes(SEP+'\n'));
+    parts.push(sjisBytes('QRコードから72時間以内に\n'));
+    parts.push(sjisBytes('会員本登録をお願いします\n\n'));
+    var tUrl='https://tequiladojo.com/member_register2.html?transfer='+tCode;
+    makeQR(tUrl).forEach(function(p){ parts.push(p); });
+    parts.push(sjisBytes('\n'));
+    parts.push([ESC,0x21,0x10]);
+    parts.push(sjisBytes(tCode+'\n'));
+    parts.push([ESC,0x21,0x00]);
+    parts.push(sjisBytes(SEP+'\n\n'));
+    parts.push([ESC,0x61,0x00]);
+  }
   // GB18030漢字モードON
   parts.push([0x1C,0x26]);
 
