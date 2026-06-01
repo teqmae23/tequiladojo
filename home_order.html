@@ -810,7 +810,8 @@ async function init(){
         }
         if(b){
           openResultModal(editBlindParam);
-          if(onlyVisitParam){resultState.lockedVisitKey=onlyVisitParam;renderResultTable();}
+          if(onlyVisitParam) resultState.lockedVisitKey=onlyVisitParam;
+          await loadExistingBlindResults();
         }
       }catch(e){showToast('ブラインドデータ取得エラー: '+e.message,'error');}
     })();
@@ -1293,6 +1294,33 @@ function openResultModal(bid){
   document.getElementById('btn-show-result').disabled=false;
   document.getElementById('btn-save-result').disabled=true;
   document.getElementById('result-modal').classList.add('open');
+}
+
+async function loadExistingBlindResults(){
+  if(!resultState) return;
+  const {members, marks} = resultState;
+  for(let mi=0; mi<members.length; mi++){
+    const g = members[mi];
+    const visit = allVisits.find(v => v.id === g.visitKey);
+    const customerId = visit?.memberId || g.visitKey;
+    const docId = g.gid + '_' + customerId;
+    try {
+      const doc = await db.collection('blindResults').doc(docId).get();
+      if(doc.exists){
+        const data = doc.data();
+        if(data.answers && Array.isArray(data.answers)){
+          data.answers.forEach(ans => {
+            const mki = marks.indexOf(ans.blindMarkId);
+            if(mki >= 0 && ans.guessMarkId) resultState.answers[mi][mki] = ans.guessMarkId;
+          });
+        }
+        if(data.winner) resultState.winners[mi] = data.winner;
+      }
+    } catch(e) {
+      console.warn('blindResults load:', e);
+    }
+  }
+  renderResultTable();
 }
 
 function renderResultTable(){
