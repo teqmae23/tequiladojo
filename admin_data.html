@@ -2368,6 +2368,8 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
     +' &nbsp;来場: <strong>'+visits.length+'</strong>'
     +' &nbsp;注文: <strong>'+totalOrders+'</strong>'
     +' &nbsp;売上合計: <strong>¥'+totalAmt.toLocaleString()+'</strong></div>'
+    +'<div style="display:flex;gap:6px">'
+    +'<button class="btn bs sm" onclick="exportTreeCSV(\''+yymmdd+'\')" title="セッション・来場・注文をCSVでダウンロード">CSVバックアップ</button>'
     +'<button class="btn bd sm" data-tree-del-date="'+yymmdd+'" title="この日のセッション・来場・注文を全削除">この日のデータを全削除</button>'
     +'</div>';
 
@@ -2632,6 +2634,72 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
 
   html+='</div>';
   cont.innerHTML=html;
+}
+
+// ── CSVバックアップ ──────────────────────────────
+function csvCell(v){
+  var s=String(v==null?'':v);
+  return (s.indexOf(',')>=0||s.indexOf('"')>=0||s.indexOf('\n')>=0)
+    ?'"'+s.replace(/"/g,'""')+'"':s;
+}
+function csvDownload(filename,rows){
+  var bom='﻿';
+  var content=bom+rows.map(function(r){return r.map(csvCell).join(',');}).join('\r\n');
+  var blob=new Blob([content],{type:'text/csv;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url; a.download=filename; a.click();
+  setTimeout(function(){URL.revokeObjectURL(url);},1000);
+}
+function exportTreeCSV(yymmdd){
+  var dateLabel=fmtDate(yymmdd).replace(/\//g,'');
+  var memName=function(mid){
+    if(!mid) return '';
+    var m=cache.members.find(function(x){return x.id===mid||x.memberId===mid;});
+    return m?(m.nickname||m.name||mid):mid;
+  };
+
+  // セッション
+  var sesRows=[['sessionId','date','openTime','closeTime','guestCount','sales','memo']];
+  _treeSessions.forEach(function(s){
+    sesRows.push([s.id,s.date||'',s.openTime||'',s.closeTime||'',
+      s.guestCount!=null?s.guestCount:'',s.sales!=null?s.sales:'',s.memo||'']);
+  });
+  csvDownload('sessions_'+dateLabel+'.csv',sesRows);
+
+  // 来場
+  setTimeout(function(){
+    var visRows=[['visitKey','visitDate','visitTime','checkoutTime','checkoutPayTime',
+      'memberId','memberName','tequilaAmount','amount','payment','receiptIssued']];
+    _treeCurrentVisits.forEach(function(v){
+      visRows.push([v.id,v.visitDate||'',v.visitTime||'',v.checkoutTime||'',v.checkoutPayTime||'',
+        v.memberId||'',memName(v.memberId),
+        v.tequilaAmount!=null?v.tequilaAmount:'',
+        v.amount!=null?v.amount:'',v.payment||'',v.receiptIssued||'']);
+    });
+    csvDownload('visits_'+dateLabel+'.csv',visRows);
+  },300);
+
+  // 注文
+  setTimeout(function(){
+    var ordRows=[['orderId','orderDate','orderTime','visitKey','customerId','memberName',
+      'productType','productCode','productName','qty','unit','unitPrice','amount',
+      'batchId','orderGroupId','itemSeq','served','blindId','blindMarkId','deleted']];
+    _treeCurrentOrders.forEach(function(o){
+      var isMl=o.productType==='tequila'||o.productType==='other';
+      var amt=(o.unitPrice!=null&&o.qty!=null)
+        ?(isMl?Math.round(o.unitPrice*o.qty/10):o.unitPrice*o.qty):'';
+      ordRows.push([o.id,o.orderDate||'',o.orderTime||'',o.visitKey||o.visitId||'',
+        o.customerId||'',memName(o.customerId),
+        o.productType||'',o.productCode||'',o.productName||'',
+        o.qty!=null?o.qty:'',o.unit||'',o.unitPrice!=null?o.unitPrice:'',amt,
+        o.batchId||'',o.orderGroupId||'',o.itemSeq!=null?o.itemSeq:'',
+        o.served!=null?o.served:'',o.blindId||0,o.blindMarkId||'',o.deleted||0]);
+    });
+    csvDownload('orders_'+dateLabel+'.csv',ordRows);
+  },600);
+
+  toast('CSVをダウンロードしています（3ファイル）','success');
 }
 
 function treeToggle(id,btn){
