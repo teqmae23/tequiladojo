@@ -198,12 +198,30 @@ var breakIndex=0;
 var layouts=[];
 var members=[];
 
-// 公開用ステータスドキュメントを書き込む（index.htmlが参照）
+var RTDB_BASE='https://tequiladojo-default-rtdb.firebaseio.com';
+
+// 公開用ステータスを書き込む（Firestore + RTDB両方）
 function writePublicStatus(status, extra){
-  var data=Object.assign({status:status,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},extra||{});
-  db.collection('storeStatus').doc('current').set(data)
-    .then(function(){ toast('公開ステータス更新: '+status,'inf'); console.log('storeStatus write OK:',status,extra); })
-    .catch(function(e){ toast('公開ステータス書込失敗: '+e.code,'err'); console.error('storeStatus write FAILED:',e); });
+  // Firestoreへの書き込み（ログインユーザー向け）
+  var fsData=Object.assign({status:status,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},extra||{});
+  db.collection('storeStatus').doc('current').set(fsData)
+    .catch(function(e){ console.error('storeStatus Firestore write failed:',e); });
+
+  // RTDBへの書き込み（未ログインユーザーも読み取り可能 → index.html用）
+  // RTDB側のルール: { "storeStatus": { ".read": true, ".write": "auth != null" } }
+  var rtdbData=Object.assign({status:status,updatedAt:Date.now()},extra||{});
+  if(!auth.currentUser){ return; }
+  auth.currentUser.getIdToken().then(function(token){
+    return fetch(RTDB_BASE+'/storeStatus.json?auth='+token,{
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(rtdbData)
+    });
+  }).then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+  }).catch(function(e){
+    console.warn('RTDB write skipped (RTDBが未有効または未設定の可能性):',e.message||e);
+  });
 }
 
 var STATUS_LABEL={closed:"閉店中",open:"開店中",break:"休憩中"};

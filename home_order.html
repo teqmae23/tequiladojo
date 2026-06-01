@@ -613,12 +613,6 @@ input,select{font-family:var(--sans)}
       </div>
       <div id="gift-empty-msg" style="display:none;padding:24px;text-align:center;font-size:13px;color:var(--ink3)">奢り相手となる来場者・スタッフがいません</div>
     </div>
-    <div style="padding:8px 14px;border-top:1px solid var(--border);background:var(--cream2)">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink2)">
-        <input type="checkbox" id="gift-payer-drinks" checked style="width:15px;height:15px;accent-color:var(--gold-d)">
-        奢り主も同じ商品を飲む
-      </label>
-    </div>
     <div style="padding:12px 14px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center">
       <button class="btn bs sm" onclick="clearGiftModal()">選択クリア</button>
       <div style="flex:1"></div>
@@ -703,7 +697,7 @@ let currentSessionBT=null; // 営業時刻用セッション情報
 let blindResultsSet=new Set();
 let masterData={tequila:[],other:[],misc:[],set:[],cocktail:[],subMaterials:[]};
 let blindMarks=[];
-let flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false,giftPayerDrinks:true};
+let flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false};
 let resultTarget=null;
 let currentPTab='tequila', currentNOM='', currentLotType='1', currentInitial='', currentClasses=new Set(), currentAbv='', currentAdditive='', pendingProduct=null, currentProductSort='';
 
@@ -884,7 +878,7 @@ async function loadTodayData(){
 }
 
 function calcAmt(o){
-  const mult=o.isGiftPayer?(((o.giftCount||0))+(o.giftPayerDrinks?1:0)):1;
+  const mult=o.isGiftPayer?((o.giftCount||0)):1;
   if(o.productType==='tequila'||o.productType==='other')return Math.round((o.unitPrice*o.qty)/10)*mult;
   return(o.unitPrice||0)*(o.qty||0)*mult;
 }
@@ -1675,7 +1669,7 @@ async function saveResult(){
 
 // ━━━ 注文作成 ━━━
 function openOrderModal(){
-  flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false,giftPayerDrinks:true};
+  flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false};
   document.getElementById('blind-check').checked=false;
   updateGiftBar();
   document.getElementById('order-modal').classList.add('open');
@@ -1731,7 +1725,7 @@ function goStep0(){showStep(0);renderVisitors();}
 async function goStep1(){
   if(!flow.visits.length)return;
   // 奢りリセット（payerが変わった場合に備えて）
-  flow.giftTo=[];flow.isGift=false;flow.giftPayerDrinks=true;
+  flow.giftTo=[];flow.isGift=false;
   updateGiftBar();
   // DOMを先に表示してからデータロード・リスト描画
   showStep(1);
@@ -2171,8 +2165,7 @@ function cartAmt(o){
 function renderCart(){
   const items=flow.cart;
   const perPersonTotal=items.reduce((s,o)=>s+cartAmt(o),0);
-  const giftPeople=flow.isGift&&flow.giftTo.length>0
-    ?(flow.giftTo.length+(flow.giftPayerDrinks?1:0)):0;
+  const giftPeople=flow.isGift&&flow.giftTo.length>0?flow.giftTo.length:0;
   document.getElementById('cart-count').textContent=items.length+'件';
   document.getElementById('cart-total').textContent=giftPeople>0
     ?`¥${perPersonTotal.toLocaleString()}×${giftPeople}人=¥${(perPersonTotal*giftPeople).toLocaleString()}`
@@ -2270,13 +2263,11 @@ function goStep2(){
   const totalLabelEl=document.getElementById('confirm-total-label');
   if(flow.isGift&&flow.giftTo.length>0){
     const giftN=flow.giftTo.length;
-    const totalPeople=giftN+(flow.giftPayerDrinks?1:0);
     const giftNames=flow.giftTo.map(r=>r.name).join('、');
-    const payerNote=flow.giftPayerDrinks?'（奢り主含む合計'+totalPeople+'人）':'（奢り主分除く）';
     giftInfoEl.style.display='block';
-    giftInfoEl.textContent=`🎁 ${giftN}人への奢り: ${giftNames} ${payerNote}`;
+    giftInfoEl.textContent=`🎁 ${giftN}人への奢り: ${giftNames}`;
     totalLabelEl.textContent='合計（1人分）';
-    document.getElementById('confirm-total').innerHTML=`¥${total.toLocaleString()}<span style="font-size:12px;color:var(--ink3)">×${totalPeople}人=¥${(total*totalPeople).toLocaleString()}</span>`;
+    document.getElementById('confirm-total').innerHTML=`¥${total.toLocaleString()}<span style="font-size:12px;color:var(--ink3)">×${giftN}人=¥${(total*giftN).toLocaleString()}</span>`;
   }else{
     giftInfoEl.style.display='none';
     const suffix=flow.visits.length>1?` <span style="font-size:12px;color:var(--ink3)">（×${flow.visits.length}人分 = ¥${(total*flow.visits.length).toLocaleString()}）</span>`:'';
@@ -2303,7 +2294,7 @@ async function confirmOrder(){
   const isGift=flow.isGift&&flow.giftTo.length>0;
   const giftRecipients=isGift?flow.giftTo.filter(r=>r.visitKey):[];
   const giftCount=isGift?flow.giftTo.length:0;
-  const giftPayerDrinks=isGift?!!flow.giftPayerDrinks:false;
+  const giftPayerDrinks=false; // 廃止: 奢りオーダーは常に他人分のみ
 
   try{
     const fsBatch=db.batch();
@@ -2331,7 +2322,7 @@ async function confirmOrder(){
           itemSeq:i+1,productCode:item.productId,productName:saveName,productType:item.productType,
           qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,
           blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:1,
-          ...(isGift?{isGiftPayer:true,giftCount,giftPayerDrinks,giftTo:flow.giftTo}:{})
+          ...(isGift?{isGiftPayer:true,giftCount,giftTo:flow.giftTo}:{})
         });
         if(item.productType==='cocktail'&&item._cocktailId){
           fsBatch.set(db.collection('cocktailOrders').doc(docId),{
@@ -2389,7 +2380,7 @@ function renderQuickVisitorList(){
 function openOrderWithSelected(){
   var cbs=document.querySelectorAll('.qv-cb:checked');
   if(cbs.length===0){openOrderModal();return;}
-  flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false,giftPayerDrinks:true};
+  flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false};
   document.getElementById('blind-check').checked=false;
   Array.prototype.forEach.call(cbs,function(cb){
     var v=allVisits.find(function(x){return x.id===cb.dataset.vid;});
@@ -2478,9 +2469,7 @@ function updateGiftBar(){
   if(!bar||!txt)return;
   if(flow.isGift&&flow.giftTo.length>0){
     const names=flow.giftTo.map(r=>r.name).join('、');
-    const totalPeople=flow.giftTo.length+(flow.giftPayerDrinks?1:0);
-    const drinkNote=flow.giftPayerDrinks?'':'・奢り主分除く';
-    txt.textContent=`🎁 奢り: ${names}（合計${totalPeople}人${drinkNote}）`;
+    txt.textContent=`🎁 奢り: ${names}（${flow.giftTo.length}人分）`;
     txt.style.color='var(--gold-d)';
     bar.style.background='#fdf8ea';
     bar.style.borderColor='rgba(200,146,30,.4)';
@@ -2538,10 +2527,6 @@ async function renderGiftModal(){
     staffSec.style.display='none';
   }
 
-  // 奢り主が飲むかチェックボックスを現在の状態に同期
-  const pdCb=document.getElementById('gift-payer-drinks');
-  if(pdCb)pdCb.checked=flow.giftPayerDrinks!==false;
-
   document.getElementById('gift-empty-msg').style.display=(otherVisitors.length||staffVisitors.length)?'none':'block';
 }
 
@@ -2571,8 +2556,6 @@ function applyGift(){
   });
   flow.giftTo=selected;
   flow.isGift=selected.length>0;
-  const pdCb=document.getElementById('gift-payer-drinks');
-  flow.giftPayerDrinks=pdCb?pdCb.checked:true;
   closeGiftModal();
   updateGiftBar();
   renderCart();

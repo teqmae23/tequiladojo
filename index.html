@@ -664,25 +664,38 @@ function loadStoreStatus(){
     });
   }
 
-  // ローディング状態を即時表示（空白を防ぐ）
   render('<span style="color:#aaa;font-size:12px;letter-spacing:.02em;">確認中...</span>');
 
-  // ログイン済みなら認証確定を待たず即時取得
-  if(auth.currentUser){ doFetch(); return; }
-
-  // 未ログイン：匿名認証を試みてから取得
-  // （Firestoreルールが認証を要求する場合に匿名ユーザーとして読み取れるようにする）
-  var _fetchDone=false;
-  auth.onAuthStateChanged(function(user){
-    if(_fetchDone) return;
-    _fetchDone=true;
-    if(user){ doFetch(); return; }
-    auth.signInAnonymously()
-      .then(function(){ doFetch(); })
-      .catch(function(){
-        // 匿名認証不可：認証なしで試行（公開読み取り可なら取得できる）
-        doFetch();
-      });
+  // まずFirebase RTDB（認証不要・公開読み取り）で状態を取得する
+  // RTDB側のルール設定例: { "rules": { "storeStatus": { ".read": true, ".write": "auth != null" } } }
+  var RTDB_URL='https://tequiladojo-default-rtdb.firebaseio.com/storeStatus.json';
+  fetch(RTDB_URL)
+  .then(function(r){ if(!r.ok) throw new Error('http '+r.status); return r.json(); })
+  .then(function(d){
+    if(!d||!d.status) throw new Error('empty');
+    if(d.status==='open'){
+      render(box('#2CA44E','営業中',''));
+    } else if(d.status==='break'){
+      var resumeT=d.breakResumeTime||'';
+      render(box('#9B59B6','休憩中',resumeT?fmtT(resumeT)+'再開予定':''));
+    } else {
+      render(box('#999','閉店中',''));
+    }
+    // ログイン済みなら来場者数などの詳細をFirestoreから上書き
+    if(auth.currentUser) doFetch();
+  })
+  .catch(function(){
+    // RTDB未設定またはエラー → Firestoreにフォールバック（認証が必要）
+    if(auth.currentUser){ doFetch(); return; }
+    var _fetchDone=false;
+    auth.onAuthStateChanged(function(user){
+      if(_fetchDone) return;
+      _fetchDone=true;
+      if(user){ doFetch(); return; }
+      auth.signInAnonymously()
+        .then(function(){ doFetch(); })
+        .catch(function(){ doFetch(); });
+    });
   });
 }
 
