@@ -945,9 +945,24 @@ document.addEventListener("click",function(e){
   if(btn.dataset.treeDelOrder)  { treeDelOrder(btn.dataset.treeDelOrder);            return; }
   if(btn.dataset.treeDelDate)   { treeCascadeDelDate(btn.dataset.treeDelDate);       return; }
   // ツリービュー：追加・ブラインド編集・仲間
+  if(btn.dataset.treeAddSession){ openSessionModalForTree(btn.dataset.treeAddSession); return; }
   if(btn.dataset.treeAddVisit)  { openVisitModalForTree(btn.dataset.treeAddVisit);   return; }
-  if(btn.dataset.treeAddOrder)  { openOrderModalForTree(btn.dataset.treeAddOrder, btn.dataset.treeAddOrderMember); return; }
-  if(btn.dataset.treeBlindEdit) { openBlindEditModal(btn.dataset.treeBlindEdit);     return; }
+  if(btn.dataset.treeAddOrder){
+    var _taVisitId=btn.dataset.treeAddOrder;
+    window.open('home_order.html?visits='+encodeURIComponent(_taVisitId),'_blank');
+    return;
+  }
+  if(btn.dataset.treeBlindEdit){
+    var _tbOrdId=btn.dataset.treeBlindEdit;
+    var _tbOrd=_treeCurrentOrders.find(function(o){return o.id===_tbOrdId;});
+    if(_tbOrd&&_tbOrd.batchId){
+      var _tbVk=_tbOrd.visitKey||_tbOrd.visitId||'';
+      window.open('home_order.html?editBlind='+encodeURIComponent(_tbOrd.batchId)+'&onlyVisit='+encodeURIComponent(_tbVk),'_blank');
+    } else {
+      openBlindEditModal(_tbOrdId);
+    }
+    return;
+  }
   if(btn.dataset.treeEditTogether){ openTogetherModal(btn.dataset.treeEditTogether); return; }
 });
 
@@ -1073,8 +1088,12 @@ var _bssBtn=g("btn-save-session"); if(_bssBtn) _bssBtn.addEventListener("click",
   var promise;
   if(keyChanged){ promise=db.collection("sessions").doc(editId.session).delete().then(doSave); }
   else { promise=doSave(); }
-  promise.then(function(){ toast(editId.session?"営業データを更新しました":"営業データを登録しました"); closeM("m-session"); loadSessions(); })
-    .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
+  promise.then(function(){
+    toast(editId.session?"営業データを更新しました":"営業データを登録しました");
+    closeM("m-session");
+    loadSessions();
+    if(_treeAfterSave){var _cb=_treeAfterSave;_treeAfterSave=null;_cb();}
+  }).catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
 // ════════════════════════════════════════════════════════════════
@@ -2344,6 +2363,17 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
     +'<button class="btn bd sm" data-tree-del-date="'+yymmdd+'" title="この日のセッション・来場・注文を全削除">この日のデータを全削除</button>'
     +'</div>';
 
+  // セッションなし時
+  if(!sessions.length){
+    html+='<div style="padding:32px;text-align:center">'
+      +'<div style="font-size:12px;color:var(--ink3);margin-bottom:14px">この日の営業データ（セッション）がありません</div>'
+      +'<button class="btn bp" data-tree-add-session="'+yymmdd+'">＋ 営業データを追加</button>'
+      +'</div>';
+    html+='</div>';
+    cont.innerHTML=html;
+    return;
+  }
+
   // セッションブロック
   sessions.forEach(function(ses,si){
     var sesVisits = (sessions.length>1)?getSessionVisits(ses,visits):visits;
@@ -2391,10 +2421,13 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
 
     html+='<div class="tree-children" id="'+sesId+'">';
 
-    if(!visits.length){
-      html+='<div class="ec" style="padding:12px">この日の来場データはありません。</div>';
+    if(!sesVisits.length){
+      html+='<div style="padding:12px 20px;display:flex;align-items:center;gap:12px">'
+        +'<span style="font-size:12px;color:var(--ink3)">このセッションに来場データがありません</span>'
+        +'<button class="btn bp sm" style="font-size:11px" data-tree-add-visit="'+yymmdd+'">＋ 来場追加</button>'
+        +'</div>';
     } else {
-      visits.forEach(function(vis){
+      sesVisits.forEach(function(vis){
         var visOrders=orders.filter(function(o){return (o.visitKey||o.visitId)===vis.id;});
         var name=treeMemName(vis.memberId)||'ゲスト ('+vis.id+')';
         var visDet=[];
@@ -2452,7 +2485,10 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
             }).reduce(function(acc,o){
               var bvk=o.visitKey||o.visitId; return acc.indexOf(bvk)<0?acc.concat([bvk]):acc;
             },[]):[];
-            var togetherBtn='<button class="btn bs sm" style="font-size:10px;padding:2px 7px" data-tree-edit-together="'+escHtml(ord.id)+'" title="一緒に飲んだ人を管理">👥 '+compVisIds.length+'人</button>';
+            var togetherStyle=compVisIds.length>0
+              ?'font-size:10px;padding:2px 7px;background:#fff3e0;border-color:#f59f00;color:#b45309'
+              :'font-size:10px;padding:2px 7px;background:var(--cream2);border-color:var(--border2);color:var(--ink3)';
+            var togetherBtn='<button class="btn sm" style="'+togetherStyle+'" data-tree-edit-together="'+escHtml(ord.id)+'" title="一緒に飲んだ人を管理">👥 '+compVisIds.length+'人</button>';
 
             // ブラインドアイコン（クリックで結果編集）
             var blindBtn='';
@@ -2605,6 +2641,20 @@ function openOrderModalForTree(visitId, memberId){
   }
   if(memberId) sv("ord-customer",memberId);
   updateOrderKey();
+}
+
+function openSessionModalForTree(yymmdd){
+  _treeAfterSave=loadTree;
+  openSessionModal(null);
+  setTimeout(function(){
+    sv("ses-date",yymmdd);
+    var sesSesCount=cache.sessions.filter(function(s){return s.date===yymmdd;}).length
+      +_treeSessions.filter(function(s){return s.date===yymmdd;}).length;
+    sesSesCount=Math.max(sesSesCount,0);
+    sv("ses-seq",String(sesSesCount));
+    var d=gv("ses-date"),sq=gv("ses-seq");
+    if(g("kb-session")) g("kb-session").innerHTML='<span class="keypart kp-nom">'+d+'</span><span class="keypart kp-flt">'+sq+'</span><span class="klabel">セッションID</span>';
+  },60);
 }
 
 function openBlindEditModal(ordId){
