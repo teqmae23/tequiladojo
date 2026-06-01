@@ -268,6 +268,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <button class="tab" data-page="orders">注文データ <span class="cnt" id="cnt-orders">—</span></button>
       <button class="tab" data-page="calendar">カレンダー</button>
       <button class="tab" data-page="tree">🌲 ツリー</button>
+      <button class="tab" data-page="backup">💾 バックアップ</button>
     </div>
   </div>
   <div class="content">
@@ -405,6 +406,30 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <thead><tr><th>注文ID・時間</th><th>顧客ID</th><th>来店キー</th><th>種別</th><th>コード / 商品名</th><th>数量</th><th>単価</th><th>提供</th><th>グループID</th><th>盲</th><th>✏️ 操作</th></tr></thead>
           <tbody id="tb-orders"><tr><td colspan="11" class="ec">読み込み中...</td></tr></tbody>
         </table></div>
+      </div>
+    </div>
+
+    <!-- バックアップページ -->
+    <div class="page" id="page-backup">
+      <div class="phead">
+        <div>
+          <div class="ptitle">CSVバックアップ</div>
+          <div class="pdesc">Firestoreの全コレクションをCSVファイルとしてダウンロードします。</div>
+        </div>
+      </div>
+      <div style="padding:20px;max-width:680px">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div style="background:var(--cream2);border:1px solid var(--border2);border-radius:var(--r);padding:14px 16px;font-size:12px;color:var(--ink2)">
+            <strong>全データバックアップ</strong> — 以下の全コレクションをまとめてダウンロードします。<br>
+            データ量によっては完了まで数十秒かかります。ダウンロードが順次始まります。
+          </div>
+          <button class="btn bp" style="width:fit-content" onclick="exportAllCSV()">💾 全データをCSVバックアップ</button>
+          <div id="backup-progress" style="font-size:12px;color:var(--ink3);min-height:20px"></div>
+          <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
+            <div style="font-size:11px;color:var(--ink3);margin-bottom:10px;font-weight:500;letter-spacing:.06em;text-transform:uppercase">コレクション別ダウンロード</div>
+            <div id="backup-collection-list" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -2322,6 +2347,12 @@ async function loadTree(){
         snap.docs.forEach(function(d){orders.push(Object.assign({id:d.id},d.data()));});
       }
     }
+    // 来場に紐づいていない注文（orderDateベース）も取得
+    var dateOrdSnap=await db.collection('orders').where('orderDate','==',yymmdd).get().catch(function(){return{docs:[]};});
+    dateOrdSnap.docs.forEach(function(d){
+      if(!orders.find(function(o){return o.id===d.id;}))
+        orders.push(Object.assign({id:d.id},d.data()));
+    });
     _treeSessions=sessions;
     _treeCurrentVisits=visits;
     _treeCurrentOrders=orders;
@@ -2362,6 +2393,8 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
     +' &nbsp;来場: <strong>'+visits.length+'</strong>'
     +' &nbsp;注文: <strong>'+totalOrders+'</strong>'
     +' &nbsp;売上合計: <strong>¥'+totalAmt.toLocaleString()+'</strong></div>'
+    +'<div style="display:flex;gap:6px">'
+    +'<button class="btn bs sm" onclick="exportTreeCSV(\''+yymmdd+'\')" title="セッション・来場・注文をCSVでダウンロード">CSVバックアップ</button>'
     +'<button class="btn bd sm" data-tree-del-date="'+yymmdd+'" title="この日のセッション・来場・注文を全削除">この日のデータを全削除</button>'
     +'</div>';
 
@@ -2386,6 +2419,9 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
     visits.forEach(function(v){assignedVisitIds[v.id]=true;});
   }
   var orphanVisits=visits.filter(function(v){return !assignedVisitIds[v.id];});
+
+  // 表示済み注文IDを追跡（孤立注文の検出用）
+  var shownOrderIds={};
 
   // セッションブロック
   sessions.forEach(function(ses,si){
@@ -2478,6 +2514,7 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
         } else {
           visOrders.sort(function(a,b){return (a.orderTime||'').localeCompare(b.orderTime||'');});
           visOrders.forEach(function(ord){
+            shownOrderIds[ord.id]=true;
             var cancelled=ord.served===0;
             var isBlind=ord.blindId===1||ord.blindId==='1';
             var ordDet=[];
@@ -2540,13 +2577,81 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
     orphanVisits.forEach(function(vis){
       var name=treeMemName(vis.memberId)||'ゲスト ('+vis.id+')';
       var timeDisp=vis.visitTime?fmtHHMM(vis.visitTime):'時間なし';
-      html+='<div class="tree-node vnode" style="padding-left:20px">'
+      var ovOrders=orders.filter(function(o){return (o.visitKey||o.visitId)===vis.id;});
+      ovOrders.forEach(function(o){shownOrderIds[o.id]=true;});
+      var ovId='tree-ov-'+vis.id;
+      html+='<div class="tree-child-visit">'
+        +'<div class="tree-node vnode">'
+        +'<span class="tree-toggle" style="margin-left:20px" onclick="treeToggle(\''+ovId+'\',this)">▼</span>'
         +'<span class="tree-tag tag-visit">来場</span>'
         +'<span class="tree-label"><strong>'+escHtml(name)+'</strong> &nbsp;来場時間: '+timeDisp
+        +' <button class="btn bs sm" style="font-size:11px;margin-left:4px;vertical-align:middle" data-tree-add-order="'+escHtml(vis.id)+'" data-tree-add-order-member="'+escHtml(vis.memberId||'')+'">＋注文</button>'
         +' <span style="font-size:10px;color:var(--ink3)">'+escHtml(vis.id)+'</span></span>'
         +'<div class="tree-acts">'
         +'<button class="btn bs sm" data-edit-visit="'+escHtml(vis.id)+'">編集</button>'
         +'<button class="btn bd sm" data-tree-del-visit="'+escHtml(vis.id)+'">削除</button>'
+        +'</div></div>'
+        +'<div id="'+ovId+'" style="display:none">';
+      if(!ovOrders.length){
+        html+='<div style="padding:8px 16px 8px 60px;font-size:11px;color:var(--ink3)">注文なし</div>';
+      } else {
+        ovOrders.sort(function(a,b){return (a.orderTime||'').localeCompare(b.orderTime||'');});
+        ovOrders.forEach(function(ord){
+          var ordDet=[];
+          if(ord.orderTime) ordDet.push(fmtHHMM(ord.orderTime));
+          ordDet.push(escHtml(ord.productName||ord.productCode||'—'));
+          if(ord.qty) ordDet.push(ord.qty+(ord.unit||''));
+          var cancelled=ord.served===0;
+          var badge='<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;'
+            +(cancelled?'background:#fee;color:var(--red)':'background:rgba(40,120,80,.1);color:#1a5e3a')
+            +'">'+(cancelled?'キャンセル':treeServedLabel(ord.served))+'</span>';
+          html+='<div class="tree-node onode tree-child-order'+(cancelled?' cancelled':'')+'">'
+            +'<span style="width:44px;flex-shrink:0"></span>'
+            +'<span class="tree-tag tag-order">注文</span>'
+            +'<span class="tree-label">'+ordDet.join(' &nbsp;')+badge+'</span>'
+            +'<div class="tree-acts">'
+            +'<button class="btn bs sm" data-edit-order="'+escHtml(ord.id)+'">編集</button>'
+            +'<button class="btn bd sm" data-tree-del-order="'+escHtml(ord.id)+'">削除</button>'
+            +'</div></div>';
+        });
+      }
+      html+='</div></div>';
+    });
+    html+='</div>';
+  }
+
+  // 孤立注文（来場に紐づいていない注文）
+  var orphanOrders=orders.filter(function(o){return !shownOrderIds[o.id];});
+  if(orphanOrders.length){
+    html+='<div class="tree-block" style="border-color:var(--red);background:#fff8f7">'
+      +'<div class="tree-node" style="background:#fee8e4">'
+      +'<span class="tree-tag" style="background:var(--red);color:#fff">未割当</span>'
+      +'<span class="tree-label" style="color:var(--red)"><strong>⚠ 来場に紐づいていない注文 '+orphanOrders.length+'件</strong>'
+      +' <span style="font-size:11px;font-weight:normal">visitKeyが空または存在しない来場を参照しています。編集して修正してください。</span></span>'
+      +'</div>';
+    orphanOrders.sort(function(a,b){return (a.orderTime||'').localeCompare(b.orderTime||'');});
+    orphanOrders.forEach(function(ord){
+      var ordDet=[];
+      if(ord.orderTime) ordDet.push(fmtHHMM(ord.orderTime));
+      ordDet.push(escHtml(ord.productName||ord.productCode||'—'));
+      if(ord.qty) ordDet.push(ord.qty+(ord.unit||''));
+      if(ord.unitPrice){
+        var isMl2=ord.productType==='tequila'||ord.productType==='other';
+        var amt2=isMl2?Math.round(ord.unitPrice*ord.qty/10):ord.unitPrice*ord.qty;
+        ordDet.push('¥'+amt2.toLocaleString());
+      }
+      var cancelled=ord.served===0;
+      var badge='<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;'
+        +(cancelled?'background:#fee;color:var(--red)':'background:rgba(40,120,80,.1);color:#1a5e3a')
+        +'">'+(cancelled?'キャンセル':treeServedLabel(ord.served))+'</span>';
+      var vkLabel=ord.visitKey?'visitKey: '+escHtml(ord.visitKey):'visitKeyなし';
+      html+='<div class="tree-node onode'+(cancelled?' cancelled':'')+'">'
+        +'<span class="tree-tag tag-order">注文</span>'
+        +'<span class="tree-label">'+ordDet.join(' &nbsp;')+badge
+        +' <span style="font-size:10px;color:var(--ink3)">'+vkLabel+'</span></span>'
+        +'<div class="tree-acts">'
+        +'<button class="btn bs sm" data-edit-order="'+escHtml(ord.id)+'">編集</button>'
+        +'<button class="btn bd sm" data-tree-del-order="'+escHtml(ord.id)+'">削除</button>'
         +'</div></div>';
     });
     html+='</div>';
@@ -2555,6 +2660,163 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
   html+='</div>';
   cont.innerHTML=html;
 }
+
+// ── CSVバックアップ ──────────────────────────────
+function csvCell(v){
+  var s=String(v==null?'':v);
+  return (s.indexOf(',')>=0||s.indexOf('"')>=0||s.indexOf('\n')>=0)
+    ?'"'+s.replace(/"/g,'""')+'"':s;
+}
+function csvDownload(filename,rows){
+  var bom='﻿';
+  var content=bom+rows.map(function(r){return r.map(csvCell).join(',');}).join('\r\n');
+  var blob=new Blob([content],{type:'text/csv;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url; a.download=filename; a.click();
+  setTimeout(function(){URL.revokeObjectURL(url);},1000);
+}
+function exportTreeCSV(yymmdd){
+  var dateLabel=fmtDate(yymmdd).replace(/\//g,'');
+  var memName=function(mid){
+    if(!mid) return '';
+    var m=cache.members.find(function(x){return x.id===mid||x.memberId===mid;});
+    return m?(m.nickname||m.name||mid):mid;
+  };
+
+  // セッション
+  var sesRows=[['sessionId','date','openTime','closeTime','guestCount','sales','memo']];
+  _treeSessions.forEach(function(s){
+    sesRows.push([s.id,s.date||'',s.openTime||'',s.closeTime||'',
+      s.guestCount!=null?s.guestCount:'',s.sales!=null?s.sales:'',s.memo||'']);
+  });
+  csvDownload('sessions_'+dateLabel+'.csv',sesRows);
+
+  // 来場
+  setTimeout(function(){
+    var visRows=[['visitKey','visitDate','visitTime','checkoutTime','checkoutPayTime',
+      'memberId','memberName','tequilaAmount','amount','payment','receiptIssued']];
+    _treeCurrentVisits.forEach(function(v){
+      visRows.push([v.id,v.visitDate||'',v.visitTime||'',v.checkoutTime||'',v.checkoutPayTime||'',
+        v.memberId||'',memName(v.memberId),
+        v.tequilaAmount!=null?v.tequilaAmount:'',
+        v.amount!=null?v.amount:'',v.payment||'',v.receiptIssued||'']);
+    });
+    csvDownload('visits_'+dateLabel+'.csv',visRows);
+  },300);
+
+  // 注文
+  setTimeout(function(){
+    var ordRows=[['orderId','orderDate','orderTime','visitKey','customerId','memberName',
+      'productType','productCode','productName','qty','unit','unitPrice','amount',
+      'batchId','orderGroupId','itemSeq','served','blindId','blindMarkId','deleted']];
+    _treeCurrentOrders.forEach(function(o){
+      var isMl=o.productType==='tequila'||o.productType==='other';
+      var amt=(o.unitPrice!=null&&o.qty!=null)
+        ?(isMl?Math.round(o.unitPrice*o.qty/10):o.unitPrice*o.qty):'';
+      ordRows.push([o.id,o.orderDate||'',o.orderTime||'',o.visitKey||o.visitId||'',
+        o.customerId||'',memName(o.customerId),
+        o.productType||'',o.productCode||'',o.productName||'',
+        o.qty!=null?o.qty:'',o.unit||'',o.unitPrice!=null?o.unitPrice:'',amt,
+        o.batchId||'',o.orderGroupId||'',o.itemSeq!=null?o.itemSeq:'',
+        o.served!=null?o.served:'',o.blindId||0,o.blindMarkId||'',o.deleted||0]);
+    });
+    csvDownload('orders_'+dateLabel+'.csv',ordRows);
+  },600);
+
+  toast('CSVをダウンロードしています（3ファイル）','success');
+}
+
+// ── 全データCSVバックアップ ──────────────────────────────
+var BACKUP_COLLECTIONS=[
+  {id:'members',        label:'会員マスタ'},
+  {id:'blindMarks',     label:'ブラインドマーク'},
+  {id:'bottleData',     label:'ボトルデータ'},
+  {id:'cocktailMaster', label:'カクテルマスタ'},
+  {id:'miscProducts',   label:'その他商品'},
+  {id:'otherBottles',   label:'その他ボトル'},
+  {id:'setProducts',    label:'セット商品'},
+  {id:'subMaterials',   label:'副材料'},
+  {id:'schedules',      label:'スケジュール'},
+  {id:'reservations',   label:'予約'},
+  {id:'publicProfiles', label:'公開プロフィール'},
+  {id:'sessions',       label:'営業セッション'},
+  {id:'visits',         label:'来場データ'},
+  {id:'orders',         label:'注文データ'},
+  {id:'blindResults',   label:'ブラインド結果'},
+  {id:'cocktailOrders', label:'カクテル注文'}
+];
+
+function renderBackupCollectionList(){
+  var el=document.getElementById('backup-collection-list'); if(!el)return;
+  el.innerHTML=BACKUP_COLLECTIONS.map(function(c){
+    return '<button class="btn bs sm" onclick="exportCollectionCSV(\''+c.id+'\',\''+c.label+'\')" title="'+c.label+'">'
+      +c.label+'</button>';
+  }).join('');
+}
+
+async function exportCollectionCSV(colId,label){
+  var prog=document.getElementById('backup-progress');
+  if(prog) prog.textContent=label+'を取得中...';
+  try{
+    var snap=await db.collection(colId).get();
+    if(snap.empty){toast(label+'にデータがありません','err');if(prog)prog.textContent='';return;}
+    var rows=colToRows(snap);
+    var ts=new Date().toISOString().slice(0,10).replace(/-/g,'');
+    csvDownload(colId+'_'+ts+'.csv',rows);
+    toast(label+' '+snap.size+'件をダウンロードしました','success');
+    if(prog) prog.textContent='';
+  }catch(e){
+    toast(label+'の取得失敗: '+e.message,'err');
+    if(prog) prog.textContent='';
+  }
+}
+
+function colToRows(snap){
+  // フィールド名をすべてのドキュメントの和集合で決定
+  var keySet={id:0};
+  snap.docs.forEach(function(d){Object.keys(d.data()).forEach(function(k){if(!(k in keySet))keySet[k]=Object.keys(keySet).length;});});
+  var headers=Object.keys(keySet);
+  var rows=[headers];
+  snap.docs.forEach(function(d){
+    var data=d.data();
+    rows.push(headers.map(function(h){
+      if(h==='id') return d.id;
+      var v=data[h];
+      if(v==null) return '';
+      if(typeof v==='object') return JSON.stringify(v);
+      return v;
+    }));
+  });
+  return rows;
+}
+
+async function exportAllCSV(){
+  var prog=document.getElementById('backup-progress');
+  var ts=new Date().toISOString().slice(0,10).replace(/-/g,'');
+  var total=BACKUP_COLLECTIONS.length;
+  var done=0;
+  for(var i=0;i<BACKUP_COLLECTIONS.length;i++){
+    var c=BACKUP_COLLECTIONS[i];
+    if(prog) prog.textContent='('+( i+1)+'/'+total+') '+c.label+'を取得中...';
+    try{
+      var snap=await db.collection(c.id).get();
+      if(!snap.empty){
+        var rows=colToRows(snap);
+        csvDownload(c.id+'_'+ts+'.csv',rows);
+        done++;
+        await new Promise(function(r){setTimeout(r,400);});
+      }
+    }catch(e){toast(c.label+'スキップ: '+e.message,'err');}
+  }
+  if(prog) prog.textContent='完了: '+done+'/'+total+'コレクションをダウンロードしました';
+  toast('全データCSVバックアップ完了（'+done+'ファイル）','success');
+}
+
+// バックアップページ表示時にボタン一覧を描画
+document.querySelector('[data-page="backup"]').addEventListener('click',function(){
+  setTimeout(renderBackupCollectionList,50);
+});
 
 function treeToggle(id,btn){
   var el=document.getElementById(id);
@@ -2610,23 +2872,27 @@ async function treeCascadeDelSession(sessionId){
     var close=sesData.closeTime?sesData.closeTime.slice(0,4):'9999';
     sesVisits=allVisits.filter(function(v){var vt=v.visitTime||'0000';return vt>=open&&vt<=close;});
   }
-  var ordCount=0;
+  var ordDocs=[];
   if(sesVisits.length){
     var vkeys=sesVisits.map(function(v){return v.id;});
     var chunks=[];
     for(var i=0;i<vkeys.length;i+=30)chunks.push(vkeys.slice(i,i+30));
     for(var ci=0;ci<chunks.length;ci++){
       var snap=await db.collection('orders').where('visitKey','in',chunks[ci]).get().catch(function(){return{docs:[]};});
-      ordCount+=snap.docs.length;
+      snap.docs.forEach(function(d){ordDocs.push(d);});
     }
   }
   var msg='セッション「'+sessionId+'」を削除します。\n'
-    +'このセッションの来場 '+sesVisits.length+'件・注文 '+ordCount+'件は削除されません。\n'
+    +'このセッションの来場 '+sesVisits.length+'件・注文 '+ordDocs.length+'件も同時に削除されます。\n'
     +'この操作は元に戻せません。';
   confirmDel(msg,async function(){
     try{
-      await db.collection('sessions').doc(sessionId).delete();
-      toast('セッションを削除しました');
+      var batch=db.batch();
+      batch.delete(db.collection('sessions').doc(sessionId));
+      sesVisits.forEach(function(v){batch.delete(db.collection('visits').doc(v.id));});
+      ordDocs.forEach(function(d){batch.delete(d.ref);});
+      await batch.commit();
+      toast('削除完了（セッション/来場'+sesVisits.length+'/注文'+ordDocs.length+'）');
       loadTree();
     }catch(e){toast('削除失敗: '+e.message,'err');}
   });
@@ -2821,14 +3087,37 @@ function renderTogetherModal(){
       }
     });
   }
-  var available=_treeCurrentVisits.filter(function(v){return usedVids.indexOf(v.id)<0;});
+  // 注文時間に来場中の来場者に絞り込む
+  var thisOrd=_treeCurrentOrders.find(function(o){return o.id===ordId;});
+  var orderHHMM=thisOrd&&thisOrd.orderTime?thisOrd.orderTime.slice(0,4):'';
+  var available=_treeCurrentVisits.filter(function(v){
+    if(usedVids.indexOf(v.id)>=0) return false;
+    if(!orderHHMM) return true; // 注文時間不明なら全員表示
+    var vt=(v.visitTime||'').slice(0,4);
+    var ct=(v.checkoutTime||'').slice(0,4);
+    if(vt&&vt>orderHHMM) return false; // 注文時間より後に来場
+    if(ct&&ct<orderHHMM) return false; // 注文時間より前に退場済み
+    return true;
+  });
+  var allOthers=_treeCurrentVisits.filter(function(v){return usedVids.indexOf(v.id)<0&&!available.some(function(a){return a.id===v.id;});});
   var sel=g("together-add-sel");
   if(sel){
-    sel.innerHTML='<option value="">選択...</option>'+
-      available.map(function(v){
+    var opts='<option value="">選択...</option>';
+    if(available.length){
+      opts+=available.map(function(v){
         var nm=treeMemName(v.memberId)||v.id;
         return '<option value="'+v.id+'">'+escHtml(nm)+' ('+v.id+')</option>';
       }).join("");
+    }
+    if(allOthers.length){
+      opts+='<optgroup label="── 注文時間外の来場者 ──">'
+        +allOthers.map(function(v){
+          var nm=treeMemName(v.memberId)||v.id;
+          return '<option value="'+v.id+'">'+escHtml(nm)+' ('+v.id+')</option>';
+        }).join("")
+        +'</optgroup>';
+    }
+    sel.innerHTML=opts;
   }
 }
 
