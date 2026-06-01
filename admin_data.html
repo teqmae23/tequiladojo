@@ -2346,8 +2346,20 @@ async function loadTree(){
     if(!cache.members.length) await new Promise(function(res){loadMembers(res);});
     var sesSnap=await db.collection('sessions').where('date','==',yymmdd).get();
     var sessions=sesSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
-    var visSnap=await db.collection('visits').where('visitDate','==',yymmdd).get();
+    // visitDateフィールドでの検索 + IDプレフィックス検索を併用（visitDateが未設定の旧データ対策）
+    var [visSnap,visIdSnap]=await Promise.all([
+      db.collection('visits').where('visitDate','==',yymmdd).get(),
+      db.collection('visits')
+        .orderBy(firebase.firestore.FieldPath.documentId())
+        .startAt(yymmdd)
+        .endAt(yymmdd+'99')
+        .get()
+    ]);
     var visits=visSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    visIdSnap.docs.forEach(function(d){
+      if(!visits.find(function(v){return v.id===d.id;}))
+        visits.push(Object.assign({id:d.id},d.data()));
+    });
     var visitKeys=visits.map(function(v){return v.id;});
     var orders=[];
     if(visitKeys.length){
