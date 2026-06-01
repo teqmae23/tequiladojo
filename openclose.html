@@ -21,6 +21,8 @@ var FIREBASE_CONFIG = {
 };
 </script>
 <script src="/auth-role.js?v=20260521"></script>
+<script>window.JOURNAL_PAGE='openclose';</script>
+<script src="/journal.js?v=20260601"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -337,11 +339,12 @@ g("btn-open-store").addEventListener("click",function(){
     .then(function(snap){
       var existCount=snap.docs.length;
       if(existCount>0&&!confirm("本日すでに"+existCount+"件の営業データがあります。追加営業として登録しますか？"))return;
-      var seq=existCount;
+      var maxSeq=snap.docs.reduce(function(m,d){return Math.max(m,parseInt(d.id.slice(6))||0);}, -1);
+      var seq=maxSeq+1;
       var sessionId=today+String(seq);
       var openTime=nowStr();
       return db.collection("sessions").doc(sessionId).set({
-        sessionId:sessionId,date:today,seq:seq,
+        date:today,
         openTime:openTime,closeTime:null,
         layoutId:layoutId,
         breakStart1:null,breakEnd1:null,
@@ -349,6 +352,7 @@ g("btn-open-store").addEventListener("click",function(){
         breakStart3:null,breakEnd3:null,
         guestCount:null,sales:null,memo:null
       }).then(function(){
+        writeJournal('create','sessions',sessionId,null,{date:today,openTime:openTime,layoutId:layoutId});
         currentSessionId=sessionId;
         currentOpenTime=openTime;
         currentSessionDate=today;
@@ -409,22 +413,37 @@ g("btn-close-store").addEventListener("click",function(){
   var closingDate=currentSessionDate;
   db.collection("sessions").doc(closingSessionId).update({closeTime:closeTime})
     .then(function(){
+      writeJournal('update','sessions',closingSessionId,null,{closeTime:closeTime});
       toast("閉店しました（"+closeTime+"）");
       autoCheckoutStaff(closeTime);
       currentSessionId=null;
       currentLayoutId=null;
       applyStoreStatus("closed");
       writePublicStatus('closed',{});
-      // 来場数・売上合計をセッションに記録
+      // 来場数・売上合計をセッションに記録（セッション時間帯で絞り込み・IDプレフィックス補完）
       if(closingDate){
-        db.collection("visits").where("visitDate","==",closingDate).get()
-          .then(function(snap){
-            var dayVisits=snap.docs.map(function(d){return d.data();});
-            var guestCount=dayVisits.filter(function(v){return !v.isStaff;}).length;
-            var sales=dayVisits.reduce(function(s,v){return s+(v.amount||0);},0);
-            db.collection("sessions").doc(closingSessionId).update({guestCount:guestCount,sales:sales})
-              .catch(function(e){console.warn("セッション集計更新失敗:",e);});
-          }).catch(function(e){console.warn("来場データ取得失敗:",e);});
+        var closingOpenTime=currentOpenTime;
+        Promise.all([
+          db.collection("visits").where("visitDate","==",closingDate).get(),
+          db.collection("visits")
+            .orderBy(firebase.firestore.FieldPath.documentId())
+            .startAt(closingDate).endAt(closingDate+"99").get()
+        ]).then(function(snaps){
+          var seen={};var dayVisits=[];
+          snaps.forEach(function(snap){snap.docs.forEach(function(d){if(!seen[d.id]){seen[d.id]=true;dayVisits.push(d.data());}});});
+          var sesVisits=dayVisits;
+          if(closingOpenTime){
+            var open=closingOpenTime.slice(0,4),close=closeTime.slice(0,4);
+            sesVisits=dayVisits.filter(function(v){
+              if(!v.visitTime)return true;
+              var vt=v.visitTime.slice(0,4);return vt>=open&&vt<=close;
+            });
+          }
+          var guestCount=sesVisits.filter(function(v){return !v.isStaff;}).length;
+          var sales=sesVisits.reduce(function(s,v){return s+(v.amount||0);},0);
+          db.collection("sessions").doc(closingSessionId).update({guestCount:guestCount,sales:sales})
+            .catch(function(e){console.warn("セッション集計更新失敗:",e);});
+        }).catch(function(e){console.warn("来場データ取得失敗:",e);});
       }
     }).catch(function(e){toast("閉店処理失敗: "+e.message,"err");});
 });
@@ -440,7 +459,7 @@ function restoreStoreState(){
   db.collection("sessions").get()
     .then(function(snap){
       if(snap.empty){applyStoreStatus("closed");writePublicStatus('closed',{});return;}
-      var docs=snap.docs.map(function(d){return d.data();});
+      var docs=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
       docs.sort(function(a,b){
         var ka=(a.date||"")+(a.openTime||"");
         var kb=(b.date||"")+(b.openTime||"");
@@ -449,7 +468,7 @@ function restoreStoreState(){
       var d=docs[0];
       if(d.closeTime){currentSessionId=null;currentOpenTime=null;currentSessionDate=null;currentLayoutId=null;applyStoreStatus("closed");writePublicStatus('closed',{});return;}
       currentSessionDate=d.date||null;
-      currentSessionId=d.sessionId||d.date+(d.seq!==undefined?String(d.seq):"0");
+      currentSessionId=d.id||d.sessionId;
       currentOpenTime=d.openTime||null;
       currentLayoutId=d.layoutId||null;
       var memoEl=g("oc-memo");if(memoEl)memoEl.value=d.memo||"";
@@ -551,7 +570,7 @@ async function autoCheckinStaff(today, openTime){
       if(existIds.has(mid))return;
       var docId=today+'s'+mid;
       batch.set(db.collection('visits').doc(docId),{
-        visitKey:docId,visitDate:today,visitTime:openTime,
+        visitDate:today,visitTime:openTime,
         seq:9990+idx,memberId:mid,isStaff:true,
         tequilaAmount:0,amount:0,checkoutTime:null,checkoutPayTime:null
       });
@@ -559,6 +578,10 @@ async function autoCheckinStaff(today, openTime){
     });
     if(cnt>0){
       await batch.commit();
+      checkedInIds.forEach(function(mid,idx){
+        if(existIds.has(mid))return;
+        writeJournal('create','visits',today+'s'+mid,null,{visitDate:today,visitTime:openTime,memberId:mid,isStaff:true});
+      });
       toast('スタッフ'+cnt+'名を自動チェックイン','inf');
       loadTodayVisits();
     }
