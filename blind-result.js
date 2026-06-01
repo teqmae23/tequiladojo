@@ -6,7 +6,8 @@
 var BlindResult = (function(){
   'use strict';
 
-  var _db, _getBlindMarks, _getVisits, _vLabel, _showToast, _markSym, _esc, _onSaved;
+  var _db, _getBlindMarks, _getVisits, _vLabel, _showToast, _markSym, _esc, _onSaved, _onClose;
+  var _canEdit = true;
   var _state = null;
   var _panel = null;
 
@@ -58,7 +59,7 @@ var BlindResult = (function(){
     + '<button class="btn bp" id="btn-save-result-hidden" style="flex:1" disabled>結果を保存する</button>'
     + '</div>'
     + '<div class="result-action-bar" id="result-action-revealed" style="display:none">'
-    + '<button class="btn bs" onclick="BlindResult.backToInput()" style="flex:1">← 入力に戻る</button>'
+    + '<button class="btn bs" id="btn-back-to-input" onclick="BlindResult.backToInput()" style="flex:1">← 入力に戻る</button>'
     + '<button class="btn bs" id="btn-confirm-partial-r" onclick="BlindResult.confirmPartial()" style="flex:1;display:none">未入力のまま確定</button>'
     + '<button class="btn bp" id="btn-save-result" onclick="BlindResult.save()" style="flex:1" disabled>結果を保存する</button>'
     + '</div>'
@@ -78,6 +79,8 @@ var BlindResult = (function(){
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     };
     _onSaved = cfg.onSaved || null;
+    _onClose = cfg.onClose || null;
+    _canEdit = (cfg.canEdit !== false);
     if(cfg.injectUI !== false) _injectUI();
   }
 
@@ -247,13 +250,18 @@ var BlindResult = (function(){
   function _switchToRevealed(allConfirmed){
     _g('result-action-input').style.display = 'none';
     _g('result-action-revealed').style.display = 'flex';
+    var backBtn = _g('btn-back-to-input');
+    if(backBtn) backBtn.style.display = _canEdit ? '' : 'none';
     var s = _state;
     var hasEmpty = s.members.some(function(_, mi){
       return s.marks.some(function(_, mki){ return !s.answers[mi][mki]; });
     });
     var saveBtn = _g('btn-save-result');
     var partialBtn = _g('btn-confirm-partial-r');
-    if(hasEmpty && !allConfirmed){
+    if(!_canEdit){
+      saveBtn.style.display = 'none';
+      partialBtn.style.display = 'none';
+    } else if(hasEmpty && !allConfirmed){
       saveBtn.disabled = true;
       partialBtn.style.display = 'flex';
     } else {
@@ -436,9 +444,10 @@ var BlindResult = (function(){
 
   // ── Public: load saved results from Firestore ──
   async function loadExisting(){
-    if(!_state) return;
+    if(!_state) return false;
     var allVisits = _getVisits();
     var members = _state.members, marks = _state.marks;
+    var hadData = false;
     for(var mi = 0; mi < members.length; mi++){
       var g = members[mi];
       var visit = allVisits.find(function(v){ return v.id === g.visitKey; });
@@ -451,16 +460,20 @@ var BlindResult = (function(){
           if(data.answers && Array.isArray(data.answers)){
             data.answers.forEach(function(ans){
               var mki = marks.indexOf(ans.blindMarkId);
-              if(mki >= 0 && ans.guessMarkId) _state.answers[mi][mki] = ans.guessMarkId;
+              if(mki >= 0 && ans.guessMarkId){
+                _state.answers[mi][mki] = ans.guessMarkId;
+                hadData = true;
+              }
             });
           }
-          if(data.winner) _state.winners[mi] = data.winner;
+          if(data.winner){ _state.winners[mi] = data.winner; hadData = true; }
         }
       } catch(e) {
         console.warn('blindResults load:', e);
       }
     }
     _renderTable();
+    return hadData;
   }
 
   // ── Public: show results ──
@@ -514,13 +527,15 @@ var BlindResult = (function(){
   }
 
   // ── Public: close modal ──
-  function close(){
+  // fromSave=true suppresses onClose so save's onSaved callback controls post-save behavior
+  function close(fromSave){
     _g('result-modal').classList.remove('open');
     var inp = _g('result-action-input');
     var rev = _g('result-action-revealed');
     if(inp) inp.style.display = 'flex';
     if(rev) rev.style.display = 'none';
     _state = null;
+    if(!fromSave && _onClose) _onClose();
   }
 
   // ── Public: save results to Firestore ──
@@ -573,7 +588,7 @@ var BlindResult = (function(){
       }
       await fsBatch.commit();
       _showToast('結果を保存しました', 'success');
-      close();
+      close(true);
       if(_onSaved) _onSaved();
     } catch(e) {
       _showToast('エラー: ' + e.message, 'error');
