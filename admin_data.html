@@ -225,6 +225,10 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 .tree-child-order{border-top:1px solid var(--border);padding-left:40px}
 .tree-child-order:first-child{border-top:none}
 .tree-summary{padding:10px 16px;font-size:12px;color:var(--ink3);background:var(--cream2);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.tree-amount-mismatch{color:var(--red);font-weight:700}
+.tree-together-row{padding:4px 16px 4px 60px;display:flex;flex-wrap:wrap;align-items:center;gap:4px;border-top:1px dashed var(--border);background:rgba(26,110,88,.02)}
+.tree-together-chip{display:inline-flex;align-items:center;gap:2px;background:rgba(26,110,88,.1);border:1px solid rgba(26,110,88,.22);border-radius:12px;padding:1px 6px 1px 8px;font-size:10px;color:var(--teal)}
+.tree-add-row{padding:6px 14px 8px;border-top:1px dashed var(--border)}
 </style>
 <meta name="version" content="202603260723">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -691,6 +695,20 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
   </div>
 </div>
 
+<!-- ブラインドデータ編集モーダル -->
+<div class="mbg" id="m-blind-edit">
+  <div class="modal">
+    <div class="mhead"><div class="mtitle">ブラインドデータ編集</div><button class="mx" data-close="m-blind-edit">✕</button></div>
+    <div class="mbody">
+      <div class="fg"><label class="fl">注文ID</label><input class="fi mono" id="blind-ord-id" readonly style="background:var(--cream2)"></div>
+      <div class="fg"><label class="fl">ブラインドマーク</label><input class="fi mono" id="blind-mark" placeholder="R● など"></div>
+      <div class="fg"><label class="fl">商品コード（ボトルID等）</label><input class="fi mono" id="blind-product-code" placeholder="ボトルID等"></div>
+      <div class="fg"><label class="fl">商品名</label><input class="fi" id="blind-product-name" placeholder="テキーラ名など"></div>
+    </div>
+    <div class="mfoot"><button class="btn bg2" data-close="m-blind-edit">キャンセル</button><button class="btn bp" id="btn-save-blind">保存</button></div>
+  </div>
+</div>
+
 <div id="toasts"></div>
 
 <script>
@@ -786,6 +804,9 @@ document.querySelectorAll(".tab").forEach(function(tab){
 var cache = { sessions:[], visits:[], reservations:[], orders:[], members:[], layouts:[] };
 var editId = { session:null, visit:null, reservation:null, order:null };
 var sortState = {};
+var _treeAfterSave = null;     // callback to run after modal save instead of default tab reload
+var _treeCurrentVisits = [];   // visits loaded for current tree day
+var _treeCurrentOrders = [];   // all orders loaded for current tree day
 
 var SORT_COLS = ["sessions","visits","reservations","orders"];
 SORT_COLS.forEach(function(col){
@@ -894,6 +915,12 @@ document.addEventListener("click",function(e){
   if(btn.dataset.treeDelVisit)  { treeCascadeDelVisit(btn.dataset.treeDelVisit);     return; }
   if(btn.dataset.treeDelOrder)  { treeDelOrder(btn.dataset.treeDelOrder);            return; }
   if(btn.dataset.treeDelDate)   { treeCascadeDelDate(btn.dataset.treeDelDate);       return; }
+  // ツリービュー：追加・ブラインド編集・仲間
+  if(btn.dataset.treeAddVisit)  { openVisitModalForTree(btn.dataset.treeAddVisit);   return; }
+  if(btn.dataset.treeAddOrder)  { openOrderModalForTree(btn.dataset.treeAddOrder, btn.dataset.treeAddOrderMember); return; }
+  if(btn.dataset.treeBlindEdit) { openBlindEditModal(btn.dataset.treeBlindEdit);     return; }
+  if(btn.dataset.treeAddCompanionBatch){ treeShowCompanionPicker(btn, btn.dataset.treeAddCompanionBatch, btn.dataset.treeAddCompanionOrd); return; }
+  if(btn.dataset.treeRemoveCompanion)  { treeRemoveCompanion(btn.dataset.treeRemoveCompanion); return; }
 });
 
 // ════════════════════════════════════════════════════════════════
@@ -2207,7 +2234,11 @@ if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
     setId:gv("ord-set-id")||null,
     deleted:0
   },{merge:true})
-  .then(function(){ toast(editId.order?"注文データを更新しました":"注文データを登録しました"); closeM("m-order"); loadOrders(); })
+  .then(function(){
+    toast(editId.order?"注文データを更新しました":"注文データを登録しました");
+    closeM("m-order");
+    if(_treeAfterSave){var _cb=_treeAfterSave;_treeAfterSave=null;_cb();}else{loadOrders();}
+  })
   .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
@@ -2239,6 +2270,8 @@ async function loadTree(){
         snap.docs.forEach(function(d){orders.push(Object.assign({id:d.id},d.data()));});
       }
     }
+    _treeCurrentVisits=visits;
+    _treeCurrentOrders=orders;
     renderTree(yymmdd,sessions,visits,orders,cont);
   }catch(e){cont.innerHTML='<div class="ec">読込エラー: '+e.message+'</div>';}
 }
@@ -2299,7 +2332,17 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
         var visDet=[];
         if(vis.visitTime) visDet.push('来場 '+fmtHHMM(vis.visitTime));
         if(vis.checkoutTime) visDet.push('退場 '+fmtHHMM(vis.checkoutTime));
-        if(vis.amount) visDet.push('¥'+Number(vis.amount).toLocaleString());
+        if(vis.amount!=null){
+          var ordCalc=visOrders.filter(function(o){return o.served!==0;}).reduce(function(s,o){
+            if(o.unitPrice==null)return s;
+            var isMlC=o.productType==='tequila'||o.productType==='other';
+            var multC=o.isGiftPayer?(o.giftCount||0):1;
+            return s+Math.round(isMlC?o.unitPrice*o.qty/10:o.unitPrice*o.qty)*multC;
+          },0);
+          var amtDisp='¥'+Number(vis.amount).toLocaleString();
+          if(vis.amount!==ordCalc) amtDisp='<strong class="tree-amount-mismatch">⚠ '+amtDisp+'</strong>';
+          visDet.push(amtDisp);
+        }
         var visId='tree-vis-'+vis.id;
 
         html+='<div class="tree-child-visit">';
@@ -2320,6 +2363,7 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
           visOrders.sort(function(a,b){return (a.orderTime||'').localeCompare(b.orderTime||'');});
           visOrders.forEach(function(ord){
             var cancelled=ord.served===0;
+            var isBlind=ord.blindId===1||ord.blindId==='1';
             var ordDet=[];
             if(ord.orderTime) ordDet.push(fmtHHMM(ord.orderTime));
             ordDet.push(escHtml(ord.productName||ord.productCode||'—'));
@@ -2332,19 +2376,48 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
             var badge='<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;'
               +(cancelled?'background:#fee;color:var(--red)':'background:rgba(40,120,80,.1);color:#1a5e3a')
               +'">'+(cancelled?'キャンセル':treeServedLabel(ord.served))+'</span>';
+            var blindMark=isBlind&&ord.blindMarkId?'<span style="font-size:9px;background:var(--red-l);color:var(--red);border-radius:3px;padding:1px 5px;margin-left:4px">盲:'+escHtml(ord.blindMarkId)+'</span>':'';
             html+='<div class="tree-node onode tree-child-order'+(cancelled?' cancelled':'')+'">'
               +'<span style="width:44px;flex-shrink:0"></span>'
               +'<span class="tree-tag tag-order">注文</span>'
-              +'<span class="tree-label">'+ordDet.join(' &nbsp;')+badge+'</span>'
+              +'<span class="tree-label">'+ordDet.join(' &nbsp;')+badge+blindMark+'</span>'
               +'<div class="tree-acts">'
+              +(isBlind?'<button class="btn bs sm" style="font-size:10px;background:var(--red-l);color:var(--red);border-color:rgba(140,40,24,.2)" data-tree-blind-edit="'+escHtml(ord.id)+'">盲編集</button>':'')
               +'<button class="btn bs sm" data-edit-order="'+escHtml(ord.id)+'">編集</button>'
               +'<button class="btn bd sm" data-tree-del-order="'+escHtml(ord.id)+'">削除</button>'
               +'</div></div>';
+            // 一緒に飲んだ人セクション（batchIdがある注文のみ）
+            if(!cancelled&&ord.batchId){
+              var companions=orders.filter(function(o){
+                return o.batchId===ord.batchId&&(o.visitKey||o.visitId)!==vis.id&&!o.deleted;
+              }).reduce(function(acc,o){
+                var bvk=o.visitKey||o.visitId;
+                if(!acc.some(function(x){return x.visitId===bvk;})){
+                  var bvis=visits.find(function(v){return v.id===bvk;});
+                  acc.push({name:treeMemName(bvis?bvis.memberId:null)||bvk,ordId:o.id,visitId:bvk});
+                }
+                return acc;
+              },[]);
+              html+='<div class="tree-together-row">';
+              html+='<span style="font-size:10px;color:var(--ink3);flex-shrink:0;margin-right:2px">👥 一緒:</span>';
+              companions.forEach(function(c){
+                html+='<span class="tree-together-chip">'+escHtml(c.name)
+                  +'<button data-tree-remove-companion="'+escHtml(c.ordId)+'" title="外す" style="background:none;border:none;cursor:pointer;color:var(--ink3);padding:0 0 0 3px;font-size:11px;line-height:1">×</button></span>';
+              });
+              html+='<button class="btn bs sm" style="font-size:10px;padding:2px 8px" data-tree-add-companion-batch="'+escHtml(ord.batchId)+'" data-tree-add-companion-ord="'+escHtml(ord.id)+'">＋ 追加</button>';
+              html+='</div>';
+            }
           });
         }
+        html+='<div class="tree-add-row" style="padding-left:60px">'
+          +'<button class="btn bs sm" style="font-size:11px" data-tree-add-order="'+escHtml(vis.id)+'" data-tree-add-order-member="'+escHtml(vis.memberId||'')+'">＋ 注文追加</button>'
+          +'</div>';
         html+='</div></div>';
       });
     }
+    html+='<div class="tree-add-row" style="padding-left:20px">'
+      +'<button class="btn bs sm" style="font-size:11px" data-tree-add-visit="'+yymmdd+'">＋ 来場追加</button>'
+      +'</div>';
     html+='</div></div>';
   });
 
@@ -2438,6 +2511,142 @@ function treeDelOrder(orderId){
     db.collection('orders').doc(orderId).delete()
       .then(function(){toast('注文を削除しました');loadTree();})
       .catch(function(e){toast('削除失敗: '+e.message,'err');});
+  });
+}
+
+// ─── ツリービュー：来場・注文追加、ブラインド編集、一緒に飲んだ人 ─────────────
+
+function openVisitModalForTree(yymmdd){
+  openVisitModal(null);
+  sv("vis-date", yymmdd);
+  autoVisitSeq(yymmdd, function(seq){
+    _currentVisitSeq=seq;
+    updateVisitKeyBox(seq);
+  });
+  // rebind save button to reload tree after save
+  setTimeout(function(){
+    var saveBtn=g("btn-save-visit");
+    if(saveBtn) saveBtn.onclick=function(){
+      doSaveVisit(function(){ closeM("m-visit"); loadTree(); });
+    };
+  }, 60);
+}
+
+function openOrderModalForTree(visitId, memberId){
+  _treeAfterSave=loadTree;
+  openOrderModal(null);
+  if(visitId){
+    var yymmdd=visitId.slice(0,6);
+    sv("ord-date",yymmdd);
+    sv("ord-visit",visitId);
+    sv("ord-visit-id",visitId);
+    autoSetOrderSeq(yymmdd);
+  }
+  if(memberId) sv("ord-customer",memberId);
+  updateOrderKey();
+}
+
+function openBlindEditModal(ordId){
+  var ord=_treeCurrentOrders.find(function(o){return o.id===ordId;});
+  if(!ord) return;
+  sv("blind-ord-id",ordId);
+  sv("blind-mark",ord.blindMarkId||"");
+  sv("blind-product-code",ord.productCode||"");
+  sv("blind-product-name",ord.productName||"");
+  openM("m-blind-edit");
+}
+
+(function(){
+  var btn=g("btn-save-blind"); if(!btn) return;
+  btn.addEventListener("click",function(){
+    var ordId=gv("blind-ord-id"); if(!ordId) return;
+    db.collection("orders").doc(ordId).update({
+      blindMarkId:gv("blind-mark")||null,
+      productCode:gv("blind-product-code")||null,
+      productName:gv("blind-product-name")||null
+    })
+    .then(function(){ toast("ブラインドデータを更新しました"); closeM("m-blind-edit"); loadTree(); })
+    .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
+  });
+})();
+
+function treeShowCompanionPicker(btn, batchId, templateOrdId){
+  // close any existing picker
+  document.querySelectorAll(".tree-companion-picker").forEach(function(el){el.remove();});
+  var templateOrd=_treeCurrentOrders.find(function(o){return o.id===templateOrdId;});
+  if(!templateOrd){ toast("注文データが見つかりません","err"); return; }
+  var myVisitId=templateOrd.visitKey||templateOrd.visitId;
+  // collect visit IDs already in this batch
+  var usedVids=[myVisitId];
+  _treeCurrentOrders.forEach(function(o){
+    if(o.batchId===batchId&&!o.deleted){
+      var vk=o.visitKey||o.visitId; if(usedVids.indexOf(vk)<0) usedVids.push(vk);
+    }
+  });
+  var available=_treeCurrentVisits.filter(function(v){ return usedVids.indexOf(v.id)<0; });
+  if(!available.length){ toast("追加できる来場者がいません","inf"); return; }
+
+  var picker=document.createElement("div");
+  picker.className="tree-companion-picker";
+  picker.style.cssText="display:inline-flex;align-items:center;gap:4px;padding:0";
+
+  var sel=document.createElement("select");
+  sel.className="fsel";
+  sel.style.cssText="font-size:11px;padding:3px 6px";
+  sel.innerHTML='<option value="">来場者を選択...</option>'+
+    available.map(function(v){
+      var nm=treeMemName(v.memberId)||v.id;
+      return '<option value="'+v.id+'">'+escHtml(nm)+' ('+v.id+')</option>';
+    }).join("");
+
+  var addBtn=document.createElement("button");
+  addBtn.className="btn bp sm"; addBtn.style.fontSize="11px"; addBtn.textContent="追加";
+  addBtn.onclick=function(){
+    var vid=sel.value; if(!vid){toast("来場者を選択してください","err");return;}
+    var vis=_treeCurrentVisits.find(function(v){return v.id===vid;});
+    treeDoAddCompanion(batchId, templateOrd, vis);
+    picker.remove();
+  };
+
+  var cancelBtn=document.createElement("button");
+  cancelBtn.className="btn bg2 sm"; cancelBtn.style.fontSize="11px"; cancelBtn.textContent="✕";
+  cancelBtn.onclick=function(){picker.remove();};
+
+  picker.appendChild(sel); picker.appendChild(addBtn); picker.appendChild(cancelBtn);
+  btn.parentNode.insertBefore(picker, btn.nextSibling);
+}
+
+async function treeDoAddCompanion(batchId, templateOrd, vis){
+  if(!vis) return;
+  var date=(templateOrd.id||"").slice(0,6);
+  var maxSeq=_treeCurrentOrders.reduce(function(mx,o){
+    if((o.id||"").slice(0,6)===date){var s=parseInt((o.id||"").slice(6))||0;return s>mx?s:mx;}
+    return mx;
+  },0);
+  var newId=date+String(maxSeq+1).padStart(3,"0");
+  var newOrd={
+    orderDate:date, orderTime:templateOrd.orderTime||null,
+    customerId:vis.memberId||null, visitKey:vis.id, visitId:vis.id,
+    productType:templateOrd.productType||"tequila",
+    productCode:templateOrd.productCode||null, productName:templateOrd.productName||null,
+    qty:templateOrd.qty||null, unit:templateOrd.unit||"ml",
+    unitPrice:templateOrd.unitPrice||null,
+    orderGroupId:templateOrd.orderGroupId||null, batchId:batchId,
+    itemSeq:templateOrd.itemSeq||1, served:templateOrd.served||1,
+    blindId:0, blindMarkId:null, setId:templateOrd.setId||null, deleted:0
+  };
+  try{
+    await db.collection("orders").doc(newId).set(newOrd);
+    toast("仲間を追加しました");
+    loadTree();
+  }catch(e){ toast("追加失敗: "+e.message,"err"); }
+}
+
+function treeRemoveCompanion(orderId){
+  confirmDel("仲間の注文「"+orderId+"」を削除しますか？",function(){
+    db.collection("orders").doc(orderId).delete()
+      .then(function(){ toast("仲間の注文を削除しました"); loadTree(); })
+      .catch(function(e){ toast("削除失敗: "+e.message,"err"); });
   });
 }
 
