@@ -27,6 +27,8 @@ var FIREBASE_CONFIG = {
 };
 </script>
 <script src="/auth-role.js?v=20260521"></script>
+<script>window.JOURNAL_PAGE='checkin';</script>
+<script src="/journal.js?v=20260601"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -1405,11 +1407,9 @@ g('m-checkin-save').addEventListener('click', async function(){
 
     registeredVisitKeys.forEach(function(vk, idx){
       var mid=idx<cntMem?(memberIds[idx]||null):(tempMemberIds[idx-cntMem]?tempMemberIds[idx-cntMem].tempId:null);
-      cache.visits.push({
-        id:vk, visitDate:today, visitTime:time,
-        memberId:mid, checkinGroupId:groupId,
-        tequilaAmount:0, amount:0, payment:payment, receiptIssued:'0', checkoutTime:null
-      });
+      var vdata={visitDate:today,visitTime:time,seq:parseInt(vk.slice(6,8))||0,memberId:mid,checkinGroupId:groupId,tequilaAmount:0,amount:0,payment:payment,receiptIssued:'0',checkoutTime:null};
+      writeJournal('create','visits',vk,null,vdata);
+      cache.visits.push(Object.assign({id:vk},vdata));
     });
 
     window._lastTempMembers=tempMemberIds;
@@ -1721,6 +1721,10 @@ function doCheckoutSave(){
   }).catch(function(){});
 
   fbBatch.commit().then(function(){
+    bulkCheckoutVisitKeys.forEach(function(vk){
+      var v=cache.visits.find(function(x){return x.id===vk;});
+      writeJournal('update','visits',vk,null,{amount:v?v.amount:null,tequilaAmount:v?v.tequilaAmount:null,payment:payment,checkoutPayTime:now,checkoutTime:alsoCheckout?now:undefined});
+    });
     closeM('m-checkout');
     var msg=alsoCheckout
       ?'お会計・退場を確定しました（'+bulkCheckoutVisitKeys.length+'名）'

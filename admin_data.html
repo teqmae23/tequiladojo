@@ -269,6 +269,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <button class="tab" data-page="calendar">カレンダー</button>
       <button class="tab" data-page="tree">🌲 ツリー</button>
       <button class="tab" data-page="backup">💾 バックアップ</button>
+      <button class="tab" data-page="journal">📋 ジャーナル</button>
     </div>
   </div>
   <div class="content">
@@ -443,6 +444,36 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
     </div>
 
     <!-- ツリービューページ -->
+    <!-- ジャーナルページ -->
+    <div class="page" id="page-journal">
+      <div class="phead">
+        <div><div class="ptitle">操作ジャーナル</div><div class="pdesc">セッション・来場・注文の作成・更新・削除ログ</div></div>
+      </div>
+      <div style="padding:16px 20px;display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+        <select id="jnl-filter-col" class="fsel" style="width:140px">
+          <option value="">全コレクション</option>
+          <option value="sessions">sessions</option>
+          <option value="visits">visits</option>
+          <option value="orders">orders</option>
+          <option value="members">members</option>
+        </select>
+        <select id="jnl-filter-op" class="fsel" style="width:120px">
+          <option value="">全操作</option>
+          <option value="create">create</option>
+          <option value="update">update</option>
+          <option value="delete">delete</option>
+        </select>
+        <input type="date" id="jnl-filter-date" class="fsel" style="width:150px" title="この日以降のログを表示">
+        <button class="btn bp sm" onclick="loadJournal()">検索</button>
+        <button class="btn bs sm" onclick="exportJournalCSV()">CSV出力</button>
+        <button class="btn bd sm" onclick="deleteOldJournals()">古いログを削除</button>
+        <span id="jnl-count" style="font-size:12px;color:var(--ink3)"></span>
+      </div>
+      <div id="jnl-container" style="padding:0 20px 20px">
+        <div style="font-size:12px;color:var(--ink3)">「検索」を押してログを読み込んでください</div>
+      </div>
+    </div>
+
     <div class="page" id="page-tree">
       <div class="phead" style="flex-direction:column;align-items:stretch;gap:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -785,6 +816,10 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 <div id="toasts"></div>
 
 <script>
+window.JOURNAL_PAGE = 'admin_data';
+</script>
+<script src="/journal.js?v=20260601"></script>
+<script>
 // Firebase初期化
 if (!firebase.apps.length) { firebase.initializeApp(FIREBASE_CONFIG); }
 var auth = firebase.auth();
@@ -975,7 +1010,7 @@ document.addEventListener("click",function(e){
   if(btn.dataset.del){
     var col=btn.dataset.del,id=btn.dataset.delId,label=btn.dataset.delLabel;
     confirmDel("「"+id+"」の"+label+"データを削除しますか？",function(){
-      db.collection(col).doc(id).delete()
+      journaledDelete(col,id)
         .then(function(){
           toast(label+"を削除しました");
           if(col==="sessions") loadSessions();
@@ -1139,6 +1174,7 @@ var _bssBtn=g("btn-save-session"); if(_bssBtn) _bssBtn.addEventListener("click",
   if(keyChanged){ promise=db.collection("sessions").doc(editId.session).delete().then(doSave); }
   else { promise=doSave(); }
   promise.then(function(){
+    writeJournal(keyChanged?'delete+create':editId.session?'update':'create','sessions',id,null,saveData);
     toast(editId.session?"営業データを更新しました":"営業データを登録しました");
     closeM("m-session");
     loadSessions();
@@ -1326,7 +1362,15 @@ function doSaveVisit(onSuccess){
     checkoutTime:gv("vis-out")||null,
     checkoutPayTime:gv("vis-pay-time")||null
   },{merge:true})
-  .then(function(){ toast(editId.visit?"来店データを更新しました":"来店登録しました"); if(onSuccess) onSuccess(); })
+  .then(function(){
+    var _vdata={visitDate:date,visitTime:time||null,seq:seq,memberId:gv("vis-member")||null,
+      tequilaAmount:gv("vis-tequila")!==""?parseFloat(gv("vis-tequila")):null,
+      amount:gv("vis-amount")!==""?parseInt(gv("vis-amount")):null,
+      payment:gv("vis-payment")||"0",receiptIssued:gv("vis-receipt")||"0",
+      checkoutTime:gv("vis-out")||null,checkoutPayTime:gv("vis-pay-time")||null};
+    writeJournal(editId.visit?'update':'create','visits',id,null,_vdata);
+    toast(editId.visit?"来店データを更新しました":"来店登録しました"); if(onSuccess) onSuccess();
+  })
   .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 }
 
@@ -2336,6 +2380,13 @@ if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
     deleted:0
   },editId.order?{merge:true}:{})
   .then(function(){
+    var _odata={orderDate:gv("ord-date"),orderTime:gv("ord-time")||null,
+      customerId:gv("ord-customer")||null,visitKey:gv("ord-visit")||null,
+      productType:gv("ord-type")||"tequila",productName:gv("ord-product-name")||null,
+      qty:parseFloat(gv("ord-qty"))||null,unit:gv("ord-unit")||"ml",
+      unitPrice:gv("ord-unit-price")!==""?parseInt(gv("ord-unit-price")):null,
+      served:parseInt(gv("ord-served")||"1"),deleted:0};
+    writeJournal(editId.order?'update':'create','orders',id,null,_odata);
     toast(editId.order?"注文データを更新しました":"注文データを登録しました");
     closeM("m-order");
     if(_treeAfterSave){var _cb=_treeAfterSave;_treeAfterSave=null;_cb();}else{loadOrders();}
@@ -2968,6 +3019,109 @@ async function runFieldMigration(){
 document.querySelector('[data-page="backup"]').addEventListener('click',function(){
   setTimeout(renderBackupCollectionList,50);
 });
+document.querySelector('[data-page="journal"]').addEventListener('click',function(){
+  if(!document.getElementById('jnl-container').querySelector('table')) loadJournal();
+});
+
+// ── ジャーナル閲覧 ───────────────────────────────────────────
+var _jnlDocs=[];
+
+async function loadJournal(){
+  var cont=document.getElementById('jnl-container');
+  var cntEl=document.getElementById('jnl-count');
+  cont.innerHTML='<div class="ec">読み込み中...</div>';
+  try{
+    var col=document.getElementById('jnl-filter-col').value;
+    var op=document.getElementById('jnl-filter-op').value;
+    var dateV=document.getElementById('jnl-filter-date').value;
+    var q=db.collection('journals').orderBy('at','desc').limit(500);
+    if(col) q=q.where('col','==',col);
+    if(op)  q=q.where('op','==',op);
+    var snap=await q.get();
+    _jnlDocs=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    if(dateV){
+      var ts=new Date(dateV).getTime();
+      _jnlDocs=_jnlDocs.filter(function(d){
+        return d.at&&d.at.toDate&&d.at.toDate().getTime()>=ts;
+      });
+    }
+    cntEl.textContent=_jnlDocs.length+'件';
+    renderJournal(_jnlDocs,cont);
+  }catch(e){cont.innerHTML='<div class="ec">読込エラー: '+e.message+'</div>';}
+}
+
+function renderJournal(docs,cont){
+  if(!docs.length){cont.innerHTML='<div class="ec">ログがありません</div>';return;}
+  var OP_COLOR={create:'#2a7a2a',update:'#1a5a9a',delete:'#c0392b'};
+  var html='<table style="width:100%;border-collapse:collapse;font-size:12px">'
+    +'<thead><tr style="background:var(--cream2)">'
+    +'<th style="padding:6px 10px;text-align:left;border-bottom:1px solid var(--border)">日時</th>'
+    +'<th style="padding:6px 10px;text-align:left;border-bottom:1px solid var(--border)">操作</th>'
+    +'<th style="padding:6px 10px;text-align:left;border-bottom:1px solid var(--border)">コレクション</th>'
+    +'<th style="padding:6px 10px;text-align:left;border-bottom:1px solid var(--border)">ドキュメントID</th>'
+    +'<th style="padding:6px 10px;text-align:left;border-bottom:1px solid var(--border)">実行者</th>'
+    +'<th style="padding:6px 10px;text-align:left;border-bottom:1px solid var(--border)">画面</th>'
+    +'<th style="padding:6px 10px;border-bottom:1px solid var(--border)">詳細</th>'
+    +'</tr></thead><tbody>';
+  docs.forEach(function(d,i){
+    var ts=d.at&&d.at.toDate?d.at.toDate().toLocaleString('ja-JP'):'—';
+    var col=OP_COLOR[d.op]||'#666';
+    html+='<tr style="border-bottom:1px solid var(--border2)">'
+      +'<td style="padding:5px 10px;white-space:nowrap;color:var(--ink3)">'+escHtml(ts)+'</td>'
+      +'<td style="padding:5px 10px"><span style="background:'+col+';color:#fff;border-radius:3px;padding:1px 6px;font-size:10px;font-weight:500">'+escHtml(d.op||'')+'</span></td>'
+      +'<td style="padding:5px 10px;font-family:monospace">'+escHtml(d.col||'')+'</td>'
+      +'<td style="padding:5px 10px;font-family:monospace;font-size:11px">'+escHtml(d.docId||'')+'</td>'
+      +'<td style="padding:5px 10px;font-size:11px">'+escHtml(d.by||'')+'</td>'
+      +'<td style="padding:5px 10px;font-size:11px">'+escHtml(d.page||'')+'</td>'
+      +'<td style="padding:5px 10px;text-align:center">'
+      +'<button class="btn bs sm" onclick="toggleJnlDetail(\'jd'+i+'\')" style="font-size:10px">展開</button>'
+      +'</td></tr>'
+      +'<tr id="jd'+i+'" style="display:none;background:var(--cream2)">'
+      +'<td colspan="7" style="padding:8px 16px">'
+      +'<div style="display:flex;gap:16px;flex-wrap:wrap">'
+      +(d.before?'<div><div style="font-size:10px;color:var(--ink3);margin-bottom:4px">BEFORE</div><pre style="font-size:11px;margin:0;white-space:pre-wrap;max-width:400px">'+escHtml(JSON.stringify(d.before,null,2))+'</pre></div>':'')
+      +(d.after?'<div><div style="font-size:10px;color:var(--ink3);margin-bottom:4px">AFTER</div><pre style="font-size:11px;margin:0;white-space:pre-wrap;max-width:400px">'+escHtml(JSON.stringify(d.after,null,2))+'</pre></div>':'')
+      +'</div></td></tr>';
+  });
+  html+='</tbody></table>';
+  cont.innerHTML=html;
+}
+
+function toggleJnlDetail(id){
+  var el=document.getElementById(id);
+  if(el) el.style.display=el.style.display==='none'?'':'none';
+}
+
+function exportJournalCSV(){
+  if(!_jnlDocs.length){toast('先に検索してください','err');return;}
+  var rows=[['日時','操作','コレクション','ドキュメントID','実行者','画面','before','after']];
+  _jnlDocs.forEach(function(d){
+    var ts=d.at&&d.at.toDate?d.at.toDate().toISOString():'';
+    rows.push([ts,d.op||'',d.col||'',d.docId||'',d.by||'',d.page||'',
+      d.before?JSON.stringify(d.before):'',d.after?JSON.stringify(d.after):'']);
+  });
+  var csv=rows.map(function(r){return r.map(function(c){return '"'+String(c).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
+  var a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,﻿'+encodeURIComponent(csv);
+  a.download='journals_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+}
+
+async function deleteOldJournals(){
+  var days=parseInt(prompt('何日より前のログを削除しますか？（例: 90）','90'));
+  if(!days||days<1) return;
+  var cutoff=new Date(Date.now()-days*86400000);
+  if(!confirm(cutoff.toLocaleDateString('ja-JP')+'以前のジャーナルを削除します。よろしいですか？')) return;
+  try{
+    var snap=await db.collection('journals').where('at','<',cutoff).get();
+    if(!snap.docs.length){toast('該当するログがありません');return;}
+    var b=db.batch(),bc=0;
+    snap.docs.forEach(function(d){b.delete(d.ref);bc++;});
+    await b.commit();
+    toast(snap.docs.length+'件のログを削除しました');
+    loadJournal();
+  }catch(e){toast('削除失敗: '+e.message,'err');}
+}
 
 function treeToggle(id,btn){
   var el=document.getElementById(id);
@@ -3002,6 +3156,9 @@ async function treeCascadeDelDate(yymmdd){
       visSnap.docs.forEach(function(d){batch.delete(d.ref);});
       ordDocs.forEach(function(d){batch.delete(d.ref);});
       await batch.commit();
+      sesSnap.docs.forEach(function(d){writeJournal('delete','sessions',d.id,d.data(),null);});
+      visSnap.docs.forEach(function(d){writeJournal('delete','visits',d.id,d.data(),null);});
+      ordDocs.forEach(function(d){writeJournal('delete','orders',d.id,d.data(),null);});
       toast('削除完了（セッション'+sesSnap.docs.length+'/来場'+visSnap.docs.length+'/注文'+ordDocs.length+'）');
       cont.innerHTML='<div class="ec">削除しました。</div>';
     }catch(e){toast('削除失敗: '+e.message,'err');}
@@ -3043,6 +3200,9 @@ async function treeCascadeDelSession(sessionId){
       sesVisits.forEach(function(v){batch.delete(db.collection('visits').doc(v.id));});
       ordDocs.forEach(function(d){batch.delete(d.ref);});
       await batch.commit();
+      writeJournal('delete','sessions',sessionId,sesData,null);
+      sesVisits.forEach(function(v){writeJournal('delete','visits',v.id,v,null);});
+      ordDocs.forEach(function(d){writeJournal('delete','orders',d.id,d.data(),null);});
       toast('削除完了（セッション/来場'+sesVisits.length+'/注文'+ordDocs.length+'）');
       loadTree();
     }catch(e){toast('削除失敗: '+e.message,'err');}
@@ -3055,9 +3215,12 @@ async function treeCascadeDelVisit(visitId){
   confirmDel(msg,async function(){
     try{
       var batch=db.batch();
+      var _visData=_treeCurrentVisits.find(function(v){return v.id===visitId;})||null;
       batch.delete(db.collection('visits').doc(visitId));
       ordSnap.docs.forEach(function(d){batch.delete(d.ref);});
       await batch.commit();
+      writeJournal('delete','visits',visitId,_visData,null);
+      ordSnap.docs.forEach(function(d){writeJournal('delete','orders',d.id,d.data(),null);});
       toast('削除完了（来場/注文'+ordSnap.docs.length+'）');
       loadTree();
     }catch(e){toast('削除失敗: '+e.message,'err');}
@@ -3066,7 +3229,7 @@ async function treeCascadeDelVisit(visitId){
 
 function treeDelOrder(orderId){
   confirmDel('注文「'+orderId+'」を削除します。',function(){
-    db.collection('orders').doc(orderId).delete()
+    journaledDelete('orders',orderId)
       .then(function(){toast('注文を削除しました');loadTree();})
       .catch(function(e){toast('削除失敗: '+e.message,'err');});
   });
