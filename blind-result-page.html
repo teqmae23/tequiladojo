@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ブラインド結果 | テキーラ道場</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Noto+Sans+JP:wght@400;500;700&family=DM+Mono&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="/auth-role.js?v=20260527"></script>
+<script src="blind-result.js"></script>
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --teal:#1a6e58;--teal-l:#e0f0eb;
+  --red:#8c2818;--red-l:#fae8e4;
+  --cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;
+  --border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);
+  --shadow:0 1px 12px rgba(24,17,10,.07);--shadow-lg:0 6px 36px rgba(24,17,10,.13);
+  --r:8px;--rl:14px;
+  --serif:'Cormorant Garamond',Georgia,serif;
+  --sans:'Noto Sans JP',sans-serif;
+  --mono:'DM Mono',monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+button{cursor:pointer;font-family:var(--sans);border:none}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 16px;border-radius:var(--r);font-size:13px;font-weight:500;border:none;white-space:nowrap;cursor:pointer;transition:all .15s}
+.bp{background:var(--gold-d);color:var(--cream)}.bp:hover{background:var(--gold)}.bp:active{transform:scale(.97)}
+.bs{background:var(--cream2);color:var(--ink2);border:1px solid var(--border2)}.bs:hover{background:var(--cream3)}
+.sm{padding:6px 10px;font-size:11px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:200;overflow-y:auto;padding:20px 16px}
+.modal-overlay.open{display:block}
+.modal-panel{background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);max-width:560px;margin:0 auto;box-shadow:var(--shadow-lg)}
+.modal-header{display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border);gap:10px}
+.modal-title{font-family:var(--serif);font-size:18px;font-weight:600;color:var(--gold-d);flex:1}
+/* ログイン */
+#login-screen{min-height:100vh;display:none;align-items:center;justify-content:center;padding:20px}
+#login-screen.show{display:flex}
+.lcard{width:100%;max-width:340px;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:36px 24px;box-shadow:var(--shadow-lg)}
+.llogo{text-align:center;font-size:36px;margin-bottom:4px}
+.lbrand{font-family:var(--serif);font-size:22px;font-weight:600;color:var(--gold-d);letter-spacing:.14em;text-align:center;margin-bottom:20px}
+.lcard label{display:block;font-size:10px;font-weight:500;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px;margin-top:12px}
+.lcard input{width:100%;padding:10px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:14px;background:var(--cream);color:var(--ink);outline:none}
+.lcard input:focus{border-color:var(--gold)}
+.lerr{min-height:14px;font-size:12px;color:var(--red);margin-top:8px;text-align:center}
+.lbtn{width:100%;margin-top:16px;padding:12px;background:var(--gold-d);color:var(--cream);border-radius:var(--r);font-size:14px;font-weight:500}
+/* ローディング・エラー */
+#status{min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;font-size:13px;color:var(--ink3)}
+#status.hide{display:none}
+</style>
+</head>
+<body>
+<div id="login-screen">
+  <div class="lcard">
+    <div class="llogo">🌵</div>
+    <div class="lbrand">Tequila Dojo</div>
+    <label>メールアドレス</label>
+    <input type="email" id="login-email" placeholder="staff@example.com">
+    <label>パスワード</label>
+    <input type="password" id="login-pass">
+    <div class="lerr" id="login-err"></div>
+    <button class="lbtn" onclick="doLogin()">ログイン</button>
+  </div>
+</div>
+
+<div id="status">読み込み中...</div>
+
+<div id="toast" style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:6px;pointer-events:none"></div>
+
+<script>
+const firebaseConfig={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
+};
+firebase.initializeApp(firebaseConfig);
+const auth=firebase.auth();
+const db=firebase.firestore();
+
+let allVisits=[],allMembers={},blindMarks=[];
+
+const MARK_COLOR_MAP={R:'#c0392b',G:'#1a6e3a',W:null,Y:'#b8860b',B:'#185FA5'};
+function markSym(m){
+  var cc=(m.colorCode||m.id.charAt(0));
+  var isDbl=(m.mark||m.id.charAt(1))==='◎';
+  var isWhite=cc==='W';
+  var color=isWhite?'#18110a':(MARK_COLOR_MAP[cc]||'#666');
+  var sym=isWhite?(isDbl?'○○':'○'):(isDbl?'●●':'●');
+  return{sym:sym,color:color};
+}
+function esc(s){if(!s)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function vLabel(visitKey){
+  var v=allVisits.find(function(x){return x.id===visitKey;});
+  if(!v)return'来店ID: '+visitKey;
+  if(v.memberId&&allMembers[v.memberId]){
+    var m=allMembers[v.memberId];
+    return m.nickname||m.name||v.memberId;
+  }
+  return 'ゲスト（'+v.id+'）';
+}
+function showToast(msg,type){
+  var el=document.createElement('div');
+  var bg=type==='error'?'#7a1a0a':(type==='success'?'#1a5e3a':'#5c4010');
+  el.style.cssText='padding:10px 16px;border-radius:8px;font-size:12px;font-weight:500;color:#fff;background:'+bg+';box-shadow:0 4px 16px rgba(0,0,0,.2);pointer-events:auto';
+  el.textContent=msg;
+  document.getElementById('toast').appendChild(el);
+  setTimeout(function(){el.remove();},2800);
+}
+function setStatus(msg){
+  var s=document.getElementById('status');
+  s.textContent=msg;
+  s.className='';
+}
+function hideStatus(){
+  document.getElementById('status').className='hide';
+}
+function doLogin(){
+  auth.signInWithEmailAndPassword(
+    document.getElementById('login-email').value,
+    document.getElementById('login-pass').value
+  ).catch(function(){document.getElementById('login-err').textContent='ログインに失敗しました';});
+}
+
+// ── URLパラメータ ──
+var params=new URLSearchParams(window.location.search);
+var batchId=params.get('batchId')||params.get('editBlind')||'';
+var visitKey=params.get('visitKey')||params.get('onlyVisit')||'';
+
+// ── 認証 ──
+AuthRole.requireStaff(auth,
+  function(user,role){
+    document.getElementById('login-screen').className='';
+    loadAndShow();
+  },
+  function(){
+    document.getElementById('login-screen').className='show';
+    hideStatus();
+  }
+);
+
+// ── データ取得・表示 ──
+async function loadAndShow(){
+  if(!batchId){setStatus('バッチIDが指定されていません');return;}
+
+  // blindMarks
+  try{
+    var bSnap=await db.collection('blindMarks').get();
+    blindMarks=[];
+    bSnap.forEach(function(d){blindMarks.push(Object.assign({id:d.id},d.data()));});
+    blindMarks.sort(function(a,b){return (a.sortOrder||0)-(b.sortOrder||0);});
+  }catch(e){setStatus('ブラインドマークの取得に失敗しました');return;}
+
+  // batch orders
+  var batchOrders=[];
+  try{
+    var ordSnap=await db.collection('orders').where('batchId','==',batchId).get();
+    batchOrders=ordSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+  }catch(e){setStatus('注文データの取得に失敗しました');return;}
+
+  if(!batchOrders.length){setStatus('このバッチのブラインド注文が見つかりません');return;}
+
+  // visits
+  var vks=[...new Set(batchOrders.map(function(o){return o.visitKey||o.visitId;}).filter(Boolean))];
+  try{
+    await Promise.all(vks.map(async function(vk){
+      if(!allVisits.find(function(v){return v.id===vk;})){
+        var d=await db.collection('visits').doc(vk).get();
+        if(d.exists)allVisits.push(Object.assign({id:d.id},d.data()));
+      }
+    }));
+  }catch(e){/* visits optional */}
+
+  // members (for vLabel)
+  var memIds=[...new Set(allVisits.map(function(v){return v.memberId;}).filter(Boolean))];
+  try{
+    await Promise.all(memIds.map(async function(mid){
+      if(!allMembers[mid]){
+        var d=await db.collection('members').doc(mid).get();
+        if(d.exists)allMembers[mid]=d.data();
+      }
+    }));
+  }catch(e){/* members optional */}
+
+  // batchGroup構築
+  var bGmap={};
+  batchOrders.forEach(function(o){
+    var gid=o.orderGroupId||o.id;
+    if(!bGmap[gid])bGmap[gid]=[];
+    bGmap[gid].push(o);
+  });
+  var groups=Object.entries(bGmap).map(function(entry){
+    var ords=entry[1],sample=ords[0];
+    return{gid:entry[0],orders:ords,served:sample.served||3,
+           isBlind:ords.some(function(o){return o.blindId===1;}),
+           hasResult:false,total:0,visitKey:sample.visitKey||sample.visitId,
+           orderTime:sample.orderTime,batchId:batchId};
+  });
+  var batchGroup={bid:batchId,groups:groups,served:3,isBlind:true,hasResult:false,orderTime:'',batchId:batchId};
+
+  // モジュール初期化
+  BlindResult.init({
+    db:db,
+    getBlindMarks:function(){return blindMarks;},
+    getVisits:function(){return allVisits;},
+    vLabel:vLabel,
+    showToast:showToast,
+    markSym:markSym,
+    esc:esc,
+    canEdit:true,
+    onSaved:function(){window.close();},
+    onClose:function(){window.close();}
+  });
+
+  hideStatus();
+  BlindResult.open(batchGroup, visitKey||null);
+  var hasData=await BlindResult.loadExisting();
+  if(hasData) BlindResult.show();
+}
+</script>
+</body>
+</html>
