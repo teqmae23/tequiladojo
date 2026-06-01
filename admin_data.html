@@ -2688,23 +2688,27 @@ async function treeCascadeDelSession(sessionId){
     var close=sesData.closeTime?sesData.closeTime.slice(0,4):'9999';
     sesVisits=allVisits.filter(function(v){var vt=v.visitTime||'0000';return vt>=open&&vt<=close;});
   }
-  var ordCount=0;
+  var ordDocs=[];
   if(sesVisits.length){
     var vkeys=sesVisits.map(function(v){return v.id;});
     var chunks=[];
     for(var i=0;i<vkeys.length;i+=30)chunks.push(vkeys.slice(i,i+30));
     for(var ci=0;ci<chunks.length;ci++){
       var snap=await db.collection('orders').where('visitKey','in',chunks[ci]).get().catch(function(){return{docs:[]};});
-      ordCount+=snap.docs.length;
+      snap.docs.forEach(function(d){ordDocs.push(d);});
     }
   }
   var msg='セッション「'+sessionId+'」を削除します。\n'
-    +'このセッションの来場 '+sesVisits.length+'件・注文 '+ordCount+'件は削除されません。\n'
+    +'このセッションの来場 '+sesVisits.length+'件・注文 '+ordDocs.length+'件も同時に削除されます。\n'
     +'この操作は元に戻せません。';
   confirmDel(msg,async function(){
     try{
-      await db.collection('sessions').doc(sessionId).delete();
-      toast('セッションを削除しました');
+      var batch=db.batch();
+      batch.delete(db.collection('sessions').doc(sessionId));
+      sesVisits.forEach(function(v){batch.delete(db.collection('visits').doc(v.id));});
+      ordDocs.forEach(function(d){batch.delete(d.ref);});
+      await batch.commit();
+      toast('削除完了（セッション/来場'+sesVisits.length+'/注文'+ordDocs.length+'）');
       loadTree();
     }catch(e){toast('削除失敗: '+e.message,'err');}
   });
