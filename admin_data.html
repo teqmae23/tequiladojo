@@ -207,13 +207,13 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 /* ─── データツリー ─── */
 .tree-wrap{display:flex;flex-direction:column;gap:6px}
 .tree-block{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;box-shadow:var(--shadow)}
-.tree-node{display:flex;align-items:center;gap:8px;padding:9px 14px;flex-wrap:wrap}
+.tree-node{display:flex;align-items:center;gap:8px;padding:9px 14px;flex-wrap:nowrap;overflow:hidden}
 .tree-toggle{cursor:pointer;font-size:11px;color:var(--ink3);width:14px;flex-shrink:0;user-select:none;text-align:center}
 .tree-tag{font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;letter-spacing:.07em;white-space:nowrap;flex-shrink:0}
 .tag-session{background:rgba(200,146,30,.18);color:var(--gold-d)}
 .tag-visit{background:rgba(40,120,80,.14);color:#1a5e3a}
 .tag-order{background:rgba(30,60,180,.09);color:#1a3090}
-.tree-label{flex:1;font-size:12px;color:var(--ink2);min-width:120px}
+.tree-label{flex:1;font-size:12px;color:var(--ink2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tree-acts{display:flex;gap:4px;flex-shrink:0;margin-left:auto}
 .snode{background:rgba(200,146,30,.05)}
 .vnode{background:rgba(40,120,80,.03)}
@@ -435,15 +435,27 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 
     <!-- ツリービューページ -->
     <div class="page" id="page-tree">
-      <div class="phead">
-        <div>
-          <div class="ptitle">データツリー</div>
-          <div class="pdesc">営業日を指定してセッション・来場・注文をツリー表示。カスケード削除対応。</div>
+      <div class="phead" style="flex-direction:column;align-items:stretch;gap:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div>
+            <div class="ptitle">データツリー</div>
+            <div class="pdesc">営業日を指定してセッション・来場・注文をツリー表示。カスケード削除対応。</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="date" id="tree-date-input" class="fsel">
+            <button class="btn bp" id="btn-tree-load" onclick="loadTree()">表示</button>
+            <button class="btn bs" id="btn-tree-refresh" onclick="loadTree()" title="データを再読み込み">🔄 更新</button>
+          </div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="date" id="tree-date-input" class="fsel">
-          <button class="btn bp" id="btn-tree-load" onclick="loadTree()">表示</button>
-          <button class="btn bs" id="btn-tree-refresh" onclick="loadTree()" title="データを再読み込み">🔄 更新</button>
+        <div style="border-top:1px solid var(--border);padding-top:10px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-size:11px;color:var(--ink3);white-space:nowrap">期間検索</span>
+            <input type="date" id="tree-range-from" class="fsel" style="font-size:12px;padding:4px 8px">
+            <span style="font-size:12px;color:var(--ink3)">〜</span>
+            <input type="date" id="tree-range-to" class="fsel" style="font-size:12px;padding:4px 8px">
+            <button class="btn bs sm" onclick="searchTreeRange()">検索</button>
+          </div>
+          <div id="tree-range-results" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
         </div>
       </div>
       <div id="tree-container"><div class="ec">日付を選択して「表示」を押してください。</div></div>
@@ -2288,7 +2300,7 @@ if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
   if(!seq||seq.length!==3){ toast("連番（3桁）は必須です","err"); return; }
   if(!qty){ toast("数量は必須です","err"); return; }
   var id=date+seq;
-  if(!editId.order&&cache.orders.some(function(r){return r.id===id;})){ toast("注文ID「"+id+"」は既に存在します","err"); return; }
+  if(!editId.order&&(cache.orders.some(function(r){return r.id===id;})||_treeCurrentOrders.some(function(r){return r.id===id;}))){toast("注文ID「"+id+"」は既に存在します","err");return;}
   var ordDateVal=gv("ord-date");
   db.collection("orders").doc(id).set({
     orderDate:ordDateVal||null,
@@ -2310,7 +2322,7 @@ if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
     blindMarkId:gv("ord-blind-mark")||null,
     setId:gv("ord-set-id")||null,
     deleted:0
-  },{merge:true})
+  },editId.order?{merge:true}:{})
   .then(function(){
     toast(editId.order?"注文データを更新しました":"注文データを登録しました");
     closeM("m-order");
@@ -2356,6 +2368,8 @@ async function loadTree(){
     _treeSessions=sessions;
     _treeCurrentVisits=visits;
     _treeCurrentOrders=orders;
+    orders.forEach(function(o){var idx=cache.orders.findIndex(function(c){return c.id===o.id;});if(idx>=0)cache.orders[idx]=o;else cache.orders.push(o);});
+    visits.forEach(function(v){var idx=cache.visits.findIndex(function(c){return c.id===v.id;});if(idx>=0)cache.visits[idx]=v;else cache.visits.push(v);});
     renderTree(yymmdd,sessions,visits,orders,cont);
   }catch(e){cont.innerHTML='<div class="ec">読込エラー: '+e.message+'</div>';}
 }
@@ -2746,6 +2760,67 @@ var BACKUP_COLLECTIONS=[
   {id:'blindResults',   label:'ブラインド結果'},
   {id:'cocktailOrders', label:'カクテル注文'}
 ];
+
+// ── ツリー期間検索 ──────────────────────────────
+var DOW_JA=['日','月','火','水','木','金','土'];
+function yymmddToDate(s){
+  if(!s||s.length!==6)return null;
+  var y=2000+parseInt(s.slice(0,2)),m=parseInt(s.slice(2,4))-1,d=parseInt(s.slice(4,6));
+  return new Date(y,m,d);
+}
+function dateToYymmdd(dt){
+  return String(dt.getFullYear()).slice(2)+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0');
+}
+function dateInputToYymmdd(v){ return v?v.slice(2,4)+v.slice(5,7)+v.slice(8,10):''; }
+
+async function searchTreeRange(){
+  var fromV=document.getElementById('tree-range-from').value;
+  var toV=document.getElementById('tree-range-to').value;
+  var resultsEl=document.getElementById('tree-range-results');
+  if(!fromV||!toV){resultsEl.innerHTML='<span style="font-size:12px;color:var(--red)">開始日と終了日を指定してください</span>';return;}
+  var fromYmd=dateInputToYymmdd(fromV);
+  var toYmd=dateInputToYymmdd(toV);
+  if(fromYmd>toYmd){resultsEl.innerHTML='<span style="font-size:12px;color:var(--red)">開始日が終了日より後です</span>';return;}
+  resultsEl.innerHTML='<span style="font-size:12px;color:var(--ink3)">検索中...</span>';
+  try{
+    var snap=await db.collection('sessions')
+      .where('date','>=',fromYmd).where('date','<=',toYmd)
+      .orderBy('date').get();
+    if(snap.empty){resultsEl.innerHTML='<span style="font-size:12px;color:var(--ink3)">この期間に営業日がありません</span>';return;}
+    // 日付ごとにセッション数を集計
+    var dayMap={};
+    snap.docs.forEach(function(d){
+      var dt=d.data().date||'';
+      if(!dt)return;
+      dayMap[dt]=(dayMap[dt]||0)+1;
+    });
+    var html=Object.keys(dayMap).sort().map(function(ymd){
+      var dt=yymmddToDate(ymd);
+      var dow=dt?DOW_JA[dt.getDay()]:'';
+      var cnt=dayMap[ymd];
+      var label=(dt?(dt.getMonth()+1)+'/'+dt.getDate()+'('+dow+')':ymd)+(cnt>1?' ×'+cnt:'');
+      var isSelected=document.getElementById('tree-date-input').value===
+        (dt?(dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0')):'');
+      return '<button class="btn '+(isSelected?'bp':'bs')+' sm" style="font-size:12px" onclick="treeRangeSelect(\''+ymd+'\')">'+label+'</button>';
+    }).join('');
+    resultsEl.innerHTML=html;
+  }catch(e){resultsEl.innerHTML='<span style="font-size:12px;color:var(--red)">検索失敗: '+e.message+'</span>';}
+}
+
+function treeRangeSelect(ymd){
+  var dt=yymmddToDate(ymd);
+  if(!dt)return;
+  var iso=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+  document.getElementById('tree-date-input').value=iso;
+  loadTree();
+  // 選択状態を更新
+  var resultsEl=document.getElementById('tree-range-results');
+  resultsEl.querySelectorAll('button').forEach(function(btn){
+    btn.className=btn.className.replace(/\bbp\b/,'bs');
+  });
+  var btns=resultsEl.querySelectorAll('button');
+  btns.forEach(function(btn){if(btn.getAttribute('onclick').indexOf(ymd)>=0)btn.className=btn.className.replace(/\bbs\b/,'bp');});
+}
 
 function renderBackupCollectionList(){
   var el=document.getElementById('backup-collection-list'); if(!el)return;
