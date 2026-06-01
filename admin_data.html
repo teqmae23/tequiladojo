@@ -226,7 +226,6 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 .tree-child-order:first-child{border-top:none}
 .tree-summary{padding:10px 16px;font-size:12px;color:var(--ink3);background:var(--cream2);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
 .tree-amount-mismatch{color:var(--red);font-weight:700}
-.tree-together-row{padding:4px 16px 4px 60px;display:flex;flex-wrap:wrap;align-items:center;gap:4px;border-top:1px dashed var(--border);background:rgba(26,110,88,.02)}
 .tree-together-chip{display:inline-flex;align-items:center;gap:2px;background:rgba(26,110,88,.1);border:1px solid rgba(26,110,88,.22);border-radius:12px;padding:1px 6px 1px 8px;font-size:10px;color:var(--teal)}
 .tree-add-row{padding:6px 14px 8px;border-top:1px dashed var(--border)}
 </style>
@@ -698,14 +697,41 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 <!-- ブラインドデータ編集モーダル -->
 <div class="mbg" id="m-blind-edit">
   <div class="modal">
-    <div class="mhead"><div class="mtitle">ブラインドデータ編集</div><button class="mx" data-close="m-blind-edit">✕</button></div>
+    <div class="mhead"><div class="mtitle">🎭 ブラインド結果編集</div><button class="mx" data-close="m-blind-edit">✕</button></div>
     <div class="mbody">
       <div class="fg"><label class="fl">注文ID</label><input class="fi mono" id="blind-ord-id" readonly style="background:var(--cream2)"></div>
+      <div id="blind-mark-display" style="text-align:center;font-size:28px;font-weight:700;letter-spacing:.1em;padding:12px 0 8px;color:var(--red);font-family:var(--mono)"></div>
       <div class="fg"><label class="fl">ブラインドマーク</label><input class="fi mono" id="blind-mark" placeholder="R● など"></div>
-      <div class="fg"><label class="fl">商品コード（ボトルID等）</label><input class="fi mono" id="blind-product-code" placeholder="ボトルID等"></div>
-      <div class="fg"><label class="fl">商品名</label><input class="fi" id="blind-product-name" placeholder="テキーラ名など"></div>
+      <hr class="fsep">
+      <div class="fg"><label class="fl">正解（商品コード）</label><input class="fi mono" id="blind-product-code" placeholder="ボトルID等"></div>
+      <div class="fg"><label class="fl">正解（商品名）</label><input class="fi" id="blind-product-name" placeholder="テキーラ名など"></div>
+      <div id="blind-companions-section" style="display:none;margin-top:8px">
+        <hr class="fsep">
+        <label class="fl" style="display:block;margin-bottom:6px">一緒に飲んだ人のブラインドデータ（参照のみ）</label>
+        <div id="blind-companions-list"></div>
+      </div>
     </div>
     <div class="mfoot"><button class="btn bg2" data-close="m-blind-edit">キャンセル</button><button class="btn bp" id="btn-save-blind">保存</button></div>
+  </div>
+</div>
+
+<!-- 一緒に飲んだ人編集モーダル -->
+<div class="mbg" id="m-together">
+  <div class="modal">
+    <div class="mhead"><div class="mtitle">👥 一緒に飲んだ人</div><button class="mx" data-close="m-together">✕</button></div>
+    <div class="mbody">
+      <div class="fg">
+        <label class="fl">現在の一緒に飲んだ人</label>
+        <div id="together-companions" style="display:flex;flex-wrap:wrap;gap:6px;min-height:36px;padding:8px;background:var(--cream2);border-radius:var(--r)"></div>
+      </div>
+      <hr class="fsep">
+      <div class="fg">
+        <label class="fl">来場者を追加</label>
+        <select class="fs" id="together-add-sel"><option value="">選択...</option></select>
+      </div>
+      <button class="btn bs" id="btn-together-add">＋ 追加</button>
+    </div>
+    <div class="mfoot"><button class="btn bg2" data-close="m-together">閉じる</button></div>
   </div>
 </div>
 
@@ -804,9 +830,12 @@ document.querySelectorAll(".tab").forEach(function(tab){
 var cache = { sessions:[], visits:[], reservations:[], orders:[], members:[], layouts:[] };
 var editId = { session:null, visit:null, reservation:null, order:null };
 var sortState = {};
-var _treeAfterSave = null;     // callback to run after modal save instead of default tab reload
-var _treeCurrentVisits = [];   // visits loaded for current tree day
-var _treeCurrentOrders = [];   // all orders loaded for current tree day
+var _treeAfterSave = null;       // callback to run after modal save instead of default tab reload
+var _treeCurrentVisits = [];     // visits loaded for current tree day
+var _treeCurrentOrders = [];     // all orders loaded for current tree day
+var _treeSessions = [];          // sessions loaded for current tree day
+var _togetherCurrentOrdId = null;
+var _togetherCurrentBatchId = null;
 
 var SORT_COLS = ["sessions","visits","reservations","orders"];
 SORT_COLS.forEach(function(col){
@@ -919,8 +948,7 @@ document.addEventListener("click",function(e){
   if(btn.dataset.treeAddVisit)  { openVisitModalForTree(btn.dataset.treeAddVisit);   return; }
   if(btn.dataset.treeAddOrder)  { openOrderModalForTree(btn.dataset.treeAddOrder, btn.dataset.treeAddOrderMember); return; }
   if(btn.dataset.treeBlindEdit) { openBlindEditModal(btn.dataset.treeBlindEdit);     return; }
-  if(btn.dataset.treeAddCompanionBatch){ treeShowCompanionPicker(btn, btn.dataset.treeAddCompanionBatch, btn.dataset.treeAddCompanionOrd); return; }
-  if(btn.dataset.treeRemoveCompanion)  { treeRemoveCompanion(btn.dataset.treeRemoveCompanion); return; }
+  if(btn.dataset.treeEditTogether){ openTogetherModal(btn.dataset.treeEditTogether); return; }
 });
 
 // ════════════════════════════════════════════════════════════════
@@ -990,7 +1018,7 @@ function openSessionModal(id){
   g("mt-session").textContent=id?"営業データ編集":"営業データ登録";
   updateSesLayoutFilter();
   if(id){
-    var r=cache.sessions.find(function(s){return s.id===id;});
+    var r=cache.sessions.find(function(s){return s.id===id;})||_treeSessions.find(function(s){return s.id===id;});
     sv("ses-date",r?r.date:""); sv("ses-seq",r?String(r.seq||0):"0");
     sv("ses-layout",r?r.layoutId:"");
     sv("ses-open",r?r.openTime||"":""); sv("ses-close",r?r.closeTime||"":"");
@@ -1167,7 +1195,7 @@ function openVisitModal(id){
   if(foot) foot.innerHTML='<button class="btn bg2" id="btn-cancel-visit">キャンセル</button><button class="btn bp" id="btn-save-visit">登録</button>';
   bindVisitModalButtons();
   if(id){
-    var r=cache.visits.find(function(v){return v.id===id;});
+    var r=cache.visits.find(function(v){return v.id===id;})||_treeCurrentVisits.find(function(v){return v.id===id;});
     sv("vis-date",id.slice(0,6));
     _currentVisitSeq=parseInt(id.slice(6,8))||1;
     setVisitFields(r);
@@ -2151,6 +2179,9 @@ function autoSetOrderSeq(date){
   cache.orders.forEach(function(r){
     if((r.id||"").slice(0,6)===date){ var s=parseInt((r.id||"").slice(6))||0; if(s>maxSeq) maxSeq=s; }
   });
+  _treeCurrentOrders.forEach(function(r){
+    if((r.id||"").slice(0,6)===date){ var s=parseInt((r.id||"").slice(6))||0; if(s>maxSeq) maxSeq=s; }
+  });
   sv("ord-seq",String(maxSeq+1).padStart(3,"0"));
   updateOrderKey();
 }
@@ -2160,7 +2191,7 @@ function openOrderModal(id){
   g("mt-order").textContent=id?"注文データ編集":"注文登録";
   var dEl=g("ord-date"), sEl=g("ord-seq");
   if(id){
-    var r=cache.orders.find(function(x){return x.id===id;});
+    var r=cache.orders.find(function(x){return x.id===id;})||_treeCurrentOrders.find(function(x){return x.id===id;});
     sv("ord-date",(r&&r.id)?r.id.slice(0,6):""); sv("ord-seq",id?id.slice(6):"");
     sv("ord-time",r?r.orderTime||"":"");
     sv("ord-customer",r?r.customerId||"":""); sv("ord-visit",r?r.visitKey||"":"");
@@ -2270,6 +2301,7 @@ async function loadTree(){
         snap.docs.forEach(function(d){orders.push(Object.assign({id:d.id},d.data()));});
       }
     }
+    _treeSessions=sessions;
     _treeCurrentVisits=visits;
     _treeCurrentOrders=orders;
     renderTree(yymmdd,sessions,visits,orders,cont);
@@ -2284,6 +2316,16 @@ function treeMemName(memberId){
 
 function treeServedLabel(s){
   return s===0?'キャンセル':s===1?'未提供':s===2?'ブラインド':s===3?'提供済':'—';
+}
+
+function getSessionVisits(ses, visits){
+  if(!ses.openTime) return visits;
+  var open=ses.openTime.slice(0,4);
+  var close=ses.closeTime?ses.closeTime.slice(0,4):"9999";
+  return visits.filter(function(v){
+    var vt=v.visitTime||"0000";
+    return vt>=open&&vt<=close;
+  });
 }
 
 function renderTree(yymmdd,sessions,visits,orders,cont){
@@ -2304,11 +2346,37 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
 
   // セッションブロック
   sessions.forEach(function(ses,si){
+    var sesVisits = (sessions.length>1)?getSessionVisits(ses,visits):visits;
+    var sesOrders = orders.filter(function(o){
+      return sesVisits.some(function(v){return v.id===(o.visitKey||o.visitId);});
+    });
+    var sesGuestCalc = sesVisits.length;
+    var sesSalesCalc = sesVisits.reduce(function(s,v){return s+(v.amount||0);},0);
+    var sesOrdCalc   = sesOrders.filter(function(o){return o.served!==0;}).length;
+
     var sesDet=[];
     if(ses.openTime) sesDet.push('開店 '+fmtTime(ses.openTime));
     if(ses.closeTime) sesDet.push('閉店 '+fmtTime(ses.closeTime));
-    if(ses.guestCount) sesDet.push(ses.guestCount+'名');
-    if(ses.sales) sesDet.push('¥'+Number(ses.sales).toLocaleString());
+
+    // 来場数（不一致なら警告）
+    var guestDisp;
+    if(ses.guestCount!=null&&ses.guestCount!==sesGuestCalc){
+      guestDisp='<strong class="tree-amount-mismatch">⚠ '+escHtml(String(ses.guestCount))+'名</strong>(実'+sesGuestCalc+'名)';
+    } else {
+      guestDisp=sesGuestCalc+'名';
+    }
+    sesDet.push('来場: '+guestDisp);
+    sesDet.push('注文: '+sesOrdCalc+'件');
+
+    // 売上（不一致なら警告）
+    var salesDisp;
+    if(ses.sales!=null&&ses.sales!==sesSalesCalc){
+      salesDisp='<strong class="tree-amount-mismatch">⚠ ¥'+Number(ses.sales).toLocaleString()+'</strong>(実¥'+sesSalesCalc.toLocaleString()+')';
+    } else {
+      salesDisp='¥'+sesSalesCalc.toLocaleString();
+    }
+    sesDet.push('売上: '+salesDisp);
+
     var sesId='tree-ses-'+si;
 
     html+='<div class="tree-block">';
@@ -2352,6 +2420,7 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
           +'<span class="tree-label"><strong>'+escHtml(name)+'</strong>'+(visDet.length?' &nbsp;'+visDet.join(' / '):'')
           +' <span style="font-size:10px;color:var(--ink3)">'+escHtml(vis.id)+'</span></span>'
           +'<div class="tree-acts">'
+          +'<button class="btn bs sm" style="font-size:11px" data-tree-add-order="'+escHtml(vis.id)+'" data-tree-add-order-member="'+escHtml(vis.memberId||'')+'" title="注文追加">＋注文</button>'
           +'<button class="btn bs sm" data-edit-visit="'+escHtml(vis.id)+'">編集</button>'
           +'<button class="btn bd sm" data-tree-del-visit="'+escHtml(vis.id)+'" title="来場＋注文を削除">削除</button>'
           +'</div></div>';
@@ -2376,42 +2445,34 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
             var badge='<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;'
               +(cancelled?'background:#fee;color:var(--red)':'background:rgba(40,120,80,.1);color:#1a5e3a')
               +'">'+(cancelled?'キャンセル':treeServedLabel(ord.served))+'</span>';
-            var blindMark=isBlind&&ord.blindMarkId?'<span style="font-size:9px;background:var(--red-l);color:var(--red);border-radius:3px;padding:1px 5px;margin-left:4px">盲:'+escHtml(ord.blindMarkId)+'</span>':'';
+
+            // N人ボタン（一緒に飲んだ人数）
+            var compVisIds=ord.batchId?orders.filter(function(o){
+              return o.batchId===ord.batchId&&(o.visitKey||o.visitId)!==vis.id&&!o.deleted;
+            }).reduce(function(acc,o){
+              var bvk=o.visitKey||o.visitId; return acc.indexOf(bvk)<0?acc.concat([bvk]):acc;
+            },[]):[];
+            var togetherBtn='<button class="btn bs sm" style="font-size:10px;padding:2px 7px" data-tree-edit-together="'+escHtml(ord.id)+'" title="一緒に飲んだ人を管理">👥 '+compVisIds.length+'人</button>';
+
+            // ブラインドアイコン（クリックで結果編集）
+            var blindBtn='';
+            if(isBlind){
+              var bLabel=ord.blindMarkId?('🎭 盲:'+ord.blindMarkId):'🎭 盲(未)';
+              blindBtn='<button class="btn bs sm" style="font-size:10px;padding:2px 7px;background:var(--red-l);color:var(--red);border-color:rgba(140,40,24,.2)" data-tree-blind-edit="'+escHtml(ord.id)+'" title="ブラインド結果を編集">'+escHtml(bLabel)+'</button>';
+            }
+
             html+='<div class="tree-node onode tree-child-order'+(cancelled?' cancelled':'')+'">'
               +'<span style="width:44px;flex-shrink:0"></span>'
               +'<span class="tree-tag tag-order">注文</span>'
-              +'<span class="tree-label">'+ordDet.join(' &nbsp;')+badge+blindMark+'</span>'
+              +'<span class="tree-label">'+ordDet.join(' &nbsp;')+badge+'</span>'
               +'<div class="tree-acts">'
-              +(isBlind?'<button class="btn bs sm" style="font-size:10px;background:var(--red-l);color:var(--red);border-color:rgba(140,40,24,.2)" data-tree-blind-edit="'+escHtml(ord.id)+'">盲編集</button>':'')
+              +blindBtn
+              +togetherBtn
               +'<button class="btn bs sm" data-edit-order="'+escHtml(ord.id)+'">編集</button>'
               +'<button class="btn bd sm" data-tree-del-order="'+escHtml(ord.id)+'">削除</button>'
               +'</div></div>';
-            // 一緒に飲んだ人セクション（batchIdがある注文のみ）
-            if(!cancelled&&ord.batchId){
-              var companions=orders.filter(function(o){
-                return o.batchId===ord.batchId&&(o.visitKey||o.visitId)!==vis.id&&!o.deleted;
-              }).reduce(function(acc,o){
-                var bvk=o.visitKey||o.visitId;
-                if(!acc.some(function(x){return x.visitId===bvk;})){
-                  var bvis=visits.find(function(v){return v.id===bvk;});
-                  acc.push({name:treeMemName(bvis?bvis.memberId:null)||bvk,ordId:o.id,visitId:bvk});
-                }
-                return acc;
-              },[]);
-              html+='<div class="tree-together-row">';
-              html+='<span style="font-size:10px;color:var(--ink3);flex-shrink:0;margin-right:2px">👥 一緒:</span>';
-              companions.forEach(function(c){
-                html+='<span class="tree-together-chip">'+escHtml(c.name)
-                  +'<button data-tree-remove-companion="'+escHtml(c.ordId)+'" title="外す" style="background:none;border:none;cursor:pointer;color:var(--ink3);padding:0 0 0 3px;font-size:11px;line-height:1">×</button></span>';
-              });
-              html+='<button class="btn bs sm" style="font-size:10px;padding:2px 8px" data-tree-add-companion-batch="'+escHtml(ord.batchId)+'" data-tree-add-companion-ord="'+escHtml(ord.id)+'">＋ 追加</button>';
-              html+='</div>';
-            }
           });
         }
-        html+='<div class="tree-add-row" style="padding-left:60px">'
-          +'<button class="btn bs sm" style="font-size:11px" data-tree-add-order="'+escHtml(vis.id)+'" data-tree-add-order-member="'+escHtml(vis.memberId||'')+'">＋ 注文追加</button>'
-          +'</div>';
         html+='</div></div>';
       });
     }
@@ -2553,6 +2614,34 @@ function openBlindEditModal(ordId){
   sv("blind-mark",ord.blindMarkId||"");
   sv("blind-product-code",ord.productCode||"");
   sv("blind-product-name",ord.productName||"");
+  var markDisp=g("blind-mark-display");
+  if(markDisp) markDisp.textContent=ord.blindMarkId||"（マーク未設定）";
+
+  // 一緒のブラインド注文を参照表示
+  var compSection=g("blind-companions-section");
+  var compList=g("blind-companions-list");
+  if(ord.batchId&&compList){
+    var compOrds=_treeCurrentOrders.filter(function(o){
+      return o.batchId===ord.batchId&&o.id!==ordId&&(o.blindId===1||o.blindId==='1')&&!o.deleted;
+    });
+    if(compOrds.length){
+      compList.innerHTML=compOrds.map(function(co){
+        var bvk=co.visitKey||co.visitId;
+        var bvis=_treeCurrentVisits.find(function(v){return v.id===bvk;});
+        var cname=treeMemName(bvis?bvis.memberId:null)||bvk||"—";
+        return '<div style="padding:6px 8px;background:var(--cream2);border-radius:var(--r);font-size:11px;margin-bottom:4px">'
+          +'<strong>'+escHtml(cname)+'</strong>'
+          +' &nbsp;マーク: <span style="font-family:var(--mono);font-weight:700;color:var(--red)">'+escHtml(co.blindMarkId||"未")+'</span>'
+          +' &nbsp;正解: '+escHtml(co.productName||co.productCode||"未設定")
+          +'</div>';
+      }).join("");
+      if(compSection) compSection.style.display='';
+    } else {
+      if(compSection) compSection.style.display='none';
+    }
+  } else {
+    if(compSection) compSection.style.display='none';
+  }
   openM("m-blind-edit");
 }
 
@@ -2570,51 +2659,106 @@ function openBlindEditModal(ordId){
   });
 })();
 
-function treeShowCompanionPicker(btn, batchId, templateOrdId){
-  // close any existing picker
-  document.querySelectorAll(".tree-companion-picker").forEach(function(el){el.remove();});
-  var templateOrd=_treeCurrentOrders.find(function(o){return o.id===templateOrdId;});
-  if(!templateOrd){ toast("注文データが見つかりません","err"); return; }
-  var myVisitId=templateOrd.visitKey||templateOrd.visitId;
-  // collect visit IDs already in this batch
+function openTogetherModal(ordId){
+  var ord=_treeCurrentOrders.find(function(o){return o.id===ordId;});
+  if(!ord){ toast("注文データが見つかりません","err"); return; }
+  _togetherCurrentOrdId=ordId;
+  _togetherCurrentBatchId=ord.batchId||null;
+  renderTogetherModal();
+  openM("m-together");
+}
+
+function renderTogetherModal(){
+  var ordId=_togetherCurrentOrdId;
+  var batchId=_togetherCurrentBatchId;
+  var ord=_treeCurrentOrders.find(function(o){return o.id===ordId;});
+  if(!ord) return;
+  var myVisitId=ord.visitKey||ord.visitId;
+
+  // current companions
+  var companions=[];
+  if(batchId){
+    _treeCurrentOrders.forEach(function(o){
+      if(o.batchId===batchId&&(o.visitKey||o.visitId)!==myVisitId&&!o.deleted){
+        var bvk=o.visitKey||o.visitId;
+        if(!companions.some(function(c){return c.visitId===bvk;})){
+          var bvis=_treeCurrentVisits.find(function(v){return v.id===bvk;});
+          companions.push({name:treeMemName(bvis?bvis.memberId:null)||bvk,ordId:o.id,visitId:bvk});
+        }
+      }
+    });
+  }
+  var compDiv=g("together-companions");
+  if(compDiv){
+    compDiv.innerHTML=companions.length
+      ?companions.map(function(c){
+          return '<span class="tree-together-chip">'+escHtml(c.name)
+            +'<button onclick="togetherRemove(\''+escHtml(c.ordId)+'\')" style="background:none;border:none;cursor:pointer;color:var(--ink3);padding:0 0 0 3px;font-size:11px;line-height:1">×</button></span>';
+        }).join("")
+      :'<span style="color:var(--ink3);font-size:12px">まだ一緒に飲んだ人はいません</span>';
+  }
+
+  // available to add
   var usedVids=[myVisitId];
-  _treeCurrentOrders.forEach(function(o){
-    if(o.batchId===batchId&&!o.deleted){
-      var vk=o.visitKey||o.visitId; if(usedVids.indexOf(vk)<0) usedVids.push(vk);
-    }
+  if(batchId){
+    _treeCurrentOrders.forEach(function(o){
+      if(o.batchId===batchId&&!o.deleted){
+        var vk=o.visitKey||o.visitId; if(usedVids.indexOf(vk)<0) usedVids.push(vk);
+      }
+    });
+  }
+  var available=_treeCurrentVisits.filter(function(v){return usedVids.indexOf(v.id)<0;});
+  var sel=g("together-add-sel");
+  if(sel){
+    sel.innerHTML='<option value="">選択...</option>'+
+      available.map(function(v){
+        var nm=treeMemName(v.memberId)||v.id;
+        return '<option value="'+v.id+'">'+escHtml(nm)+' ('+v.id+')</option>';
+      }).join("");
+  }
+}
+
+function togetherRemove(ordId){
+  confirmDel("仲間の注文「"+ordId+"」を削除しますか？",function(){
+    db.collection("orders").doc(ordId).delete()
+      .then(function(){
+        toast("仲間の注文を削除しました");
+        var idx=_treeCurrentOrders.findIndex(function(o){return o.id===ordId;});
+        if(idx>=0) _treeCurrentOrders.splice(idx,1);
+        renderTogetherModal();
+        loadTree();
+      })
+      .catch(function(e){toast("削除失敗: "+e.message,"err");});
   });
-  var available=_treeCurrentVisits.filter(function(v){ return usedVids.indexOf(v.id)<0; });
-  if(!available.length){ toast("追加できる来場者がいません","inf"); return; }
+}
 
-  var picker=document.createElement("div");
-  picker.className="tree-companion-picker";
-  picker.style.cssText="display:inline-flex;align-items:center;gap:4px;padding:0";
-
-  var sel=document.createElement("select");
-  sel.className="fsel";
-  sel.style.cssText="font-size:11px;padding:3px 6px";
-  sel.innerHTML='<option value="">来場者を選択...</option>'+
-    available.map(function(v){
-      var nm=treeMemName(v.memberId)||v.id;
-      return '<option value="'+v.id+'">'+escHtml(nm)+' ('+v.id+')</option>';
-    }).join("");
-
-  var addBtn=document.createElement("button");
-  addBtn.className="btn bp sm"; addBtn.style.fontSize="11px"; addBtn.textContent="追加";
-  addBtn.onclick=function(){
+(function(){
+  var addBtn=g("btn-together-add"); if(!addBtn) return;
+  addBtn.addEventListener("click",function(){
+    var sel=g("together-add-sel"); if(!sel) return;
     var vid=sel.value; if(!vid){toast("来場者を選択してください","err");return;}
     var vis=_treeCurrentVisits.find(function(v){return v.id===vid;});
-    treeDoAddCompanion(batchId, templateOrd, vis);
-    picker.remove();
-  };
-
-  var cancelBtn=document.createElement("button");
-  cancelBtn.className="btn bg2 sm"; cancelBtn.style.fontSize="11px"; cancelBtn.textContent="✕";
-  cancelBtn.onclick=function(){picker.remove();};
-
-  picker.appendChild(sel); picker.appendChild(addBtn); picker.appendChild(cancelBtn);
-  btn.parentNode.insertBefore(picker, btn.nextSibling);
-}
+    if(!vis){toast("来場データが見つかりません","err");return;}
+    var ord=_treeCurrentOrders.find(function(o){return o.id===_togetherCurrentOrdId;});
+    if(!ord){toast("注文データが見つかりません","err");return;}
+    var batchId=_togetherCurrentBatchId||_togetherCurrentOrdId;
+    function doAdd(){
+      treeDoAddCompanion(batchId, ord, vis).then(function(){
+        _togetherCurrentBatchId=batchId;
+        var updated=_treeCurrentOrders.find(function(o){return o.id===_togetherCurrentOrdId;});
+        if(updated) updated.batchId=batchId;
+        renderTogetherModal();
+      }).catch(function(e){toast("追加失敗: "+e.message,"err");});
+    }
+    if(!_togetherCurrentBatchId){
+      db.collection("orders").doc(_togetherCurrentOrdId).update({batchId:batchId})
+        .then(function(){
+          if(ord) ord.batchId=batchId;
+          doAdd();
+        }).catch(function(e){toast("追加失敗: "+e.message,"err");});
+    } else { doAdd(); }
+  });
+})();
 
 async function treeDoAddCompanion(batchId, templateOrd, vis){
   if(!vis) return;
@@ -2635,20 +2779,12 @@ async function treeDoAddCompanion(batchId, templateOrd, vis){
     itemSeq:templateOrd.itemSeq||1, served:templateOrd.served||1,
     blindId:0, blindMarkId:null, setId:templateOrd.setId||null, deleted:0
   };
-  try{
-    await db.collection("orders").doc(newId).set(newOrd);
-    toast("仲間を追加しました");
-    loadTree();
-  }catch(e){ toast("追加失敗: "+e.message,"err"); }
+  await db.collection("orders").doc(newId).set(newOrd);
+  toast("仲間を追加しました");
+  _treeCurrentOrders.push(Object.assign({id:newId},newOrd));
+  loadTree();
 }
 
-function treeRemoveCompanion(orderId){
-  confirmDel("仲間の注文「"+orderId+"」を削除しますか？",function(){
-    db.collection("orders").doc(orderId).delete()
-      .then(function(){ toast("仲間の注文を削除しました"); loadTree(); })
-      .catch(function(e){ toast("削除失敗: "+e.message,"err"); });
-  });
-}
 
 // 委任ハンドラに削除フラグ・復元を追加
 document.addEventListener("click",function(e){

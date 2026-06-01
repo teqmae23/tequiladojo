@@ -405,7 +405,9 @@ g("btn-close-store").addEventListener("click",function(){
   if(!currentSessionId){toast("営業セッションがありません","err");return;}
   if(!confirm("閉店処理を実行しますか？"))return;
   var closeTime=nowStr();
-  db.collection("sessions").doc(currentSessionId).update({closeTime:closeTime})
+  var closingSessionId=currentSessionId;
+  var closingDate=currentSessionDate;
+  db.collection("sessions").doc(closingSessionId).update({closeTime:closeTime})
     .then(function(){
       toast("閉店しました（"+closeTime+"）");
       autoCheckoutStaff(closeTime);
@@ -413,6 +415,17 @@ g("btn-close-store").addEventListener("click",function(){
       currentLayoutId=null;
       applyStoreStatus("closed");
       writePublicStatus('closed',{});
+      // 来場数・売上合計をセッションに記録
+      if(closingDate){
+        db.collection("visits").where("visitDate","==",closingDate).get()
+          .then(function(snap){
+            var dayVisits=snap.docs.map(function(d){return d.data();});
+            var guestCount=dayVisits.filter(function(v){return !v.isStaff;}).length;
+            var sales=dayVisits.reduce(function(s,v){return s+(v.amount||0);},0);
+            db.collection("sessions").doc(closingSessionId).update({guestCount:guestCount,sales:sales})
+              .catch(function(e){console.warn("セッション集計更新失敗:",e);});
+          }).catch(function(e){console.warn("来場データ取得失敗:",e);});
+      }
     }).catch(function(e){toast("閉店処理失敗: "+e.message,"err");});
 });
 
