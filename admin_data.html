@@ -2597,11 +2597,22 @@ async function treeCascadeDelDate(yymmdd){
 
 async function treeCascadeDelSession(sessionId){
   var sesDoc=await db.collection('sessions').doc(sessionId).get().catch(function(){return{exists:false};});
-  var yymmdd=sesDoc.exists?(sesDoc.data().date||''):'';
-  var visSnap=yymmdd?await db.collection('visits').where('visitDate','==',yymmdd).get().catch(function(){return{docs:[]};}):{docs:[]};
+  var sesData=sesDoc.exists?sesDoc.data():{};
+  var yymmdd=sesData.date||'';
+  // このセッションの時間帯に属する来場のみ取得
+  var allVisSnap=yymmdd?await db.collection('visits').where('visitDate','==',yymmdd).get().catch(function(){return{docs:[]};}):{docs:[]};
+  var allVisits=allVisSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+  var sesVisits;
+  if(!sesData.openTime){
+    sesVisits=allVisits;
+  } else {
+    var open=sesData.openTime.slice(0,4);
+    var close=sesData.closeTime?sesData.closeTime.slice(0,4):'9999';
+    sesVisits=allVisits.filter(function(v){var vt=v.visitTime||'0000';return vt>=open&&vt<=close;});
+  }
   var ordCount=0;
-  if(visSnap.docs.length){
-    var vkeys=visSnap.docs.map(function(d){return d.id;});
+  if(sesVisits.length){
+    var vkeys=sesVisits.map(function(v){return v.id;});
     var chunks=[];
     for(var i=0;i<vkeys.length;i+=30)chunks.push(vkeys.slice(i,i+30));
     for(var ci=0;ci<chunks.length;ci++){
@@ -2610,7 +2621,7 @@ async function treeCascadeDelSession(sessionId){
     }
   }
   var msg='セッション「'+sessionId+'」を削除します。\n'
-    +'同日の来場 '+visSnap.docs.length+'件・注文 '+ordCount+'件は削除されません。\n'
+    +'このセッションの来場 '+sesVisits.length+'件・注文 '+ordCount+'件は削除されません。\n'
     +'この操作は元に戻せません。';
   confirmDel(msg,async function(){
     try{
