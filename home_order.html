@@ -745,17 +745,75 @@ async function init(){
     if(visitKeys.length>0){
       flow={visits:[],cart:[],isBlind:false};
       document.getElementById('blind-check').checked=false;
-      visitKeys.forEach(function(vk){
-        var v=allVisits.find(function(x){ return x.id===vk; });
-        if(v&&!flow.visits.find(function(x){ return x.id===vk; })) flow.visits.push(v);
+      // まずallVisitsにない場合はFirestoreから取得
+      var missingVks=visitKeys.filter(function(vk){return !allVisits.find(function(x){return x.id===vk;});});
+      var fetchMissing=missingVks.length>0
+        ?Promise.all(missingVks.map(function(vk){return db.collection('visits').doc(vk).get();})).then(function(docs){
+            docs.forEach(function(d){if(d.exists)allVisits.push(Object.assign({id:d.id},d.data()));});
+          }).catch(function(){})
+        :Promise.resolve();
+      fetchMissing.then(function(){
+        visitKeys.forEach(function(vk){
+          var v=allVisits.find(function(x){return x.id===vk;});
+          if(v&&!flow.visits.find(function(x){return x.id===vk;}))flow.visits.push(v);
+        });
+        if(flow.visits.length>0){
+          document.getElementById('order-modal').classList.add('open');
+          showStep(1);
+          renderCart();
+          switchPTab('tequila',document.querySelectorAll('.ptab')[0]);
+        }
       });
-      if(flow.visits.length>0){
-        document.getElementById('order-modal').classList.add('open');
-        showStep(1);
-        renderCart();
-        switchPTab('tequila',document.querySelectorAll('.ptab')[0]);
-      }
     }
+    window.history.replaceState({},document.title,window.location.pathname);
+  }
+
+  // admin_data.htmlのツリーからブラインド結果編集で遷移してきた場合
+  var editBlindParam=params.get('editBlind');
+  var onlyVisitParam=params.get('onlyVisit');
+  if(editBlindParam){
+    (async function(){
+      try{
+        var b=allBatchGroups.find(function(x){return x.bid===editBlindParam;});
+        if(!b){
+          // 過去セッションの場合はFirestoreから取得してbatchGroupを構築
+          var ordSnap=await db.collection('orders').where('batchId','==',editBlindParam).get();
+          var batchOrders=ordSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+          if(!batchOrders.length){showToast('このバッチのブラインド注文が見つかりません','error');return;}
+
+          // visitデータ取得
+          var bVks=[...new Set(batchOrders.map(function(o){return o.visitKey||o.visitId;}).filter(Boolean))];
+          for(var bvi=0;bvi<bVks.length;bvi++){
+            if(!allVisits.find(function(v){return v.id===bVks[bvi];})){
+              var bVDoc=await db.collection('visits').doc(bVks[bvi]).get();
+              if(bVDoc.exists)allVisits.push(Object.assign({id:bVDoc.id},bVDoc.data()));
+            }
+          }
+
+          // orderGroupId単位でグループ化
+          var bGmap={};
+          batchOrders.forEach(function(o){
+            var gid=o.orderGroupId||o.id;
+            if(!bGmap[gid])bGmap[gid]=[];
+            bGmap[gid].push(o);
+          });
+          var tempGroups=Object.entries(bGmap).map(function(entry){
+            var ords=entry[1];
+            var sample=ords[0];
+            return{gid:entry[0],orders:ords,served:sample.served||3,
+                   isBlind:ords.some(function(o){return o.blindId===1;}),
+                   hasResult:false,total:0,visitKey:sample.visitKey||sample.visitId,
+                   orderTime:sample.orderTime,batchId:editBlindParam};
+          });
+          b={bid:editBlindParam,groups:tempGroups,served:3,isBlind:true,hasResult:false,orderTime:'',batchId:editBlindParam};
+          allBatchGroups.push(b);
+        }
+        if(b){
+          openResultModal(editBlindParam);
+          if(onlyVisitParam){resultState.lockedVisitKey=onlyVisitParam;renderResultTable();}
+        }
+      }catch(e){showToast('ブラインドデータ取得エラー: '+e.message,'error');}
+    })();
     window.history.replaceState({},document.title,window.location.pathname);
   }
 }
@@ -1273,12 +1331,22 @@ function renderResultTable(){
   </tr></thead>`;
 
   // ── データ行 ──
+  const lockedVk=resultState.lockedVisitKey||null;
   const tbody=members.map((g,mi)=>{
+    const isMyRow=!lockedVk||g.visitKey===lockedVk;
     const cells=marks.map((m,mki)=>{
       const chosen=answers[mi][mki];
       let cellClass='mark-cell';
       let cellContent='';
-      if(!isRevealed){
+      if(!isMyRow){
+        // 他人の行：参照のみ（ピッカーなし）
+        if(chosen){
+          const{sym,color}=markSym(blindMarks.find(x=>x.id===chosen)||{id:chosen});
+          cellContent=`<span style="color:${color};font-weight:700;font-size:12px;letter-spacing:-1px">${sym}</span>`;
+        } else {
+          cellContent='<span style="color:var(--ink3)">—</span>';
+        }
+      } else if(!isRevealed){
         // 入力中：全ピッカー
         cellContent=buildTableMarkPicker(mi,mki,chosen,false);
       } else if(!colAllFilled[mki]){
@@ -1309,7 +1377,14 @@ function renderResultTable(){
     // 好きセル
     const w=winners[mi];
     let winnerCell;
-    if(isRevealed&&w){
+    if(!isMyRow){
+      if(w){
+        const{sym,color}=markSym(blindMarks.find(x=>x.id===w)||{id:w});
+        winnerCell=`<span style="color:${color};font-weight:700;font-size:12px;letter-spacing:-1px">${sym}</span>`;
+      } else {
+        winnerCell='<span style="color:var(--ink3)">—</span>';
+      }
+    } else if(isRevealed&&w){
       const{sym,color}=markSym(blindMarks.find(x=>x.id===w)||{id:w});
       winnerCell=`<span style="color:${color};font-weight:700;font-size:12px;letter-spacing:-1px">${sym}</span>`;
     } else {
@@ -1335,8 +1410,9 @@ function renderResultTable(){
       winnerLabel=`<span style="font-size:10px;color:var(--ink3);margin-left:4px">好き:${wCount}</span>`;
     }
 
-    return`<tr>
-      <td class="name-cell">${esc(memberNames[mi])}${winnerLabel}</td>
+    const rowStyle=lockedVk?(isMyRow?'background:rgba(200,146,30,.06)':'opacity:0.55'):'';
+    return`<tr style="${rowStyle}">
+      <td class="name-cell">${esc(memberNames[mi])}${lockedVk&&!isMyRow?'<span style="font-size:9px;color:var(--ink3);margin-left:4px">参照</span>':''}${winnerLabel}</td>
       ${cells}
       <td class="winner-cell">${winnerCell}</td>
       <td class="score-cell">${scoreCell}</td>
