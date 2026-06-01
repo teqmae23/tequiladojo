@@ -356,11 +356,38 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
   </div>
 </div>
 
-<!-- 削除確認 -->
+<!-- 削除確認（レイアウト用・汎用） -->
 <div class="cbg" id="confirm-bg">
   <div class="ccard">
     <div class="cmsg" id="confirm-msg">削除しますか？</div>
     <div class="cacts"><button class="btn bg2" id="confirm-cancel">キャンセル</button><button class="btn bd" id="confirm-ok">削除する</button></div>
+  </div>
+</div>
+
+<!-- 顧客削除選択モーダル -->
+<div class="cbg" id="confirm-member-del-bg">
+  <div class="ccard" style="max-width:440px;width:92vw">
+    <div class="cmsg" id="confirm-member-del-msg" style="font-size:14px"></div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin:16px 0">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;background:var(--cream2);border:1px solid var(--border2);border-radius:6px;padding:10px 12px">
+        <input type="radio" name="del-mode" value="soft" checked style="margin-top:3px;flex-shrink:0">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--ink2)">顧客情報のみ削除（ソフトデリート）</div>
+          <div style="font-size:11px;color:var(--ink3);margin-top:3px;line-height:1.6">来店・注文データは保持します。顧客名は「削除済み」と表示されます。後から完全削除も可能です。</div>
+        </div>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;background:var(--red-l);border:1px solid rgba(140,40,24,.2);border-radius:6px;padding:10px 12px">
+        <input type="radio" name="del-mode" value="hard" style="margin-top:3px;flex-shrink:0">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--red)">注文データも含めて完全削除</div>
+          <div style="font-size:11px;color:var(--ink3);margin-top:3px;line-height:1.6">来店・注文・引継コードをすべて削除します。この操作は元に戻せません。</div>
+        </div>
+      </label>
+    </div>
+    <div class="cacts">
+      <button class="btn bg2" id="confirm-member-del-cancel">キャンセル</button>
+      <button class="btn bd" id="confirm-member-del-ok">削除する</button>
+    </div>
   </div>
 </div>
 
@@ -756,7 +783,8 @@ function renderMembers(){
     if(r.pendingEmail) emailCell+='<br><span style="font-size:10px;color:var(--orange)">'+r.pendingEmail+' (確認待ち)</span>';
     var guestBadge=r.isGuest?'<span class="badge bg-gray" style="font-size:9px;padding:1px 5px;margin-left:4px">ゲスト</span>':'';
     var transferBtn=r.isGuest?'<button class="btn bs sm" style="color:var(--teal);border-color:var(--teal)" onclick="issueTransferCode(\''+r.id+'\',\''+escHtml(r.nickname||r.name||r.id)+'\')">引継コード</button>':'';
-    return '<tr><td class="mono">'+r.id+'</td><td>'+(r.name||"—")+guestBadge+'</td><td style="font-size:12px;color:var(--teal)">'+(r.nickname||"—")+'</td><td class="dim" style="font-size:12px">'+(r.nameKana||"—")+'</td><td>'+gBadge+'</td><td class="dim" style="font-size:11px">'+(r.prefecture||"—")+'</td><td>'+emailCell+'</td><td class="mono dim" style="font-size:11px">'+(r.registeredAt||"—")+'</td><td><div class="acts"><button class="btn bs sm" data-edit-member="'+r.id+'">編集</button><button class="btn bs sm" data-copy-member="'+r.id+'">コピー</button>'+transferBtn+'<button class="btn bd sm" data-del="members" data-del-id="'+r.id+'" data-del-label="顧客">削除</button></div></td></tr>';
+    var deletedStyle=r.deleted?'opacity:.5;':'';
+    return '<tr style="'+deletedStyle+'"><td class="mono">'+r.id+'</td><td>'+(r.name||"—")+guestBadge+'</td><td style="font-size:12px;color:var(--teal)">'+(r.nickname||"—")+'</td><td class="dim" style="font-size:12px">'+(r.nameKana||"—")+'</td><td>'+gBadge+'</td><td class="dim" style="font-size:11px">'+(r.prefecture||"—")+'</td><td>'+emailCell+'</td><td class="mono dim" style="font-size:11px">'+(r.registeredAt||"—")+'</td><td><div class="acts"><button class="btn bs sm" data-edit-member="'+r.id+'">編集</button><button class="btn bs sm" data-copy-member="'+r.id+'">コピー</button>'+transferBtn+'<button class="btn bd sm" onclick="openMemberDelModal(\''+r.id+'\',\''+escHtml(r.name||r.nickname||r.id)+'\','+!!r.deleted+')">削除</button></div></td></tr>';
   }).join("");
 }
 
@@ -791,7 +819,8 @@ document.addEventListener("click",function(e){
 function loadMembers(cb){
   db.collection("members").get()
     .then(function(snap){
-      cache.members=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+      cache.members=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); })
+        .filter(function(m){ return !m.deleted; });
       setCnt("members",cache.members.length);
       renderMembers();
       if(cb) cb();
@@ -1039,6 +1068,78 @@ g("btn-save-layout").addEventListener("click",function(){
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 document.addEventListener('DOMContentLoaded',function(){ Cropper.initEvents(); });
+
+// ── 顧客削除（ソフト／完全） ─────────────────────────────────────
+var _delMemberId=null;
+
+function openMemberDelModal(memberId, memberName, isAlreadySoft){
+  _delMemberId=memberId;
+  var label=isAlreadySoft?'【削除済み】':'';
+  g('confirm-member-del-msg').textContent=label+'「'+memberName+'」を削除します';
+  document.querySelectorAll('input[name="del-mode"]').forEach(function(r){ r.checked=(r.value==='soft'); });
+  g('confirm-member-del-bg').classList.add('open');
+}
+
+g('confirm-member-del-cancel').addEventListener('click',function(){
+  g('confirm-member-del-bg').classList.remove('open');
+});
+
+g('confirm-member-del-ok').addEventListener('click',async function(){
+  var mode=document.querySelector('input[name="del-mode"]:checked').value;
+  g('confirm-member-del-bg').classList.remove('open');
+  var id=_delMemberId;
+  if(mode==='soft'){
+    db.collection('members').doc(id).update({
+      deleted:true, deletedAt:new Date().toISOString()
+    })
+    .then(function(){ toast('顧客をソフトデリートしました'); loadMembers(); })
+    .catch(function(e){ toast('削除失敗: '+e.message,'err'); });
+  } else {
+    await hardDeleteMember(id);
+  }
+});
+
+async function hardDeleteMember(memberId){
+  try{
+    toast('関連データを削除中...','inf');
+
+    var visitsSnap=await db.collection('visits').where('memberId','==',memberId).get();
+    var visitIds=visitsSnap.docs.map(function(d){ return d.id; });
+
+    var orderRefs=[];
+    for(var i=0;i<visitIds.length;i+=10){
+      var chunk=visitIds.slice(i,i+10);
+      var ordSnap=await db.collection('orders').where('visitKey','in',chunk).get();
+      ordSnap.docs.forEach(function(d){ orderRefs.push(d.ref); });
+      var ordSnap2=await db.collection('cocktailOrders').where('visitKey','in',chunk).get();
+      ordSnap2.docs.forEach(function(d){ orderRefs.push(d.ref); });
+    }
+
+    var trSnap=await db.collection('tempRegistrations').where('tempId','==',memberId).get();
+
+    var allRefs=[];
+    visitsSnap.docs.forEach(function(d){ allRefs.push(d.ref); });
+    orderRefs.forEach(function(r){ allRefs.push(r); });
+    trSnap.docs.forEach(function(d){ allRefs.push(d.ref); });
+
+    for(var i=0;i<allRefs.length;i+=499){
+      var b=db.batch();
+      allRefs.slice(i,i+499).forEach(function(ref){ b.delete(ref); });
+      await b.commit();
+    }
+
+    var finalBatch=db.batch();
+    finalBatch.delete(db.collection('members').doc(memberId));
+    finalBatch.delete(db.collection('memberIndex').doc(memberId));
+    await finalBatch.commit();
+
+    toast('顧客と関連データを完全削除しました');
+    bumpAndRender('members');
+    loadMembers();
+  }catch(e){
+    toast('完全削除失敗: '+e.message,'err');
+  }
+}
 
 // ── 引継コード発行 ────────────────────────────────────────────────
 function generateRegCode(){
