@@ -1170,14 +1170,16 @@ var _bovBtn=g("btn-open-visit"); if(_bovBtn) _bovBtn.addEventListener("click",fu
 function makeVisitKey(date, seq){ return date + String(seq).padStart(2,"0"); }
 
 function autoVisitSeq(date, cb){
-  // その日の最大通番+1を返す
+  // その日の最大通番+1を返す（cache未ロード時も_treeCurrentVisitsで補完）
   var maxSeq = 0;
-  cache.visits.forEach(function(v){
+  function checkV(v){
     if((v.visitDate||v.id.slice(0,6))===date){
-      var s = parseInt(v.id.slice(6,8))||0;
-      if(s > maxSeq) maxSeq = s;
+      var s=parseInt(v.id.slice(6,8))||0;
+      if(s>maxSeq)maxSeq=s;
     }
-  });
+  }
+  cache.visits.forEach(checkV);
+  _treeCurrentVisits.forEach(checkV);
   cb(maxSeq + 1);
 }
 
@@ -1262,7 +1264,7 @@ function doSaveVisit(onSuccess){
   }
   var seq=editId.visit?parseInt(editId.visit.slice(6,8)):_currentVisitSeq;
   var id=editId.visit||makeVisitKey(date,seq);
-  if(!editId.visit&&cache.visits.some(function(v){return v.id===id;})){ toast("キー重複: visitKey「"+id+"」は既に存在します","err"); return; }
+  if(!editId.visit&&(cache.visits.some(function(v){return v.id===id;})||_treeCurrentVisits.some(function(v){return v.id===id;}))){ toast("キー重複: visitKey「"+id+"」は既に存在します","err"); return; }
   db.collection("visits").doc(id).set({
     visitKey:id, visitDate:date, visitTime:time||null,
     seq:seq,
@@ -2833,7 +2835,7 @@ function togetherRemove(ordId){
 async function treeDoAddCompanion(batchId, templateOrd, vis){
   if(!vis) return;
   var date=(templateOrd.id||"").slice(0,6);
-  var maxSeq=_treeCurrentOrders.reduce(function(mx,o){
+  var maxSeq=_treeCurrentOrders.concat(cache.orders).reduce(function(mx,o){
     if((o.id||"").slice(0,6)===date){var s=parseInt((o.id||"").slice(6))||0;return s>mx?s:mx;}
     return mx;
   },0);
