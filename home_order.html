@@ -132,6 +132,11 @@ input,select{font-family:var(--sans)}
 .modal-title{font-family:var(--serif);font-size:18px;font-weight:600;color:var(--gold-d);flex:1}
 .modal-body{padding:16px}
 
+/* ── ポップアップモード（admin_data.html iframeから呼び出し時） ── */
+body.popup-mode .topbar,body.popup-mode .content,body.popup-mode #loading{display:none!important}
+body.popup-mode .modal-overlay{background:var(--cream);padding:0}
+body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-height:100vh}
+
 /* ── ステップ ── */
 .step-indicator{display:flex;border-radius:var(--r);overflow:hidden;border:1px solid var(--border2);margin-bottom:16px}
 .step-tab{flex:1;text-align:center;padding:8px 4px;font-size:11px;color:var(--ink3);background:var(--cream2);border-right:1px solid var(--border2);transition:all .2s}
@@ -694,6 +699,7 @@ const db = firebase.firestore();
 // ━━━ 状態 ━━━
 let todayStr='', allGroups=[], allBatchGroups=[], allVisits=[], allMembers={};
 let currentSessionBT=null; // 営業時刻用セッション情報
+let isPopupMode=false;
 let blindResultsSet=new Set();
 let masterData={tequila:[],other:[],misc:[],set:[],cocktail:[],subMaterials:[]};
 let blindMarks=[];
@@ -737,8 +743,14 @@ async function init(){
   renderOrderList();
   renderQuickVisitorList();
 
-  // checkin.htmlから来場者指定で遷移してきた場合はSTEP1へ直接ジャンプ
+  // ポップアップモード検出
   var params=new URLSearchParams(window.location.search);
+  if(params.get('popup')==='1'){
+    isPopupMode=true;
+    document.body.classList.add('popup-mode');
+  }
+
+  // checkin.htmlから来場者指定で遷移してきた場合はSTEP1へ直接ジャンプ
   var visitsParam=params.get('visits');
   if(visitsParam){
     var visitKeys=visitsParam.split(',').filter(Boolean);
@@ -1785,11 +1797,21 @@ function openOrderModal(){
     renderVisitors();
   }
 }
-function closeOrderModal(){document.getElementById('order-modal').classList.remove('open');}
+
 function showStep(n){
   ['step0','step1','step2','step3'].forEach((id,i)=>document.getElementById(id).style.display=i===n?'block':'none');
   ['stab0','stab1','stab2','stab3'].forEach((id,i)=>document.getElementById(id).className='step-tab '+(i<n?'done':i===n?'active':''));
   document.getElementById('modal-title').textContent=['来場者を選択','商品を選択','注文を確認','完了'][n];
+  if(n===3&&isPopupMode){
+    var closeBtn=document.querySelector('#step3 .btn-full');
+    if(closeBtn) closeBtn.textContent='完了（閉じる）';
+    window.parent.postMessage({type:'tequila-order-saved'},'*');
+  }
+}
+
+function closeOrderModal(){
+  document.getElementById('order-modal').classList.remove('open');
+  if(isPopupMode) window.parent.postMessage({type:'tequila-popup-close'},'*');
 }
 
 // STEP0
