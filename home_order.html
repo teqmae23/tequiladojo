@@ -686,9 +686,18 @@ async function init(){
     todayStr=AuthRole.businessDate(currentSessionBT.openTime, currentSessionBT.openDate);
   }
   document.getElementById('loading').style.display='none';
-  document.getElementById('content-area').style.display='block';
-  renderOrderList();
-  renderQuickVisitorList();
+
+  // URLパラメータを先に検出（表示モード・コールバックに影響するため）
+  var params=new URLSearchParams(window.location.search);
+  var editBlindParam=params.get('editBlind');
+  var onlyVisitParam=params.get('onlyVisit');
+
+  // editBlindモード以外は通常の注文一覧を表示
+  if(!editBlindParam){
+    document.getElementById('content-area').style.display='block';
+    renderOrderList();
+    renderQuickVisitorList();
+  }
 
   BlindResult.init({
     db: db,
@@ -698,11 +707,14 @@ async function init(){
     showToast: showToast,
     markSym: markSym,
     esc: esc,
-    onSaved: function(){ loadTodayData().then(function(){ renderOrderList(); }); }
+    canEdit: true,
+    onSaved: editBlindParam
+      ?function(){ window.close(); }
+      :function(){ loadTodayData().then(function(){ renderOrderList(); }); },
+    onClose: editBlindParam?function(){ window.close(); }:null
   });
 
   // ポップアップモード検出
-  var params=new URLSearchParams(window.location.search);
   if(params.get('popup')==='1'){
     isPopupMode=true;
     document.body.classList.add('popup-mode');
@@ -738,9 +750,7 @@ async function init(){
     window.history.replaceState({},document.title,window.location.pathname);
   }
 
-  // admin_data.htmlのツリーからブラインド結果編集で遷移してきた場合
-  var editBlindParam=params.get('editBlind');
-  var onlyVisitParam=params.get('onlyVisit');
+  // ツリー/直接リンクからブラインド結果を直接表示する場合
   if(editBlindParam){
     (async function(){
       try{
@@ -780,7 +790,8 @@ async function init(){
         }
         if(b){
           BlindResult.open(b, onlyVisitParam||null);
-          await BlindResult.loadExisting();
+          var hasData=await BlindResult.loadExisting();
+          if(hasData) BlindResult.show();
         }
       }catch(e){showToast('ブラインドデータ取得エラー: '+e.message,'error');}
     })();
@@ -1229,10 +1240,12 @@ function recomputeBatchTotals(){
   }
 }
 
-function openResultModal(bid){
+async function openResultModal(bid){
   var b=allBatchGroups.find(function(x){return x.bid===bid;});
   if(!b)return;
   BlindResult.open(b);
+  var hasData=await BlindResult.loadExisting();
+  if(hasData) BlindResult.show();
 }
 
 // ━━━ 注文作成 ━━━
