@@ -2322,6 +2322,12 @@ async function loadTree(){
         snap.docs.forEach(function(d){orders.push(Object.assign({id:d.id},d.data()));});
       }
     }
+    // 来場に紐づいていない注文（orderDateベース）も取得
+    var dateOrdSnap=await db.collection('orders').where('orderDate','==',yymmdd).get().catch(function(){return{docs:[]};});
+    dateOrdSnap.docs.forEach(function(d){
+      if(!orders.find(function(o){return o.id===d.id;}))
+        orders.push(Object.assign({id:d.id},d.data()));
+    });
     _treeSessions=sessions;
     _treeCurrentVisits=visits;
     _treeCurrentOrders=orders;
@@ -2386,6 +2392,9 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
     visits.forEach(function(v){assignedVisitIds[v.id]=true;});
   }
   var orphanVisits=visits.filter(function(v){return !assignedVisitIds[v.id];});
+
+  // 表示済み注文IDを追跡（孤立注文の検出用）
+  var shownOrderIds={};
 
   // セッションブロック
   sessions.forEach(function(ses,si){
@@ -2478,6 +2487,7 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
         } else {
           visOrders.sort(function(a,b){return (a.orderTime||'').localeCompare(b.orderTime||'');});
           visOrders.forEach(function(ord){
+            shownOrderIds[ord.id]=true;
             var cancelled=ord.served===0;
             var isBlind=ord.blindId===1||ord.blindId==='1';
             var ordDet=[];
@@ -2540,13 +2550,81 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
     orphanVisits.forEach(function(vis){
       var name=treeMemName(vis.memberId)||'ゲスト ('+vis.id+')';
       var timeDisp=vis.visitTime?fmtHHMM(vis.visitTime):'時間なし';
-      html+='<div class="tree-node vnode" style="padding-left:20px">'
+      var ovOrders=orders.filter(function(o){return (o.visitKey||o.visitId)===vis.id;});
+      ovOrders.forEach(function(o){shownOrderIds[o.id]=true;});
+      var ovId='tree-ov-'+vis.id;
+      html+='<div class="tree-child-visit">'
+        +'<div class="tree-node vnode">'
+        +'<span class="tree-toggle" style="margin-left:20px" onclick="treeToggle(\''+ovId+'\',this)">▼</span>'
         +'<span class="tree-tag tag-visit">来場</span>'
         +'<span class="tree-label"><strong>'+escHtml(name)+'</strong> &nbsp;来場時間: '+timeDisp
+        +' <button class="btn bs sm" style="font-size:11px;margin-left:4px;vertical-align:middle" data-tree-add-order="'+escHtml(vis.id)+'" data-tree-add-order-member="'+escHtml(vis.memberId||'')+'">＋注文</button>'
         +' <span style="font-size:10px;color:var(--ink3)">'+escHtml(vis.id)+'</span></span>'
         +'<div class="tree-acts">'
         +'<button class="btn bs sm" data-edit-visit="'+escHtml(vis.id)+'">編集</button>'
         +'<button class="btn bd sm" data-tree-del-visit="'+escHtml(vis.id)+'">削除</button>'
+        +'</div></div>'
+        +'<div id="'+ovId+'" style="display:none">';
+      if(!ovOrders.length){
+        html+='<div style="padding:8px 16px 8px 60px;font-size:11px;color:var(--ink3)">注文なし</div>';
+      } else {
+        ovOrders.sort(function(a,b){return (a.orderTime||'').localeCompare(b.orderTime||'');});
+        ovOrders.forEach(function(ord){
+          var ordDet=[];
+          if(ord.orderTime) ordDet.push(fmtHHMM(ord.orderTime));
+          ordDet.push(escHtml(ord.productName||ord.productCode||'—'));
+          if(ord.qty) ordDet.push(ord.qty+(ord.unit||''));
+          var cancelled=ord.served===0;
+          var badge='<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;'
+            +(cancelled?'background:#fee;color:var(--red)':'background:rgba(40,120,80,.1);color:#1a5e3a')
+            +'">'+(cancelled?'キャンセル':treeServedLabel(ord.served))+'</span>';
+          html+='<div class="tree-node onode tree-child-order'+(cancelled?' cancelled':'')+'">'
+            +'<span style="width:44px;flex-shrink:0"></span>'
+            +'<span class="tree-tag tag-order">注文</span>'
+            +'<span class="tree-label">'+ordDet.join(' &nbsp;')+badge+'</span>'
+            +'<div class="tree-acts">'
+            +'<button class="btn bs sm" data-edit-order="'+escHtml(ord.id)+'">編集</button>'
+            +'<button class="btn bd sm" data-tree-del-order="'+escHtml(ord.id)+'">削除</button>'
+            +'</div></div>';
+        });
+      }
+      html+='</div></div>';
+    });
+    html+='</div>';
+  }
+
+  // 孤立注文（来場に紐づいていない注文）
+  var orphanOrders=orders.filter(function(o){return !shownOrderIds[o.id];});
+  if(orphanOrders.length){
+    html+='<div class="tree-block" style="border-color:var(--red);background:#fff8f7">'
+      +'<div class="tree-node" style="background:#fee8e4">'
+      +'<span class="tree-tag" style="background:var(--red);color:#fff">未割当</span>'
+      +'<span class="tree-label" style="color:var(--red)"><strong>⚠ 来場に紐づいていない注文 '+orphanOrders.length+'件</strong>'
+      +' <span style="font-size:11px;font-weight:normal">visitKeyが空または存在しない来場を参照しています。編集して修正してください。</span></span>'
+      +'</div>';
+    orphanOrders.sort(function(a,b){return (a.orderTime||'').localeCompare(b.orderTime||'');});
+    orphanOrders.forEach(function(ord){
+      var ordDet=[];
+      if(ord.orderTime) ordDet.push(fmtHHMM(ord.orderTime));
+      ordDet.push(escHtml(ord.productName||ord.productCode||'—'));
+      if(ord.qty) ordDet.push(ord.qty+(ord.unit||''));
+      if(ord.unitPrice){
+        var isMl2=ord.productType==='tequila'||ord.productType==='other';
+        var amt2=isMl2?Math.round(ord.unitPrice*ord.qty/10):ord.unitPrice*ord.qty;
+        ordDet.push('¥'+amt2.toLocaleString());
+      }
+      var cancelled=ord.served===0;
+      var badge='<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;'
+        +(cancelled?'background:#fee;color:var(--red)':'background:rgba(40,120,80,.1);color:#1a5e3a')
+        +'">'+(cancelled?'キャンセル':treeServedLabel(ord.served))+'</span>';
+      var vkLabel=ord.visitKey?'visitKey: '+escHtml(ord.visitKey):'visitKeyなし';
+      html+='<div class="tree-node onode'+(cancelled?' cancelled':'')+'">'
+        +'<span class="tree-tag tag-order">注文</span>'
+        +'<span class="tree-label">'+ordDet.join(' &nbsp;')+badge
+        +' <span style="font-size:10px;color:var(--ink3)">'+vkLabel+'</span></span>'
+        +'<div class="tree-acts">'
+        +'<button class="btn bs sm" data-edit-order="'+escHtml(ord.id)+'">編集</button>'
+        +'<button class="btn bd sm" data-tree-del-order="'+escHtml(ord.id)+'">削除</button>'
         +'</div></div>';
     });
     html+='</div>';
