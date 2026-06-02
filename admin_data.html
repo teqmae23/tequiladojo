@@ -9,6 +9,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 
 <!-- ★★★ ここだけ書き換えてください ★★★ -->
 <script>
@@ -958,8 +959,9 @@ window.JOURNAL_PAGE = 'admin_data';
 <script>
 // Firebase初期化
 if (!firebase.apps.length) { firebase.initializeApp(FIREBASE_CONFIG); }
-var auth = firebase.auth();
-var db   = firebase.firestore();
+var auth    = firebase.auth();
+var db      = firebase.firestore();
+var storage = firebase.storage();
 
 // ── ユーティリティ ────────────────────────────────────────────
 function g(id)      { return document.getElementById(id); }
@@ -3751,6 +3753,39 @@ function nwSetBody(html){
   document.getElementById('nw-editor').innerHTML=html||'';
   document.getElementById('nw-src').value=html||'';
 }
+
+// body内のdata:URL画像をFirebase StorageにアップロードしてsrcをダウンロードURLに差し替え
+async function nwUploadInlineImages(html){
+  var re=/<img([^>]*?)src="(data:image\/[^;]+;base64,[^"]+)"([^>]*?)>/gi;
+  var matches=[];
+  var m;
+  var tmp=html;
+  while((m=re.exec(html))!==null){
+    matches.push({full:m[0],pre:m[1],data:m[2],post:m[3]});
+  }
+  if(!matches.length) return html;
+  toast('画像をアップロード中 ('+matches.length+'枚)...','inf');
+  for(var i=0;i<matches.length;i++){
+    var match=matches[i];
+    var dataUrl=match.data;
+    var mimeMatch=dataUrl.match(/^data:(image\/[^;]+);base64,/);
+    if(!mimeMatch) continue;
+    var mime=mimeMatch[1];
+    var ext=mime==='image/png'?'png':'jpg';
+    var b64=dataUrl.replace(/^data:image\/[^;]+;base64,/,'');
+    var byteStr=atob(b64);
+    var arr=new Uint8Array(byteStr.length);
+    for(var j=0;j<byteStr.length;j++) arr[j]=byteStr.charCodeAt(j);
+    var blob=new Blob([arr],{type:mime});
+    var fileName='news/'+Date.now()+'_'+i+'.'+ext;
+    var ref=storage.ref().child(fileName);
+    var snap=await ref.put(blob,{contentType:mime});
+    var downloadUrl=await snap.ref.getDownloadURL();
+    var newTag='<img'+match.pre+'src="'+downloadUrl+'"'+match.post+'>';
+    html=html.replace(match.full,newTag);
+  }
+  return html;
+}
 function nwDtToISO(val){ if(!val) return ''; return new Date(val).toISOString(); }
 function nwISOToDt(iso){
   if(!iso) return '';
@@ -3846,27 +3881,35 @@ function delNews(id){
 
 (function(){
   var btn=g('btn-save-news'); if(!btn) return;
-  btn.addEventListener('click',function(){
+  btn.addEventListener('click',async function(){
     var newsEditId=g('m-news').dataset.editId||null;
     if(newsEditId==='') newsEditId=null;
     var type=gv('nw-type'),title=gv('nw-title'),body=nwGetBody();
     var startRaw=gv('nw-start'),endRaw=gv('nw-end');
     var published=g('nw-publish').checked;
     if(!title){toast('タイトルは必須です','err');return;}
-    var publishStartISO=startRaw?nwDtToISO(startRaw):'';
-    var data={
-      type:type,title:title,body:body,
-      publishStart:publishStartISO,
-      publishEnd:endRaw?nwDtToISO(endRaw):'',
-      date:publishStartISO?publishStartISO.slice(0,10):'',
-      published:published,
-      updatedAt:new Date().toISOString()
-    };
-    if(!newsEditId) data.createdAt=new Date().toISOString();
-    var ref=newsEditId?db.collection('news').doc(newsEditId):db.collection('news').doc();
-    ref.set(data,{merge:!!newsEditId})
-    .then(function(){toast(newsEditId?'更新しました':'登録しました');closeM('m-news');loadNews();})
-    .catch(function(e){toast('保存失敗: '+e.message,'err');});
+    btn.disabled=true; btn.textContent='保存中...';
+    try{
+      body=await nwUploadInlineImages(body);
+      var publishStartISO=startRaw?nwDtToISO(startRaw):'';
+      var data={
+        type:type,title:title,body:body,
+        publishStart:publishStartISO,
+        publishEnd:endRaw?nwDtToISO(endRaw):'',
+        date:publishStartISO?publishStartISO.slice(0,10):'',
+        published:published,
+        updatedAt:new Date().toISOString()
+      };
+      if(!newsEditId) data.createdAt=new Date().toISOString();
+      var ref=newsEditId?db.collection('news').doc(newsEditId):db.collection('news').doc();
+      await ref.set(data,{merge:!!newsEditId});
+      toast(newsEditId?'更新しました':'登録しました');
+      closeM('m-news'); loadNews();
+    }catch(e){
+      toast('保存失敗: '+e.message,'err');
+    }finally{
+      btn.disabled=false; btn.textContent='保存';
+    }
   });
 })();
 (function(){
