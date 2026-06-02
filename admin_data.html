@@ -907,6 +907,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       </div>
       <div id="nw-img-dialog" style="display:none;background:#1a1a1a;border:1px solid #555;border-radius:6px;padding:14px;margin-top:-1px;margin-bottom:8px;">
         <div style="font-size:12px;color:#aaa;margin-bottom:10px;font-weight:600;">🖼 画像挿入</div>
+        <img id="nw-img-preview" style="display:none;max-width:100%;max-height:140px;border-radius:4px;margin-bottom:8px;object-fit:contain;" alt="プレビュー">
         <div class="fg" style="margin-bottom:8px"><label class="fl" style="font-size:12px">画像URL</label><input class="fi" id="nw-img-url" placeholder="https://..." style="font-size:12px"></div>
         <div class="fg" style="margin-bottom:8px"><label class="fl" style="font-size:12px">幅（px or %）</label><input class="fi" id="nw-img-width" placeholder="例: 100% または 300" style="font-size:12px;width:160px"></div>
         <div class="fg" style="margin-bottom:10px">
@@ -3686,13 +3687,29 @@ function nwInsertImageUpload(){ document.getElementById('nw-img-upload').click()
 function nwInsertImageCamera(){ document.getElementById('nw-img-camera').click(); }
 function nwHandleUpload(input){
   var file=input.files[0]; if(!file) return;
-  var reader=new FileReader();
-  reader.onload=function(e){
-    document.getElementById('nw-img-url').value=e.target.result;
+  input.value='';
+  var objectUrl=URL.createObjectURL(file);
+  var img=new Image();
+  img.onload=function(){
+    var MAX=1200;
+    var w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+    var scale=Math.min(1,MAX/w,MAX/h);
+    var tw=Math.max(1,Math.round(w*scale)), th=Math.max(1,Math.round(h*scale));
+    var canvas=document.createElement('canvas');
+    canvas.width=tw; canvas.height=th;
+    canvas.getContext('2d').drawImage(img,0,0,tw,th);
+    var dataUrl=canvas.toDataURL('image/jpeg',0.82);
+    URL.revokeObjectURL(objectUrl);
+    var preview=document.getElementById('nw-img-preview');
+    if(preview){ preview.src=dataUrl; preview.style.display='block'; }
+    document.getElementById('nw-img-url').value=dataUrl;
     document.getElementById('nw-img-dialog').style.display='block';
   };
-  reader.readAsDataURL(file);
-  input.value='';
+  img.onerror=function(){
+    URL.revokeObjectURL(objectUrl);
+    toast('画像の読み込みに失敗しました','err');
+  };
+  img.src=objectUrl;
 }
 function nwDoInsertImage(){
   var url=(document.getElementById('nw-img-url').value||'').trim();
@@ -3986,14 +4003,25 @@ function loadNewsTypeConfig(cb){
       if(items[i].type.indexOf('image')===0){
         e.preventDefault();
         var file=items[i].getAsFile();
-        var reader=new FileReader();
-        reader.onload=function(ev){
-          var html='<img src="'+ev.target.result+'" style="max-width:100%;display:block;margin:.4em auto;" alt="">';
+        var objectUrl=URL.createObjectURL(file);
+        var pImg=new Image();
+        pImg.onload=function(){
+          var MAX=1200;
+          var w=pImg.naturalWidth||pImg.width, h=pImg.naturalHeight||pImg.height;
+          var scale=Math.min(1,MAX/w,MAX/h);
+          var tw=Math.max(1,Math.round(w*scale)), th=Math.max(1,Math.round(h*scale));
+          var canvas=document.createElement('canvas');
+          canvas.width=tw; canvas.height=th;
+          canvas.getContext('2d').drawImage(pImg,0,0,tw,th);
+          var dataUrl=canvas.toDataURL('image/jpeg',0.82);
+          URL.revokeObjectURL(objectUrl);
+          var html='<img src="'+dataUrl+'" style="max-width:100%;display:block;margin:.4em auto;" alt="">';
           ed.focus();
           document.execCommand('insertHTML',false,html);
           toast('画像を貼り付けました');
         };
-        reader.readAsDataURL(file);
+        pImg.onerror=function(){ URL.revokeObjectURL(objectUrl); toast('画像貼り付け失敗','err'); };
+        pImg.src=objectUrl;
         return;
       }
     }
