@@ -543,6 +543,14 @@ body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-
           <input type="checkbox" id="blind-check-s2" onchange="toggleBlindModeS2()" style="width:16px;height:16px;accent-color:var(--purple);">
           <label for="blind-check-s2" style="font-size:13px;color:var(--ink2);cursor:pointer;">🎭 ブラインドテイスティング</label>
         </div>
+        <div id="confirm-time-row" style="display:none;background:var(--cream2);border-radius:var(--r);padding:10px 12px;margin:6px 0;border:1px solid var(--border2)">
+          <div style="font-size:10px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:5px">過去日付への注文 — 注文時間を指定</div>
+          <div style="font-size:11px;color:var(--ink3);margin-bottom:8px" id="confirm-time-range"></div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <label style="font-size:12px;color:var(--ink2);white-space:nowrap">注文時間</label>
+            <input type="time" id="confirm-order-time" style="font-size:13px;padding:5px 8px;border:1px solid var(--border2);border-radius:var(--r);background:var(--white)">
+          </div>
+        </div>
         <div id="confirm-gift-info" style="display:none;background:#fdf0d0;border-radius:var(--r);padding:8px 12px;margin:6px 0;font-size:12px;color:var(--gold-d)"></div>
         <div class="confirm-total">
           <span style="font-size:13px;color:var(--ink3)" id="confirm-total-label">合計（1人分）</span>
@@ -1826,7 +1834,7 @@ function saveCartQty(idx,val){
 }
 
 // STEP2（バリデーション付き）
-function goStep2(){
+async function goStep2(){
   if(!flow.cart.length)return;
   const isBlind=document.getElementById('blind-check').checked;
   if(isBlind){
@@ -1870,22 +1878,75 @@ function goStep2(){
     totalLabelEl.textContent='合計（1人分）';
     document.getElementById('confirm-total').innerHTML=`¥${total.toLocaleString()}${suffix}`;
   }
+
+  // 過去visitの場合、注文時間入力行を表示してプリセット
+  const timeRow=document.getElementById('confirm-time-row');
+  if(timeRow){
+    const vdp=flow.visits[0]?.id?.slice(0,6)||todayStr;
+    const isHist=/^\d{6}$/.test(vdp)&&vdp!==todayStr;
+    timeRow.style.display=isHist?'block':'none';
+    if(isHist&&flow.visits.length>0){
+      const vis=flow.visits[0];
+      const fmtT=s=>s&&s.length>=4?s.slice(0,2)+':'+s.slice(2,4):'—';
+      document.getElementById('confirm-time-range').textContent=`来場: ${fmtT(vis.visitTime)} ～ 退場: ${fmtT(vis.checkoutTime)}`;
+      const timeInp=document.getElementById('confirm-order-time');
+      if(timeInp){
+        // visitTimeをデフォルトとしてセット
+        const defT=vis.visitTime||'';
+        if(defT.length>=4) timeInp.value=defT.slice(0,2)+':'+defT.slice(2,4);
+        // Firestoreから当該visitの最終注文時間を取得してプリセット上書き
+        const vkSnap=await db.collection('orders').where('visitKey','==',vis.id).get().catch(()=>({docs:[]}));
+        const times=vkSnap.docs.map(d=>d.data().orderTime||'').filter(t=>t.length>=4).sort();
+        if(times.length>0){
+          const lastT=times[times.length-1];
+          timeInp.value=lastT.slice(0,2)+':'+lastT.slice(2,4);
+        }
+      }
+    }
+  }
 }
 
 // 確定
 async function confirmOrder(){
   if(!flow.visits.length||!flow.cart.length)return;
-  const orderTime=AuthRole.nowBusinessTime(currentSessionBT&&currentSessionBT.openTime);
   const isBlind=document.getElementById('blind-check').checked;
-  const todayOrders=allGroups.flatMap(g=>g.orders);
-  let maxSeq=todayOrders.reduce((m,o)=>{const s=parseInt(o.id.slice(6))||0;return Math.max(m,s);},0);
 
-  const maxBatch=allGroups.reduce((m,g)=>{
-    const bid=g.batchId||'';
-    if(bid.slice(0,6)!==todayStr)return m;
-    const n=parseInt(bid.slice(6))||0;return Math.max(m,n);
-  },0);
-  const batchId=todayStr+String(maxBatch+1).padStart(3,'0');
+  // 過去visitへの追加注文かを判定（visitIdの先頭6文字がtodayStrと異なれば過去日）
+  const visitDatePrefix=flow.visits[0]?.id?.slice(0,6)||todayStr;
+  const useDate=(/^\d{6}$/.test(visitDatePrefix)&&visitDatePrefix!==todayStr)?visitDatePrefix:todayStr;
+  const isHistorical=(useDate!==todayStr);
+
+  // 注文時間: 過去visitはstep2の時間入力から取得、当日はnowBusinessTime
+  let orderTime;
+  if(isHistorical){
+    const tv=(document.getElementById('confirm-order-time')||{}).value||'';
+    orderTime=tv.length===5?tv.replace(':','')+'00':AuthRole.nowBusinessTime(currentSessionBT&&currentSessionBT.openTime);
+  }else{
+    orderTime=AuthRole.nowBusinessTime(currentSessionBT&&currentSessionBT.openTime);
+  }
+
+  let maxSeq,maxBatch;
+  if(isHistorical){
+    const pastSnap=await db.collection('orders')
+      .orderBy(firebase.firestore.FieldPath.documentId())
+      .startAt(useDate).endAt(useDate+'~')
+      .get().catch(()=>({docs:[]}));
+    maxSeq=pastSnap.docs.reduce((m,d)=>{const s=parseInt(d.id.slice(6))||0;return Math.max(m,s);},0);
+    maxBatch=pastSnap.docs.reduce((m,d)=>{
+      const bid=(d.data().batchId||'');
+      if(bid.slice(0,6)!==useDate)return m;
+      return Math.max(m,parseInt(bid.slice(6))||0);
+    },0);
+  }else{
+    const todayOrders=allGroups.flatMap(g=>g.orders);
+    maxSeq=todayOrders.reduce((m,o)=>{const s=parseInt(o.id.slice(6))||0;return Math.max(m,s);},0);
+    maxBatch=allGroups.reduce((m,g)=>{
+      const bid=g.batchId||'';
+      if(bid.slice(0,6)!==todayStr)return m;
+      return Math.max(m,parseInt(bid.slice(6))||0);
+    },0);
+  }
+  const batchId=useDate+String(maxBatch+1).padStart(3,'0');
 
   const isGift=flow.isGift&&flow.giftTo.length>0;
   const giftRecipients=isGift?flow.giftTo.filter(r=>r.visitKey):[];
@@ -1899,9 +1960,16 @@ async function confirmOrder(){
     const orderGroupIdMap={};
     const allParticipants=[...flow.visits.map(v=>v.id),...giftRecipients.map(r=>r.visitKey)];
     for(const vk of allParticipants){
-      const usedSeqs=allGroups.flatMap(g=>g.orders||[])
-        .filter(o=>o.visitKey===vk)
-        .map(o=>parseInt((o.orderGroupId||'').slice(vk.length))||0);
+      let usedSeqs;
+      if(isHistorical){
+        // 過去visitはallGroupsに既存注文が含まれないのでFirestoreから確認
+        const vkSnap=await db.collection('orders').where('visitKey','==',vk).get().catch(()=>({docs:[]}));
+        usedSeqs=vkSnap.docs.map(d=>parseInt((d.data().orderGroupId||'').slice(vk.length))||0);
+      }else{
+        usedSeqs=allGroups.flatMap(g=>g.orders||[])
+          .filter(o=>o.visitKey===vk)
+          .map(o=>parseInt((o.orderGroupId||'').slice(vk.length))||0);
+      }
       const maxGSeq=usedSeqs.length?Math.max(...usedSeqs):0;
       orderGroupIdMap[vk]=vk+String(maxGSeq+1).padStart(2,'0');
     }
@@ -1912,7 +1980,7 @@ async function confirmOrder(){
         maxSeq++;
         const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
         const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):p&&p.type==='other'?(p.bottleEn||p.bottleName||p.name||item.productName):item.productName;
-        const docId=todayStr+String(maxSeq).padStart(3,'0');
+        const docId=useDate+String(maxSeq).padStart(3,'0');
         fsBatch.set(db.collection('orders').doc(docId),{
           orderTime,customerId:visit.memberId||null,visitKey:visit.id,orderGroupId,batchId,
           itemSeq:i+1,productCode:item.productId,productName:saveName,productType:item.productType,
@@ -1931,7 +1999,7 @@ async function confirmOrder(){
         // 奢り受取人レコード（visitKeyある人のみ）
         for(const recipient of giftRecipients){
           maxSeq++;
-          const recDocId=todayStr+String(maxSeq).padStart(3,'0');
+          const recDocId=useDate+String(maxSeq).padStart(3,'0');
           const recVisit=allVisits.find(v=>v.id===recipient.visitKey);
           fsBatch.set(db.collection('orders').doc(recDocId),{
             orderTime,customerId:recVisit?.memberId||null,
@@ -1954,7 +2022,7 @@ async function confirmOrder(){
         const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
         const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):item.productName;
         const s=String(maxSeq-flow.visits.length*flow.cart.length+(flow.visits.indexOf(visit)*flow.cart.length)+i+1).padStart(3,'0');
-        writeJournal('create','orders',todayStr+s,null,{orderTime,visitKey:visit.id,customerId:visit.memberId||null,
+        writeJournal('create','orders',useDate+s,null,{orderTime,visitKey:visit.id,customerId:visit.memberId||null,
           productName:saveName,productType:item.productType,qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,batchId,orderGroupId:ogId,served:1});
       });
     }
