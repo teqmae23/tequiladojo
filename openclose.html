@@ -448,6 +448,8 @@ g("btn-close-store").addEventListener("click",function(){
           var sales=sesVisits.reduce(function(s,v){return s+(v.amount||0);},0);
           db.collection("sessions").doc(closingSessionId).update({guestCount:guestCount,sales:sales})
             .catch(function(e){console.warn("セッション集計更新失敗:",e);});
+          // バッジ自動判定（バックグラウンド実行）
+          autoProcessBadges(db,sesVisits,closingSessionId);
         }).catch(function(e){console.warn("来場データ取得失敗:",e);});
       }
     }).catch(function(e){toast("閉店処理失敗: "+e.message,"err");});
@@ -612,6 +614,101 @@ async function autoCheckoutStaff(closeTime){
       toast('スタッフ'+cnt+'名を自動退場','inf');
     }
   }catch(e){toast('スタッフ自動退場失敗: '+e.message,'err');}
+}
+
+// ── バッジ自動判定（閉店後バックグラウンド実行）─────────────────
+async function autoProcessBadges(db,sesVisits,sessionId){
+  try{
+    // バッジマスタ・ボトルマスタ取得
+    var results=await Promise.all([
+      db.collection('badges').where('active','==',true).get(),
+      db.collection('bottles').get()
+    ]);
+    var activeBadges=results[0].docs.map(function(d){return Object.assign({id:d.id},d.data());})
+      .filter(function(b){return b.type==='1'&&(b.bottleIds||[]).length;});
+    if(!activeBadges.length)return;
+
+    var thresholds={};
+    results[1].docs.forEach(function(d){
+      var b=d.data();thresholds[d.id]=(b.minTasting===1||b.minTasting==='1')?5:10;
+    });
+
+    // セッション参加会員のIDリスト（スタッフ除く）
+    var memberIds=[...new Set(
+      sesVisits.filter(function(v){return !v.isStaff&&v.memberId;}).map(function(v){return v.memberId;})
+    )];
+    if(!memberIds.length)return;
+
+    // 既存バッジ取得（対象会員分）
+    var existSet=new Set();
+    for(var mi=0;mi<memberIds.length;mi+=10){
+      var chunk=memberIds.slice(mi,mi+10);
+      var mbSnap=await db.collection('memberBadges').where('memberId','in',chunk).get();
+      mbSnap.docs.forEach(function(d){var dd=d.data();existSet.add(dd.memberId+'|'+dd.badgeId);});
+    }
+
+    var totalAwarded=0;
+    var newBadgeNames=[];
+    for(var i=0;i<memberIds.length;i++){
+      var mid=memberIds[i];
+
+      // 全来場歴取得
+      var visSnap=await db.collection('visits').where('memberId','==',mid).get().catch(function(){return{docs:[]};});
+      var vkeys=visSnap.docs.map(function(d){return d.id;});
+      if(!vkeys.length)continue;
+
+      // 注文集約（bottleDataId→qty）
+      var bdQty={};
+      for(var j=0;j<vkeys.length;j+=30){
+        var vchunk=vkeys.slice(j,j+30);
+        var ordSnap=await db.collection('orders').where('visitKey','in',vchunk).get().catch(function(){return{docs:[]};});
+        ordSnap.docs.forEach(function(d){
+          var o=d.data();
+          if(o.deleted===1||o.served===0||!o.productCode)return;
+          if(o.productType==='tequila'||o.productType==='other'){
+            bdQty[o.productCode]=(bdQty[o.productCode]||0)+(o.qty||0);
+          }
+        });
+      }
+
+      // bottleDataId→bottleId変換
+      var bdIds=Object.keys(bdQty);
+      var bottleQty={};
+      for(var k=0;k<bdIds.length;k+=30){
+        var bchunk=bdIds.slice(k,k+30);
+        var bdSnap=await db.collection('bottleData')
+          .where(firebase.firestore.FieldPath.documentId(),'in',bchunk).get().catch(function(){return{docs:[]};});
+        bdSnap.docs.forEach(function(d){
+          var bd=d.data();
+          if(bd.bottleId&&bdQty[d.id]) bottleQty[bd.bottleId]=(bottleQty[bd.bottleId]||0)+bdQty[d.id];
+        });
+      }
+
+      // バッジ判定・付与
+      var batch=db.batch();var cnt=0;
+      for(var bi=0;bi<activeBadges.length;bi++){
+        var badge=activeBadges[bi];
+        if(existSet.has(mid+'|'+badge.id))continue;
+        var ok=(badge.bottleIds||[]).every(function(bid){
+          return (bottleQty[bid]||0)>=(thresholds[bid]!==undefined?thresholds[bid]:10);
+        });
+        if(ok){
+          batch.set(db.collection('memberBadges').doc(mid+'_'+badge.id),{
+            memberId:mid,badgeId:badge.id,
+            earnedAt:firebase.firestore.FieldValue.serverTimestamp(),
+            sessionId:sessionId,source:'auto'
+          });
+          existSet.add(mid+'|'+badge.id);
+          newBadgeNames.push(badge.icon+badge.name);
+          cnt++;totalAwarded++;
+        }
+      }
+      if(cnt>0)await batch.commit();
+    }
+    if(totalAwarded>0){
+      toast('🎖️ バッジ付与: '+newBadgeNames.join(' / '),'inf');
+    }
+  }catch(e){console.warn('バッジ自動判定失敗:',e);}
 }
 </script>
 </body>

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>バッジコレクション — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:"G-KMS18946JQ"
+};
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --teal:#1a6e58;--teal-l:#e0f0eb;
+  --cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;
+  --border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);
+  --shadow:0 1px 12px rgba(24,17,10,.07);--shadow-lg:0 6px 36px rgba(24,17,10,.13);
+  --r:6px;--rl:12px;
+  --serif:'Cormorant Garamond',Georgia,serif;
+  --sans:'Noto Sans JP',sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:14px}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+.hero{background:var(--ink);padding:28px 20px 24px;text-align:center}
+.hero-logo{font-size:40px;margin-bottom:6px}
+.hero-brand{font-family:var(--serif);font-size:24px;font-weight:600;color:rgba(255,255,255,.9);letter-spacing:.12em}
+.hero-sub{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.4);margin-top:4px;margin-bottom:14px}
+.hero-name{font-size:18px;color:var(--gold-l);font-weight:500}
+.hero-count{font-size:12px;color:rgba(255,255,255,.5);margin-top:4px}
+.main{max-width:720px;margin:0 auto;padding:20px 16px 60px}
+.section-title{font-size:13px;font-weight:500;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px}
+.badge-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}
+.badge-tile{border:2px solid var(--border2);border-radius:10px;padding:14px 12px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;background:var(--white)}
+.badge-tile.earned{border-color:var(--gold);background:rgba(200,146,30,.05)}
+.badge-tile.locked{opacity:.4;filter:grayscale(.5)}
+.badge-icon{font-size:36px;line-height:1}
+.badge-name{font-size:12px;font-weight:500;color:var(--ink2)}
+.badge-desc{font-size:10px;color:var(--ink3);line-height:1.4}
+.badge-date{font-size:10px;color:var(--teal);margin-top:2px}
+.badge-lock{font-size:10px;color:var(--ink3);margin-top:2px}
+.msg{text-align:center;padding:60px 20px;color:var(--ink3);font-size:14px}
+.msg-icon{font-size:48px;margin-bottom:12px}
+</style>
+</head>
+<body>
+
+<div id="hero-area">
+  <div class="hero">
+    <div class="hero-logo">🎖️</div>
+    <div class="hero-brand">TEQUILA DOJO</div>
+    <div class="hero-sub">Badge Collection</div>
+    <div class="hero-name" id="hero-name">…</div>
+    <div class="hero-count" id="hero-count"></div>
+  </div>
+</div>
+
+<div class="main">
+  <div id="main-content">
+    <div class="msg"><div class="msg-icon">⏳</div>読み込み中…</div>
+  </div>
+</div>
+
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var db=firebase.firestore();
+
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+var params=new URLSearchParams(location.search);
+var memberId=params.get('id')||'';
+
+var cont=document.getElementById('main-content');
+
+function showMsg(icon,msg){
+  cont.innerHTML='<div class="msg"><div class="msg-icon">'+icon+'</div>'+esc(msg)+'</div>';
+}
+
+async function load(){
+  if(!memberId){showMsg('❌','URLが正しくありません');return;}
+
+  // メンバー取得
+  var memSnap=await db.collection('members').where(firebase.firestore.FieldPath.documentId(),'==',memberId).limit(1).get()
+    .catch(function(){return{empty:true};});
+
+  // memberId フィールドで検索（documentIdと異なる場合の対応）
+  if(memSnap.empty){
+    memSnap=await db.collection('members').where('memberId','==',memberId).limit(1).get()
+      .catch(function(){return{empty:true};});
+  }
+
+  if(memSnap.empty){showMsg('❌','会員が見つかりません');return;}
+
+  var member=Object.assign({id:memSnap.docs[0].id},memSnap.docs[0].data());
+  var mid=member.memberId||member.id;
+
+  // 非公開チェック
+  if(member.badgePublic!==true){showMsg('🔒','このコレクションは非公開です');return;}
+
+  var displayName=member.nickname||member.name||mid;
+  document.title=displayName+' のバッジコレクション — テキーラ道場';
+  document.getElementById('hero-name').textContent=displayName+' のコレクション';
+
+  // バッジマスタ + 取得バッジを並行取得
+  var results=await Promise.all([
+    db.collection('badges').where('active','==',true).get().catch(function(){return{docs:[]};}),
+    db.collection('memberBadges').where('memberId','==',mid).get().catch(function(){return{docs:[]};})
+  ]);
+
+  var allBadges=results[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+  allBadges.sort(function(a,b){return a.id.localeCompare(b.id);});
+
+  var earnedMap={};
+  results[1].docs.forEach(function(d){var dd=d.data();earnedMap[dd.badgeId]=dd;});
+
+  var earnedCount=allBadges.filter(function(b){return !!earnedMap[b.id];}).length;
+  document.getElementById('hero-count').textContent=earnedCount+' / '+allBadges.length+' バッジ取得済み';
+
+  if(!allBadges.length){
+    cont.innerHTML='<div class="msg"><div class="msg-icon">📭</div>バッジはまだ登録されていません</div>';
+    return;
+  }
+
+  var html='<div class="section-title">バッジ一覧</div><div class="badge-grid">';
+  html+=allBadges.map(function(b){
+    var mb=earnedMap[b.id];
+    var earned=!!mb;
+    var dt=mb&&mb.earnedAt?(mb.earnedAt.toDate?mb.earnedAt.toDate():new Date(mb.earnedAt)).toLocaleDateString('ja-JP'):'';
+    return '<div class="badge-tile'+(earned?' earned':' locked')+'">'
+      +'<div class="badge-icon">'+(b.icon||'🎖️')+'</div>'
+      +'<div class="badge-name">'+esc(b.name)+'</div>'
+      +(b.description?'<div class="badge-desc">'+esc(b.description)+'</div>':'')
+      +(earned?'<div class="badge-date">取得: '+dt+'</div>':'<div class="badge-lock">🔒</div>')
+    +'</div>';
+  }).join('');
+  html+='</div>';
+  cont.innerHTML=html;
+}
+
+load();
+</script>
+</body>
+</html>
