@@ -273,8 +273,14 @@ async function load(user){
   var vsnap=await db.collection('visits').where('memberId','==',mid).get();
   var vids=vsnap.docs.map(function(d){return d.id;});
 
-  // 注文→bottleDataId収集
-  var bdIds=new Set();
+  // 最低試飲量マップ: bottleId → threshold (ml)
+  var bottleThreshold={};
+  bottles.forEach(function(b){
+    bottleThreshold[b.id]=(b.minTasting===1||b.minTasting==='1')?5:10;
+  });
+
+  // 注文→bottleDataId別 qty合計
+  var bdQty={};
   if(vids.length){
     for(var i=0;i<vids.length;i+=10){
       var chunk=vids.slice(i,i+10);
@@ -282,12 +288,15 @@ async function load(user){
         var os=await db.collection('orders').where('visitKey','in',chunk).get();
         os.forEach(function(d){
           var o=d.data();
-          if((o.productType==='tequila'||o.productType==='other')&&(o.productCode||o.productId))
-            bdIds.add(o.productCode||o.productId);
+          if((o.productType==='tequila'||o.productType==='other')&&(o.productCode||o.productId)){
+            var bdId=o.productCode||o.productId;
+            bdQty[bdId]=(bdQty[bdId]||0)+(parseInt(o.qty)||0);
+          }
         });
       }catch(e){}
     }
   }
+  var bdIds=new Set(Object.keys(bdQty));
 
   // bottleData全件→drunkIds + japanIds
   drunkIds=new Set();
@@ -301,13 +310,19 @@ async function load(user){
       if(String(bd.importType||'0')==='0') japanIds.add(bd.bottleId);
     });
   }catch(e){}
-  // drunkIds
+  // drunkIds: qty >= 最低試飲量
   if(bdIds.size){
     var arr=[...bdIds];
     for(var j=0;j<arr.length;j+=10){
       try{
         var bds=await db.collection('bottleData').where(firebase.firestore.FieldPath.documentId(),'in',arr.slice(j,j+10)).get();
-        bds.forEach(function(d){if(d.data().bottleId) drunkIds.add(d.data().bottleId);});
+        bds.forEach(function(d){
+          var bd=d.data();
+          if(!bd.bottleId) return;
+          var qty=bdQty[d.id]||0;
+          var threshold=bottleThreshold[bd.bottleId]!==undefined?bottleThreshold[bd.bottleId]:10;
+          if(qty>=threshold) drunkIds.add(bd.bottleId);
+        });
       }catch(e){}
     }
   }
