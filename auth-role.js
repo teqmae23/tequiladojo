@@ -131,12 +131,18 @@ var AuthRole = (function() {
       +String(d.getDate()).padStart(2,'0');
   }
 
-  // 現在時刻をHHMMSS文字列で返す
+  // 現在時刻をHHMMSS文字列で返す（日またぎ時は24h+表記）
   function nowBusinessTime(openTime){
     var now=new Date();
-    return String(now.getHours()).padStart(2,'0')
-      +String(now.getMinutes()).padStart(2,'0')
-      +String(now.getSeconds()).padStart(2,'0');
+    var nowH=now.getHours(), nowM=now.getMinutes(), nowS=now.getSeconds();
+    // 日またぎ検出: 開店が午後（12時以降）で現在が午前（12時前）→ 24加算
+    if(openTime && openTime.length>=4){
+      var openH=parseInt(openTime.slice(0,2))||0;
+      if(openH>=12 && nowH<12){ nowH+=24; }
+    }
+    return String(nowH).padStart(2,'0')
+      +String(nowM).padStart(2,'0')
+      +String(nowS).padStart(2,'0');
   }
 
   // HHMMSS → HH:MM 表示用フォーマット
