@@ -64,15 +64,20 @@ button{cursor:pointer;font-family:var(--sans)}
 .btn.bg{background:var(--gold-d);color:var(--cream)}
 .btn.bg:hover{opacity:.85}
 /* Badge grid */
-.badge-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-top:4px}
-.badge-tile{border:2px solid var(--border2);border-radius:10px;padding:14px 12px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;transition:border-color .2s,background .2s}
-.badge-tile.earned{border-color:var(--gold);background:rgba(200,146,30,.06)}
-.badge-tile.locked{opacity:.45;filter:grayscale(.6)}
-.badge-icon{font-size:36px;line-height:1}
-.badge-name{font-size:12px;font-weight:500;color:var(--ink2)}
-.badge-desc{font-size:10px;color:var(--ink3);line-height:1.4}
-.badge-date{font-size:10px;color:var(--teal);margin-top:2px}
-.badge-lock{font-size:10px;color:var(--ink3);margin-top:2px}
+.badge-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:4px}
+/* Badge card */
+@keyframes badge-shimmer{
+  0%  {background-position:-200% 0}
+  55% {background-position:-200% 0}
+  100%{background-position: 200% 0}
+}
+.badge-card{position:relative;padding:12px 16px 12px 22px;border:3px solid var(--bc,#c8a020);border-radius:6px;background:var(--bbg);box-shadow:0 2px 8px var(--bsh,rgba(200,160,32,.22)),inset 0 1px 0 rgba(255,255,255,.55);overflow:hidden}
+.badge-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:7px;background:var(--stripe,#1a6e58)}
+.badge-card.earned::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent 35%,rgba(255,255,255,.42) 50%,transparent 65%);background-size:200% 100%;animation:badge-shimmer 4s ease-in-out infinite;pointer-events:none}
+.badge-card.locked{filter:grayscale(.75);opacity:.5}
+.badge-card .bc-name{font-family:var(--serif);font-size:16px;font-weight:600;color:var(--ink);display:block;line-height:1.3}
+.badge-card .bc-sub{font-family:var(--mono);font-size:10px;color:var(--ink3);display:block;letter-spacing:.05em;margin-top:3px}
+.badge-card .bc-date{font-size:10px;color:var(--teal);margin-top:5px;display:block}
 /* Public toggle */
 .pub-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .pub-status{font-size:13px;font-weight:500}
@@ -208,6 +213,20 @@ async function loadMyBadges(){
   myBadges=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
 }
 
+var METALLIC={
+  gold:    {border:'#c8a020',shadow:'rgba(200,160,32,.22)',bg:'linear-gradient(135deg,#fdfaea 0%,#f5e8c0 50%,#fdfaea 100%)'},
+  silver:  {border:'#8898a8',shadow:'rgba(120,138,158,.22)',bg:'linear-gradient(135deg,#f8f9fa 0%,#dde2e8 50%,#f8f9fa 100%)'},
+  bronze:  {border:'#a86828',shadow:'rgba(168,104,40,.22)', bg:'linear-gradient(135deg,#fdf5ea 0%,#edd5a8 50%,#fdf5ea 100%)'},
+  platinum:{border:'#6080a0',shadow:'rgba(80,110,140,.22)', bg:'linear-gradient(135deg,#f0f4f8 0%,#ccdaeb 50%,#f0f4f8 100%)'},
+  gunmetal:{border:'#485060',shadow:'rgba(55,65,80,.30)',   bg:'linear-gradient(135deg,#f2f2f3 0%,#d8dbdf 50%,#f2f2f3 100%)'},
+};
+var TYPE_NAMES={1:'ブランド制覇',2:'エリア制覇',3:'クラス制覇',4:'イベント制覇',5:'来場・紹介等',6:'ブラインド'};
+
+function badgeCardStyle(b){
+  var m=METALLIC[b.metallic]||METALLIC.gold;
+  return '--stripe:'+(b.color||'#1a6e58')+';--bc:'+m.border+';--bsh:'+m.shadow+';--bbg:'+m.bg;
+}
+
 function renderBadgeGrid(){
   var grid=g('badge-grid');
   g('badge-loading').style.display='none';
@@ -220,15 +239,22 @@ function renderBadgeGrid(){
     grid.innerHTML='<div style="color:var(--ink3);font-size:12px;grid-column:1/-1;padding:20px 0">バッジはまだ登録されていません</div>';
     return;
   }
-  grid.innerHTML=allBadges.map(function(b){
+  // Earned badges first, then locked
+  var sorted=allBadges.slice().sort(function(a,b){
+    var ea=!!earnedMap[a.id], eb=!!earnedMap[b.id];
+    if(ea&&!eb)return -1; if(!ea&&eb)return 1; return a.id.localeCompare(b.id);
+  });
+  grid.innerHTML=sorted.map(function(b){
     var mb=earnedMap[b.id];
     var earned=!!mb;
     var dt=mb&&mb.earnedAt?(mb.earnedAt.toDate?mb.earnedAt.toDate():new Date(mb.earnedAt)).toLocaleDateString('ja-JP'):'';
-    return '<div class="badge-tile'+(earned?' earned':' locked')+'">'
-      +'<div class="badge-icon">'+(b.icon||'🎖️')+'</div>'
-      +'<div class="badge-name">'+esc(b.name)+'</div>'
-      +(b.description?'<div class="badge-desc">'+esc(b.description)+'</div>':'')
-      +(earned?'<div class="badge-date">'+dt+'</div>':'<div class="badge-lock">🔒 未取得</div>')
+    var typeName=TYPE_NAMES[parseInt(b.type)]||'';
+    var sub=(b.abbr?b.abbr.toUpperCase()+' · ':'')+typeName;
+    return '<div class="badge-card'+(earned?' earned':' locked')+'" style="'+badgeCardStyle(b)+'">'
+      +'<div class="bc-name">'+esc(b.name)+'</div>'
+      +'<div class="bc-sub">'+esc(sub)+'</div>'
+      +(b.description?'<div style="font-size:10px;color:var(--ink3);margin-top:5px;line-height:1.5">'+esc(b.description)+'</div>':'')
+      +(earned?'<div class="bc-date">取得: '+dt+'</div>':'')
     +'</div>';
   }).join('');
 }
@@ -242,30 +268,50 @@ function collectionStoragePath(mid){
   return 'public/collections/'+mid+'.html';
 }
 
+function genBadgeCardInline(b, mb){
+  var earned=!!mb;
+  var MSTATIC={
+    gold:    {border:'#c8a020',shadow:'rgba(200,160,32,.22)',bg:'linear-gradient(135deg,#fdfaea 0%,#f5e8c0 50%,#fdfaea 100%)'},
+    silver:  {border:'#8898a8',shadow:'rgba(120,138,158,.22)',bg:'linear-gradient(135deg,#f8f9fa 0%,#dde2e8 50%,#f8f9fa 100%)'},
+    bronze:  {border:'#a86828',shadow:'rgba(168,104,40,.22)', bg:'linear-gradient(135deg,#fdf5ea 0%,#edd5a8 50%,#fdf5ea 100%)'},
+    platinum:{border:'#6080a0',shadow:'rgba(80,110,140,.22)', bg:'linear-gradient(135deg,#f0f4f8 0%,#ccdaeb 50%,#f0f4f8 100%)'},
+    gunmetal:{border:'#485060',shadow:'rgba(55,65,80,.30)',   bg:'linear-gradient(135deg,#f2f2f3 0%,#d8dbdf 50%,#f2f2f3 100%)'},
+  };
+  var TN={1:'ブランド制覇',2:'エリア制覇',3:'クラス制覇',4:'イベント制覇',5:'来場・紹介等',6:'ブラインド'};
+  var m=MSTATIC[b.metallic]||MSTATIC.gold;
+  var stripe=b.color||'#1a6e58';
+  var sub=(b.abbr?b.abbr.toUpperCase()+' · ':'')+(TN[parseInt(b.type)]||'');
+  var dt=mb&&mb.earnedAt?(mb.earnedAt.toDate?mb.earnedAt.toDate():new Date(mb.earnedAt)).toLocaleDateString('ja-JP'):'';
+  var filt=earned?'':'filter:grayscale(.75);opacity:.5;';
+  var shimmer=earned?'<div style="position:absolute;inset:0;background:linear-gradient(90deg,transparent 35%,rgba(255,255,255,.42) 50%,transparent 65%);background-size:200% 100%;animation:bs 4s ease-in-out infinite;pointer-events:none"></div>':'';
+  return '<div style="position:relative;padding:12px 16px 12px 22px;'
+    +'border:3px solid '+m.border+';border-radius:6px;'
+    +'background:'+m.bg+';'
+    +'box-shadow:0 2px 8px '+m.shadow+',inset 0 1px 0 rgba(255,255,255,.55);'
+    +'overflow:hidden;'+filt+'">'
+    +'<div style="position:absolute;left:0;top:0;bottom:0;width:7px;background:'+stripe+'"></div>'
+    +'<div style="font-family:\'Cormorant Garamond\',Georgia,serif;font-size:16px;font-weight:600;color:#18110a;display:block;line-height:1.3">'+esc(b.name||'—')+'</div>'
+    +'<div style="font-family:\'DM Mono\',monospace;font-size:10px;color:#9a8470;display:block;letter-spacing:.05em;margin-top:3px">'+esc(sub)+'</div>'
+    +(b.description?'<div style="font-size:10px;color:#9a8470;margin-top:5px;line-height:1.5">'+esc(b.description)+'</div>':'')
+    +(earned?'<div style="font-size:10px;color:#1a6e58;margin-top:5px">取得: '+dt+'</div>':'')
+    +shimmer
+  +'</div>';
+}
+
 function genCollectionHtml(memberName,allBadgesArg,earnedMap){
   var now=new Date().toLocaleDateString('ja-JP');
-  var badgeRows=allBadgesArg.map(function(b){
-    var mb=earnedMap[b.id];
-    var earned=!!mb;
-    var dt=mb&&mb.earnedAt?(mb.earnedAt.toDate?mb.earnedAt.toDate():new Date(mb.earnedAt)).toLocaleDateString('ja-JP'):'';
-    return '<div style="border:2px solid '+(earned?'#c8921e':'#d0c8bc')+';border-radius:10px;padding:14px 10px;'
-      +'display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center;'
-      +'background:'+(earned?'rgba(200,146,30,.06)':'#fff')+(earned?'':';opacity:.45;filter:grayscale(.5)')+';">'
-      +'<div style="font-size:34px;line-height:1">'+(b.icon||'🎖️')+'</div>'
-      +'<div style="font-size:12px;font-weight:600;color:#4a3820">'+esc(b.name)+'</div>'
-      +(b.description?'<div style="font-size:10px;color:#9a8470;line-height:1.4">'+esc(b.description)+'</div>':'')
-      +(earned?'<div style="font-size:10px;color:#1a6e58;margin-top:2px">取得: '+dt+'</div>'
-               :'<div style="font-size:10px;color:#9a8470;margin-top:2px">🔒</div>')
-    +'</div>';
-  }).join('');
-
   var earnedCount=allBadgesArg.filter(function(b){return !!earnedMap[b.id];}).length;
+  var sorted=allBadgesArg.slice().sort(function(a,b){
+    var ea=!!earnedMap[a.id],eb=!!earnedMap[b.id];
+    if(ea&&!eb)return -1; if(!ea&&eb)return 1; return a.id.localeCompare(b.id);
+  });
+  var badgeRows=sorted.map(function(b){return genBadgeCardInline(b,earnedMap[b.id]);}).join('');
 
   return '<!DOCTYPE html>\n<html lang="ja">\n<head>\n<meta charset="UTF-8">'
     +'<meta name="viewport" content="width=device-width,initial-scale=1">'
     +'<title>'+esc(memberName)+' のバッジコレクション — テキーラ道場</title>'
     +'<link rel="preconnect" href="https://fonts.googleapis.com">'
-    +'<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">'
+    +'<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">'
     +'<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:"Noto Sans JP",sans-serif;background:#faf7f1;color:#18110a;min-height:100vh}'
     +'.hero{background:#18110a;padding:28px 20px 22px;text-align:center}'
     +'.brand{font-family:"Cormorant Garamond",serif;font-size:22px;color:rgba(255,255,255,.9);letter-spacing:.12em}'
@@ -273,8 +319,9 @@ function genCollectionHtml(memberName,allBadgesArg,earnedMap){
     +'.name{font-size:18px;color:#e8b84a;font-weight:500;margin-top:12px}'
     +'.cnt{font-size:11px;color:rgba(255,255,255,.4);margin-top:4px}'
     +'.main{max-width:700px;margin:0 auto;padding:20px 16px 50px}'
-    +'.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}'
+    +'.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}'
     +'.foot{text-align:center;font-size:10px;color:#9a8470;margin-top:30px}'
+    +'@keyframes bs{0%{background-position:-200% 0}55%{background-position:-200% 0}100%{background-position:200% 0}}'
     +'</style></head><body>'
     +'<div class="hero">'
     +'<div class="brand">TEQUILA DOJO</div>'
