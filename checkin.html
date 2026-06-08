@@ -1097,6 +1097,12 @@ function onCountChange(){
           +'<input class="fi" type="text" id="ci-member-'+i+'" placeholder="'+(i+1)+'人目" oninput="onMemberInput('+i+')" style="width:90px;flex-shrink:0" value="'+escHtml(val)+'">'
           +'<div id="ci-member-status-'+i+'" style="font-size:11px;color:var(--teal);flex:1;line-height:1.4"></div>'
           +'<button type="button" onclick="clearMember('+i+')" id="ci-member-clear-'+i+'" style="display:none;padding:2px 6px;border:1px solid var(--border2);border-radius:var(--r);background:none;font-size:11px;color:var(--ink3);cursor:pointer;flex-shrink:0">✕</button>'
+          +'</div>'
+          +'<div id="ci-referrer-row-'+i+'" style="display:none;margin:0 0 6px 0;padding:5px 8px;background:var(--cream2);border-radius:var(--r);font-size:12px;display:none;align-items:center;gap:6px">'
+            +'<span style="color:var(--ink3);white-space:nowrap">紹介者:</span>'
+            +'<select id="ci-referrer-'+i+'" style="flex:1;font-size:12px;padding:3px 6px;border:1px solid var(--border2);border-radius:var(--r);background:var(--cream)">'
+              +'<option value="">（紹介なし）</option>'
+            +'</select>'
           +'</div>';
       }
       memberInputs.innerHTML=html;
@@ -1188,9 +1194,11 @@ function clearMember(idx){
   var el=document.getElementById('ci-member-'+idx);
   var status=document.getElementById('ci-member-status-'+idx);
   var clearBtn=document.getElementById('ci-member-clear-'+idx);
+  var refRow=document.getElementById('ci-referrer-row-'+idx);
   if(el) el.value='';
   if(status) status.textContent='';
   if(clearBtn) clearBtn.style.display='none';
+  if(refRow) refRow.style.display='none';
   filterMembers();
 }
 
@@ -1225,14 +1233,39 @@ function onMemberInput(idx){
   var el=document.getElementById('ci-member-'+idx);
   var status=document.getElementById('ci-member-status-'+idx);
   var clearBtn=document.getElementById('ci-member-clear-'+idx);
+  var refRow=document.getElementById('ci-referrer-row-'+idx);
   if(!el||!status) return;
   var val=el.value.trim();
-  if(!val){ status.textContent=''; if(clearBtn) clearBtn.style.display='none'; filterMembers(); return; }
+  if(!val){
+    status.textContent='';
+    if(clearBtn) clearBtn.style.display='none';
+    if(refRow) refRow.style.display='none';
+    filterMembers();
+    return;
+  }
   var mem=getMemberInfo(val);
   if(mem){
     status.textContent=(mem.nickname||mem.name||val)+'（'+(mem.rank||'段位なし')+'・'+(mem.visitCount||0)+'回）';
     status.style.color='var(--teal)';
     if(clearBtn) clearBtn.style.display='inline';
+    // 初来場の場合は紹介者セレクトを表示
+    if(refRow){
+      if((mem.visitCount||0)===0){
+        var refSel=document.getElementById('ci-referrer-'+idx);
+        if(refSel){
+          var opts=['<option value="">（紹介なし）</option>'];
+          cache.members.forEach(function(m){
+            var mid=m.memberId||m.id;
+            if(mid===val) return;
+            opts.push('<option value="'+escHtml(mid)+'">'+escHtml((m.nickname||m.name||mid)+' ['+mid+']')+'</option>');
+          });
+          refSel.innerHTML=opts.join('');
+        }
+        refRow.style.display='flex';
+      } else {
+        refRow.style.display='none';
+      }
+    }
     // 全枠埋まったらリストを閉じる
     var cntMem=parseInt(gv('ci-count-member'))||0;
     var allFilled=true;
@@ -1246,6 +1279,7 @@ function onMemberInput(idx){
   } else {
     status.textContent='✕ 会員ID「'+val+'」は登録されていません';
     status.style.color='var(--ink3)';
+    if(refRow) refRow.style.display='none';
   }
 }
 
@@ -1376,9 +1410,12 @@ g('m-checkin-save').addEventListener('click', async function(){
         if(alreadyIn){ toast(mid+'は既に在店中です','err'); saveBtn.disabled=false; saveBtn.textContent='登録'; return; }
       }
       var visitKey=today+pad(_nextSeq,2);
+      var refSelEl=document.getElementById('ci-referrer-'+mi);
+      var referredBy=(refSelEl&&refSelEl.value)||null;
       batch.set(db.collection('visits').doc(visitKey),{
         visitDate:today, visitTime:time, seq:_nextSeq,
         memberId:mid, checkinGroupId:groupId,
+        referredBy:referredBy,
         tequilaAmount:0, amount:0, payment:payment, receiptIssued:'0', checkoutTime:null
       });
       if(mid){
