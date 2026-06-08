@@ -1149,6 +1149,7 @@ document.querySelector('[data-page="tree"]').addEventListener("click",function()
 document.addEventListener("click",function(e){
   var btn=e.target.closest("button"); if(!btn) return;
   if(btn.dataset.editSession){ openSessionModal(btn.dataset.editSession); return; }
+  if(btn.dataset.recalcSession){ recalcSession(btn.dataset.recalcSession); return; }
   if(btn.dataset.editVisit)  { openVisitModal(btn.dataset.editVisit);   return; }
   if(btn.dataset.copyVisit)  { copyVisitModal(btn.dataset.copyVisit);   return; }
   if(btn.dataset.editReservation){ openReservationModal(btn.dataset.editReservation); return; }
@@ -1246,9 +1247,28 @@ function renderSessions(){
       +'<td class="mono" style="text-align:right">'+( r.sales!=null?("¥"+Number(r.sales).toLocaleString()):"—")+'</td>'
       +'<td><div class="acts">'
         +'<button class="btn bs sm" data-edit-session="'+r.id+'">編集</button>'
+        +'<button class="btn bs sm" data-recalc-session="'+r.id+'" title="来場データから来場数・売上を再集計">🔄 再集計</button>'
         +'<button class="btn bd sm" data-del="sessions" data-del-id="'+r.id+'" data-del-label="営業データ">削除</button>'
       +'</div></td></tr>';
   }).join("");
+}
+
+async function recalcSession(sesId){
+  var ses=cache.sessions.find(function(s){return s.id===sesId;});
+  if(!ses){ toast("セッションが見つかりません","err"); return; }
+  var yymmdd=ses.date||sesId.slice(0,6);
+  try{
+    var snap=await db.collection('visits').where('visitDate','==',yymmdd).get();
+    var allVisits=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    var sesVisits=getSessionVisits(ses,allVisits);
+    var guestCount=sesVisits.filter(function(v){return !v.isStaff;}).length;
+    var sales=sesVisits.reduce(function(s,v){return s+(v.amount||0);},0);
+    await db.collection('sessions').doc(sesId).update({guestCount:guestCount,sales:sales});
+    writeJournal('update','sessions',sesId,null,{guestCount:guestCount,sales:sales});
+    ses.guestCount=guestCount; ses.sales=sales;
+    renderSessions();
+    toast("再集計完了: 来場数 "+guestCount+"名 / 売上 ¥"+Number(sales).toLocaleString());
+  }catch(e){ toast("再集計失敗: "+e.message,"err"); }
 }
 
 addFilter(["s-ses","f-ses-layout"],"sessions");
