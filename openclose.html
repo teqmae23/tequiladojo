@@ -9,6 +9,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <script>
 var FIREBASE_CONFIG = {
   apiKey:            "AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -707,8 +708,67 @@ async function autoProcessBadges(db,sesVisits,sessionId){
     }
     if(totalAwarded>0){
       toast('🎖️ バッジ付与: '+newBadgeNames.join(' / '),'inf');
+      // 公開設定の会員の静的コレクションページを再生成
+      regeneratePublicCollections(db, memberIds, activeBadges, thresholds).catch(function(e){console.warn('静的ページ再生成失敗:',e);});
     }
   }catch(e){console.warn('バッジ自動判定失敗:',e);}
+}
+
+async function regeneratePublicCollections(db, memberIds, activeBadges, thresholds){
+  var storage=firebase.storage();
+  for(var i=0;i<memberIds.length;i++){
+    var mid=memberIds[i];
+    // メンバードキュメント取得（公開設定確認）
+    var memSnap=await db.collection('members').where('memberId','==',mid).limit(1).get().catch(function(){return{empty:true};});
+    if(memSnap.empty)continue;
+    var mem=Object.assign({id:memSnap.docs[0].id},memSnap.docs[0].data());
+    if(!mem.badgePublic)continue;
+
+    var memberName=mem.nickname||mem.name||mid;
+    // バッジマスタ取得
+    var badgesSnap=await db.collection('badges').where('active','==',true).get().catch(function(){return{docs:[]};});
+    var allBadges=badgesSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    allBadges.sort(function(a,b){return a.id.localeCompare(b.id);});
+    // 取得済みバッジ
+    var mbSnap=await db.collection('memberBadges').where('memberId','==',mid).get().catch(function(){return{docs:[]};});
+    var earnedMap={};
+    mbSnap.docs.forEach(function(d){var dd=d.data();earnedMap[dd.badgeId]=dd;});
+
+    var now=new Date().toLocaleDateString('ja-JP');
+    var earnedCount=allBadges.filter(function(b){return !!earnedMap[b.id];}).length;
+    var rows=allBadges.map(function(b){
+      var mb=earnedMap[b.id]; var earned=!!mb;
+      var dt=mb&&mb.earnedAt?(mb.earnedAt.toDate?mb.earnedAt.toDate():new Date(mb.earnedAt)).toLocaleDateString('ja-JP'):'';
+      var n=String(b.name||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      var desc=String(b.description||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return '<div style="border:2px solid '+(earned?'#c8921e':'#d0c8bc')+';border-radius:10px;padding:14px 10px;display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center;background:'+(earned?'rgba(200,146,30,.06)':'#fff')+(earned?'':';opacity:.45;filter:grayscale(.5)')+';">'
+        +'<div style="font-size:34px">'+(b.icon||'🎖️')+'</div>'
+        +'<div style="font-size:12px;font-weight:600;color:#4a3820">'+n+'</div>'
+        +(desc?'<div style="font-size:10px;color:#9a8470">'+desc+'</div>':'')
+        +(earned?'<div style="font-size:10px;color:#1a6e58">取得: '+dt+'</div>':'<div style="font-size:10px;color:#9a8470">🔒</div>')
+        +'</div>';
+    }).join('');
+    var mn=String(memberName).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    var html='<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+mn+' のバッジコレクション — テキーラ道場</title>'
+      +'<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">'
+      +'<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:"Noto Sans JP",sans-serif;background:#faf7f1;min-height:100vh}'
+      +'.hero{background:#18110a;padding:28px 20px 22px;text-align:center}'
+      +'.brand{font-family:"Cormorant Garamond",serif;font-size:22px;color:rgba(255,255,255,.9);letter-spacing:.12em}'
+      +'.sub{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.4);margin-top:3px}'
+      +'.name{font-size:18px;color:#e8b84a;font-weight:500;margin-top:12px}.cnt{font-size:11px;color:rgba(255,255,255,.4);margin-top:4px}'
+      +'.main{max-width:700px;margin:0 auto;padding:20px 16px 50px}'
+      +'.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}'
+      +'.foot{text-align:center;font-size:10px;color:#9a8470;margin-top:30px}</style></head><body>'
+      +'<div class="hero"><div class="brand">TEQUILA DOJO</div><div class="sub">Badge Collection</div>'
+      +'<div class="name">'+mn+'</div><div class="cnt">'+earnedCount+' / '+allBadges.length+' バッジ取得済み</div></div>'
+      +'<div class="main"><div class="grid">'+rows+'</div><div class="foot">Generated: '+now+' — テキーラ道場</div></div></body></html>';
+
+    var blob=new Blob([html],{type:'text/html;charset=utf-8'});
+    var ref=storage.ref('public/collections/'+mid+'.html');
+    await ref.put(blob,{contentType:'text/html;charset=utf-8',cacheControl:'no-cache'});
+    var url=await ref.getDownloadURL();
+    await db.collection('members').doc(mem.id).update({badgeCollectionUrl:url});
+  }
 }
 </script>
 </body>

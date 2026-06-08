@@ -7,6 +7,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
 <script>
 var FIREBASE_CONFIG={
   apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -190,7 +191,7 @@ async function loadMemberData(user){
   // 公開設定の反映
   var isPublic=myMember.badgePublic===true;
   g('pub-toggle').checked=isPublic;
-  updatePubUI(isPublic);
+  updatePubUI(isPublic, myMember.badgeCollectionUrl||null);
 
   // バッジ読み込み
   await Promise.all([loadAllBadges(),loadMyBadges()]);
@@ -234,14 +235,84 @@ function renderBadgeGrid(){
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
-// 公開設定トグル
-function updatePubUI(isPublic){
+// ── 静的HTML生成・Storage操作 ───────────────────────────────────
+var storage=firebase.storage();
+
+function collectionStoragePath(mid){
+  return 'public/collections/'+mid+'.html';
+}
+
+function genCollectionHtml(memberName,allBadgesArg,earnedMap){
+  var now=new Date().toLocaleDateString('ja-JP');
+  var badgeRows=allBadgesArg.map(function(b){
+    var mb=earnedMap[b.id];
+    var earned=!!mb;
+    var dt=mb&&mb.earnedAt?(mb.earnedAt.toDate?mb.earnedAt.toDate():new Date(mb.earnedAt)).toLocaleDateString('ja-JP'):'';
+    return '<div style="border:2px solid '+(earned?'#c8921e':'#d0c8bc')+';border-radius:10px;padding:14px 10px;'
+      +'display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center;'
+      +'background:'+(earned?'rgba(200,146,30,.06)':'#fff')+(earned?'':';opacity:.45;filter:grayscale(.5)')+';">'
+      +'<div style="font-size:34px;line-height:1">'+(b.icon||'🎖️')+'</div>'
+      +'<div style="font-size:12px;font-weight:600;color:#4a3820">'+esc(b.name)+'</div>'
+      +(b.description?'<div style="font-size:10px;color:#9a8470;line-height:1.4">'+esc(b.description)+'</div>':'')
+      +(earned?'<div style="font-size:10px;color:#1a6e58;margin-top:2px">取得: '+dt+'</div>'
+               :'<div style="font-size:10px;color:#9a8470;margin-top:2px">🔒</div>')
+    +'</div>';
+  }).join('');
+
+  var earnedCount=allBadgesArg.filter(function(b){return !!earnedMap[b.id];}).length;
+
+  return '<!DOCTYPE html>\n<html lang="ja">\n<head>\n<meta charset="UTF-8">'
+    +'<meta name="viewport" content="width=device-width,initial-scale=1">'
+    +'<title>'+esc(memberName)+' のバッジコレクション — テキーラ道場</title>'
+    +'<link rel="preconnect" href="https://fonts.googleapis.com">'
+    +'<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">'
+    +'<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:"Noto Sans JP",sans-serif;background:#faf7f1;color:#18110a;min-height:100vh}'
+    +'.hero{background:#18110a;padding:28px 20px 22px;text-align:center}'
+    +'.brand{font-family:"Cormorant Garamond",serif;font-size:22px;color:rgba(255,255,255,.9);letter-spacing:.12em}'
+    +'.sub{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.4);margin-top:3px}'
+    +'.name{font-size:18px;color:#e8b84a;font-weight:500;margin-top:12px}'
+    +'.cnt{font-size:11px;color:rgba(255,255,255,.4);margin-top:4px}'
+    +'.main{max-width:700px;margin:0 auto;padding:20px 16px 50px}'
+    +'.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}'
+    +'.foot{text-align:center;font-size:10px;color:#9a8470;margin-top:30px}'
+    +'</style></head><body>'
+    +'<div class="hero">'
+    +'<div class="brand">TEQUILA DOJO</div>'
+    +'<div class="sub">Badge Collection</div>'
+    +'<div class="name">'+esc(memberName)+'</div>'
+    +'<div class="cnt">'+earnedCount+' / '+allBadgesArg.length+' バッジ取得済み</div>'
+    +'</div>'
+    +'<div class="main"><div class="grid">'+badgeRows+'</div>'
+    +'<div class="foot">Generated: '+now+' — テキーラ道場</div></div>'
+    +'</body></html>';
+}
+
+async function uploadCollectionHtml(mid){
+  var earnedMap={};
+  myBadges.forEach(function(mb){earnedMap[mb.badgeId]=mb;});
+  var html=genCollectionHtml(myMember.nickname||myMember.name||mid, allBadges, earnedMap);
+  var blob=new Blob([html],{type:'text/html;charset=utf-8'});
+  var ref=storage.ref(collectionStoragePath(mid));
+  await ref.put(blob,{contentType:'text/html;charset=utf-8',cacheControl:'no-cache'});
+  return await ref.getDownloadURL();
+}
+
+async function deleteCollectionHtml(mid){
+  try{
+    await storage.ref(collectionStoragePath(mid)).delete();
+  }catch(e){
+    // ファイルが存在しない場合は無視
+    if(e.code!=='storage/object-not-found') throw e;
+  }
+}
+
+// ── 公開設定トグル ────────────────────────────────────────────────
+function updatePubUI(isPublic, url){
   g('pub-status-text').textContent=isPublic?'公開中':'非公開';
   g('pub-status-text').style.color=isPublic?'var(--teal)':'var(--ink3)';
   var urlArea=g('pub-url-area');
-  if(isPublic){
+  if(isPublic&&url){
     urlArea.style.display='block';
-    var url=location.origin+location.pathname.replace('member_collection.html','public_collection.html')+'?id='+encodeURIComponent(myMemberId);
     g('pub-url-text').textContent=url;
   } else {
     urlArea.style.display='none';
@@ -250,15 +321,26 @@ function updatePubUI(isPublic){
 
 g('pub-toggle').addEventListener('change',async function(){
   var isPublic=this.checked;
+  this.disabled=true;
   try{
-    await db.collection('members').doc(myMember.id).update({badgePublic:isPublic});
-    myMember.badgePublic=isPublic;
-    updatePubUI(isPublic);
-    toast(isPublic?'コレクションを公開しました':'コレクションを非公開にしました',isPublic?'inf':'');
+    if(isPublic){
+      var url=await uploadCollectionHtml(myMemberId);
+      await db.collection('members').doc(myMember.id).update({badgePublic:true, badgeCollectionUrl:url});
+      myMember.badgePublic=true; myMember.badgeCollectionUrl=url;
+      updatePubUI(true, url);
+      toast('コレクションを公開しました','inf');
+    } else {
+      await deleteCollectionHtml(myMemberId);
+      await db.collection('members').doc(myMember.id).update({badgePublic:false, badgeCollectionUrl:null});
+      myMember.badgePublic=false; myMember.badgeCollectionUrl=null;
+      updatePubUI(false);
+      toast('コレクションを非公開にしました（静的ページを削除しました）');
+    }
   }catch(e){
     this.checked=!isPublic;
-    toast('設定の保存に失敗しました','err');
+    toast('保存に失敗しました: '+e.message,'err');
   }
+  this.disabled=false;
 });
 
 g('btn-copy-url').addEventListener('click',function(){
