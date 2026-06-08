@@ -1304,10 +1304,19 @@ var _bssBtn=g("btn-save-session"); if(_bssBtn) _bssBtn.addEventListener("click",
     if(cache.sessions.some(function(s){return s.id===id;})||_treeSessions.some(function(s){return s.id===id;})){ toast("キー重複: セッションID「"+id+"」は既に存在します","err"); return; }
   }
   var noteEl=g("ses-note");
+  // 日またぎ閉店時間の自動補正: 開店が12時以降で閉店が6時未満の場合 → 24時間表記に変換
+  var rawOpen=gv("ses-open"), rawClose=gv("ses-close");
+  if(rawClose&&rawOpen&&rawClose.length>=4&&rawOpen.length>=4){
+    var _ci=parseInt(rawClose.slice(0,4)),_oi=parseInt(rawOpen.slice(0,4));
+    if(_ci<_oi&&_oi>=1200&&_ci<600){
+      rawClose=String(_ci+2400)+(rawClose.length>=6?rawClose.slice(4):'00');
+      var _el=g("ses-close"); if(_el) _el.value=rawClose;
+    }
+  }
   var saveData={
     date:date,
     layoutId:gv("ses-layout")||null,
-    openTime:gv("ses-open")||null, closeTime:gv("ses-close")||null,
+    openTime:rawOpen||null, closeTime:rawClose||null,
     breakStart1:gv("ses-b1s")||null, breakEnd1:gv("ses-b1e")||null,
     breakStart2:gv("ses-b2s")||null, breakEnd2:gv("ses-b2e")||null,
     breakStart3:gv("ses-b3s")||null, breakEnd3:gv("ses-b3e")||null,
@@ -2695,11 +2704,20 @@ function treeServedLabel(s){
 
 function getSessionVisits(ses, visits){
   if(!ses.openTime) return visits;
-  var open=ses.openTime.slice(0,4);
-  var close=ses.closeTime?ses.closeTime.slice(0,4):"9999";
+  var openInt=parseInt(ses.openTime.slice(0,4))||0;
+  if(!ses.closeTime){
+    return visits.filter(function(v){
+      return (parseInt((v.visitTime||"0000").slice(0,4))||0)>=openInt;
+    });
+  }
+  var closeInt=parseInt(ses.closeTime.slice(0,4))||0;
+  // 日またぎ: closeが2400以上（正規化済）、または closeがopenより小さくopenが12時以降で closeが6時前
+  var overnight=closeInt>=2400||(closeInt<openInt&&openInt>=1200&&closeInt<600);
+  var closeNorm=closeInt>=2400?closeInt-2400:closeInt;
   return visits.filter(function(v){
-    var vt=v.visitTime||"0000";
-    return vt>=open&&vt<=close;
+    var vt=parseInt((v.visitTime||"0000").slice(0,4))||0;
+    if(overnight) return vt>=openInt||(vt<1200&&vt<=closeNorm);
+    return vt>=openInt&&vt<=closeInt;
   });
 }
 
@@ -3406,14 +3424,7 @@ async function treeCascadeDelSession(sessionId){
   // このセッションの時間帯に属する来場のみ取得
   var allVisSnap=yymmdd?await db.collection('visits').where('visitDate','==',yymmdd).get().catch(function(){return{docs:[]};}):{docs:[]};
   var allVisits=allVisSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
-  var sesVisits;
-  if(!sesData.openTime){
-    sesVisits=allVisits;
-  } else {
-    var open=sesData.openTime.slice(0,4);
-    var close=sesData.closeTime?sesData.closeTime.slice(0,4):'9999';
-    sesVisits=allVisits.filter(function(v){var vt=v.visitTime||'0000';return vt>=open&&vt<=close;});
-  }
+  var sesVisits=getSessionVisits(sesData,allVisits);
   var ordDocs=[];
   if(sesVisits.length){
     var vkeys=sesVisits.map(function(v){return v.id;});
