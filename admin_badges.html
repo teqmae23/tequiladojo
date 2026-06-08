@@ -7,6 +7,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <script>
 var FIREBASE_CONFIG={
   apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -260,7 +261,7 @@ tr:hover td{background:rgba(200,146,30,.04)}
 
 <script>
 firebase.initializeApp(FIREBASE_CONFIG);
-var auth=firebase.auth(), db=firebase.firestore();
+var auth=firebase.auth(), db=firebase.firestore(), storage=firebase.storage();
 var cache={badges:[],bottles:[],members:[],memberBadges:[]};
 var editBadgeId=null, curMemberId=null;
 
@@ -437,6 +438,72 @@ function renderMemberBadges(memberId){
 }
 g('sel-member').addEventListener('change',function(){renderMemberBadges(this.value);});
 
+// ── 静的コレクションページ再生成 ────────────────────────────────
+function esc2(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+function genCollectionHtml(memberName, allBadgesArg, earnedMap){
+  var now=new Date().toLocaleDateString('ja-JP');
+  var earnedCount=allBadgesArg.filter(function(b){return !!earnedMap[b.id];}).length;
+  var rows=allBadgesArg.map(function(b){
+    var mb=earnedMap[b.id]; var earned=!!mb;
+    var dt=mb&&mb.earnedAt?(mb.earnedAt.toDate?mb.earnedAt.toDate():new Date(mb.earnedAt)).toLocaleDateString('ja-JP'):'';
+    return '<div style="border:2px solid '+(earned?'#c8921e':'#d0c8bc')+';border-radius:10px;padding:14px 10px;'
+      +'display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center;'
+      +'background:'+(earned?'rgba(200,146,30,.06)':'#fff')+(earned?'':';opacity:.45;filter:grayscale(.5)')+';">'
+      +'<div style="font-size:34px;line-height:1">'+(b.icon||'🎖️')+'</div>'
+      +'<div style="font-size:12px;font-weight:600;color:#4a3820">'+esc2(b.name)+'</div>'
+      +(b.description?'<div style="font-size:10px;color:#9a8470;line-height:1.4">'+esc2(b.description)+'</div>':'')
+      +(earned?'<div style="font-size:10px;color:#1a6e58;margin-top:2px">取得: '+dt+'</div>'
+               :'<div style="font-size:10px;color:#9a8470;margin-top:2px">🔒</div>')
+    +'</div>';
+  }).join('');
+  return '<!DOCTYPE html>\n<html lang="ja"><head><meta charset="UTF-8">'
+    +'<meta name="viewport" content="width=device-width,initial-scale=1">'
+    +'<title>'+esc2(memberName)+' のバッジコレクション — テキーラ道場</title>'
+    +'<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">'
+    +'<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:"Noto Sans JP",sans-serif;background:#faf7f1;color:#18110a;min-height:100vh}'
+    +'.hero{background:#18110a;padding:28px 20px 22px;text-align:center}'
+    +'.brand{font-family:"Cormorant Garamond",serif;font-size:22px;color:rgba(255,255,255,.9);letter-spacing:.12em}'
+    +'.sub{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.4);margin-top:3px}'
+    +'.name{font-size:18px;color:#e8b84a;font-weight:500;margin-top:12px}'
+    +'.cnt{font-size:11px;color:rgba(255,255,255,.4);margin-top:4px}'
+    +'.main{max-width:700px;margin:0 auto;padding:20px 16px 50px}'
+    +'.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}'
+    +'.foot{text-align:center;font-size:10px;color:#9a8470;margin-top:30px}'
+    +'</style></head><body>'
+    +'<div class="hero"><div class="brand">TEQUILA DOJO</div><div class="sub">Badge Collection</div>'
+    +'<div class="name">'+esc2(memberName)+'</div>'
+    +'<div class="cnt">'+earnedCount+' / '+allBadgesArg.length+' バッジ取得済み</div></div>'
+    +'<div class="main"><div class="grid">'+rows+'</div>'
+    +'<div class="foot">Generated: '+now+' — テキーラ道場</div></div></body></html>';
+}
+
+async function regenerateCollectionIfPublic(memberId){
+  var mem=cache.members.find(function(m){return (m.memberId||m.id)===memberId;});
+  if(!mem||!mem.badgePublic)return;
+  var memberName=mem.nickname||mem.name||memberId;
+  var memberDocId=mem.id;
+  var earnedMap={};
+  cache.memberBadges.filter(function(mb){return mb.memberId===memberId;})
+    .forEach(function(mb){earnedMap[mb.badgeId]=mb;});
+  var html=genCollectionHtml(memberName, cache.badges.filter(function(b){return b.active;}), earnedMap);
+  var blob=new Blob([html],{type:'text/html;charset=utf-8'});
+  var ref=storage.ref('public/collections/'+memberId+'.html');
+  await ref.put(blob,{contentType:'text/html;charset=utf-8',cacheControl:'no-cache'});
+  var url=await ref.getDownloadURL();
+  await db.collection('members').doc(memberDocId).update({badgeCollectionUrl:url});
+}
+
+async function deleteCollectionIfPublic(memberId){
+  var mem=cache.members.find(function(m){return (m.memberId||m.id)===memberId;});
+  if(!mem||!mem.badgePublic)return;
+  try{
+    await storage.ref('public/collections/'+memberId+'.html').delete();
+    await db.collection('members').doc(mem.id).update({badgePublic:false,badgeCollectionUrl:null});
+    mem.badgePublic=false; mem.badgeCollectionUrl=null;
+  }catch(e){if(e.code!=='storage/object-not-found')console.warn('静的ページ削除失敗:',e);}
+}
+
 // ── Award ─────────────────────────────────────────────────────
 g('btn-award').addEventListener('click',function(){
   if(!curMemberId){toast('会員を選択してください','err');return;}
@@ -462,6 +529,7 @@ g('btn-confirm-award').addEventListener('click',async function(){
     g('m-award').classList.remove('open');
     await loadMemberBadges();
     renderMemberBadges(curMemberId);
+    regenerateCollectionIfPublic(curMemberId).catch(function(e){console.warn('静的ページ再生成失敗:',e);});
   }catch(e){toast('付与失敗: '+e.message,'err');}
 });
 
@@ -480,8 +548,15 @@ document.addEventListener('click',function(e){
   }
   if(btn.dataset.revoke){
     if(!confirm('このバッジを剥奪しますか？'))return;
+    var revokeTarget=curMemberId;
     db.collection('memberBadges').doc(btn.dataset.revoke).delete()
-      .then(function(){toast('剥奪しました');loadMemberBadges().then(function(){renderMemberBadges(curMemberId);});})
+      .then(function(){
+        toast('剥奪しました');
+        return loadMemberBadges().then(function(){
+          renderMemberBadges(revokeTarget);
+          regenerateCollectionIfPublic(revokeTarget).catch(function(e){console.warn('静的ページ再生成失敗:',e);});
+        });
+      })
       .catch(function(e){toast('剥奪失敗: '+e.message,'err');});
     return;
   }
