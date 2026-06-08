@@ -205,6 +205,12 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 .cal-ltime-text{font-size:15px;font-weight:500;color:var(--ink);font-family:monospace}
 .cal-lbody{padding:4px 10px 6px;display:flex;flex-direction:column;gap:3px;background:var(--cream)}
 .cal-legend-dot{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+/* ── コピーモード ── */
+.cal-copy-src{outline:3px solid var(--gold)!important;outline-offset:-2px;position:relative;z-index:1}
+.cal-copy-dst{outline:3px solid var(--teal)!important;outline-offset:-2px;position:relative;z-index:1}
+.cal-litem.cal-copy-src{border:3px solid var(--gold)!important}
+.cal-litem.cal-copy-dst{border:3px solid var(--teal)!important}
+.cal-copy-badge{font-size:9px;font-weight:700;padding:1px 4px;border-radius:2px;flex-shrink:0;line-height:1.5;margin-left:auto}
 /* ─── データツリー ─── */
 .tree-wrap{display:flex;flex-direction:column;gap:6px}
 .tree-block{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;box-shadow:var(--shadow)}
@@ -528,10 +534,12 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <div><div class="ptitle">営業カレンダー</div><div class="pdesc">営業予定・記念日・予約をひと目で確認</div></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button class="btn bs" id="cal-add-sch">＋ 営業予定を登録</button>
+            <button class="btn bs" style="font-size:11px" onclick="calToggleCopyMode()" id="cal-copy-btn">📋 コピー</button>
             <button class="btn bs" style="font-size:11px" onclick="calToggleRange()" id="cal-range-btn">📅 表示期間</button>
             <button class="btn bs" style="font-size:11px" id="cal-publish">🌐 HTML公開</button>
           </div>
         </div>
+        <div id="cal-copy-bar" style="display:none;background:#fdf0d0;border:1px solid rgba(200,146,30,.3);border-radius:var(--r);padding:8px 12px;margin-bottom:0;gap:8px;align-items:center;flex-wrap:wrap"></div>
         <div class="card" style="padding:16px">
           <div id="cal-range-panel" style="display:none;margin-bottom:12px;padding:10px;background:var(--cream2);border-radius:var(--r);border:0.5px solid var(--border)">
             <span style="font-size:12px;color:var(--ink3)">表示期間：</span>
@@ -1738,6 +1746,79 @@ var calCur={y:new Date().getFullYear(),m:new Date().getMonth()};
 var calHolidays={};
 var calLoaded=false;
 var calViewMode='cal';
+// コピーモード
+var calCopyMode=false;
+var calCopySrc=null; // {key:YYYYMMDD, data:{businessType,...}}
+var calPasteDsts=new Set(); // Set of YYYYMMDD
+function calToggleCopyMode(){
+  calCopyMode=!calCopyMode;
+  if(!calCopyMode){calCopySrc=null;calPasteDsts=new Set();}
+  calUpdateCopyBar();calRenderMonth();
+}
+function calCancelCopyMode(){
+  calCopyMode=false;calCopySrc=null;calPasteDsts=new Set();
+  calUpdateCopyBar();calRenderMonth();
+}
+function calUpdateCopyBar(){
+  var bar=g('cal-copy-bar'),btn=g('cal-copy-btn');
+  if(!bar) return;
+  if(calCopyMode){
+    if(btn){btn.textContent='✕ コピー終了';btn.style.background='var(--gold-d)';btn.style.color='var(--cream)';}
+    var msg='';
+    if(!calCopySrc){
+      msg='コピー元の日付をクリックしてください（営業予定が設定された日付のみ選択可）';
+    }else{
+      var sk=calCopySrc.key;
+      var srcDisp=sk.slice(0,4)+'/'+sk.slice(4,6)+'/'+sk.slice(6,8);
+      var bt=calCopySrc.data.businessType; var btLabel=CAL_BT_LABEL[bt]||('タイプ'+bt);
+      msg='📋 '+srcDisp+'（'+btLabel+'）をコピー中';
+      if(calPasteDsts.size) msg+=' → ペースト先 '+calPasteDsts.size+'件選択中';
+      else msg+=' → ペースト先の日付をクリック（複数可・月跨ぎ可）';
+    }
+    bar.innerHTML='<span style="font-size:12px;color:var(--ink2);flex:1">'+msg+'</span>'
+      +(calCopySrc&&calPasteDsts.size>0?'<button class="btn bp sm" onclick="calExecuteCopy()">✓ 実行（'+calPasteDsts.size+'件）</button>':'')
+      +'<button class="btn bd sm" onclick="calCancelCopyMode()">キャンセル</button>';
+    bar.style.display='flex';
+  }else{
+    bar.style.display='none';
+    if(btn){btn.textContent='📋 コピー';btn.style.background='';btn.style.color='';}
+  }
+}
+async function calExecuteCopy(){
+  if(!calCopySrc||calPasteDsts.size===0){toast('コピー元またはペースト先が選択されていません','err');return;}
+  var srcData=calCopySrc.data;
+  var batch=db.batch();
+  var tv=srcData.businessType!==undefined?srcData.businessType:0;
+  calPasteDsts.forEach(function(key){
+    var data={scheduleId:key,businessType:tv};
+    if(srcData.openTime!==undefined) data.openTime=srcData.openTime;
+    if(srcData.closeTime!==undefined) data.closeTime=srcData.closeTime;
+    data.memo=srcData.memo||null;
+    batch.set(db.collection('schedules').doc(key),data,{merge:true});
+  });
+  try{
+    await batch.commit();
+    var n=calPasteDsts.size;
+    var affectedYm=new Set();
+    calPasteDsts.forEach(function(key){affectedYm.add(key.slice(0,6));});
+    calPasteDsts=new Set();
+    affectedYm.forEach(function(ym){calSaveUpdateTime(ym);calCheckUnpublished(ym);});
+    calUpdateCopyBar();
+    calFetchHolidays(calRenderMonth);
+    toast(n+'件にコピーしました');
+  }catch(e){toast('コピー失敗: '+e.message,'err');}
+}
+function calHandleCopyCellClick(schKey,sch){
+  if(!calCopySrc){
+    if(!sch){toast('この日付には営業予定が設定されていません','err');return;}
+    calCopySrc={key:schKey,data:sch};calPasteDsts=new Set();
+  }else{
+    if(schKey===calCopySrc.key) return;
+    if(calPasteDsts.has(schKey)) calPasteDsts.delete(schKey);
+    else calPasteDsts.add(schKey);
+  }
+  calUpdateCopyBar();calRenderMonth();
+}
 function calSetView(v){
   calViewMode=v;
   var grid=g('cal-view-grid'),list=g('cal-div-list');
@@ -1799,6 +1880,8 @@ function calRenderGrid(y,m,schMap,rsvMap,annivMap){
     var hname=(calHolidays&&calHolidays[key])||''; var isHol=!!hname;
     var cls='cal-cell'+(key===todayKey?' cal-today':'')+(dow===0||isHol?' csun':dow===6?' csat':'');
     if(sch) cls+=' '+CAL_BT_CLASS[parseInt(sch.businessType)||0];
+    var schKey=String(y)+calPad(m+1)+calPad(d);
+    if(calCopyMode){if(calCopySrc&&schKey===calCopySrc.key) cls+=' cal-copy-src'; else if(calPasteDsts.has(schKey)) cls+=' cal-copy-dst';}
     html+='<div class="'+cls+'">';
     html+='<div class="cal-drow">';
     if(calIsC23(m,d)) html+=calMakeC23('');
@@ -1819,7 +1902,12 @@ function calRenderGrid(y,m,schMap,rsvMap,annivMap){
   grid.innerHTML=html;
   grid.querySelectorAll('.cal-cell:not(.cal-other)').forEach(function(cell,idx){
     var d=idx+1;
-    cell.addEventListener('click',function(e){ if(e.target.closest('button')) return; calShowScheduleModal(y,m,d); });
+    var schKey2=String(y)+calPad(m+1)+calPad(d);
+    cell.addEventListener('click',function(e){
+      if(e.target.closest('button')) return;
+      if(calCopyMode){calHandleCopyCellClick(schKey2,schMap[d]||null);return;}
+      calShowScheduleModal(y,m,d);
+    });
     var rvs2=rsvMap[d]||[];
     var ribtn=cell.querySelector('[data-rsv-btn]');
     if(ribtn) ribtn.onclick=function(e){ e.stopPropagation(); calShowRsvPopup(rvs2,ribtn); };
@@ -1837,7 +1925,10 @@ function calRenderList(y,m,schMap,rsvMap,annivMap){
     var headCls='cal-lhead '+(btIdx>=0?CAL_BT_CLASS[btIdx]:'cbt-none');
     var dowCls=dow===0||isHol?' csun':dow===6?' csat':'';
     var isToday=key===todayKey;
-    html+='<div class="cal-litem'+(isToday?' cal-ltoday':'')+'" data-date="'+key+'">';
+    var lSchKey=String(y)+calPad(m+1)+calPad(d);
+    var lCopyCls='';
+    if(calCopyMode){if(calCopySrc&&lSchKey===calCopySrc.key) lCopyCls=' cal-copy-src'; else if(calPasteDsts.has(lSchKey)) lCopyCls=' cal-copy-dst';}
+    html+='<div class="cal-litem'+(isToday?' cal-ltoday':'')+lCopyCls+'" data-date="'+key+'">';
     html+='<div class="'+headCls+'">';
     html+='<div class="cal-ldwrap">';
     if(calIsC23(m,d)) html+=calMakeC23('');
@@ -1863,7 +1954,11 @@ function calRenderList(y,m,schMap,rsvMap,annivMap){
     item.addEventListener('click',function(e){
       if(e.target.closest('button')) return;
       var key2=item.dataset.date; if(!key2) return;
-      var parts=key2.split('-'); calShowScheduleModal(parseInt(parts[0]),parseInt(parts[1])-1,parseInt(parts[2]));
+      var parts=key2.split('-');
+      var ly=parseInt(parts[0]),lm2=parseInt(parts[1])-1,ld=parseInt(parts[2]);
+      var lSchKey2=String(ly)+calPad(lm2+1)+calPad(ld);
+      if(calCopyMode){calHandleCopyCellClick(lSchKey2,schMap[ld]||null);return;}
+      calShowScheduleModal(ly,lm2,ld);
     });
   });
 }
