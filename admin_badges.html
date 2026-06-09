@@ -120,6 +120,9 @@ tr:hover td{background:rgba(200,146,30,.04)}
 .badge-card.mini::before{width:4px}
 .badge-card.mini .bc-name{font-size:11px}
 .badge-card.mini .bc-sub{font-size:9px}
+.badge-card.nano{padding:2px 5px 2px 9px;min-width:auto;display:inline-flex;align-items:center;border-width:2px}
+.badge-card.nano::before{width:3px}
+.badge-card.nano .bc-nano{font-family:var(--mono);font-size:10px;color:var(--ink);line-height:1;letter-spacing:.04em;white-space:nowrap}
 .badge-wrap{display:flex;flex-wrap:wrap;gap:12px;padding-top:4px}
 .badge-wrap-item{display:flex;flex-direction:column;gap:6px}
 .badge-wrap-item .bc-meta{font-size:10px;color:var(--ink3);text-align:right}
@@ -327,8 +330,8 @@ tr:hover td{background:rgba(200,146,30,.04)}
           <input type="text" id="badge-name" placeholder="例: ブランコ制覇" oninput="updateBadgePreview()">
         </div>
         <div class="frow">
-          <label>略称 <span style="color:var(--ink3);font-weight:400">(3文字)</span></label>
-          <input type="text" id="badge-abbr" placeholder="BLC" maxlength="3"
+          <label>略称 <span style="color:var(--ink3);font-weight:400">(8文字以内)</span></label>
+          <input type="text" id="badge-abbr" placeholder="BLANCO-8" maxlength="8"
             style="text-align:center;font-family:var(--mono);text-transform:uppercase" oninput="updateBadgePreview()">
         </div>
       </div>
@@ -419,8 +422,17 @@ tr:hover td{background:rgba(200,146,30,.04)}
               <label class="bjrax-chk"><input type="checkbox" class="t3-class-chk" value="X" checked>X</label>
             </div>
           </div>
-          <button class="btn bp sm" id="btn-t3-reextract" type="button">🔄 再抽出</button>
-          <span style="font-size:10px;color:var(--ink3);margin-left:8px">エリア・クラスに該当するボトルを自動取得</span>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <button class="btn bp sm" id="btn-t3-reextract" type="button">🔄 再抽出</button>
+            <span style="font-size:10px;color:var(--ink3)">エリア・クラスに該当するボトルを自動取得</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+            <label style="font-size:10px;color:var(--ink3);font-weight:500;white-space:nowrap;text-transform:uppercase;letter-spacing:.06em">達成率</label>
+            <input type="number" id="badge-t3-rate" min="1" max="100"
+              style="width:64px;padding:2px 6px;border:1px solid var(--border2);border-radius:var(--r);font-size:12px;background:var(--cream)"
+              placeholder="自動" oninput="autoSetT3Metallic()">
+            <span style="font-size:10px;color:var(--ink3)">% &nbsp;再抽出後自動算出: <span id="t3-auto-rate" style="color:var(--teal);font-weight:500">—</span></span>
+          </div>
         </div>
       </div>
 
@@ -510,7 +522,7 @@ firebase.initializeApp(FIREBASE_CONFIG);
 var auth=firebase.auth(), db=firebase.firestore(), storage=firebase.storage();
 var cache={badges:[],bottles:[],members:[],memberBadges:[],badgeTypes:[]};
 var editBadgeId=null, editBadgeTypeId=null, curMemberId=null;
-var nomMap={}, regionMap={}, selectedBottleIds=[], badgeTypeFilter='';
+var nomMap={}, regionMap={}, selectedBottleIds=[], badgeTypeFilter='', t3TotalCriteria=0;
 
 function g(id){return document.getElementById(id);}
 function gv(id){var e=g(id);return e?e.value:'';}
@@ -571,12 +583,24 @@ function badgeCardStyle(b){
   var m=METALLIC[b.metallic]||METALLIC.gold;
   return '--stripe:'+(b.color||'#1a6e58')+';--bc:'+m.border+';--bsh:'+m.shadow+';--bbg:'+m.bg;
 }
-function badgeCardHtml(b,earned,mini){
+function t3RateEmoji(rate){return rate>=86?'🥇':rate>=66?'🥈':rate>=46?'🥉':'';}
+function badgeCardHtml(b,earned,mini,nano){
+  if(nano){
+    var abbrText=(b.abbr||b.name||'').toUpperCase().slice(0,8);
+    return '<div class="badge-card nano'+(earned?' earned':' locked')+'" style="'+badgeCardStyle(b)+'">'
+      +'<span class="bc-nano">'+esc(abbrText)+'</span>'
+    +'</div>';
+  }
   var typeName=TYPE_NAMES[String(b.type)]||('type:'+b.type);
   var sub=(b.abbr?b.abbr.toUpperCase()+' · ':'')+typeName;
   var cls='badge-card'+(mini?' mini':'')+(earned?' earned':' locked');
+  var nameHtml=esc(b.name||'—');
+  if(getTypeBehavior(String(b.type))==='3'&&b.targetRate!=null){
+    var em=t3RateEmoji(b.targetRate);
+    nameHtml+=esc(' ('+b.targetRate+'%)')+(em?' '+em:'');
+  }
   return '<div class="'+cls+'" style="'+badgeCardStyle(b)+'">'
-    +'<div class="bc-name">'+esc(b.name||'—')+'</div>'
+    +'<div class="bc-name">'+nameHtml+'</div>'
     +'<div class="bc-sub">'+esc(sub)+'</div>'
   +'</div>';
 }
@@ -586,14 +610,19 @@ function updateBadgePreview(){
   var colorEl=g('badge-color');
   var color=colorEl?colorEl.value:'#1a6e58';
   if(g('badge-color-label'))g('badge-color-label').textContent=color;
-  var b={name:gv('badge-name')||'バッジ名',abbr:gv('badge-abbr')||'',type:gv('badge-type')||'1',color:color,metallic:gv('badge-metallic')||'gold'};
+  var type=gv('badge-type')||'1';
+  var behavior=getTypeBehavior(type);
+  var b={name:gv('badge-name')||'バッジ名',abbr:gv('badge-abbr')||'',type:type,color:color,metallic:gv('badge-metallic')||'gold'};
+  if(behavior==='3'){var r=parseInt(gv('badge-t3-rate'));if(r>0)b.targetRate=r;}
   var prev=g('badge-preview');
   if(!prev)return;
   var m=METALLIC[b.metallic]||METALLIC.gold;
   var typeName=TYPE_NAMES[String(b.type)]||'';
   var sub=(b.abbr?b.abbr.toUpperCase()+' · ':'')+typeName;
+  var nameHtml=esc(b.name);
+  if(behavior==='3'&&b.targetRate){var em=t3RateEmoji(b.targetRate);nameHtml+=esc(' ('+b.targetRate+'%)')+(em?' '+em:'');}
   prev.style.cssText='--stripe:'+b.color+';--bc:'+m.border+';--bsh:'+m.shadow+';--bbg:'+m.bg;
-  prev.innerHTML='<div class="bc-name">'+esc(b.name)+'</div><div class="bc-sub">'+esc(sub)+'</div>';
+  prev.innerHTML='<div class="bc-name">'+nameHtml+'</div><div class="bc-sub">'+esc(sub)+'</div>';
 }
 
 // Populate badge-type select from live type data
@@ -837,8 +866,19 @@ function autoSetMetallic(){
   sv('badge-metallic',metal);
   updateBadgePreview();
 }
-function addBottle(id){if(selectedBottleIds.indexOf(id)<0){selectedBottleIds.push(id);renderSelectedList();autoSetMetallic();}}
-function removeBottle(id){selectedBottleIds=selectedBottleIds.filter(function(x){return x!==id;});renderSelectedList();autoSetMetallic();}
+function autoSetT3Metallic(){
+  if(getTypeBehavior(gv('badge-type'))!=='3')return;
+  var manualRate=parseInt(gv('badge-t3-rate'));
+  var autoRate=t3TotalCriteria>0?Math.round(selectedBottleIds.length/t3TotalCriteria*100):null;
+  var rateEl=g('t3-auto-rate');if(rateEl)rateEl.textContent=autoRate!=null?(autoRate+'%'):'—';
+  var rate=(!isNaN(manualRate)&&manualRate>0)?manualRate:(autoRate||0);
+  if(!rate)return;
+  var metal=rate>=86?'gold':rate>=66?'silver':rate>=46?'bronze':rate>=26?'gunmetal':'platinum';
+  sv('badge-metallic',metal);
+  updateBadgePreview();
+}
+function addBottle(id){if(selectedBottleIds.indexOf(id)<0){selectedBottleIds.push(id);renderSelectedList();autoSetMetallic();autoSetT3Metallic();}}
+function removeBottle(id){selectedBottleIds=selectedBottleIds.filter(function(x){return x!==id;});renderSelectedList();autoSetMetallic();autoSetT3Metallic();}
 
 g('avail-search').addEventListener('input',renderAvailList);
 g('avail-sort').addEventListener('change',renderAvailList);
@@ -848,12 +888,16 @@ g('btn-bjrax-reset').addEventListener('click',function(){document.querySelectorA
 g('btn-t3-reextract').addEventListener('click',function(){
   var areas=Array.from(document.querySelectorAll('.area-chk:checked')).map(function(c){return c.value;});
   var classes=Array.from(document.querySelectorAll('.t3-class-chk:checked')).map(function(c){return c.value;});
-  selectedBottleIds=cache.bottles.filter(function(b){
+  var matched=cache.bottles.filter(function(b){
     if(classes.length&&classes.indexOf(getBottleClass(b))<0)return false;
     if(areas.length){var r=getBottleRegion(b);if(!r||areas.indexOf(r)<0)return false;}
     return true;
-  }).map(function(b){return b.id;});
+  });
+  t3TotalCriteria=matched.length;
+  selectedBottleIds=matched.map(function(b){return b.id;});
+  sv('badge-t3-rate',''); // clear manual rate to show auto
   renderSelectedList();
+  autoSetT3Metallic();
   toast('再抽出: '+selectedBottleIds.length+'本',selectedBottleIds.length?'inf':'');
 });
 
@@ -909,6 +953,9 @@ function _fillBadgeModal(b){
   updateBadgePreview();
   document.querySelectorAll('.area-chk').forEach(function(c){c.checked=b.areaFilter?(b.areaFilter.indexOf(c.value)>=0):false;});
   document.querySelectorAll('.t3-class-chk').forEach(function(c){c.checked=b.classFilter?(b.classFilter.indexOf(c.value)>=0):true;});
+  sv('badge-t3-rate',b.targetRate!=null?String(b.targetRate):'');
+  t3TotalCriteria=0; // reset until re-extracted
+  var autoEl=g('t3-auto-rate');if(autoEl)autoEl.textContent='—';
   sv('badge-event-name',b.eventName||'');
   if(b.metric)sv('badge-metric',b.metric);
   sv('badge-threshold',b.threshold||'');
@@ -953,7 +1000,7 @@ g('btn-save-badge').addEventListener('click',async function(){
   if(!id||id.length<2){toast('バッジIDを入力してください','err');return;}
   if(!name){toast('バッジ名は必須です','err');return;}
   if(!editBadgeId&&cache.badges.some(function(b){return b.id===id;})){toast('バッジID「'+id+'」は既に存在します','err');return;}
-  var abbr=gv('badge-abbr').trim().toUpperCase().slice(0,3)||null;
+  var abbr=gv('badge-abbr').trim().toUpperCase().slice(0,8)||null;
   var behavior=getTypeBehavior(type);
   var data={
     type:type,name:name,abbr:abbr,
@@ -968,6 +1015,7 @@ g('btn-save-badge').addEventListener('click',async function(){
     data.bottleIds=selectedBottleIds;
     data.areaFilter=Array.from(document.querySelectorAll('.area-chk:checked')).map(function(c){return c.value;});
     data.classFilter=Array.from(document.querySelectorAll('.t3-class-chk:checked')).map(function(c){return c.value;});
+    var tr=parseInt(gv('badge-t3-rate'));data.targetRate=tr>0?tr:null;
   }
   else if(behavior==='4'){data.eventName=gv('badge-event-name').trim()||null;}
   else if(behavior==='5'){data.metric=gv('badge-metric')||null;var thr=Number(gv('badge-threshold'));data.threshold=thr||null;}
@@ -1022,14 +1070,20 @@ function genBadgeCardStyleInline(b, earned){
   var sub=(b.abbr?b.abbr.toUpperCase()+' · ':'')+typeName;
   var filterStyle=earned?'':'filter:grayscale(.75);opacity:.5;';
   var shimmer=earned?'<div style="position:absolute;inset:0;background:linear-gradient(90deg,transparent 35%,rgba(255,255,255,.42) 50%,transparent 65%);background-size:200% 100%;animation:bs 4s ease-in-out infinite;pointer-events:none"></div>':'';
-  return '<div style="position:relative;padding:10px 14px 10px 20px;'
+  var nameDisp=esc2(b.name||'—');
+  if(getTypeBehavior(String(b.type))==='3'&&b.targetRate!=null){
+    var rr=b.targetRate;
+    var eem=rr>=86?'🥇':rr>=66?'🥈':rr>=46?'🥉':'';
+    nameDisp+=esc2(' ('+rr+'%)')+(eem?' '+eem:'');
+  }
+  return '<div style="position:relative;padding:5px 10px 5px 16px;'
     +'border:3px solid '+m.border+';border-radius:6px;'
     +'background:'+m.bg+';'
     +'box-shadow:0 2px 8px '+m.shadow+',inset 0 1px 0 rgba(255,255,255,.55);'
     +'overflow:hidden;'+filterStyle+'">'
-    +'<div style="position:absolute;left:0;top:0;bottom:0;width:7px;background:'+stripe+'"></div>'
-    +'<div style="font-family:\'Cormorant Garamond\',Georgia,serif;font-size:15px;font-weight:600;color:#18110a;display:block;line-height:1.3">'+esc2(b.name||'—')+'</div>'
-    +'<div style="font-family:\'DM Mono\',monospace;font-size:10px;color:#9a8470;display:block;letter-spacing:.05em;margin-top:3px">'+esc2(sub)+'</div>'
+    +'<div style="position:absolute;left:0;top:0;bottom:0;width:5px;background:'+stripe+'"></div>'
+    +'<div style="font-family:\'Cormorant Garamond\',Georgia,serif;font-size:13px;font-weight:600;color:#18110a;display:block;line-height:1.2">'+nameDisp+'</div>'
+    +'<div style="font-family:\'DM Mono\',monospace;font-size:9px;color:#9a8470;display:block;letter-spacing:.05em;margin-top:2px">'+esc2(sub)+'</div>'
     +(earned?'<div style="font-size:10px;color:#1a6e58;margin-top:4px">取得済み</div>':'')
     +shimmer
   +'</div>';
