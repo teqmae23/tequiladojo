@@ -559,7 +559,8 @@ firebase.initializeApp(FIREBASE_CONFIG);
 var auth=firebase.auth(), db=firebase.firestore(), storage=firebase.storage();
 var cache={badges:[],bottles:[],members:[],memberBadges:[],badgeTypes:[]};
 var editBadgeId=null, editBadgeTypeId=null, curMemberId=null;
-var nomMap={}, regionMap={}, municipalityMap={}, areaMuniMap={};
+var nomMap={}, regionMap={}, municipalityMap={};
+var districtCache=[], locationCache=[];
 var selectedBottleIds=[], selectedBadgeIds=[], badgeTypeFilter='';
 
 function g(id){return document.getElementById(id);}
@@ -710,7 +711,7 @@ g('lbtn').addEventListener('click',function(){
 
 // ── Loaders ───────────────────────────────────────────────────
 async function loadAll(){
-  await Promise.all([loadBadgeTypes(),loadBadges(),loadBottles(),loadMembers(),loadMemberBadges(),loadDistilleries()]);
+  await Promise.all([loadBadgeTypes(),loadBadges(),loadBottles(),loadMembers(),loadMemberBadges(),loadDistilleries(),loadDistricts(),loadLocations()]);
 }
 async function loadBadgeTypes(){
   var snap=await db.collection('badgeTypes').get();
@@ -745,15 +746,19 @@ async function loadDistilleries(){
   snap.docs.forEach(function(d){
     var data=d.data();
     nomMap[d.id]=data.nom||'';
-    var region=data.region||data.area||'';
-    regionMap[d.id]=region;
-    var muni=data.municipality||data.town||data.municipio||'';
-    municipalityMap[d.id]=muni;
-    if(region){
-      if(!areaMuniMap[region])areaMuniMap[region]=[];
-      if(muni&&areaMuniMap[region].indexOf(muni)<0)areaMuniMap[region].push(muni);
-    }
+    regionMap[d.id]=data.districtId||data.region||data.area||'';
+    municipalityMap[d.id]=data.locationId||data.municipality||data.town||'';
   });
+}
+async function loadDistricts(){
+  var snap=await db.collection('districts').get();
+  districtCache=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+  districtCache.sort(function(a,b){return a.id.localeCompare(b.id);});
+}
+async function loadLocations(){
+  var snap=await db.collection('locations').get();
+  locationCache=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+  locationCache.sort(function(a,b){return (a.locationName||a.id).localeCompare(b.locationName||b.id,'ja');});
 }
 
 // ── Badge type master ─────────────────────────────────────────
@@ -935,32 +940,24 @@ function autoSetT3Metallic(){
 }
 function renderAreaCheckboxes(checkedAreas){
   var bar=g('area-chk-bar');if(!bar)return;
-  var regions=Object.keys(areaMuniMap).sort();
-  if(!regions.length) regions=['valles','altos','tequila','exjalisco'];
-  bar.innerHTML=regions.map(function(r){
-    var ch=(checkedAreas&&checkedAreas.indexOf(r)>=0)?' checked':'';
-    return '<label class="bjrax-chk"><input type="checkbox" class="area-chk" value="'+esc(r)+'"'+ch+'>'+esc(r)+'</label>';
+  if(!districtCache.length){bar.innerHTML='<span style="font-size:11px;color:var(--ink3)">エリアデータなし</span>';return;}
+  bar.innerHTML=districtCache.map(function(d){
+    var ch=(checkedAreas&&checkedAreas.indexOf(d.id)>=0)?' checked':'';
+    return '<label class="bjrax-chk"><input type="checkbox" class="area-chk" value="'+esc(d.id)+'"'+ch+'>'+esc(d.districtName||d.id)+'</label>';
   }).join('');
 }
 function renderTownCheckboxes(selectedAreas,checkedTowns){
   var bar=g('town-chk-bar');if(!bar)return;
-  var towns=[];
-  var hasAreaFilter=selectedAreas&&selectedAreas.length>0;
-  if(hasAreaFilter){
-    selectedAreas.forEach(function(r){
-      var ms=areaMuniMap[r]||[];
-      ms.forEach(function(t){if(towns.indexOf(t)<0)towns.push(t);});
-    });
+  var locs;
+  if(selectedAreas&&selectedAreas.length>0){
+    locs=locationCache.filter(function(l){return selectedAreas.indexOf(l.districtId)>=0;});
   } else {
-    Object.keys(areaMuniMap).forEach(function(r){
-      areaMuniMap[r].forEach(function(t){if(towns.indexOf(t)<0)towns.push(t);});
-    });
+    locs=locationCache.slice();
   }
-  towns.sort();
-  if(!towns.length){bar.innerHTML='<span style="font-size:11px;color:var(--ink3)">町データがありません</span>';return;}
-  bar.innerHTML=towns.map(function(t){
-    var ch=(checkedTowns&&checkedTowns.indexOf(t)>=0)?' checked':'';
-    return '<label class="bjrax-chk"><input type="checkbox" class="town-chk" value="'+esc(t)+'"'+ch+'>'+esc(t)+'</label>';
+  if(!locs.length){bar.innerHTML='<span style="font-size:11px;color:var(--ink3)">街データがありません</span>';return;}
+  bar.innerHTML=locs.map(function(l){
+    var ch=(checkedTowns&&checkedTowns.indexOf(l.id)>=0)?' checked':'';
+    return '<label class="bjrax-chk"><input type="checkbox" class="town-chk" value="'+esc(l.id)+'"'+ch+'>'+esc(l.locationName||l.id)+'</label>';
   }).join('');
 }
 function getBottleAgaveClass(b){
