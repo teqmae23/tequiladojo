@@ -229,7 +229,7 @@ tr:hover td{background:rgba(200,146,30,.04)}
       <table>
         <thead><tr>
           <th>プレビュー</th><th>ID</th><th>種別</th>
-          <th style="text-align:center">ボトル数</th><th>状態</th><th>操作</th>
+          <th style="text-align:center">条件数</th><th>状態</th><th>操作</th>
         </tr></thead>
         <tbody id="tb-badges"></tbody>
       </table>
@@ -279,12 +279,12 @@ tr:hover td{background:rgba(200,146,30,.04)}
         <div class="frow">
           <label>組み込み処理</label>
           <select id="btype-behavior">
-            <option value="1">type1 準拠（ブランド制覇）</option>
-            <option value="2">type2 準拠（カスタム選択）</option>
-            <option value="3">type3 準拠（エリア・クラス制覇）</option>
-            <option value="4">手動付与のみ</option>
-            <option value="5">メトリクス判定</option>
+            <option value="1">セット制覇準拠（ボトル選択）</option>
+            <option value="3">エリア・クラス制覇準拠</option>
+            <option value="4">手動付与のみ（イベント等）</option>
+            <option value="5">メトリクス判定（来場等）</option>
             <option value="6">ブラインド判定</option>
+            <option value="combo">バッジコンボ判定</option>
           </select>
         </div>
       </div>
@@ -437,6 +437,21 @@ tr:hover td{background:rgba(200,146,30,.04)}
         </div>
       </div>
 
+      <!-- Type combo: バッジコンボ -->
+      <div id="type-section-combo" class="type-section" style="display:none">
+        <div class="frow" style="margin-bottom:8px">
+          <label>必要バッジ <span id="combo-sel-count" style="color:var(--teal);font-size:11px">(0個)</span></label>
+          <div class="sel-bottle-list empty" id="combo-sel-list">バッジを追加してください</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+          <span style="font-size:10px;color:var(--ink3);font-weight:500;flex-shrink:0">種別:</span>
+          <select id="combo-type-filter" style="padding:3px 8px;border:1px solid var(--border2);border-radius:var(--r);font-size:12px;background:var(--cream)">
+            <option value="">全種別</option>
+          </select>
+        </div>
+        <div class="avail-list" id="combo-avail-list"></div>
+      </div>
+
       <!-- Type 4 -->
       <div id="type-section-4" class="type-section" style="display:none">
         <div class="frow">
@@ -523,7 +538,7 @@ firebase.initializeApp(FIREBASE_CONFIG);
 var auth=firebase.auth(), db=firebase.firestore(), storage=firebase.storage();
 var cache={badges:[],bottles:[],members:[],memberBadges:[],badgeTypes:[]};
 var editBadgeId=null, editBadgeTypeId=null, curMemberId=null;
-var nomMap={}, regionMap={}, selectedBottleIds=[], badgeTypeFilter='', t3TotalCriteria=0;
+var nomMap={}, regionMap={}, selectedBottleIds=[], selectedBadgeIds=[], badgeTypeFilter='', t3TotalCriteria=0;
 
 function g(id){return document.getElementById(id);}
 function gv(id){var e=g(id);return e?e.value:'';}
@@ -548,13 +563,15 @@ var METALLIC={
 
 // Built-in type definitions (fallback names + behavior key)
 var BUILTIN_TYPES={
-  '1':{id:'1',name:'ブランド制覇',description:'指定ボトルをすべて試飲で取得',behavior:'1'},
-  '2':{id:'2',name:'カスタム選択',description:'手動選択したボトルを全試飲で取得',behavior:'2'},
-  '3':{id:'3',name:'エリア・クラス制覇',description:'指定エリア・クラスのボトルを全試飲で取得',behavior:'3'},
+  '1':{id:'1',name:'セット制覇',description:'指定ボトルセットをすべて試飲で取得',behavior:'1'},
+  '2':{id:'2',name:'エリア・クラス制覇',description:'指定エリア・クラスのボトルを全試飲で取得',behavior:'3'},
+  '3':{id:'3',name:'来場・紹介等',description:'',behavior:'5'},
   '4':{id:'4',name:'イベント制覇',description:'',behavior:'4'},
-  '5':{id:'5',name:'来場・紹介等',description:'',behavior:'5'},
+  '5':{id:'5',name:'バッジコンボ',description:'指定バッジをすべて取得で付与',behavior:'combo'},
   '6':{id:'6',name:'ブラインド',description:'',behavior:'6'},
 };
+// Legacy behavior map: old type numbers → behavior (for backward compat with Firestore data)
+var LEGACY_TYPE_BEHAVIORS={'2':'1','3':'3'};
 
 // Live TYPE_NAMES (built-in + Firestore overrides)
 var TYPE_NAMES={};
@@ -565,12 +582,11 @@ function buildTypeNames(){
 
 function getTypeBehavior(typeId){
   var tid=String(typeId);
-  // Check Firestore overrides first
   var ft=cache.badgeTypes.find(function(t){return String(t.id)===tid;});
   if(ft&&ft.behavior)return String(ft.behavior);
-  // Builtin
   if(BUILTIN_TYPES[tid])return BUILTIN_TYPES[tid].behavior;
-  return '4'; // default: manual
+  if(LEGACY_TYPE_BEHAVIORS[tid])return LEGACY_TYPE_BEHAVIORS[tid];
+  return '4';
 }
 
 function allTypesMap(){
@@ -800,7 +816,8 @@ function renderBadges(){
   tb.innerHTML=badges.map(function(b){
     var typeName=TYPE_NAMES[String(b.type)]||('type:'+b.type);
     var beh=getTypeBehavior(String(b.type));
-    var bottleCount=(['1','2','3'].indexOf(beh)>=0)?((b.bottleIds||[]).length):'—';
+    var bottleCount=(['1','2','3'].indexOf(beh)>=0)?((b.bottleIds||[]).length):
+                    (beh==='combo')?((b.requiredBadgeIds||[]).length):'—';
     return '<tr>'
       +'<td>'+badgeCardHtml(b,true,true)+'</td>'
       +'<td class="mono">'+esc(b.id)+'</td>'
@@ -913,6 +930,62 @@ g('btn-t3-reextract').addEventListener('click',function(){
   toast('再抽出: '+selectedBottleIds.length+'本',selectedBottleIds.length?'inf':'');
 });
 
+// ── Combo badge picker ────────────────────────────────────────
+function populateComboTypeFilter(){
+  var sel=g('combo-type-filter');if(!sel)return;
+  var prev=sel.value;
+  var m=allTypesMap();
+  var keys=Object.keys(m).sort(function(a,b){return parseInt(a)-parseInt(b);});
+  sel.innerHTML='<option value="">全種別</option>'
+    +keys.filter(function(k){return getTypeBehavior(k)!=='combo';})
+         .map(function(k){var t=m[k];return '<option value="'+esc(k)+'"'+(k===prev?' selected':'')+'>'+esc(k)+' — '+esc(t.name||k)+'</option>';}).join('');
+  sel.value=prev;
+}
+function renderSelectedBadgeList(){
+  var list=g('combo-sel-list');
+  var cnt=g('combo-sel-count');
+  if(cnt)cnt.textContent='('+selectedBadgeIds.length+'個)';
+  if(!selectedBadgeIds.length){list.className='sel-bottle-list empty';list.innerHTML='バッジを追加してください';renderComboAvailList();return;}
+  list.className='sel-bottle-list';
+  list.innerHTML=selectedBadgeIds.map(function(bid){
+    var b=cache.badges.find(function(x){return x.id===bid;})||{id:bid,name:bid};
+    var typeName=TYPE_NAMES[String(b.type)]||String(b.type);
+    return '<div class="sel-row">'
+      +'<span class="sr-cls">'+esc(String(b.type))+'</span>'
+      +'<span class="sr-nom" style="max-width:60px;overflow:hidden;text-overflow:ellipsis">'+esc(typeName)+'</span>'
+      +'<span class="sr-name">'+esc(b.name||bid)+'</span>'
+      +'<button class="sr-del" data-remove-badge="'+esc(bid)+'" type="button">×</button>'
+    +'</div>';
+  }).join('');
+  renderComboAvailList();
+}
+function renderComboAvailList(){
+  var list=g('combo-avail-list');if(!list)return;
+  var typeFilter=gv('combo-type-filter');
+  var selSet=new Set(selectedBadgeIds);
+  var currentId=gv('badge-id');
+  var filtered=cache.badges.filter(function(b){
+    if(selSet.has(b.id))return false;
+    if(b.id===currentId)return false;
+    if(getTypeBehavior(String(b.type))==='combo')return false;
+    if(typeFilter&&String(b.type)!==typeFilter)return false;
+    return true;
+  });
+  if(!filtered.length){list.innerHTML='<div class="avail-row" style="justify-content:center;color:var(--ink3);cursor:default">該当バッジなし</div>';return;}
+  list.innerHTML=filtered.map(function(b){
+    var typeName=TYPE_NAMES[String(b.type)]||String(b.type);
+    return '<div class="avail-row">'
+      +'<span class="ar-cls">'+esc(String(b.type))+'</span>'
+      +'<span class="ar-nom" style="max-width:60px;overflow:hidden;text-overflow:ellipsis">'+esc(typeName)+'</span>'
+      +'<span class="ar-name">'+esc(b.name||b.id)+'</span>'
+      +'<button class="ar-add" data-add-badge="'+esc(b.id)+'" type="button">＋</button>'
+    +'</div>';
+  }).join('');
+}
+function addBadge(id){if(selectedBadgeIds.indexOf(id)<0){selectedBadgeIds.push(id);renderSelectedBadgeList();}}
+function removeBadge(id){selectedBadgeIds=selectedBadgeIds.filter(function(x){return x!==id;});renderSelectedBadgeList();}
+g('combo-type-filter').addEventListener('change',renderComboAvailList);
+
 g('badge-type').addEventListener('change',function(){
   onBadgeTypeChange();
   var idEl=g('badge-id');
@@ -922,12 +995,15 @@ g('badge-type').addEventListener('change',function(){
 
 function onBadgeTypeChange(){
   var behavior=getTypeBehavior(gv('badge-type'));
-  ['btl','3crit','4','5','6','custom'].forEach(function(k){
+  ['btl','3crit','combo','4','5','6','custom'].forEach(function(k){
     var el=g('type-section-'+k);if(el)el.style.display='none';
   });
   if(behavior==='1'||behavior==='2'||behavior==='3'){
     g('type-section-btl').style.display='';
     if(behavior==='3') g('type-section-3crit').style.display='';
+  } else if(behavior==='combo'){
+    g('type-section-combo').style.display='';
+    populateComboTypeFilter();
   } else {
     var bEl=g('type-section-'+behavior);
     if(bEl){bEl.style.display='';}
@@ -959,9 +1035,11 @@ function _fillBadgeModal(b){
   sv('badge-metallic',b.metallic||'gold');
   onBadgeTypeChange();
   selectedBottleIds=(b.bottleIds||[]).slice();
+  selectedBadgeIds=(b.requiredBadgeIds||[]).slice();
   sv('avail-search',''); sv('avail-sort','id');
   document.querySelectorAll('.bjrax-filter').forEach(function(c){c.checked=true;});
   renderSelectedList();
+  renderSelectedBadgeList();
   updateBadgePreview();
   document.querySelectorAll('.area-chk').forEach(function(c){c.checked=b.areaFilter?(b.areaFilter.indexOf(c.value)>=0):false;});
   document.querySelectorAll('.t3-class-chk').forEach(function(c){c.checked=b.classFilter?(b.classFilter.indexOf(c.value)>=0):true;});
@@ -1029,6 +1107,7 @@ g('btn-save-badge').addEventListener('click',async function(){
     data.classFilter=Array.from(document.querySelectorAll('.t3-class-chk:checked')).map(function(c){return c.value;});
     var tr=parseInt(gv('badge-t3-rate'));data.targetRate=tr>0?tr:null;
   }
+  else if(behavior==='combo'){data.requiredBadgeIds=selectedBadgeIds.slice();}
   else if(behavior==='4'){data.eventName=gv('badge-event-name').trim()||null;}
   else if(behavior==='5'){data.metric=gv('badge-metric')||null;var thr=Number(gv('badge-threshold'));data.threshold=thr||null;}
   else if(behavior==='6'){data.blindMetric=gv('badge-blind-metric')||null;var bthr=Number(gv('badge-blind-threshold'));data.blindThreshold=bthr||null;}
@@ -1186,6 +1265,8 @@ document.addEventListener('click',function(e){
   if(btn.dataset.editType){openBadgeTypeModal(btn.dataset.editType);return;}
   if(btn.dataset.addBottle){addBottle(btn.dataset.addBottle);return;}
   if(btn.dataset.removeBottle){removeBottle(btn.dataset.removeBottle);return;}
+  if(btn.dataset.addBadge){addBadge(btn.dataset.addBadge);return;}
+  if(btn.dataset.removeBadge){removeBadge(btn.dataset.removeBadge);return;}
   if(btn.dataset.delBadge){
     var bid=btn.dataset.delBadge;
     if(!confirm('バッジ「'+bid+'」を削除しますか？'))return;
@@ -1220,11 +1301,10 @@ document.addEventListener('click',function(e){
 
 // ── Badge judge engine ────────────────────────────────────────
 async function runBadgeJudge(targetMemberIds){
-  var activeBadges=cache.badges.filter(function(b){
-    if(!b.active)return false;
-    var beh=getTypeBehavior(b.type);
-    return (beh==='1'||beh==='2'||beh==='3')&&(b.bottleIds||[]).length;
-  });
+  var allActive=cache.badges.filter(function(b){if(!b.active)return false;var beh=getTypeBehavior(b.type);return ((beh==='1'||beh==='2'||beh==='3')&&(b.bottleIds||[]).length)||(beh==='combo'&&(b.requiredBadgeIds||[]).length);});
+  // Process combo badges after bottle-based badges
+  var activeBadges=allActive.filter(function(b){return getTypeBehavior(b.type)!=='combo';})
+    .concat(allActive.filter(function(b){return getTypeBehavior(b.type)==='combo';}));
   if(!activeBadges.length)return{awarded:0};
   var thresholds={};
   cache.bottles.forEach(function(b){thresholds[b.id]=(b.minTasting===1||b.minTasting==='1')?5:10;});
@@ -1256,7 +1336,10 @@ async function runBadgeJudge(targetMemberIds){
     for(var bi=0;bi<activeBadges.length;bi++){
       var badge=activeBadges[bi];
       if(existSet.has(mid+'|'+badge.id))continue;
-      var ok=(badge.bottleIds||[]).every(function(bid){return (bottleQty[bid]||0)>=(thresholds[bid]!==undefined?thresholds[bid]:10);});
+      var behJ=getTypeBehavior(badge.type);
+      var ok=behJ==='combo'
+        ?(badge.requiredBadgeIds||[]).every(function(bid){return existSet.has(mid+'|'+bid);})
+        :(badge.bottleIds||[]).every(function(bid){return (bottleQty[bid]||0)>=(thresholds[bid]!==undefined?thresholds[bid]:10);});
       if(ok){
         batch.set(db.collection('memberBadges').doc(mid+'_'+badge.id),{
           memberId:mid,badgeId:badge.id,earnedAt:firebase.firestore.FieldValue.serverTimestamp(),source:'auto'
