@@ -442,6 +442,22 @@ tr:hover td{background:rgba(200,146,30,.04)}
               <label class="bjrax-chk"><input type="checkbox" class="t3-class-chk" value="MIX_X" checked>X</label>
             </div>
           </div>
+          <div class="frow" style="margin-bottom:8px">
+            <label style="margin:0 0 4px">度数</label>
+            <div class="bjrax-bar" style="margin:0">
+              <label class="bjrax-chk"><input type="radio" name="t3-abv-filter" class="t3-abv-radio" value="all" checked>全件</label>
+              <label class="bjrax-chk"><input type="radio" name="t3-abv-filter" class="t3-abv-radio" value="np">NP (≤40%)</label>
+              <label class="bjrax-chk"><input type="radio" name="t3-abv-filter" class="t3-abv-radio" value="hp">HP (≥41%)</label>
+            </div>
+          </div>
+          <div class="frow" style="margin-bottom:8px">
+            <label style="margin:0 0 4px">種類</label>
+            <div class="bjrax-bar" style="margin:0">
+              <label class="bjrax-chk"><input type="radio" name="t3-prod-filter" class="t3-prod-radio" value="all" checked>全件</label>
+              <label class="bjrax-chk"><input type="radio" name="t3-prod-filter" class="t3-prod-radio" value="standard">定番</label>
+              <label class="bjrax-chk"><input type="radio" name="t3-prod-filter" class="t3-prod-radio" value="limited">非定番</label>
+            </div>
+          </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
             <button class="btn bp sm" id="btn-t3-reextract" type="button">🔄 再抽出</button>
             <span style="font-size:10px;color:var(--ink3)">条件に該当するボトルを抽出（新規作成時は0件）</span>
@@ -854,7 +870,7 @@ function renderBadges(){
     var bottleCount=(['1','2','3'].indexOf(beh)>=0)?((b.bottleIds||[]).length):
                     (beh==='combo')?((b.requiredBadgeIds||[]).length):'—';
     return '<tr>'
-      +'<td>'+badgeCardHtml(b,true,true)+'</td>'
+      +'<td style="width:1px"><div style="display:inline-block">'+badgeCardHtml(b,true,true)+'</div></td>'
       +'<td class="mono">'+esc(b.id)+'</td>'
       +'<td><span class="type-pill">'+esc(String(b.type))+'</span> <span class="dim" style="font-size:11px">'+esc(typeName)+'</span></td>'
       +'<td class="mono dim" style="text-align:center">'+bottleCount+'</td>'
@@ -995,6 +1011,7 @@ function renderT3Preview(bottles){
       +(nom?'<span class="sr-nom">NOM '+esc(nom)+'</span>':'')
       +(muni?'<span class="sr-nom" style="color:var(--teal)">'+esc(muni)+'</span>':'')
       +'<span class="sr-name">'+esc(nm)+'</span>'
+      +'<button class="sr-del" data-remove-t3="'+esc(b.id)+'" type="button">×</button>'
     +'</div>';
   }).join('');
 }
@@ -1010,10 +1027,16 @@ g('btn-t3-reextract').addEventListener('click',function(){
   var areas=Array.from(document.querySelectorAll('.area-chk:checked')).map(function(c){return c.value;});
   var towns=Array.from(document.querySelectorAll('.town-chk:checked')).map(function(c){return c.value;});
   var classVals=Array.from(document.querySelectorAll('.t3-class-chk:checked')).map(function(c){return c.value;});
+  var abvEl=document.querySelector('.t3-abv-radio:checked');var abvVal=abvEl?abvEl.value:'all';
+  var prodEl=document.querySelector('.t3-prod-radio:checked');var prodVal=prodEl?prodEl.value:'all';
   var matched=cache.bottles.filter(function(b){
     if(classVals.length&&classVals.indexOf(getBottleAgaveClass(b))<0)return false;
     if(areas.length){var r=getBottleRegion(b);if(!r||areas.indexOf(r)<0)return false;}
     if(towns.length){var m=getBottleMunicipality(b);if(!m||towns.indexOf(m)<0)return false;}
+    if(abvVal==='np'&&!(parseFloat(b.abv)<=40))return false;
+    if(abvVal==='hp'&&!(parseFloat(b.abv)>=41))return false;
+    if(prodVal==='standard'&&String(b.production)!=='0')return false;
+    if(prodVal==='limited'&&String(b.production)!=='1')return false;
     return true;
   });
   selectedBottleIds=matched.map(function(b){return b.id;});
@@ -1164,6 +1187,10 @@ function _fillBadgeModal(b){
     else{c.checked=b.classFilter.indexOf(c.value)>=0;}
   });
   sv('badge-t3-rate',b.targetRate!=null?String(b.targetRate):'');
+  var savedAbv=b.abvFilter||'all';
+  var savedProd=b.productionFilter||'all';
+  document.querySelectorAll('.t3-abv-radio').forEach(function(r){r.checked=r.value===savedAbv;});
+  document.querySelectorAll('.t3-prod-radio').forEach(function(r){r.checked=r.value===savedProd;});
   if(selectedBottleIds.length){
     var prevBottles=selectedBottleIds.map(function(id){return cache.bottles.find(function(x){return x.id===id;})||{id:id};});
     renderT3Preview(prevBottles);
@@ -1230,6 +1257,8 @@ g('btn-save-badge').addEventListener('click',async function(){
     data.areaFilter=Array.from(document.querySelectorAll('.area-chk:checked')).map(function(c){return c.value;});
     data.townFilter=Array.from(document.querySelectorAll('.town-chk:checked')).map(function(c){return c.value;});
     data.classFilter=Array.from(document.querySelectorAll('.t3-class-chk:checked')).map(function(c){return c.value;});
+    var abvEl2=document.querySelector('.t3-abv-radio:checked');data.abvFilter=abvEl2?abvEl2.value:'all';
+    var prodEl2=document.querySelector('.t3-prod-radio:checked');data.productionFilter=prodEl2?prodEl2.value:'all';
     var tr=parseInt(gv('badge-t3-rate'));data.targetRate=tr>0?tr:null;
   }
   else if(behavior==='combo'){data.requiredBadgeIds=selectedBadgeIds.slice();}
@@ -1390,6 +1419,11 @@ document.addEventListener('click',function(e){
   if(btn.dataset.editType){openBadgeTypeModal(btn.dataset.editType);return;}
   if(btn.dataset.addBottle){addBottle(btn.dataset.addBottle);return;}
   if(btn.dataset.removeBottle){removeBottle(btn.dataset.removeBottle);return;}
+  if(btn.dataset.removeT3){
+    selectedBottleIds=selectedBottleIds.filter(function(id){return id!==btn.dataset.removeT3;});
+    var remaining=cache.bottles.filter(function(b){return selectedBottleIds.indexOf(b.id)>=0;});
+    renderT3Preview(remaining);return;
+  }
   if(btn.dataset.addBadge){addBadge(btn.dataset.addBadge);return;}
   if(btn.dataset.removeBadge){removeBadge(btn.dataset.removeBadge);return;}
   if(btn.dataset.delBadge){
