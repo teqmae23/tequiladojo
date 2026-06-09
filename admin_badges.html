@@ -401,16 +401,19 @@ tr:hover td{background:rgba(200,146,30,.04)}
         <div class="avail-list" id="avail-list"></div>
       </div>
 
-      <!-- Type 3 criteria: エリア・クラス指定（ピッカーの上に表示） -->
+      <!-- Type 3 criteria: エリア・クラス制覇 -->
       <div id="type-section-3crit" class="type-section" style="display:none">
         <div style="border:1px solid var(--border2);border-radius:var(--r);padding:10px 12px;background:var(--cream2);margin-bottom:10px">
           <div class="frow" style="margin-bottom:8px">
             <label>エリア（複数選択可）</label>
-            <div class="bjrax-bar" style="margin:0">
-              <label class="bjrax-chk"><input type="checkbox" class="area-chk" value="valles">Valles</label>
-              <label class="bjrax-chk"><input type="checkbox" class="area-chk" value="altos">Los Altos</label>
-              <label class="bjrax-chk"><input type="checkbox" class="area-chk" value="tequila">Tequila</label>
-              <label class="bjrax-chk"><input type="checkbox" class="area-chk" value="exjalisco">Ex-Jalisco</label>
+            <div id="area-chk-bar" class="bjrax-bar" style="margin:0">
+              <span style="font-size:11px;color:var(--ink3)">読み込み中…</span>
+            </div>
+          </div>
+          <div class="frow" style="margin-bottom:8px">
+            <label>町（エリア選択で絞り込み、複数選択可）</label>
+            <div id="town-chk-bar" class="bjrax-bar" style="margin:0">
+              <span style="font-size:11px;color:var(--ink3)">エリアを選択すると町が表示されます</span>
             </div>
           </div>
           <div class="frow" style="margin-bottom:8px">
@@ -423,16 +426,18 @@ tr:hover td{background:rgba(200,146,30,.04)}
               <label class="bjrax-chk"><input type="checkbox" class="t3-class-chk" value="X" checked>X</label>
             </div>
           </div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
             <button class="btn bp sm" id="btn-t3-reextract" type="button">🔄 再抽出</button>
-            <span style="font-size:10px;color:var(--ink3)">エリア・クラスに該当するボトルを自動取得</span>
+            <span style="font-size:10px;color:var(--ink3)">条件に該当するボトルを抽出</span>
+            <span style="font-size:11px;color:var(--teal);font-weight:500" id="t3-preview-count">0本</span>
           </div>
+          <div id="t3-preview-list" class="sel-bottle-list empty" style="max-height:180px">条件を設定して再抽出してください</div>
           <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
             <label style="font-size:10px;color:var(--ink3);font-weight:500;white-space:nowrap;text-transform:uppercase;letter-spacing:.06em">達成率</label>
             <input type="number" id="badge-t3-rate" min="1" max="100"
               style="width:64px;padding:2px 6px;border:1px solid var(--border2);border-radius:var(--r);font-size:12px;background:var(--cream)"
-              placeholder="自動" oninput="autoSetT3Metallic()">
-            <span style="font-size:10px;color:var(--ink3)">% &nbsp;再抽出後自動算出: <span id="t3-auto-rate" style="color:var(--teal);font-weight:500">—</span></span>
+              placeholder="例: 80" oninput="autoSetT3Metallic()">
+            <span style="font-size:10px;color:var(--ink3)">% （このバッジの必要達成率）</span>
           </div>
         </div>
       </div>
@@ -538,7 +543,8 @@ firebase.initializeApp(FIREBASE_CONFIG);
 var auth=firebase.auth(), db=firebase.firestore(), storage=firebase.storage();
 var cache={badges:[],bottles:[],members:[],memberBadges:[],badgeTypes:[]};
 var editBadgeId=null, editBadgeTypeId=null, curMemberId=null;
-var nomMap={}, regionMap={}, selectedBottleIds=[], selectedBadgeIds=[], badgeTypeFilter='', t3TotalCriteria=0;
+var nomMap={}, regionMap={}, municipalityMap={}, areaMuniMap={};
+var selectedBottleIds=[], selectedBadgeIds=[], badgeTypeFilter='';
 
 function g(id){return document.getElementById(id);}
 function gv(id){var e=g(id);return e?e.value:'';}
@@ -723,7 +729,14 @@ async function loadDistilleries(){
   snap.docs.forEach(function(d){
     var data=d.data();
     nomMap[d.id]=data.nom||'';
-    regionMap[d.id]=data.region||data.area||'';
+    var region=data.region||data.area||'';
+    regionMap[d.id]=region;
+    var muni=data.municipality||data.town||data.municipio||'';
+    municipalityMap[d.id]=muni;
+    if(region){
+      if(!areaMuniMap[region])areaMuniMap[region]=[];
+      if(muni&&areaMuniMap[region].indexOf(muni)<0)areaMuniMap[region].push(muni);
+    }
   });
 }
 
@@ -806,6 +819,7 @@ var BJRAX_MAP={'1':'B','2':'J','3':'R','4':'A','5':'X'};
 function getBottleClass(b){return BJRAX_MAP[String(b.classId||'').slice(-1)]||'?';}
 function getBottleNom(b){var did=String(b.brandId||'').slice(0,4);return did?nomMap[did]||'':'';}
 function getBottleRegion(b){var did=String(b.brandId||'').slice(0,4);return did?regionMap[did]||'':'';}
+function getBottleMunicipality(b){var did=String(b.brandId||'').slice(0,4);return did?municipalityMap[did]||'':'';}
 
 // ── Badge list ────────────────────────────────────────────────
 function renderBadges(){
@@ -897,14 +911,56 @@ function autoSetMetallic(){
 }
 function autoSetT3Metallic(){
   if(getTypeBehavior(gv('badge-type'))!=='3')return;
-  var manualRate=parseInt(gv('badge-t3-rate'));
-  var autoRate=t3TotalCriteria>0?Math.round(selectedBottleIds.length/t3TotalCriteria*100):null;
-  var rateEl=g('t3-auto-rate');if(rateEl)rateEl.textContent=autoRate!=null?(autoRate+'%'):'—';
-  var rate=(!isNaN(manualRate)&&manualRate>0)?manualRate:(autoRate||0);
-  if(!rate)return;
+  var rate=parseInt(gv('badge-t3-rate'));
+  if(!rate||rate<=0)return;
   var metal=rate>=86?'gold':rate>=66?'silver':rate>=46?'bronze':rate>=26?'gunmetal':'platinum';
   sv('badge-metallic',metal);
   updateBadgePreview();
+}
+function renderAreaCheckboxes(checkedAreas){
+  var bar=g('area-chk-bar');if(!bar)return;
+  var regions=Object.keys(areaMuniMap).sort();
+  if(!regions.length) regions=['valles','altos','tequila','exjalisco'];
+  bar.innerHTML=regions.map(function(r){
+    var ch=(checkedAreas&&checkedAreas.indexOf(r)>=0)?' checked':'';
+    return '<label class="bjrax-chk"><input type="checkbox" class="area-chk" value="'+esc(r)+'"'+ch+'>'+esc(r)+'</label>';
+  }).join('');
+}
+function renderTownCheckboxes(selectedAreas,checkedTowns){
+  var bar=g('town-chk-bar');if(!bar)return;
+  var towns=[];
+  (selectedAreas||[]).forEach(function(r){
+    var ms=areaMuniMap[r]||[];
+    ms.forEach(function(t){if(towns.indexOf(t)<0)towns.push(t);});
+  });
+  towns.sort();
+  if(!towns.length){bar.innerHTML='<span style="font-size:11px;color:var(--ink3)">エリアを選択すると町が表示されます</span>';return;}
+  bar.innerHTML=towns.map(function(t){
+    var ch=(checkedTowns&&checkedTowns.indexOf(t)>=0)?' checked':'';
+    return '<label class="bjrax-chk"><input type="checkbox" class="town-chk" value="'+esc(t)+'"'+ch+'>'+esc(t)+'</label>';
+  }).join('');
+}
+function renderT3Preview(bottles){
+  var list=g('t3-preview-list');
+  var cnt=g('t3-preview-count');
+  if(cnt)cnt.textContent=bottles.length+'本';
+  if(!list)return;
+  if(!bottles.length){
+    list.className='sel-bottle-list empty';
+    list.innerHTML='条件を設定して再抽出してください';
+    return;
+  }
+  list.className='sel-bottle-list';
+  list.innerHTML=bottles.map(function(b){
+    var cls=getBottleClass(b),nom=getBottleNom(b),nm=b.bottleJa||b.bottleEs||b.id;
+    var muni=getBottleMunicipality(b);
+    return '<div class="sel-row">'
+      +'<span class="sr-cls">'+esc(cls)+'</span>'
+      +(nom?'<span class="sr-nom">NOM '+esc(nom)+'</span>':'')
+      +(muni?'<span class="sr-nom" style="color:var(--teal)">'+esc(muni)+'</span>':'')
+      +'<span class="sr-name">'+esc(nm)+'</span>'
+    +'</div>';
+  }).join('');
 }
 function addBottle(id){if(selectedBottleIds.indexOf(id)<0){selectedBottleIds.push(id);renderSelectedList();autoSetMetallic();autoSetT3Metallic();}}
 function removeBottle(id){selectedBottleIds=selectedBottleIds.filter(function(x){return x!==id;});renderSelectedList();autoSetMetallic();autoSetT3Metallic();}
@@ -916,18 +972,24 @@ g('btn-bjrax-reset').addEventListener('click',function(){document.querySelectorA
 
 g('btn-t3-reextract').addEventListener('click',function(){
   var areas=Array.from(document.querySelectorAll('.area-chk:checked')).map(function(c){return c.value;});
+  var towns=Array.from(document.querySelectorAll('.town-chk:checked')).map(function(c){return c.value;});
   var classes=Array.from(document.querySelectorAll('.t3-class-chk:checked')).map(function(c){return c.value;});
   var matched=cache.bottles.filter(function(b){
     if(classes.length&&classes.indexOf(getBottleClass(b))<0)return false;
     if(areas.length){var r=getBottleRegion(b);if(!r||areas.indexOf(r)<0)return false;}
+    if(towns.length){var m=getBottleMunicipality(b);if(!m||towns.indexOf(m)<0)return false;}
     return true;
   });
-  t3TotalCriteria=matched.length;
   selectedBottleIds=matched.map(function(b){return b.id;});
-  sv('badge-t3-rate',''); // clear manual rate to show auto
-  renderSelectedList();
+  renderT3Preview(matched);
   autoSetT3Metallic();
-  toast('再抽出: '+selectedBottleIds.length+'本',selectedBottleIds.length?'inf':'');
+  toast('再抽出: '+matched.length+'本',matched.length?'inf':'');
+});
+document.addEventListener('change',function(e){
+  if(e.target.classList.contains('area-chk')){
+    var areas=Array.from(document.querySelectorAll('.area-chk:checked')).map(function(c){return c.value;});
+    renderTownCheckboxes(areas,[]);
+  }
 });
 
 // ── Combo badge picker ────────────────────────────────────────
@@ -998,9 +1060,13 @@ function onBadgeTypeChange(){
   ['btl','3crit','combo','4','5','6','custom'].forEach(function(k){
     var el=g('type-section-'+k);if(el)el.style.display='none';
   });
-  if(behavior==='1'||behavior==='2'||behavior==='3'){
+  if(behavior==='1'||behavior==='2'){
     g('type-section-btl').style.display='';
-    if(behavior==='3') g('type-section-3crit').style.display='';
+  } else if(behavior==='3'){
+    g('type-section-3crit').style.display='';
+    renderAreaCheckboxes([]);
+    renderTownCheckboxes([],[]);
+    renderT3Preview([]);
   } else if(behavior==='combo'){
     g('type-section-combo').style.display='';
     populateComboTypeFilter();
@@ -1041,11 +1107,16 @@ function _fillBadgeModal(b){
   renderSelectedList();
   renderSelectedBadgeList();
   updateBadgePreview();
-  document.querySelectorAll('.area-chk').forEach(function(c){c.checked=b.areaFilter?(b.areaFilter.indexOf(c.value)>=0):false;});
-  document.querySelectorAll('.t3-class-chk').forEach(function(c){c.checked=b.classFilter?(b.classFilter.indexOf(c.value)>=0):true;});
+  var savedAreas=b.areaFilter||[];
+  var savedTowns=b.townFilter||[];
+  renderAreaCheckboxes(savedAreas);
+  renderTownCheckboxes(savedAreas,savedTowns);
+  document.querySelectorAll('.t3-class-chk').forEach(function(c){
+    c.checked=b.classFilter?(b.classFilter.indexOf(c.value)>=0):true;
+  });
   sv('badge-t3-rate',b.targetRate!=null?String(b.targetRate):'');
-  t3TotalCriteria=0; // reset until re-extracted
-  var autoEl=g('t3-auto-rate');if(autoEl)autoEl.textContent='—';
+  var prevBottles=selectedBottleIds.map(function(id){return cache.bottles.find(function(x){return x.id===id;})||{id:id};});
+  renderT3Preview(prevBottles);
   sv('badge-event-name',b.eventName||'');
   if(b.metric)sv('badge-metric',b.metric);
   sv('badge-threshold',b.threshold||'');
@@ -1104,6 +1175,7 @@ g('btn-save-badge').addEventListener('click',async function(){
   else if(behavior==='3'){
     data.bottleIds=selectedBottleIds;
     data.areaFilter=Array.from(document.querySelectorAll('.area-chk:checked')).map(function(c){return c.value;});
+    data.townFilter=Array.from(document.querySelectorAll('.town-chk:checked')).map(function(c){return c.value;});
     data.classFilter=Array.from(document.querySelectorAll('.t3-class-chk:checked')).map(function(c){return c.value;});
     var tr=parseInt(gv('badge-t3-rate'));data.targetRate=tr>0?tr:null;
   }
