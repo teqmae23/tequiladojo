@@ -464,12 +464,21 @@ tr:hover td{background:rgba(200,146,30,.04)}
             <span style="font-size:11px;color:var(--teal);font-weight:500" id="t3-preview-count">0本</span>
           </div>
           <div id="t3-preview-list" class="sel-bottle-list empty" style="max-height:200px">抽出ボタンを押してください</div>
-          <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
-            <label style="font-size:10px;color:var(--ink3);font-weight:500;white-space:nowrap;text-transform:uppercase;letter-spacing:.06em">達成率</label>
-            <input type="number" id="badge-t3-rate" min="1" max="100"
-              style="width:64px;padding:2px 6px;border:1px solid var(--border2);border-radius:var(--r);font-size:12px;background:var(--cream)"
-              placeholder="例: 80" oninput="autoSetT3Metallic()">
-            <span style="font-size:10px;color:var(--ink3)">% （このバッジの必要達成率）</span>
+          <div style="margin-top:8px">
+            <div style="margin-bottom:6px">
+              <label style="font-size:10px;color:var(--ink3);font-weight:500;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">達成タイプ</label>
+              <div class="bjrax-bar" style="margin:0">
+                <label class="bjrax-chk"><input type="radio" name="t3-ach-type" class="t3-ach-radio" value="full" checked>100%達成</label>
+                <label class="bjrax-chk"><input type="radio" name="t3-ach-type" class="t3-ach-radio" value="rate">割合達成</label>
+              </div>
+            </div>
+            <div id="t3-rate-row" style="display:none;align-items:center;gap:8px">
+              <label style="font-size:10px;color:var(--ink3);font-weight:500;white-space:nowrap;text-transform:uppercase;letter-spacing:.06em">達成率</label>
+              <input type="number" id="badge-t3-rate" min="1" max="100"
+                style="width:64px;padding:2px 6px;border:1px solid var(--border2);border-radius:var(--r);font-size:12px;background:var(--cream)"
+                placeholder="例: 80" oninput="autoSetT3Metallic()">
+              <span style="font-size:10px;color:var(--ink3)">% → 自動でバッジ色設定</span>
+            </div>
           </div>
         </div>
       </div>
@@ -959,8 +968,19 @@ function autoSetMetallic(){
   sv('badge-metallic',metal);
   updateBadgePreview();
 }
+function onT3AchTypeChange(){
+  var achEl=document.querySelector('.t3-ach-radio:checked');
+  var isRate=achEl&&achEl.value==='rate';
+  var metSel=g('badge-metallic');
+  var rateRow=g('t3-rate-row');
+  if(metSel){metSel.disabled=isRate;metSel.style.opacity=isRate?'.35':'1';}
+  if(rateRow)rateRow.style.display=isRate?'flex':'none';
+  if(isRate)autoSetT3Metallic();
+}
 function autoSetT3Metallic(){
   if(getTypeBehavior(gv('badge-type'))!=='3')return;
+  var achEl=document.querySelector('.t3-ach-radio:checked');
+  if(!achEl||achEl.value!=='rate')return;
   var rate=parseInt(gv('badge-t3-rate'));
   if(!rate||rate<=0)return;
   var metal=rate>=86?'gold':rate>=66?'silver':rate>=46?'bronze':rate>=26?'gunmetal':'platinum';
@@ -1062,6 +1082,7 @@ document.addEventListener('change',function(e){
     var areas=Array.from(document.querySelectorAll('.area-chk:checked')).map(function(c){return c.value;});
     renderTownCheckboxes(areas,[]);
   }
+  if(e.target.classList.contains('t3-ach-radio')){onT3AchTypeChange();}
 });
 g('btn-area-all').addEventListener('click',function(){
   toggleSelectAll('.area-chk');
@@ -1149,6 +1170,7 @@ function onBadgeTypeChange(){
     var cntEl=g('t3-preview-count');if(cntEl)cntEl.textContent='0本';
     var listEl=g('t3-preview-list');
     if(listEl){listEl.className='sel-bottle-list empty';listEl.innerHTML='抽出ボタンを押してください';}
+    onT3AchTypeChange();
   } else if(behavior==='combo'){
     g('type-section-combo').style.display='';
     populateComboTypeFilter();
@@ -1202,8 +1224,11 @@ function _fillBadgeModal(b){
   sv('badge-t3-rate',b.targetRate!=null?String(b.targetRate):'');
   var savedAbv=b.abvFilter||'all';
   var savedProd=b.productionFilter||'all';
+  var savedAch=b.achievementType||'full';
   document.querySelectorAll('.t3-abv-radio').forEach(function(r){r.checked=r.value===savedAbv;});
   document.querySelectorAll('.t3-prod-radio').forEach(function(r){r.checked=r.value===savedProd;});
+  document.querySelectorAll('.t3-ach-radio').forEach(function(r){r.checked=r.value===savedAch;});
+  onT3AchTypeChange();
   if(selectedBottleIds.length){
     var prevBottles=selectedBottleIds.map(function(id){return cache.bottles.find(function(x){return x.id===id;})||{id:id};});
     renderT3Preview(prevBottles);
@@ -1272,7 +1297,8 @@ g('btn-save-badge').addEventListener('click',async function(){
     data.classFilter=Array.from(document.querySelectorAll('.t3-class-chk:checked')).map(function(c){return c.value;});
     var abvEl2=document.querySelector('.t3-abv-radio:checked');data.abvFilter=abvEl2?abvEl2.value:'all';
     var prodEl2=document.querySelector('.t3-prod-radio:checked');data.productionFilter=prodEl2?prodEl2.value:'all';
-    var tr=parseInt(gv('badge-t3-rate'));data.targetRate=tr>0?tr:null;
+    var achEl3=document.querySelector('.t3-ach-radio:checked');data.achievementType=achEl3?achEl3.value:'full';
+    var tr=parseInt(gv('badge-t3-rate'));data.targetRate=(data.achievementType==='rate'&&tr>0)?tr:null;
   }
   else if(behavior==='combo'){data.requiredBadgeIds=selectedBadgeIds.slice();}
   else if(behavior==='4'){data.eventName=gv('badge-event-name').trim()||null;}
