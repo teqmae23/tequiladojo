@@ -226,7 +226,7 @@ function idxPad(n){return String(n).padStart(2,'0');}
 function idxFmtT(h){if(!h||h.length<4)return '';return h.slice(0,2)+':'+h.slice(2,4);}
 function idxDkey(y,m,d){return y+'-'+idxPad(m+1)+'-'+idxPad(d);}
 
-// 天気予報（Open-Meteo WMOコード → 絵文字）
+// 天気予報（Open-Meteo WMOコード → 絵文字・説明）
 var WMO_EMOJI={
   0:'☀️',1:'🌤️',2:'⛅',3:'☁️',
   45:'🌫️',48:'🌫️',
@@ -236,7 +236,53 @@ var WMO_EMOJI={
   80:'🌧️',81:'🌧️',82:'🌧️',85:'❄️',86:'❄️',
   95:'⛈️',96:'⛈️',99:'⛈️'
 };
+var WMO_DESC={
+  0:'快晴',1:'概ね晴れ',2:'晴れ時々曇り',3:'曇り',
+  45:'霧',48:'霧（着氷性）',
+  51:'霧雨（弱）',53:'霧雨',55:'霧雨（強）',56:'霧雨（着氷性・弱）',57:'霧雨（着氷性）',
+  61:'小雨',63:'雨',65:'大雨',66:'雨（着氷性・弱）',67:'雨（着氷性）',
+  71:'小雪',73:'雪',75:'大雪',77:'細氷',
+  80:'にわか雨（弱）',81:'にわか雨',82:'にわか雨（強）',85:'にわか雪（弱）',86:'にわか雪',
+  95:'雷雨',96:'雷雨＋ひょう（弱）',99:'雷雨＋ひょう'
+};
 function wmoEmoji(code){return WMO_EMOJI[code]||'🌡️';}
+function wmoDesc(code){return WMO_DESC[code]||(code!=null?'コード:'+code:'—');}
+
+// 天気ツールチップ
+var _wxTip=null;
+function wxTipShow(el,wx){
+  if(!_wxTip){
+    _wxTip=document.createElement('div');
+    _wxTip.id='wx-tip';
+    _wxTip.style.cssText='position:fixed;z-index:9000;background:rgba(20,30,20,.93);color:#e8f4e8;border-radius:8px;padding:10px 14px;font-size:13px;line-height:1.6;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.35);white-space:nowrap;display:none;';
+    document.body.appendChild(_wxTip);
+  }
+  var emoji=wmoEmoji(wx.code);
+  var desc=wmoDesc(wx.code);
+  var lines=['<span style="font-size:22px">'+emoji+'</span> <strong>'+desc+'</strong>'];
+  if(wx.tmax!=null||wx.tmin!=null){
+    var tstr='気温: ';
+    if(wx.tmin!=null)tstr+=wx.tmin+'°';
+    if(wx.tmax!=null&&wx.tmin!=null)tstr+=' 〜 ';
+    if(wx.tmax!=null)tstr+=wx.tmax+'°C';
+    lines.push(tstr);
+  }
+  if(wx.prob!=null)lines.push('降水確率: '+wx.prob+'%');
+  _wxTip.innerHTML=lines.join('<br>');
+  var r=el.getBoundingClientRect();
+  var tw=220;
+  var left=r.right+6;
+  if(left+tw>window.innerWidth)left=r.left-tw-6;
+  if(left<4)left=4;
+  var top=r.top-10;
+  if(top+80>window.innerHeight)top=window.innerHeight-90;
+  if(top<4)top=4;
+  _wxTip.style.left=left+'px';
+  _wxTip.style.top=top+'px';
+  _wxTip.style.display='block';
+}
+function wxTipHide(){if(_wxTip)_wxTip.style.display='none';}
+document.addEventListener('click',function(e){if(_wxTip&&!e.target.closest('#wx-tip')&&!e.target.closest('.wx-icon'))wxTipHide();});
 function idxIsC23(m,d){
   // month 0-indexed
   return (d===23)||(m===1&&d===3);
@@ -359,14 +405,20 @@ function idxBuildSchedule(){
         rsvMap[rd].push(data);
       });
     }).catch(function(){});
-    var p3=fetch('https://api.open-meteo.com/v1/forecast?latitude=35.602145&longitude=140.121287&daily=weathercode,precipitation_probability_max&timezone=Asia%2FTokyo&forecast_days=7')
+    var p3=fetch('https://api.open-meteo.com/v1/forecast?latitude=35.602145&longitude=140.121287&daily=weathercode,precipitation_probability_max,temperature_2m_max,temperature_2m_min&timezone=Asia%2FTokyo&forecast_days=7')
       .then(function(r){return r.json();})
       .then(function(data){
         var dates=data.daily.time||[];
         var codes=data.daily.weathercode||[];
         var probs=data.daily.precipitation_probability_max||[];
+        var tmaxs=data.daily.temperature_2m_max||[];
+        var tmins=data.daily.temperature_2m_min||[];
         dates.forEach(function(dt,i){
-          weatherMap[dt.replace(/-/g,'')]={code:codes[i],prob:probs[i]};
+          weatherMap[dt.replace(/-/g,'')]={
+            code:codes[i],prob:probs[i],
+            tmax:tmaxs[i]!=null?Math.round(tmaxs[i]):null,
+            tmin:tmins[i]!=null?Math.round(tmins[i]):null
+          };
         });
       }).catch(function(){});
     Promise.all([p1,p2,p3]).then(function(){
@@ -474,7 +526,8 @@ function idxBuildSchedule(){
         // 天気アイコン（右端）
         var wx=weatherMap[dstr];
         var wxEl=document.createElement('div');
-        wxEl.style.cssText='display:flex;flex-direction:column;align-items:center;flex-shrink:0;min-width:26px;';
+        wxEl.className='wx-icon';
+        wxEl.style.cssText='display:flex;flex-direction:column;align-items:center;flex-shrink:0;min-width:26px;cursor:pointer;';
         if(wx!=null){
           var emojiEl=document.createElement('span');
           emojiEl.style.cssText='font-size:17px;line-height:1;';
@@ -486,11 +539,44 @@ function idxBuildSchedule(){
             probEl.textContent=wx.prob+'%';
             wxEl.appendChild(probEl);
           }
+          (function(el,w){
+            el.addEventListener('mouseenter',function(){wxTipShow(el,w);});
+            el.addEventListener('mouseleave',wxTipHide);
+            el.addEventListener('click',function(e){
+              e.stopPropagation();
+              if(_wxTip&&_wxTip.style.display==='block'){wxTipHide();}
+              else{wxTipShow(el,w);}
+            });
+          })(wxEl,wx);
         }
         row.appendChild(wxEl);
 
         wrap.appendChild(row);
       });
+
+      // 天気凡例
+      if(Object.keys(weatherMap).length){
+        var legendDiv=document.createElement('div');
+        legendDiv.style.cssText='padding:8px 14px 6px;border-top:0.5px solid rgba(200,140,60,0.18);';
+        var legendTitle=document.createElement('div');
+        legendTitle.style.cssText='font-size:10px;color:rgba(40,60,40,0.5);letter-spacing:.06em;margin-bottom:5px;';
+        legendTitle.textContent='天気アイコン凡例';
+        legendDiv.appendChild(legendTitle);
+        var legendGrid=document.createElement('div');
+        legendGrid.style.cssText='display:flex;flex-wrap:wrap;gap:4px 10px;';
+        var LEGEND_ITEMS=[
+          ['☀️','快晴'],['🌤️','概ね晴れ'],['⛅','晴れ時々曇り'],['☁️','曇り'],
+          ['🌦️','にわか雨'],['🌧️','雨'],['❄️','雪'],['⛈️','雷雨'],['🌫️','霧']
+        ];
+        LEGEND_ITEMS.forEach(function(item){
+          var cell=document.createElement('span');
+          cell.style.cssText='font-size:11px;color:rgba(40,60,40,0.65);white-space:nowrap;';
+          cell.textContent=item[0]+' '+item[1];
+          legendGrid.appendChild(cell);
+        });
+        legendDiv.appendChild(legendGrid);
+        wrap.appendChild(legendDiv);
+      }
 
       // More Calendar... リンク
       var now=new Date();
