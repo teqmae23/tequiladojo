@@ -226,6 +226,17 @@ function idxPad(n){return String(n).padStart(2,'0');}
 function idxFmtT(h){if(!h||h.length<4)return '';return h.slice(0,2)+':'+h.slice(2,4);}
 function idxDkey(y,m,d){return y+'-'+idxPad(m+1)+'-'+idxPad(d);}
 
+// 天気予報（Open-Meteo WMOコード → 絵文字）
+var WMO_EMOJI={
+  0:'☀️',1:'🌤️',2:'⛅',3:'☁️',
+  45:'🌫️',48:'🌫️',
+  51:'🌦️',53:'🌦️',55:'🌦️',56:'🌧️',57:'🌧️',
+  61:'🌧️',63:'🌧️',65:'🌧️',66:'🌨️',67:'🌨️',
+  71:'❄️',73:'❄️',75:'❄️',77:'❄️',
+  80:'🌧️',81:'🌧️',82:'🌧️',85:'❄️',86:'❄️',
+  95:'⛈️',96:'⛈️',99:'⛈️'
+};
+function wmoEmoji(code){return WMO_EMOJI[code]||'🌡️';}
 function idxIsC23(m,d){
   // month 0-indexed
   return (d===23)||(m===1&&d===3);
@@ -332,6 +343,7 @@ function idxBuildSchedule(){
     // schedules 全件取得
     var schMap={};
     var rsvMap={};
+    var weatherMap={};
     var p1=db.collection('schedules').get().then(function(snap){
       snap.docs.forEach(function(doc){
         var data=doc.data();
@@ -347,7 +359,17 @@ function idxBuildSchedule(){
         rsvMap[rd].push(data);
       });
     }).catch(function(){});
-    Promise.all([p1,p2]).then(function(){
+    var p3=fetch('https://api.open-meteo.com/v1/forecast?latitude=35.602145&longitude=140.121287&daily=weathercode,precipitation_probability_max&timezone=Asia%2FTokyo&forecast_days=7')
+      .then(function(r){return r.json();})
+      .then(function(data){
+        var dates=data.daily.time||[];
+        var codes=data.daily.weathercode||[];
+        var probs=data.daily.precipitation_probability_max||[];
+        dates.forEach(function(dt,i){
+          weatherMap[dt.replace(/-/g,'')]={code:codes[i],prob:probs[i]};
+        });
+      }).catch(function(){});
+    Promise.all([p1,p2,p3]).then(function(){
       wrap.innerHTML='';
       var CAL_DOWS=['日','月','火','水','木','金','土'];
       var CAL_BT_CLASS=['cbt0','cbt1','cbt2','cbt3','cbt4','cbt5','cbt6','cbt7','cbt8'];
@@ -448,6 +470,24 @@ function idxBuildSchedule(){
 
         // 予約アイコン
         row.appendChild(idxMakeRsvIcon(rvs));
+
+        // 天気アイコン（右端）
+        var wx=weatherMap[dstr];
+        var wxEl=document.createElement('div');
+        wxEl.style.cssText='display:flex;flex-direction:column;align-items:center;flex-shrink:0;min-width:26px;';
+        if(wx!=null){
+          var emojiEl=document.createElement('span');
+          emojiEl.style.cssText='font-size:17px;line-height:1;';
+          emojiEl.textContent=wmoEmoji(wx.code);
+          wxEl.appendChild(emojiEl);
+          if(wx.prob!=null&&wx.prob>=30){
+            var probEl=document.createElement('span');
+            probEl.style.cssText='font-size:9px;color:rgba(30,80,160,0.75);font-family:monospace;line-height:1;margin-top:1px;';
+            probEl.textContent=wx.prob+'%';
+            wxEl.appendChild(probEl);
+          }
+        }
+        row.appendChild(wxEl);
 
         wrap.appendChild(row);
       });
