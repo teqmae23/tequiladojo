@@ -123,6 +123,13 @@ td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle
       </div>
     </div>
 
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <label id="oc-test-mode-label" style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink2);cursor:pointer;user-select:none;padding:6px 10px;border:1px dashed var(--border2);border-radius:var(--r);background:var(--cream2)">
+        <input type="checkbox" id="oc-test-mode" style="width:14px;height:14px;cursor:pointer">
+        テストモード
+      </label>
+      <span id="oc-test-mode-note" style="font-size:11px;color:var(--ink3)">チェック時：開店してもTOPページの表示は閉店中のまま</span>
+    </div>
     <div style="display:flex;gap:8px;margin-bottom:24px">
       <button id="btn-open-store" class="btn bp" style="flex:1;font-size:15px;padding:16px 8px">🏮 開店</button>
       <button id="btn-break-store" class="btn bs" style="flex:1;font-size:15px;padding:16px 8px">☕ 休憩</button>
@@ -197,6 +204,7 @@ var currentSessionId=null;
 var currentOpenTime=null;   // 開店時刻（HHMMSS形式）
 var currentSessionDate=null; // 開店日付（YYMMDD形式）
 var currentLayoutId=null;   // レイアウトID
+var currentTestMode=false;  // テストモード（trueなら公開ステータスに反映しない）
 var breakIndex=0;
 var layouts=[];
 var members=[];
@@ -323,18 +331,32 @@ function applyStoreStatus(status){
     btnClose.disabled=true;btnClose.style.opacity="0.4";
   }
   var det=g("oc-session-detail");
-  if(det) det.textContent=currentSessionId?"セッションID: "+currentSessionId+" / "+(STATUS_LABEL[status]||status):"営業セッションなし";
+  if(det) det.textContent=currentSessionId?"セッションID: "+currentSessionId+" / "+(STATUS_LABEL[status]||status)+(currentTestMode?" [テストモード]":""):"営業セッションなし";
   var laySelEl=g("oc-layout-sel");
   if(laySelEl){
     var isClosed=(status==="closed");
     laySelEl.disabled=!isClosed;
     laySelEl.style.opacity=isClosed?"1":"0.5";
   }
+  // テストモードチェックボックスはセッション中は変更不可
+  var tmChk=g("oc-test-mode");
+  var tmNote=g("oc-test-mode-note");
+  var tmLabel=g("oc-test-mode-label");
+  if(tmChk){
+    var isIdle=(status==="closed");
+    tmChk.disabled=!isIdle;
+    if(tmLabel)tmLabel.style.opacity=isIdle?"1":"0.6";
+    if(tmNote){
+      if(!isIdle&&currentTestMode){tmNote.textContent="テストモード中：TOPページには非公開";}
+      else{tmNote.textContent="チェック時：開店してもTOPページの表示は閉店中のまま";}
+    }
+  }
 }
 
 g("btn-open-store").addEventListener("click",function(){
   var layoutId=gv("oc-layout-sel");
   if(!layoutId){toast("座席レイアウトを選択してください","err");return;}
+  var testMode=!!(g("oc-test-mode")&&g("oc-test-mode").checked);
   var today=todayStr6();
   db.collection("sessions").where("date","==",today).get()
     .then(function(snap){
@@ -351,17 +373,19 @@ g("btn-open-store").addEventListener("click",function(){
         breakStart1:null,breakEnd1:null,
         breakStart2:null,breakEnd2:null,
         breakStart3:null,breakEnd3:null,
-        guestCount:null,sales:null,memo:null
+        guestCount:null,sales:null,memo:null,
+        testMode:testMode||null
       }).then(function(){
         writeJournal('create','sessions',sessionId,null,{date:today,openTime:openTime,layoutId:layoutId});
         currentSessionId=sessionId;
         currentOpenTime=openTime;
         currentSessionDate=today;
         currentLayoutId=layoutId;
+        currentTestMode=testMode;
         breakIndex=0;
         applyStoreStatus("open");
-        writePublicStatus('open',{layoutId:layoutId,sessionDate:today});
-        toast("開店しました（"+openTime+"）");
+        if(!testMode) writePublicStatus('open',{layoutId:layoutId,sessionDate:today});
+        toast("開店しました（"+openTime+"）"+(testMode?" [テストモード]":""));
         sv("oc-memo","");
         autoCheckinStaff(today, openTime);
       });
@@ -390,7 +414,7 @@ g("btn-break-store").addEventListener("click",function(){
         return db.collection("sessions").doc(currentSessionId).update(upd)
           .then(function(){
             applyStoreStatus("break");
-            writePublicStatus('break',{breakResumeTime:resumeTime||null,sessionDate:currentSessionDate});
+            if(!currentTestMode) writePublicStatus('break',{breakResumeTime:resumeTime||null,sessionDate:currentSessionDate});
             toast("休憩開始（"+t+(resumeTime?" 再開予定:"+resumeTime.slice(0,2)+":"+resumeTime.slice(2,4):"")+"）");
           });
       }).catch(function(e){toast("休憩処理失敗: "+e.message,"err");});
@@ -399,7 +423,7 @@ g("btn-break-store").addEventListener("click",function(){
     db.collection("sessions").doc(currentSessionId).update(upd)
       .then(function(){
         applyStoreStatus("open");
-        writePublicStatus('open',{layoutId:currentLayoutId,sessionDate:currentSessionDate});
+        if(!currentTestMode) writePublicStatus('open',{layoutId:currentLayoutId,sessionDate:currentSessionDate});
         toast("休憩終了（"+t+"）");
       })
       .catch(function(e){toast("休憩終了処理失敗: "+e.message,"err");});
@@ -479,6 +503,8 @@ function restoreStoreState(){
       currentSessionId=d.id||d.sessionId;
       currentOpenTime=d.openTime||null;
       currentLayoutId=d.layoutId||null;
+      currentTestMode=!!(d.testMode);
+      var tmChk=g("oc-test-mode");if(tmChk)tmChk.checked=currentTestMode;
       var memoEl=g("oc-memo");if(memoEl)memoEl.value=d.memo||"";
       var fields=[d.breakStart1,d.breakEnd1,d.breakStart2,d.breakEnd2,d.breakStart3,d.breakEnd3];
       var filled=fields.filter(function(f){return f;}).length;
@@ -488,10 +514,10 @@ function restoreStoreState(){
         else breakIndex=1;
         applyStoreStatus("break");
         var bResume=d['breakResumeTime'+breakIndex]||null;
-        writePublicStatus('break',{breakResumeTime:bResume,sessionDate:currentSessionDate});
+        if(!currentTestMode) writePublicStatus('break',{breakResumeTime:bResume,sessionDate:currentSessionDate});
       } else {
         applyStoreStatus("open");
-        writePublicStatus('open',{layoutId:currentLayoutId,sessionDate:currentSessionDate});
+        if(!currentTestMode) writePublicStatus('open',{layoutId:currentLayoutId,sessionDate:currentSessionDate});
       }
     }).catch(function(e){console.error("restoreStoreState error:",e);});
 }
