@@ -574,12 +574,15 @@ var BlindResult = (function(){
         var correctCount = ans.filter(function(a){ return a.isCorrect; }).length;
         var customerId = (visit && visit.memberId) || g.visitKey;
         var docId = g.gid + '_' + customerId;
+        var bottleIds = marks.map(function(m){ return (markToOrder[m] && markToOrder[m].productCode) || m; }).filter(Boolean);
+        var bottleComboKey = bottleIds.slice().sort().join('|');
         fsBatch.set(_db.collection('blindResults').doc(docId), {
           id: docId, groupId: g.gid, batchId: b.batchId || null,
           visitKey: g.visitKey, customerId: customerId,
           answeredAt: firebase.firestore.FieldValue.serverTimestamp(),
           answers: ans, winner: winners[mi],
-          correctCount: correctCount, totalCount: marks.length
+          correctCount: correctCount, totalCount: marks.length,
+          bottleComboKey: bottleComboKey
         });
         for(var oi = 0; oi < g.orders.length; oi++){
           var o = g.orders[oi];
