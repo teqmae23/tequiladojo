@@ -620,7 +620,7 @@ document.querySelectorAll(".tab").forEach(function(tab){
 });
 document.querySelector('[data-page="bdata"]').addEventListener("click",function(){
   if(!cache.bdata.length) loadBdata();
-  if(!cache.bottles.length) loadCol("bottles");
+  loadCol("bottles");
   if(!cache.brands.length) loadCol("brands");
 });
 
@@ -1166,12 +1166,20 @@ var bdNomSelEl=g("bd-nom-sel"); if(bdNomSelEl) bdNomSelEl.addEventListener("chan
 var bdBrandEl=g("bd-brand"); if(bdBrandEl) bdBrandEl.addEventListener("change",function(){
   var brandId=this.value; var sel=g("bd-master");
   if(brandId){
-    var bottles=cache.bottles.filter(function(b){return b.brandId===brandId;});
-    sel.innerHTML=bottles.length?'<option value="">選択してください</option>'+bottles.map(function(b){
-      var cls=cache.classes.find(function(c){return c.id===b.classId;});
-      var clsName=cls?(cls.classNameJa||CLASS_CLS[b.classId[1]]||b.classId):"";
-      return '<option value="'+b.id+'">'+b.id+' — '+(b.bottleJa||b.bottleEs||"")+(clsName?" / "+clsName:"")+'</option>';
-    }).join(""):'<option value="">該当ボトルなし</option>';
+    var allBottles=cache.bottles.filter(function(b){return b.brandId===brandId;});
+    var bottles=allBottles.filter(function(b){return b.id&&b.id.length===12;});
+    var hiddenCount=allBottles.length-bottles.length;
+    if(bottles.length){
+      sel.innerHTML='<option value="">選択してください</option>'+bottles.map(function(b){
+        var cls=cache.classes.find(function(c){return c.id===b.classId;});
+        var clsName=cls?(cls.classNameJa||CLASS_CLS[b.classId[1]]||b.classId):"";
+        return '<option value="'+b.id+'">'+b.id+' — '+(b.bottleJa||b.bottleEs||"")+(clsName?" / "+clsName:"")+'</option>';
+      }).join("")+(hiddenCount?'<option disabled>── '+hiddenCount+'件は12桁IDへ移行が必要 ──</option>':'');
+    } else if(allBottles.length){
+      sel.innerHTML='<option value="">12桁IDへ移行が必要なボトルのみ（ボトルマスタタブで修正）</option>';
+    } else {
+      sel.innerHTML='<option value="">該当ボトルなし</option>';
+    }
   } else { sel.innerHTML='<option value="">ブランド選択後に選択</option>'; }
   sv("bd-bottle",""); var _p=g("bd-master-panel"); if(_p) _p.style.display="none"; updateBdataKey();
 });
@@ -1278,11 +1286,12 @@ function openBdataModal(id){
     sv("bd-cost",r?r.cost:""); sv("bd-import",r?r.importType:"0");
     sv("bd-suffix",r?r.suffix||"":""); sv("bd-note",r?r.note||"":"");
   } else {
+    loadBdata();
     sv("bd-nom",""); var nomSelEl2=g("bd-nom-sel"); if(nomSelEl2) nomSelEl2.value=""; sv("bd-bottle",""); sv("bd-seq","");
     g("bd-brand").innerHTML='<option value="">NOM入力後に選択</option>';
     g("bd-master").innerHTML='<option value="">ブランド選択後に選択</option>';
     var _rp2=g("bd-master-panel"); if(_rp2) _rp2.style.display="none";
-    bottleEl.readOnly=false; bottleEl.style.background=""; seqEl.readOnly=true; seqEl.style.background="var(--cream2)";
+    bottleEl.readOnly=true; bottleEl.style.background="var(--cream2)"; seqEl.readOnly=true; seqEl.style.background="var(--cream2)";
     sv("bd-lottype","1"); sv("bd-es",""); sv("bd-ja",""); sv("bd-abv",""); sv("bd-prod","0"); sv("bd-flt","0");
     var clsSel3=g("bd-class"); if(clsSel3) clsSel3.innerHTML='<option value="">—</option>'+cache.classes.map(function(cl){return '<option value="'+cl.id+'">'+cl.id+' '+(cl.classNameJa||cl.id)+'</option>';}).join("");
     sv("bd-lot","N/A"); sv("bd-vol",750); sv("bd-remain",750);
@@ -1351,7 +1360,7 @@ function copyBdataModal(id){
   }
 
   // New seq for copy
-  if(bottleId) autoSetBdataSeq(bottleId);
+  autoSetBdataSeq(bottleId);
 
   // Class
   var clsSel=g("bd-class");
@@ -1384,7 +1393,9 @@ function copyBdataModal(id){
 }
 g("btn-save-bdata").addEventListener("click",function(){
   var bottleId=gv("bd-bottle"),seq=gv("bd-seq");
-  if(bottleId.length!==12){ toast("ボトルマスタを選択してください","err"); return; }
+  if(!bottleId){ toast("ボトルマスタを選択してください（NOM→ブランド→ボトルマスタの順に選択）","err"); return; }
+  if(bottleId.length!==12){ toast("ボトルマスタIDが"+bottleId.length+"桁です（12桁が必要）。ボトルマスタタブでIDを修正してください","err"); return; }
+  if(!seq){ autoSetBdataSeq(bottleId); seq=gv("bd-seq"); }
   if(!seq){ toast("連番が設定されていません","err"); return; }
   var id=editId.bdata||seq;
   if(!editId.bdata&&cache.bdata.some(function(d){return d.id===id;})){ toast("ボトルデータID「"+id+"」は既に存在します","err"); return; }
