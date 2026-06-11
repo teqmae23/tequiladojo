@@ -620,6 +620,8 @@ document.querySelectorAll(".tab").forEach(function(tab){
 });
 document.querySelector('[data-page="bdata"]').addEventListener("click",function(){
   if(!cache.bdata.length) loadBdata();
+  if(!cache.bottles.length) loadCol("bottles");
+  if(!cache.brands.length) loadCol("brands");
 });
 
 // ── データ読み込み ──────────────────────────────────────────────
@@ -1282,7 +1284,7 @@ function openBdataModal(id){
     var _rp2=g("bd-master-panel"); if(_rp2) _rp2.style.display="none";
     bottleEl.readOnly=false; bottleEl.style.background=""; seqEl.readOnly=true; seqEl.style.background="var(--cream2)";
     sv("bd-lottype","1"); sv("bd-es",""); sv("bd-ja",""); sv("bd-abv",""); sv("bd-prod","0"); sv("bd-flt","0");
-    var clsSel3=g("bd-class"); if(clsSel3) clsSel3.innerHTML="";
+    var clsSel3=g("bd-class"); if(clsSel3) clsSel3.innerHTML='<option value="">—</option>'+cache.classes.map(function(cl){return '<option value="'+cl.id+'">'+cl.id+' '+(cl.classNameJa||cl.id)+'</option>';}).join("");
     sv("bd-lot","N/A"); sv("bd-vol",750); sv("bd-remain",750);
     sv("bd-price",""); sv("bd-pub","0");
     setDateInputs("bd-buy-date",""); setDateInputs("bd-start",""); setDateInputs("bd-end","");
@@ -1295,22 +1297,90 @@ function openBdataModal(id){
 }
 function copyBdataModal(id){
   var r=cache.bdata.find(function(d){return d.id===id;});
+  if(!r) return;
   openBdataModal(null);
-  var nom=r?(r.bottleId||r.id).slice(0,4):""; sv("bd-nom",nom);
-  var e=new Event("input"); g("bd-nom").dispatchEvent(e);
-  setTimeout(function(){
-    sv("bd-brand",r?r.brandId:"");
-    var e2=new Event("change"); g("bd-brand").dispatchEvent(e2);
-    setTimeout(function(){
-      sv("bd-master",r?r.bottleId||r.id.slice(0,12):"");
-      var e3=new Event("change"); g("bd-master").dispatchEvent(e3);
-      sv("bd-lottype",r?String(r.lotType||1):"1"); sv("bd-lot",r?r.lotNo:"N/A"); sv("bd-vol",r?r.volume:750); sv("bd-remain",r?r.remaining:750);
-      sv("bd-price",r?r.price:""); sv("bd-pub",r?r.visibility:"0");
-      setDateInputs("bd-buy-date",""); setDateInputs("bd-start",""); setDateInputs("bd-end","");
-      sv("bd-cost",r?r.cost:""); sv("bd-import",r?r.importType:"0");
-    sv("bd-suffix",r?r.suffix||"":""); sv("bd-note",r?r.note||"":"");
-    },50);
-  },50);
+
+  var bottleId=r.bottleId||"";
+  var brandId=r.brandId||"";
+  var nom=brandId?brandId.slice(0,4):(bottleId?bottleId.slice(0,4):"");
+
+  // NOM
+  sv("bd-nom",nom);
+  var nomSelEl=g("bd-nom-sel"); if(nomSelEl) nomSelEl.value=nom;
+
+  // Brand dropdown
+  var brandSel=g("bd-brand");
+  if(nom.length===4){
+    var brands=cache.brands.filter(function(b){return b.id.slice(0,4)===nom;});
+    brandSel.innerHTML=brands.length
+      ?'<option value="">選択してください</option>'+brands.map(function(b){return '<option value="'+b.id+'">'+b.id+' — '+(b.brandEs||"")+(b.brandJa?" / "+b.brandJa:"")+'</option>';}).join("")
+      :'<option value="">該当ブランドなし</option>';
+  }
+  if(brandId) sv("bd-brand",brandId);
+
+  // Master dropdown
+  var masterSel=g("bd-master");
+  if(brandId){
+    var bottles=cache.bottles.filter(function(b){return b.brandId===brandId;});
+    masterSel.innerHTML=bottles.length
+      ?'<option value="">選択してください</option>'+bottles.map(function(b){
+          var cls=cache.classes.find(function(c){return c.id===b.classId;});
+          var clsName=cls?(cls.classNameJa||CLASS_CLS[b.classId[1]]||b.classId):"";
+          return '<option value="'+b.id+'">'+b.id+' — '+(b.bottleJa||b.bottleEs||"")+(clsName?" / "+clsName:"")+'</option>';
+        }).join("")
+      :'<option value="">該当ボトルなし</option>';
+    if(bottleId) sv("bd-master",bottleId);
+  }
+  sv("bd-bottle",bottleId);
+
+  // Reference panel
+  var b=bottleId?cache.bottles.find(function(x){return x.id===bottleId;}):null;
+  var panel=g("bd-master-panel");
+  if(b&&panel){
+    panel.style.display="block";
+    var br=cache.brands.find(function(x){return x.id===b.brandId;});
+    var cls=cache.classes.find(function(x){return x.id===b.classId;});
+    var brName=br?(br.brandEs||"")+(br.brandJa?" / "+br.brandJa:""):"";
+    g("bd-ref-name").textContent=(b.bottleJa||b.bottleEs||"")+(brName?" — "+brName:"");
+    g("bd-ref-id").textContent=b.id;
+    g("bd-ref-class").textContent=cls?(cls.classNameJa||CLASS_CLS[b.classId[1]]||b.classId):(b.classId||"—");
+    g("bd-ref-abv").textContent=(b.abv!==null&&b.abv!==undefined)?parseFloat(b.abv).toFixed(1)+"%":"—";
+    g("bd-ref-prod").textContent={"0":"定番品","1":"限定品"}[b.production]||"—";
+    g("bd-ref-flt").textContent={"0":"なし","1":"色素濾過"}[b.filtration]||"—";
+    g("bd-ref-add").textContent={"0":"なし","1":"不明"}[b.additive]||"—";
+  }
+
+  // New seq for copy
+  if(bottleId) autoSetBdataSeq(bottleId);
+
+  // Class
+  var clsSel=g("bd-class");
+  if(clsSel){
+    clsSel.innerHTML=cache.classes.map(function(cl){
+      return '<option value="'+cl.id+'"'+(cl.id===r.classId?' selected':'')+'>'
+        +cl.id+' '+(cl.classNameJa||cl.id)+'</option>';
+    }).join("");
+    sv("bd-class",r.classId||"");
+  }
+
+  // Data fields
+  var _esRaw=r.bottleEsBase||r.bottleEs||"";
+  var _jaRaw=r.bottleJaBase||r.bottleJa||"";
+  sv("bd-es",_esRaw); sv("bd-ja",_jaRaw);
+  sv("bd-abv",r.abv!=null?r.abv:"");
+  sv("bd-prod",r.production||"0");
+  sv("bd-flt",r.filtration||"0");
+  sv("bd-lottype",String(r.lotType||1));
+  sv("bd-lot",r.lotNo||"N/A");
+  sv("bd-vol",r.volume!=null?r.volume:750);
+  sv("bd-remain",r.remaining!=null?r.remaining:750);
+  sv("bd-price",r.price!=null?r.price:"");
+  sv("bd-pub",r.visibility||"0");
+  setDateInputs("bd-buy-date",""); setDateInputs("bd-start",""); setDateInputs("bd-end","");
+  sv("bd-suffix",r.suffix||""); sv("bd-note",r.note||"");
+  sv("bd-cost",r.cost!=null?r.cost:""); sv("bd-import",r.importType||"0");
+
+  updateBdataKey();
 }
 g("btn-save-bdata").addEventListener("click",function(){
   var bottleId=gv("bd-bottle"),seq=gv("bd-seq");

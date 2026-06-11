@@ -284,6 +284,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <button class="tab" data-page="backup">💾 バックアップ</button>
       <button class="tab" data-page="journal">📋 ジャーナル</button>
       <button class="tab" data-page="news">ニュース <span class="cnt" id="cnt-news">—</span></button>
+      <button class="tab" data-page="blind">🎭 ブラインド</button>
     </div>
   </div>
   <div class="content">
@@ -612,6 +613,61 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           </div>
         </div>
       </details>
+    </div>
+
+    <!-- ブラインドテイスティングページ -->
+    <div class="page" id="page-blind">
+      <div class="phead">
+        <div><div class="ptitle">🎭 ブラインドテイスティング</div><div class="pdesc">遡及入力・集計ビュー</div></div>
+      </div>
+      <!-- サブタブ -->
+      <div style="display:flex;gap:6px;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+        <button class="btn bp" id="bst-entry" onclick="bswitchTab('entry')" style="font-size:12px">📝 遡及入力</button>
+        <button class="btn bs" id="bst-stats" onclick="bswitchTab('stats')" style="font-size:12px">📊 集計</button>
+      </div>
+
+      <!-- 遡及入力パネル -->
+      <div id="bpanel-entry">
+        <div class="card" style="padding:14px 16px;margin-bottom:10px">
+          <div style="font-size:10px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">STEP 1 — 基本情報</div>
+          <div class="frow">
+            <div class="fg" style="max-width:160px">
+              <label class="fl">実施日（YYMMDD）</label>
+              <input class="fi mono" id="br-date" maxlength="6" placeholder="260610">
+            </div>
+            <div class="fg" style="max-width:110px">
+              <label class="fl">カップ数（2〜10）</label>
+              <input class="fi mono" id="br-cup-count" type="number" min="2" max="10" value="3">
+            </div>
+            <div class="fg" style="align-self:flex-end">
+              <button class="btn bs" onclick="brRebuildCups()">カップ構成を更新</button>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="padding:14px 16px;margin-bottom:10px">
+          <div style="font-size:10px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">STEP 2 — カップ構成（各カップのボトル）</div>
+          <div id="br-cups-form" style="display:flex;flex-direction:column;gap:6px"></div>
+        </div>
+        <div class="card" style="padding:14px 16px;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <div style="font-size:10px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em">STEP 3 — 参加者の回答</div>
+            <button class="btn bp sm" onclick="brAddParticipant()">＋ 参加者追加</button>
+          </div>
+          <div id="br-participants-form"><div style="font-size:12px;color:var(--ink3)">参加者がいません。</div></div>
+        </div>
+        <button class="btn bp" style="width:100%;font-size:14px;font-weight:700;padding:14px" onclick="brSave()">💾 ブラインド結果を保存</button>
+      </div>
+
+      <!-- 集計パネル -->
+      <div id="bpanel-stats" style="display:none">
+        <div class="card" style="padding:14px 16px;margin-bottom:10px">
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn bp" onclick="brLoadStats()">🔄 集計を読み込む</button>
+            <span id="br-stats-status" style="font-size:12px;color:var(--ink3)"></span>
+          </div>
+        </div>
+        <div id="br-stats-content"></div>
+      </div>
     </div>
 
   </div><!-- .content -->
@@ -3294,6 +3350,11 @@ document.querySelector('[data-page="backup"]').addEventListener('click',function
 document.querySelector('[data-page="journal"]').addEventListener('click',function(){
   if(!document.getElementById('jnl-container').querySelector('table')) loadJournal();
 });
+document.querySelector('[data-page="blind"]').addEventListener('click',function(){
+  var dateEl=g('br-date');
+  if(dateEl&&!dateEl.value) dateEl.value=todayStr6();
+  if(!g('br-cups-form').innerHTML.trim()) brRebuildCups();
+});
 
 // ── ジャーナル閲覧 ───────────────────────────────────────────
 var _jnlDocs=[];
@@ -4165,6 +4226,235 @@ function loadNewsTypeConfig(cb){
     document.getElementById('add-type-color').value='#e8961e';
   });
 })();
+// ── ブラインドテイスティング（遡及入力・集計）──────────────────
+
+var _brCups=[{name:'',code:''},{name:'',code:''},{name:'',code:''}];
+var _brParts=[];
+var _CIRCLE=['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩'];
+
+function bswitchTab(t){
+  var ep=g('bpanel-entry'),sp=g('bpanel-stats');
+  if(ep) ep.style.display=t==='entry'?'':'none';
+  if(sp) sp.style.display=t==='stats'?'':'none';
+  var eb=g('bst-entry'),sb=g('bst-stats');
+  if(eb) eb.className=t==='entry'?'btn bp':'btn bs';
+  if(sb) sb.className=t==='stats'?'btn bp':'btn bs';
+  // fix font-size
+  if(eb) eb.style.fontSize='12px';
+  if(sb) sb.style.fontSize='12px';
+}
+
+function brRebuildCups(){
+  var n=Math.max(2,Math.min(10,parseInt(gv('br-cup-count'))||3));
+  sv('br-cup-count',String(n));
+  while(_brCups.length<n) _brCups.push({name:'',code:''});
+  _brCups=_brCups.slice(0,n);
+  _brParts.forEach(function(p){
+    while(p.answers.length<n) p.answers.push('');
+    p.answers=p.answers.slice(0,n);
+    if(p.winner&&parseInt(p.winner)>n) p.winner='';
+  });
+  brRenderCups();
+  brRenderParts();
+}
+
+function brRenderCups(){
+  var el=g('br-cups-form'); if(!el) return;
+  el.innerHTML=_brCups.map(function(c,i){
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">'
+      +'<span style="min-width:22px;font-size:14px;color:#4a3820;font-weight:700;text-align:center">'+_CIRCLE[i]+'</span>'
+      +'<input class="fi" style="flex:1" placeholder="ボトル名（例: Patrón Silver）" value="'+escHtml(c.name||'')+'" oninput="_brCups['+i+'].name=this.value">'
+      +'<input class="fi mono" style="width:120px" placeholder="ボトルID（任意）" value="'+escHtml(c.code||'')+'" oninput="_brCups['+i+'].code=this.value">'
+      +'</div>';
+  }).join('');
+}
+
+function brAddParticipant(){
+  _brParts.push({name:'',answers:_brCups.map(function(){return'';}),winner:''});
+  brRenderParts();
+}
+
+function brRemovePart(pi){
+  _brParts.splice(pi,1);
+  brRenderParts();
+}
+
+function brRenderParts(){
+  var el=g('br-participants-form'); if(!el) return;
+  if(!_brParts.length){
+    el.innerHTML='<div style="font-size:12px;color:var(--ink3)">参加者がいません。「＋ 参加者追加」をクリックしてください。</div>';
+    return;
+  }
+  var noneOpt='<option value="">—</option>';
+  var cupOpts=_brCups.map(function(c,i){
+    return '<option value="'+(i+1)+'">'+(i+1)+(c.name?': '+escHtml(c.name.slice(0,10)):'')+'</option>';
+  }).join('');
+  var thCups=_brCups.map(function(c,i){
+    return '<th style="padding:3px 5px;font-size:10px;text-align:center;min-width:72px">'
+      +_CIRCLE[i]
+      +(c.name?'<br><span style="font-weight:400;color:var(--ink3);font-size:9px">'+escHtml(c.name.slice(0,8))+'</span>':'')
+      +'</th>';
+  }).join('');
+  var rows=_brParts.map(function(p,pi){
+    var tdCups=_brCups.map(function(_,ci){
+      return '<td style="padding:2px 3px;text-align:center">'
+        +'<select id="br-pa-'+pi+'-'+ci+'" style="font-size:11px;padding:1px 2px;border:1px solid var(--border2);border-radius:3px;background:var(--cream)">'
+        +noneOpt+cupOpts+'</select></td>';
+    }).join('');
+    return '<tr>'
+      +'<td style="padding:2px 3px"><input style="width:82px;font-size:11px;padding:3px 6px;border:1px solid var(--border2);border-radius:3px;background:var(--cream)" id="br-pn-'+pi+'" placeholder="名前/ID" value="'+escHtml(p.name||'')+'"></td>'
+      +tdCups
+      +'<td style="padding:2px 3px;text-align:center"><select id="br-pw-'+pi+'" style="font-size:11px;padding:1px 2px;border:1px solid var(--border2);border-radius:3px;background:var(--cream)">'+noneOpt+cupOpts+'</select></td>'
+      +'<td style="padding:2px 3px"><button class="btn bd" style="padding:1px 6px;font-size:10px" onclick="brRemovePart('+pi+')">×</button></td>'
+      +'</tr>';
+  }).join('');
+  el.innerHTML='<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px">'
+    +'<thead><tr><th style="padding:3px 5px;font-size:10px;text-align:left;min-width:86px">名前</th>'
+    +thCups+'<th style="padding:3px 5px;font-size:10px;text-align:center;min-width:72px">❤️好き</th><th></th></tr></thead>'
+    +'<tbody>'+rows+'</tbody></table></div>';
+  _brParts.forEach(function(p,pi){
+    var nameEl=g('br-pn-'+pi);
+    if(nameEl) nameEl.addEventListener('input',function(){_brParts[pi].name=this.value;});
+    _brCups.forEach(function(_,ci){
+      var sel=g('br-pa-'+pi+'-'+ci);
+      if(sel){
+        if(p.answers[ci]) sel.value=String(p.answers[ci]);
+        sel.addEventListener('change',function(){_brParts[pi].answers[ci]=this.value;});
+      }
+    });
+    var wsel=g('br-pw-'+pi);
+    if(wsel){
+      if(p.winner) wsel.value=String(p.winner);
+      wsel.addEventListener('change',function(){_brParts[pi].winner=this.value;});
+    }
+  });
+}
+
+async function brSave(){
+  var date=(gv('br-date')||'').trim();
+  if(date.length!==6){toast('日付（6桁）は必須です','err');return;}
+  if(_brCups.length<2){toast('カップ数が不足です','err');return;}
+  if(!_brCups.every(function(c){return (c.name||'').trim();})){toast('すべてのカップにボトル名を入力してください','err');return;}
+  if(!_brParts.length){toast('参加者を追加してください','err');return;}
+  var groupId='retro_'+date+'_'+Date.now();
+  var marks=_brCups.map(function(_,i){return String(i+1);});
+  var bottleIds=_brCups.map(function(c){return (c.code||c.name).trim();});
+  var bottleComboKey=bottleIds.slice().sort().join('|');
+  try{
+    var batch=db.batch();
+    _brParts.forEach(function(p,pi){
+      var customerId=(p.name||'').trim()||('anon'+pi);
+      var docId=groupId+'_'+customerId;
+      var answers=marks.map(function(actualMark,mki){
+        var guessMark=String(p.answers[mki]||'');
+        var guessIdx=parseInt(guessMark)-1;
+        return{
+          blindMarkId:actualMark,
+          actualOrderId:'',
+          actualProduct:_brCups[mki].name,
+          guessMarkId:guessMark||null,
+          guessOrderId:'',
+          guessProduct:(guessIdx>=0&&_brCups[guessIdx])?_brCups[guessIdx].name:'',
+          isCorrect:!!guessMark&&guessMark===actualMark
+        };
+      });
+      batch.set(db.collection('blindResults').doc(docId),{
+        id:docId,groupId:groupId,batchId:null,
+        visitKey:customerId,customerId:customerId,
+        answeredAt:firebase.firestore.FieldValue.serverTimestamp(),
+        answers:answers,winner:String(p.winner||'')||null,
+        correctCount:answers.filter(function(a){return a.isCorrect;}).length,
+        totalCount:marks.length,
+        bottleComboKey:bottleComboKey,
+        isRetro:true
+      });
+    });
+    await batch.commit();
+    toast('ブラインド結果を保存しました（'+_brParts.length+'件）');
+    _brParts=[];
+    brRenderParts();
+  }catch(e){
+    toast('保存失敗: '+e.message,'err');
+  }
+}
+
+async function brLoadStats(){
+  var statusEl=g('br-stats-status'),contentEl=g('br-stats-content');
+  if(statusEl) statusEl.textContent='読み込み中...';
+  if(contentEl) contentEl.innerHTML='';
+  try{
+    var snap=await db.collection('blindResults').get();
+    var results=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    if(statusEl) statusEl.textContent='計'+results.length+'件';
+    brRenderStats(results,contentEl);
+  }catch(e){
+    if(statusEl) statusEl.textContent='エラー: '+e.message;
+  }
+}
+
+function brRenderStats(results,contentEl){
+  if(!contentEl) return;
+  if(!results.length){
+    contentEl.innerHTML='<div class="card" style="padding:16px;font-size:12px;color:var(--ink3)">データがありません</div>';
+    return;
+  }
+  var groups={};
+  results.forEach(function(r){
+    var key=r.bottleComboKey||(r.batchId?'batch:'+r.batchId:'—');
+    if(!groups[key]) groups[key]=[];
+    groups[key].push(r);
+  });
+  var keys=Object.keys(groups).sort();
+  contentEl.innerHTML=keys.map(function(key){
+    var recs=groups[key],n=recs.length;
+    var bottleMap={};
+    recs.forEach(function(r){
+      if(!r.answers) return;
+      r.answers.forEach(function(a){
+        var mid=a.blindMarkId||'?';
+        if(!bottleMap[mid]) bottleMap[mid]={product:a.actualProduct||mid,correct:0,total:0,liked:0};
+        bottleMap[mid].total++;
+        if(a.isCorrect) bottleMap[mid].correct++;
+      });
+      if(r.winner){
+        if(!bottleMap[r.winner]) bottleMap[r.winner]={product:r.winner,correct:0,total:0,liked:0};
+        bottleMap[r.winner].liked++;
+      }
+    });
+    var midKeys=Object.keys(bottleMap).sort(function(a,b){
+      var na=parseInt(a),nb=parseInt(b);
+      return(!isNaN(na)&&!isNaN(nb))?na-nb:a.localeCompare(b,'ja');
+    });
+    var tableRows=midKeys.map(function(mid){
+      var b=bottleMap[mid];
+      var pct=b.total?Math.round(b.correct/b.total*100):0;
+      var numIdx=parseInt(mid)-1;
+      var markLabel=(numIdx>=0&&numIdx<10)?_CIRCLE[numIdx]:mid;
+      var pctColor=pct>=70?'var(--teal)':pct>=50?'var(--gold-d)':'var(--red)';
+      return '<tr>'
+        +'<td style="text-align:center;font-size:14px;color:#4a3820;font-weight:700;padding:5px 8px">'+markLabel+'</td>'
+        +'<td style="padding:5px 8px">'+escHtml(b.product)+'</td>'
+        +'<td style="text-align:center;font-family:var(--mono);padding:5px 8px">'+b.correct+'/'+b.total+'</td>'
+        +'<td style="text-align:center;font-weight:700;color:'+pctColor+';padding:5px 8px">'+pct+'%</td>'
+        +'<td style="text-align:center;padding:5px 8px">'+b.liked+(b.liked>0?' ❤️':'')+'</td>'
+        +'</tr>';
+    }).join('');
+    var dispKey=key.length>70?key.slice(0,70)+'…':key;
+    return '<div class="card" style="padding:14px 16px;margin-bottom:12px">'
+      +'<div style="font-size:10px;color:var(--ink3);font-family:var(--mono);margin-bottom:4px;word-break:break-all">'+escHtml(dispKey)+'</div>'
+      +'<div style="font-size:12px;font-weight:600;margin-bottom:10px">参加者数: '+n+'名</div>'
+      +'<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px">'
+      +'<thead><tr style="background:var(--cream2)">'
+      +'<th style="padding:4px 8px;font-size:10px;text-align:center">カップ</th>'
+      +'<th style="padding:4px 8px;font-size:10px;text-align:left">ボトル名</th>'
+      +'<th style="padding:4px 8px;font-size:10px;text-align:center">正解数</th>'
+      +'<th style="padding:4px 8px;font-size:10px;text-align:center">正解率</th>'
+      +'<th style="padding:4px 8px;font-size:10px;text-align:center">好き</th>'
+      +'</tr></thead><tbody>'+tableRows+'</tbody></table></div>'
+      +'</div>';
+  }).join('');
+}
+
 (function(){
   var ed=document.getElementById('nw-editor'); if(!ed) return;
   ed.addEventListener('paste',function(e){
