@@ -116,7 +116,24 @@ var AuthRole = (function() {
   async function getActiveSession(db){
     try{
       var snap=await db.collection('sessions').where('status','==','open').orderBy('openTime','desc').limit(1).get();
-      if(!snap.empty) return {id:snap.docs[0].id,...snap.docs[0].data()};
+      if(!snap.empty){
+        var ses={id:snap.docs[0].id};
+        Object.assign(ses,snap.docs[0].data());
+        // 古すぎるセッションは無視（日またぎ営業対応で最大2日以内）
+        var sesDate=ses.openDate||ses.date;
+        if(sesDate&&sesDate.length===6){
+          var now=new Date();
+          var validDates=[];
+          for(var offset=0;offset<=2;offset++){
+            var dd=new Date(now.getTime()-offset*86400000);
+            validDates.push(String(dd.getFullYear()).slice(2)
+              +String(dd.getMonth()+1).padStart(2,'0')
+              +String(dd.getDate()).padStart(2,'0'));
+          }
+          if(validDates.indexOf(sesDate)<0) return null; // 2日以上前のセッションは無効
+        }
+        return ses;
+      }
     }catch(e){}
     return null;
   }
