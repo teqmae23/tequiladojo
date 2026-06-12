@@ -785,7 +785,7 @@ function renderMembers(){
     var guestBadge=r.isGuest?'<span class="badge bg-gray" style="font-size:9px;padding:1px 5px;margin-left:4px">ゲスト</span>':'';
     var transferBtn=r.isGuest?'<button class="btn bs sm" style="color:var(--teal);border-color:var(--teal)" data-transfer-id="'+r.id+'">引継コード</button>':'';
     var deletedStyle=r.deleted?'opacity:.5;':'';
-    return '<tr style="'+deletedStyle+'"><td class="mono">'+r.id+'</td><td>'+(r.name||"—")+guestBadge+'</td><td style="font-size:12px;color:var(--teal)">'+(r.nickname||"—")+'</td><td class="dim" style="font-size:12px">'+(r.nameKana||"—")+'</td><td>'+gBadge+'</td><td class="dim" style="font-size:11px">'+(r.prefecture||"—")+'</td><td>'+emailCell+'</td><td class="mono dim" style="font-size:11px">'+(r.registeredAt||"—")+'</td><td><div class="acts"><button class="btn bs sm" data-edit-member="'+r.id+'">編集</button><button class="btn bs sm" data-copy-member="'+r.id+'">コピー</button>'+transferBtn+'<button class="btn bd sm" onclick="openMemberDelModal(\''+r.id+'\',\''+escHtml(r.name||r.nickname||r.id)+'\','+!!r.deleted+')">削除</button></div></td></tr>';
+    return '<tr style="'+deletedStyle+'"><td class="mono">'+r.id+'</td><td>'+(r.name||"—")+guestBadge+'</td><td style="font-size:12px;color:var(--teal)">'+(r.nickname||"—")+'</td><td class="dim" style="font-size:12px">'+(r.nameKana||"—")+'</td><td>'+gBadge+'</td><td class="dim" style="font-size:11px">'+(r.prefecture||"—")+'</td><td>'+emailCell+'</td><td class="mono dim" style="font-size:11px">'+(normDateStr(r.registeredAt)||r.registeredAt||"—")+'</td><td><div class="acts"><button class="btn bs sm" data-edit-member="'+r.id+'">編集</button><button class="btn bs sm" data-copy-member="'+r.id+'">コピー</button>'+transferBtn+'<button class="btn bd sm" onclick="openMemberDelModal(\''+r.id+'\',\''+escHtml(r.name||r.nickname||r.id)+'\','+!!r.deleted+')">削除</button></div></td></tr>';
   }).join("");
 }
 
@@ -832,6 +832,38 @@ function loadMembers(cb){
 
 function todayDate(){ return new Date().toISOString().slice(0,10); }
 
+// YYYYMMDD / YYYY-MM-DD など混在形式を YYYY-MM-DD に正規化
+function normDateStr(s){
+  if(!s) return '';
+  s=String(s).trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  var digits=s.replace(/\D/g,'');
+  if(digits.length===8) return digits.slice(0,4)+'-'+digits.slice(4,6)+'-'+digits.slice(6,8);
+  return s;
+}
+// hidden フィールド + 分割 y/m/d フィールドを一括セット
+function setDateGroup(prefix,dateStr){
+  var d=normDateStr(dateStr);
+  var parts=d?d.split('-'):[];
+  sv(prefix+'-y',parts[0]||'');
+  sv(prefix+'-m',parts[1]||'');
+  sv(prefix+'-d',parts[2]||'');
+  sv(prefix,parts.length===3?d:'');
+}
+// y/m/d 入力 → hidden 同期リスナー（1回だけ設定）
+function initDateGroupListeners(prefix){
+  function sync(){
+    var y=gv(prefix+'-y'),m=gv(prefix+'-m'),d=gv(prefix+'-d');
+    sv(prefix,(y&&m&&d)?y+'-'+m+'-'+d:'');
+  }
+  ['-y','-m','-d'].forEach(function(s){
+    var el=g(prefix+s);
+    if(el){el.addEventListener('input',sync);el.addEventListener('change',sync);}
+  });
+}
+initDateGroupListeners('mem-reg');
+initDateGroupListeners('mem-birth');
+
 function genMemberId(){
   var yy=new Date().getFullYear().toString().slice(2);
   var maxSeq=0;
@@ -844,8 +876,8 @@ function setMemberFields(r){
   sv("mem-kana",   r?r.nameKana:"");
   sv("mem-nick",   r?r.nickname:"");
   sv("mem-gender", r?r.gender:"他");
-  sv("mem-reg",    r?(r.registeredAt||todayDate()):todayDate());
-  sv("mem-birth",  r?r.birthday:"");
+  setDateGroup("mem-reg",  r?(r.registeredAt||todayDate()):todayDate());
+  setDateGroup("mem-birth",r?r.birthday||"":"");
   sv("mem-pref",   r?r.prefecture:"");
   sv("mem-addr",   r?r.address:"");
   sv("mem-tel",    r?r.phone:"");
@@ -905,7 +937,7 @@ function copyMemberModal(id){
   editId.member=null; g("mt-member").textContent="顧客登録（コピー）";
   var newId=genMemberId(); sv("mem-id",newId);
   var idEl=g("mem-id"); idEl.readOnly=true; idEl.style.background="var(--cream2)";
-  setMemberFields(r); sv("mem-reg",todayDate()); sv("mem-email","");
+  setMemberFields(r); setDateGroup("mem-reg",todayDate()); sv("mem-email","");
   _editOrigEmail="";
   var emailEl=g("mem-email"); if(emailEl){ emailEl.readOnly=false; emailEl.style.background=""; }
   var photoSec=g("m-photo-section"); if(photoSec) photoSec.style.display=_currentRole==="owner"?"block":"none";
@@ -986,7 +1018,7 @@ g("btn-save-member").addEventListener("click",async function(){
     iconUrl:(typeof iUrl!=="undefined"?iUrl:(r?r.iconUrl||null:null)),
     photoUrl:(_currentRole==="owner"&&typeof pUrl!=="undefined"?pUrl:(r?r.photoUrl||null:null)),
     name:name, nameKana:gv("mem-kana")||null, nickname:gv("mem-nick")||null,
-    gender:gv("mem-gender")||"男", registeredAt:gv("mem-reg")||todayDate(), birthday:gv("mem-birth")||null,
+    gender:gv("mem-gender")||"男", registeredAt:normDateStr(gv("mem-reg"))||todayDate(), birthday:normDateStr(gv("mem-birth"))||null,
     prefecture:gv("mem-pref")||null, address:gv("mem-addr")||null, phone:gv("mem-tel")||null,
     email:newEmail||null,
     twitterId:gv("mem-tw")||null, instagramId:gv("mem-ig")||null, facebookId:gv("mem-fb")||null,
