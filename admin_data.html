@@ -310,7 +310,10 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
     <div class="page active" id="page-sessions">
       <div class="phead">
         <div><div class="ptitle">営業データ</div><div class="pdesc">セッションID 7桁 = YYMMDD + 連番1</div></div>
-        <button class="btn bp" id="btn-open-session">＋ 新規追加</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn bs" onclick="navigateToPerfCal()" style="font-size:11px">📊 営業実績カレンダー</button>
+          <button class="btn bp" id="btn-open-session">＋ 新規追加</button>
+        </div>
       </div>
       <div class="card">
         <div class="toolbar">
@@ -515,7 +518,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button class="btn bs sm" onclick="switchToPage('sessions')" style="font-size:11px">← 営業データ一覧へ</button>
-            <button class="btn bs sm" onclick="switchToPage('perf-cal')" style="font-size:11px">📊 営業実績カレンダーへ</button>
+            <button class="btn bs sm" onclick="navigateToPerfCal()" style="font-size:11px">📊 営業実績カレンダーへ</button>
             <input type="date" id="tree-date-input" class="fsel">
             <button class="btn bp" id="btn-tree-load" onclick="loadTree()">表示</button>
             <button class="btn bs" id="btn-tree-refresh" onclick="loadTree()" title="データを再読み込み">🔄 更新</button>
@@ -544,6 +547,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div class="pdesc">月単位の営業実績。日付セルをクリックでツリー表示へ移動。</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn bs sm" onclick="switchToPage('sessions')" style="font-size:11px">← 営業データ一覧へ</button>
             <button class="btn bs" id="perf-cal-prev">◀ 前月</button>
             <span id="perf-cal-ym" style="font-size:14px;font-weight:600;color:var(--ink);min-width:88px;text-align:center"></span>
             <button class="btn bs" id="perf-cal-next">翌月 ▶</button>
@@ -1243,7 +1247,7 @@ document.querySelector('[data-page="perf-cal"]').addEventListener("click",functi
     var now=new Date();
     _perfCalYM={y:now.getFullYear(),m:now.getMonth()};
   }
-  loadPerfCal();
+  if(typeof loadPerfCal==='function') loadPerfCal();
 });
 // 期間検索：開始を入力したら終了に今日を自動セット
 (function(){
@@ -4561,11 +4565,49 @@ function switchToPage(pageName){
 }
 
 function navigateToTree(yymmdd){
-  // yymmdd = 6桁 YYMMDD
+  // yymmdd = 6桁 YYMMDD → tree表示 + 期間検索欄にも同日付をセット
   var dateStr='20'+yymmdd.slice(0,2)+'-'+yymmdd.slice(2,4)+'-'+yymmdd.slice(4,6);
   switchToPage('tree');
   document.getElementById('tree-date-input').value=dateStr;
+  var fromEl=document.getElementById('tree-range-from');
+  var toEl=document.getElementById('tree-range-to');
+  if(fromEl) fromEl.value=dateStr;
+  if(toEl)   toEl.value=dateStr;
   loadTree();
+}
+
+function navigateToPerfCal(){
+  // ツリー表示中のセッション日付から月を求めてカレンダーを開く
+  var latestYYMMDD=null;
+  // tree-date-input から
+  var tdi=document.getElementById('tree-date-input');
+  if(tdi&&tdi.value){
+    var d=new Date(tdi.value);
+    if(!isNaN(d)){
+      if(!latestYYMMDD){
+        var yy2=String(d.getFullYear()).slice(2);
+        var mm2=String(d.getMonth()+1).padStart(2,'0');
+        var dd2=String(d.getDate()).padStart(2,'0');
+        latestYYMMDD=yy2+mm2+dd2;
+      }
+    }
+  }
+  // _treeSessions から最新日付
+  if(_treeSessions&&_treeSessions.length){
+    _treeSessions.forEach(function(s){
+      if(s.date&&(!latestYYMMDD||s.date>latestYYMMDD)) latestYYMMDD=s.date;
+    });
+  }
+  if(latestYYMMDD&&latestYYMMDD.length>=6){
+    var fy=2000+parseInt(latestYYMMDD.slice(0,2),10);
+    var fm=parseInt(latestYYMMDD.slice(2,4),10)-1;
+    _perfCalYM={y:fy,m:fm};
+  } else if(!_perfCalYM.y){
+    var now=new Date();
+    _perfCalYM={y:now.getFullYear(),m:now.getMonth()};
+  }
+  switchToPage('perf-cal');
+  loadPerfCal();
 }
 
 // ── 営業実績カレンダー ────────────────────────────────────────
@@ -4608,30 +4650,43 @@ async function loadPerfCal(){
       .where('visitDate','>=',startYYMMDD).where('visitDate','<',endYYMMDD).get();
     var visList=visSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
 
-    // 注文データ（テキーラ提供済のみ）
-    var ordStartKey=yy+mm+'0100';
-    var ordEndKey=nextYY+nextMM+'0100';
-    var ordSnap=await db.collection('orders')
-      .where('visitKey','>=',ordStartKey).where('visitKey','<',ordEndKey).get();
-    var ordList=ordSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    // 注文データ: visList の visitId で whereIn クエリ（recalcSession と同じ方式）
+    // ※ range クエリは visitId フィールド名の揺れや複合インデックス不在で抜けが起きるため使わない
+    var visitIds=visList.map(function(v){return v.id;});
+    var ordList=[];
+    if(visitIds.length){
+      var ordChunks=[];
+      for(var oci=0;oci<visitIds.length;oci+=30) ordChunks.push(visitIds.slice(oci,oci+30));
+      for(var oci=0;oci<ordChunks.length;oci++){
+        var cSnap=await db.collection('orders').where('visitKey','in',ordChunks[oci]).get();
+        cSnap.docs.forEach(function(d){ordList.push(Object.assign({id:d.id},d.data()));});
+      }
+    }
+
+    // visitId → visitDate マップ（日別フィルタ用）
+    var visDateMap={};
+    visList.forEach(function(v){visDateMap[v.id]=v.visitDate;});
 
     // 日付ごとに集計
     var dayData={}; // key: yymmdd
     for(var dd=1;dd<=daysInMonth;dd++){
-      var yymmdd=yy+mm+String(dd).padStart(2,'0');
-      var daySes=sesList.filter(function(s){return s.date===yymmdd;});
-      var dayVis=visList.filter(function(v){return v.visitDate===yymmdd;});
-      var guestCount=dayVis.filter(function(v){return !v.isStaff;}).length;
-      var sales=dayVis.reduce(function(s,v){return s+(v.amount||0);},0);
+      (function(yymmdd){
+        var daySes=sesList.filter(function(s){return s.date===yymmdd;});
+        var dayVis=visList.filter(function(v){return v.visitDate===yymmdd;});
+        var guestCount=dayVis.filter(function(v){return !v.isStaff;}).length;
+        var sales=dayVis.reduce(function(s,v){return s+(v.amount||0);},0);
+        var dayVisIdSet={};
+        dayVis.forEach(function(v){dayVisIdSet[v.id]=true;});
 
-      // テキーラml: visitKeyがyymmddで始まる注文
-      var prefix=yymmdd;
-      var dayOrds=ordList.filter(function(o){
-        return (o.visitKey||'').slice(0,6)===prefix&&o.served!==0&&o.productType==='tequila';
-      });
-      var tequilaMl=dayOrds.reduce(function(s,o){return s+(o.qty||0);},0);
+        var tequilaMl=ordList.reduce(function(s,o){
+          var vk=o.visitKey||o.visitId||'';
+          if(!dayVisIdSet[vk]) return s;
+          if(o.served===0||o.productType!=='tequila') return s;
+          return s+(o.qty||0);
+        },0);
 
-      dayData[yymmdd]={sessions:daySes,guestCount:guestCount,sales:sales,tequilaMl:tequilaMl};
+        dayData[yymmdd]={sessions:daySes,guestCount:guestCount,sales:sales,tequilaMl:tequilaMl};
+      })(yy+mm+String(dd).padStart(2,'0'));
     }
 
     // 月全体の集計
