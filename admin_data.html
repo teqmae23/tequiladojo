@@ -236,13 +236,29 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 .tree-together-chip{display:inline-flex;align-items:center;gap:2px;background:rgba(26,110,88,.1);border:1px solid rgba(26,110,88,.22);border-radius:12px;padding:1px 6px 1px 8px;font-size:10px;color:var(--teal)}
 .tree-add-row{padding:6px 14px 8px;border-top:1px dashed var(--border)}
 .tbl-wrap{overflow-x:auto}
+/* ─── 営業実績カレンダー ─── */
+.perf-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.perf-dow-hd{background:var(--topbar);color:rgba(255,255,255,.7);font-size:11px;font-weight:600;text-align:center;padding:4px 2px;border-radius:var(--r)}
+.perf-cell{border:1px solid var(--border);border-radius:var(--r);padding:6px 8px;min-height:86px;background:var(--white);vertical-align:top;transition:background .12s}
+.perf-cell.perf-has-ses{cursor:pointer}
+.perf-cell.perf-has-ses:hover{background:var(--cream2);border-color:var(--teal)}
+.perf-cell.perf-empty-day{background:var(--cream);opacity:.55}
+.perf-cell.perf-blank{background:transparent;border-color:transparent}
+.perf-day-num{font-size:11px;font-weight:700;color:var(--ink);margin-bottom:3px}
+.perf-time{font-size:10px;color:var(--ink3);line-height:1.5}
+.perf-layout{font-size:10px;color:var(--ink3)}
+.perf-stat{font-size:10px;color:var(--ink2);line-height:1.6}
+.perf-sales{font-size:11px;font-weight:600;color:var(--teal)}
+.perf-summary-chip{display:flex;flex-direction:column;align-items:flex-start;background:var(--cream2);border:1px solid var(--border);border-radius:var(--r);padding:8px 14px;min-width:120px}
+.perf-summary-chip .lbl{font-size:10px;color:var(--ink3)}
+.perf-summary-chip .val{font-size:16px;font-weight:700;color:var(--ink);margin-top:2px}
 /* ニュースエディタツールバー */
 .nw-tb-btn{padding:3px 7px;font-size:12px;border:1px solid #555;background:#333;color:#ddd;border-radius:3px;cursor:pointer;line-height:1.4;transition:background .12s}
 .nw-tb-btn:hover{background:#444;color:#fff}
 .nw-tb-btn:active{background:#555}
 .nw-sep{width:1px;background:#444;margin:2px 4px;align-self:stretch}
 </style>
-<meta name="version" content="202603260723">
+<meta name="version" content="202606121200">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -281,6 +297,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <button class="tab" data-page="orders">注文データ <span class="cnt" id="cnt-orders">—</span></button>
       <button class="tab" data-page="calendar">カレンダー</button>
       <button class="tab" data-page="tree">🌲 ツリー</button>
+      <button class="tab" data-page="perf-cal">📊 営業実績</button>
       <button class="tab" data-page="backup">💾 バックアップ</button>
       <button class="tab" data-page="journal">📋 ジャーナル</button>
       <button class="tab" data-page="news">ニュース <span class="cnt" id="cnt-news">—</span></button>
@@ -497,6 +514,8 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div class="pdesc">営業日を指定してセッション・来場・注文をツリー表示。カスケード削除対応。</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn bs sm" onclick="switchToPage('sessions')" style="font-size:11px">← 営業データ一覧へ</button>
+            <button class="btn bs sm" onclick="switchToPage('perf-cal')" style="font-size:11px">📊 営業実績カレンダーへ</button>
             <input type="date" id="tree-date-input" class="fsel">
             <button class="btn bp" id="btn-tree-load" onclick="loadTree()">表示</button>
             <button class="btn bs" id="btn-tree-refresh" onclick="loadTree()" title="データを再読み込み">🔄 更新</button>
@@ -514,6 +533,25 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         </div>
       </div>
       <div id="tree-container"><div class="ec">日付を選択して「表示」を押してください。</div></div>
+    </div>
+
+    <!-- 営業実績カレンダーページ -->
+    <div class="page" id="page-perf-cal">
+      <div class="phead" style="flex-direction:column;align-items:stretch;gap:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div>
+            <div class="ptitle">営業実績カレンダー</div>
+            <div class="pdesc">月単位の営業実績。日付セルをクリックでツリー表示へ移動。</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn bs" id="perf-cal-prev">◀ 前月</button>
+            <span id="perf-cal-ym" style="font-size:14px;font-weight:600;color:var(--ink);min-width:88px;text-align:center"></span>
+            <button class="btn bs" id="perf-cal-next">翌月 ▶</button>
+          </div>
+        </div>
+        <div id="perf-cal-summary" style="display:flex;gap:10px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border)"></div>
+      </div>
+      <div id="perf-cal-grid" class="perf-cal-grid" style="margin-top:12px"></div>
     </div>
 
     <!-- カレンダーページ -->
@@ -1200,9 +1238,30 @@ document.querySelector('[data-page="tree"]').addEventListener("click",function()
     document.getElementById('tree-date-input').value=d.toISOString().slice(0,10);
   }
 });
+document.querySelector('[data-page="perf-cal"]').addEventListener("click",function(){
+  if(!_perfCalYM.y){
+    var now=new Date();
+    _perfCalYM={y:now.getFullYear(),m:now.getMonth()};
+  }
+  loadPerfCal();
+});
+// 期間検索：開始を入力したら終了に今日を自動セット
+(function(){
+  var fromEl=document.getElementById('tree-range-from');
+  if(fromEl) fromEl.addEventListener('change',function(){
+    var toEl=document.getElementById('tree-range-to');
+    if(this.value&&toEl&&!toEl.value){
+      toEl.value=new Date().toISOString().slice(0,10);
+    }
+  });
+})();
 
 // 削除共通ハンドラ
 document.addEventListener("click",function(e){
+  // date cell in sessions table → navigate to tree
+  var td=e.target.closest("td[data-nav-tree]");
+  if(td){ navigateToTree(td.dataset.navTree); return; }
+
   var btn=e.target.closest("button"); if(!btn) return;
   if(btn.dataset.editSession){ openSessionModal(btn.dataset.editSession); return; }
   if(btn.dataset.recalcSession){ recalcSession(btn.dataset.recalcSession); return; }
@@ -1295,7 +1354,7 @@ function renderSessions(){
     var lay2=cache.layouts.find(function(l){return l.id===r.layoutId;});
     return '<tr>'
       +'<td class="mono" style="font-size:11px">'+r.id+'</td>'
-      +'<td class="mono dim">'+fmtDate(r.date)+'</td>'
+      +'<td class="mono" style="cursor:pointer;color:var(--teal);text-decoration:underline" data-nav-tree="'+r.date+'" title="ツリー表示へ">'+fmtDate(r.date)+'</td>'
       +'<td class="mono dim">'+fmtTime(r.openTime)+'</td>'
       +'<td class="mono dim">'+fmtTime(r.closeTime)+'</td>'
       +'<td class="dim" style="font-size:11px">'+( lay2?lay2.name:r.layoutId||"—")+'</td>'
@@ -4489,6 +4548,158 @@ function brRenderStats(results,contentEl){
       +'</tr></thead><tbody>'+tableRows+'</tbody></table></div>'
       +'</div>';
   }).join('');
+}
+
+// ── ページ切り替えユーティリティ ─────────────────────────────
+function switchToPage(pageName){
+  document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
+  var pg=document.getElementById('page-'+pageName);
+  if(pg) pg.classList.add('active');
+  var tab=document.querySelector('[data-page="'+pageName+'"]');
+  if(tab) tab.classList.add('active');
+}
+
+function navigateToTree(yymmdd){
+  // yymmdd = 6桁 YYMMDD
+  var dateStr='20'+yymmdd.slice(0,2)+'-'+yymmdd.slice(2,4)+'-'+yymmdd.slice(4,6);
+  switchToPage('tree');
+  document.getElementById('tree-date-input').value=dateStr;
+  loadTree();
+}
+
+// ── 営業実績カレンダー ────────────────────────────────────────
+var _perfCalYM={y:0,m:0}; // y=西暦4桁, m=0-indexed
+
+document.getElementById('perf-cal-prev').addEventListener('click',function(){
+  _perfCalYM.m--;
+  if(_perfCalYM.m<0){_perfCalYM.m=11;_perfCalYM.y--;}
+  loadPerfCal();
+});
+document.getElementById('perf-cal-next').addEventListener('click',function(){
+  _perfCalYM.m++;
+  if(_perfCalYM.m>11){_perfCalYM.m=0;_perfCalYM.y++;}
+  loadPerfCal();
+});
+
+async function loadPerfCal(){
+  var y=_perfCalYM.y, mo=_perfCalYM.m; // mo: 0-indexed
+  var yy=String(y).slice(2);
+  var mm=String(mo+1).padStart(2,'0');
+  var daysInMonth=new Date(y,mo+1,0).getDate();
+  var startYYMMDD=yy+mm+'01';
+  var nextMo=mo+1>11?{y:y+1,m:0}:{y:y,m:mo+1};
+  var nextYY=String(nextMo.y).slice(2);
+  var nextMM=String(nextMo.m+1).padStart(2,'0');
+  var endYYMMDD=nextYY+nextMM+'01';
+
+  document.getElementById('perf-cal-ym').textContent=y+'年'+(mo+1)+'月';
+  document.getElementById('perf-cal-summary').innerHTML='<span style="font-size:11px;color:var(--ink3)">読み込み中...</span>';
+  document.getElementById('perf-cal-grid').innerHTML='';
+
+  try{
+    // セッション取得
+    var sesSnap=await db.collection('sessions')
+      .where('date','>=',startYYMMDD).where('date','<',endYYMMDD).get();
+    var sesList=sesSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+
+    // 来場データ取得
+    var visSnap=await db.collection('visits')
+      .where('visitDate','>=',startYYMMDD).where('visitDate','<',endYYMMDD).get();
+    var visList=visSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+
+    // 注文データ（テキーラ提供済のみ）
+    var ordStartKey=yy+mm+'0100';
+    var ordEndKey=nextYY+nextMM+'0100';
+    var ordSnap=await db.collection('orders')
+      .where('visitKey','>=',ordStartKey).where('visitKey','<',ordEndKey).get();
+    var ordList=ordSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+
+    // 日付ごとに集計
+    var dayData={}; // key: yymmdd
+    for(var dd=1;dd<=daysInMonth;dd++){
+      var yymmdd=yy+mm+String(dd).padStart(2,'0');
+      var daySes=sesList.filter(function(s){return s.date===yymmdd;});
+      var dayVis=visList.filter(function(v){return v.visitDate===yymmdd;});
+      var guestCount=dayVis.filter(function(v){return !v.isStaff;}).length;
+      var sales=dayVis.reduce(function(s,v){return s+(v.amount||0);},0);
+
+      // テキーラml: visitKeyがyymmddで始まる注文
+      var prefix=yymmdd;
+      var dayOrds=ordList.filter(function(o){
+        return (o.visitKey||'').slice(0,6)===prefix&&o.served!==0&&o.productType==='tequila';
+      });
+      var tequilaMl=dayOrds.reduce(function(s,o){return s+(o.qty||0);},0);
+
+      dayData[yymmdd]={sessions:daySes,guestCount:guestCount,sales:sales,tequilaMl:tequilaMl};
+    }
+
+    // 月全体の集計
+    var totalGuests=0,totalMl=0,totalSales=0;
+    Object.keys(dayData).forEach(function(k){
+      totalGuests+=dayData[k].guestCount;
+      totalMl+=dayData[k].tequilaMl;
+      totalSales+=dayData[k].sales;
+    });
+
+    var summaryHtml=''
+      +'<div class="perf-summary-chip"><span class="lbl">月間来場人数</span><span class="val">'+totalGuests+'<small style="font-size:12px;font-weight:400"> 名</small></span></div>'
+      +'<div class="perf-summary-chip"><span class="lbl">提供テキーラ合計</span><span class="val">'+totalMl+'<small style="font-size:12px;font-weight:400"> ml</small></span></div>'
+      +'<div class="perf-summary-chip"><span class="lbl">月間会計合計</span><span class="val">¥'+Number(totalSales).toLocaleString()+'</span></div>';
+    document.getElementById('perf-cal-summary').innerHTML=summaryHtml;
+
+    renderPerfCal(y,mo,daysInMonth,dayData);
+  }catch(e){
+    document.getElementById('perf-cal-summary').innerHTML='<span style="color:var(--red);font-size:12px">読み込み失敗: '+escHtml(e.message)+'</span>';
+    toast('営業実績読み込み失敗: '+e.message,'err');
+  }
+}
+
+function renderPerfCal(y,mo,daysInMonth,dayData){
+  var DOW=['日','月','火','水','木','金','土'];
+  var grid=document.getElementById('perf-cal-grid');
+  var html='';
+
+  // 曜日ヘッダー
+  DOW.forEach(function(d,i){
+    var col=i===0?'color:#c0392b':i===6?'color:#2471a3':'';
+    html+='<div class="perf-dow-hd" style="'+col+'">'+d+'</div>';
+  });
+
+  // 月初の曜日オフセット
+  var firstDow=new Date(y,mo,1).getDay(); // 0=Sun
+  for(var bi=0;bi<firstDow;bi++) html+='<div class="perf-cell perf-blank"></div>';
+
+  var yy=String(y).slice(2);
+  var mm=String(mo+1).padStart(2,'0');
+
+  for(var dd=1;dd<=daysInMonth;dd++){
+    var yymmdd=yy+mm+String(dd).padStart(2,'0');
+    var dow=new Date(y,mo,dd).getDay();
+    var dayColStyle=dow===0?'color:#c0392b':dow===6?'color:#2471a3':'';
+    var d=dayData[yymmdd];
+    var hasSes=d&&d.sessions&&d.sessions.length>0;
+    var cellClass='perf-cell'+(hasSes?' perf-has-ses':' perf-empty-day');
+    var clickAttr=hasSes?' onclick="navigateToTree(\''+yymmdd+'\')" title="ツリー表示へ"':'';
+
+    html+='<div class="'+cellClass+'"'+clickAttr+'>';
+    html+='<div class="perf-day-num" style="'+dayColStyle+'">'+dd+'日</div>';
+
+    if(hasSes){
+      var ses=d.sessions[0];
+      var lay=cache.layouts.find(function(l){return l.id===ses.layoutId;});
+      var openT=ses.openTime?fmtTime(ses.openTime):'—';
+      var closeT=ses.closeTime?fmtTime(ses.closeTime):'—';
+      if(lay) html+='<div class="perf-layout">'+escHtml(lay.name)+'</div>';
+      html+='<div class="perf-time">'+openT+' – '+closeT+'</div>';
+      html+='<div class="perf-stat">'+d.guestCount+'名 / '+d.tequilaMl+'ml</div>';
+      html+='<div class="perf-sales">¥'+Number(d.sales).toLocaleString()+'</div>';
+    }
+
+    html+='</div>';
+  }
+
+  grid.innerHTML=html;
 }
 
 (function(){
