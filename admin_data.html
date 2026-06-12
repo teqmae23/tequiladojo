@@ -1378,9 +1378,10 @@ async function recalcSession(sesId){
   if(!ses){ toast("セッションが見つかりません","err"); return; }
   var yymmdd=ses.date||sesId.slice(0,6);
   try{
-    // 1. 当日の来場を取得してセッション時間帯でフィルタ
+    // 1. 当日の来場を取得してセッション時間帯でフィルタ（hidden:true は除外）
     var visSnap=await db.collection('visits').where('visitDate','==',yymmdd).get();
-    var allVisits=visSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    var allVisits=visSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());})
+      .filter(function(v){return v.hidden!==true;});
     var sesVisits=getSessionVisits(ses,allVisits);
 
     // 2. セッション来場の注文を取得
@@ -1496,7 +1497,9 @@ var _bssBtn=g("btn-save-session"); if(_bssBtn) _bssBtn.addEventListener("click",
     breakStart3:gv("ses-b3s")||null, breakEnd3:gv("ses-b3e")||null,
     guestCount:gv("ses-guests")!==""?parseInt(gv("ses-guests")):null,
     sales:gv("ses-sales")!==""?parseInt(gv("ses-sales")):null,
-    memo:noteEl?noteEl.value||null:null
+    memo:noteEl?noteEl.value||null:null,
+    // closeTime がセットされていれば closed、なければ open
+    status: rawClose ? 'closed' : 'open'
   };
   var doSave=function(){ return db.collection("sessions").doc(id).set(saveData,{merge:true}); };
   var promise;
@@ -2896,19 +2899,32 @@ function getSessionVisits(ses, visits){
 }
 
 function renderTree(yymmdd,sessions,visits,orders,cont){
-  var totalOrders=orders.filter(function(o){return o.served!==0;}).length;
-  var totalAmt=visits.reduce(function(s,v){return s+(v.amount||0);},0);
+  // hidden:true な来場は非表示フィルタ（異常データ除外）
+  var hiddenVisits=visits.filter(function(v){return v.hidden===true;});
+  var visibleVisits=visits.filter(function(v){return v.hidden!==true;});
+  // hidden来場に紐づく注文も除外
+  var hiddenVisitIds={};
+  hiddenVisits.forEach(function(v){hiddenVisitIds[v.id]=true;});
+  var visibleOrders=orders.filter(function(o){return !hiddenVisitIds[(o.visitKey||o.visitId||'')];});
+
+  var totalOrders=visibleOrders.filter(function(o){return o.served!==0;}).length;
+  var totalAmt=visibleVisits.reduce(function(s,v){return s+(v.amount||0);},0);
+
+  // 以後は visible なものだけ使う
+  visits=visibleVisits; orders=visibleOrders;
 
   var html='<div class="tree-wrap">';
 
   // 日付サマリーバー
+  var hiddenNote=hiddenVisits.length?(' <span style="font-size:10px;background:#fee;color:var(--red);border-radius:3px;padding:1px 6px;margin-left:4px">非表示: '+hiddenVisits.length+'件</span>'):'';
   html+='<div class="card" style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">'
     +'<div style="font-size:13px;color:var(--ink2)">📅 <strong>'+fmtDate(yymmdd)+'</strong>'
     +' &nbsp;セッション: <strong>'+sessions.length+'</strong>'
     +' &nbsp;来場: <strong>'+visits.length+'</strong>'
     +' &nbsp;注文: <strong>'+totalOrders+'</strong>'
-    +' &nbsp;売上合計: <strong>¥'+totalAmt.toLocaleString()+'</strong></div>'
+    +' &nbsp;売上合計: <strong>¥'+totalAmt.toLocaleString()+'</strong>'+hiddenNote+'</div>'
     +'<div style="display:flex;gap:6px">'
+    +'<button class="btn bs sm" onclick="batchHideVisits(\''+yymmdd+'\')" title="この日の来場データを全件 hidden:true にする" style="font-size:10px">⚠ 異常来場を非表示</button>'
     +'<button class="btn bs sm" onclick="exportTreeCSV(\''+yymmdd+'\')" title="セッション・来場・注文をCSVでダウンロード">CSVバックアップ</button>'
     +'<button class="btn bd sm" data-tree-del-date="'+yymmdd+'" title="この日のセッション・来場・注文を全削除">この日のデータを全削除</button>'
     +'</div>';
@@ -3681,6 +3697,26 @@ window.addEventListener('message',function(e){
   if(!e.data||typeof e.data!=='object') return;
   if(e.data.type==='tequila-popup-close'){ closeOrderPopup(); loadTree(); }
 });
+
+async function batchHideVisits(yymmdd){
+  var label=fmtDate(yymmdd);
+  if(!confirm(label+'の来場データをすべて非表示にします。\n（Firestoreに hidden:true を設定します。再集計・実績カレンダーにも反映されません）\n\nよろしいですか？')) return;
+  try{
+    var snap=await db.collection('visits').where('visitDate','==',yymmdd).get();
+    var toHide=snap.docs.filter(function(d){return d.data().hidden!==true;});
+    if(!toHide.length){ toast(label+'に非表示にする来場データはありません','inf'); return; }
+    var batch=db.batch();
+    var cnt=0;
+    toHide.forEach(function(d){
+      batch.update(db.collection('visits').doc(d.id),{hidden:true});
+      cnt++;
+      if(cnt%500===0){ batch.commit(); batch=db.batch(); }
+    });
+    await batch.commit();
+    toast(label+'の来場 '+cnt+'件を非表示にしました');
+    loadTree();
+  }catch(e){ toast('非表示処理失敗: '+e.message,'err'); }
+}
 
 function openVisitModalForTree(yymmdd){
   openVisitModal(null);
@@ -4648,7 +4684,8 @@ async function loadPerfCal(){
     // 来場データ取得
     var visSnap=await db.collection('visits')
       .where('visitDate','>=',startYYMMDD).where('visitDate','<',endYYMMDD).get();
-    var visList=visSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    var visList=visSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());})
+      .filter(function(v){return v.hidden!==true;}); // hidden:true は実績集計から除外
 
     // 注文データ: visList の visitId で whereIn クエリ（recalcSession と同じ方式）
     // ※ range クエリは visitId フィールド名の揺れや複合インデックス不在で抜けが起きるため使わない
