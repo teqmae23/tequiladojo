@@ -4715,29 +4715,46 @@ async function loadPerfCal(){
         var dayVisIdSet={};
         dayVis.forEach(function(v){dayVisIdSet[v.id]=true;});
 
+        // テキーラml: ordList から計算、取れなければ visit.tequilaAmount をフォールバック
         var tequilaMl=ordList.reduce(function(s,o){
           var vk=o.visitKey||o.visitId||'';
           if(!dayVisIdSet[vk]) return s;
           if(o.served===0||o.productType!=='tequila') return s;
           return s+(o.qty||0);
         },0);
+        if(!tequilaMl){
+          tequilaMl=dayVis.reduce(function(s,v){return s+(v.tequilaAmount||0);},0);
+        }
 
-        dayData[yymmdd]={sessions:daySes,guestCount:guestCount,sales:sales,tequilaMl:tequilaMl};
+        dayData[yymmdd]={sessions:daySes,guestCount:guestCount,sales:sales,tequilaMl:tequilaMl,hasVisits:dayVis.length>0};
       })(yy+mm+String(dd).padStart(2,'0'));
     }
 
-    // 月全体の集計
+    // 月全体の集計: セッションのある日のみ（セルに表示される日と一致させる）
     var totalGuests=0,totalMl=0,totalSales=0;
+    var orphanGuests=0; // セッションのない日の来場数
     Object.keys(dayData).forEach(function(k){
-      totalGuests+=dayData[k].guestCount;
-      totalMl+=dayData[k].tequilaMl;
-      totalSales+=dayData[k].sales;
+      var dd=dayData[k];
+      if(dd.sessions&&dd.sessions.length){
+        totalGuests+=dd.guestCount;
+        totalMl+=dd.tequilaMl;
+        totalSales+=dd.sales;
+      } else if(dd.hasVisits){
+        orphanGuests+=dd.guestCount;
+      }
     });
 
     var summaryHtml=''
       +'<div class="perf-summary-chip"><span class="lbl">月間来場人数</span><span class="val">'+totalGuests+'<small style="font-size:12px;font-weight:400"> 名</small></span></div>'
       +'<div class="perf-summary-chip"><span class="lbl">提供テキーラ合計</span><span class="val">'+totalMl+'<small style="font-size:12px;font-weight:400"> ml</small></span></div>'
       +'<div class="perf-summary-chip"><span class="lbl">月間会計合計</span><span class="val">¥'+Number(totalSales).toLocaleString()+'</span></div>';
+    // 孤立来場（セッションのない日の来場）がある場合は警告表示
+    if(orphanGuests>0){
+      summaryHtml+='<div class="perf-summary-chip" style="border-color:rgba(140,40,24,.3);background:#fdf0ee">'
+        +'<span class="lbl" style="color:var(--red)">⚠ 異常データ（セッション外来場）</span>'
+        +'<span class="val" style="color:var(--red);font-size:13px">'+orphanGuests+' 名</span>'
+        +'</div>';
+    }
     document.getElementById('perf-cal-summary').innerHTML=summaryHtml;
 
     renderPerfCal(y,mo,daysInMonth,dayData);
@@ -4771,8 +4788,9 @@ function renderPerfCal(y,mo,daysInMonth,dayData){
     var dayColStyle=dow===0?'color:#c0392b':dow===6?'color:#2471a3':'';
     var d=dayData[yymmdd];
     var hasSes=d&&d.sessions&&d.sessions.length>0;
-    var cellClass='perf-cell'+(hasSes?' perf-has-ses':' perf-empty-day');
-    var clickAttr=hasSes?' onclick="navigateToTree(\''+yymmdd+'\')" title="ツリー表示へ"':'';
+    var hasOrphan=!hasSes&&d&&d.hasVisits; // セッションなし、来場あり（異常データ）
+    var cellClass='perf-cell'+(hasSes?' perf-has-ses':hasOrphan?' perf-has-ses':' perf-empty-day');
+    var clickAttr=(hasSes||hasOrphan)?' onclick="navigateToTree(\''+yymmdd+'\')" title="ツリー表示へ"':'';
 
     html+='<div class="'+cellClass+'"'+clickAttr+'>';
     html+='<div class="perf-day-num" style="'+dayColStyle+'">'+dd+'日</div>';
@@ -4786,6 +4804,10 @@ function renderPerfCal(y,mo,daysInMonth,dayData){
       html+='<div class="perf-time">'+openT+' – '+closeT+'</div>';
       html+='<div class="perf-stat">'+d.guestCount+'名 / '+d.tequilaMl+'ml</div>';
       html+='<div class="perf-sales">¥'+Number(d.sales).toLocaleString()+'</div>';
+    } else if(hasOrphan){
+      // セッションのない日に来場データあり → 異常データとして表示
+      html+='<div style="font-size:9px;color:var(--red);font-weight:600">⚠ 異常</div>';
+      html+='<div class="perf-stat" style="color:var(--red)">'+d.guestCount+'名</div>';
     }
 
     html+='</div>';
