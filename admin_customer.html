@@ -783,7 +783,7 @@ function renderMembers(){
     var emailCell=emailVal?'<span class="mono" style="font-size:11px">'+emailVal+'</span>':'<span class="dim">—</span>';
     if(r.pendingEmail) emailCell+='<br><span style="font-size:10px;color:var(--orange)">'+r.pendingEmail+' (確認待ち)</span>';
     var guestBadge=r.isGuest?'<span class="badge bg-gray" style="font-size:9px;padding:1px 5px;margin-left:4px">ゲスト</span>':'';
-    var transferBtn=r.isGuest?'<button class="btn bs sm" style="color:var(--teal);border-color:var(--teal)" data-transfer-id="'+r.id+'" onclick="issueTransferCode(this.dataset.transferId)">引継コード</button>':'';
+    var transferBtn=r.isGuest?'<button class="btn bs sm" style="color:var(--teal);border-color:var(--teal)" data-transfer-id="'+r.id+'">引継コード</button>':'';
     var deletedStyle=r.deleted?'opacity:.5;':'';
     return '<tr style="'+deletedStyle+'"><td class="mono">'+r.id+'</td><td>'+(r.name||"—")+guestBadge+'</td><td style="font-size:12px;color:var(--teal)">'+(r.nickname||"—")+'</td><td class="dim" style="font-size:12px">'+(r.nameKana||"—")+'</td><td>'+gBadge+'</td><td class="dim" style="font-size:11px">'+(r.prefecture||"—")+'</td><td>'+emailCell+'</td><td class="mono dim" style="font-size:11px">'+(r.registeredAt||"—")+'</td><td><div class="acts"><button class="btn bs sm" data-edit-member="'+r.id+'">編集</button><button class="btn bs sm" data-copy-member="'+r.id+'">コピー</button>'+transferBtn+'<button class="btn bd sm" onclick="openMemberDelModal(\''+r.id+'\',\''+escHtml(r.name||r.nickname||r.id)+'\','+!!r.deleted+')">削除</button></div></td></tr>';
   }).join("");
@@ -805,6 +805,7 @@ document.addEventListener("click",function(e){
   var btn=e.target.closest("button"); if(!btn) return;
   if(btn.dataset.editMember)  { openMemberModal(btn.dataset.editMember); return; }
   if(btn.dataset.copyMember)  { copyMemberModal(btn.dataset.copyMember); return; }
+  if(btn.dataset.transferId)  { issueTransferCode(btn.dataset.transferId); return; }
   if(btn.dataset.editLayout)  { openLayoutModal(btn.dataset.editLayout); return; }
   if(btn.dataset.del){
     var col=btn.dataset.del, id=btn.dataset.delId, label=btn.dataset.delLabel;
@@ -1158,18 +1159,15 @@ async function issueTransferCode(memberId){
   var member=cache.members.find(function(m){return m.id===memberId;});
   var nickname=(member&&(member.nickname||member.name))||memberId;
   try{
-    toast('コード生成中...','inf');
     var now=new Date();
     var expiresAt=new Date(now.getTime()+72*60*60*1000);
 
-    var snap=await db.collection('tempRegistrations')
-      .where('tempId','==',memberId)
-      .where('used','==',false)
-      .get();
+    // tempId のみで絞り込み、JS側でフィルタ（複合インデックス不要）
+    var snap=await db.collection('tempRegistrations').where('tempId','==',memberId).get();
     var code=null;
     snap.forEach(function(doc){
       var d=doc.data();
-      if(d.expiresAt>now.toISOString()&&d.issuedBy==='admin') code=doc.id;
+      if(!d.used && d.expiresAt>now.toISOString() && d.issuedBy==='admin') code=doc.id;
     });
 
     if(!code){
@@ -1182,10 +1180,8 @@ async function issueTransferCode(memberId){
     }
 
     var url='https://tequiladojo.com/member_register2.html?transfer='+code+'&nick='+encodeURIComponent(nickname);
-    var expiresStr=expiresAt.toLocaleDateString('ja-JP')+' '+expiresAt.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
-    _trData={code:code,url:url,name:nickname,expires:expiresStr};
 
-    // クリップボードにURLをコピー
+    // クリップボードにコピー
     var copied=false;
     if(navigator.clipboard&&window.isSecureContext){
       try{ await navigator.clipboard.writeText(url); copied=true; }catch(e2){}
@@ -1198,20 +1194,7 @@ async function issueTransferCode(memberId){
       document.body.removeChild(ta);
     }
 
-    g('tr-name').textContent=nickname+' 様';
-    g('tr-expires').textContent=expiresStr;
-    g('tr-code').textContent=code;
-    g('tr-url').textContent=url;
-
-    if(typeof QRCode!=='undefined'){
-      var canvas=g('tr-qr-canvas');
-      QRCode.toCanvas(canvas,url,{width:200,margin:2,color:{dark:'#18110a',light:'#faf7f1'}},function(err){
-        if(err) console.error(err);
-      });
-    }
-
-    openM('m-transfer');
-    if(copied) toast('リンクをクリップボードにコピーしました','inf');
+    toast('コピーしました','inf');
   }catch(e){
     toast('コード生成失敗: '+e.message,'err');
   }
