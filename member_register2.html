@@ -29,10 +29,12 @@ label{display:block;font-size:12px;color:#4a3820;margin-bottom:4px;margin-top:12
 label:first-of-type{margin-top:0;}
 input,select{width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;color:#18110a;background:#fafaf8;outline:none;}
 input:focus,select:focus{border-color:#c8921e;}
+input[readonly]{background:#f0ebe0;color:#6a5840;cursor:default;}
 .pw-wrap{position:relative;}
 .pw-wrap input{padding-right:44px;}
 .pw-eye{position:absolute;right:0;top:0;bottom:0;width:40px;background:none;border:none;cursor:pointer;font-size:16px;color:#9a8470;}
-.required{color:#c00;margin-left:2px;}
+.required{color:#c00;margin-left:4px;}
+.opt-note{font-size:11px;color:#888;margin-left:6px;}
 .hint{font-size:11px;color:#9a8470;margin-top:3px;}
 .err{color:#c00;font-size:12px;min-height:16px;margin-top:8px;}
 .btn{width:100%;padding:14px;background:#c8921e;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;margin-top:8px;letter-spacing:.05em;}
@@ -51,29 +53,19 @@ input:focus,select:focus{border-color:#c8921e;}
   <h1>新規会員登録</h1>
 
   <div id="form-area">
+    <!-- ニックネーム -->
     <div class="card">
-      <div class="card-title">プロフィール <span class="required">必須</span></div>
-      <label>ニックネーム <span class="required">*</span></label>
+      <label>ニックネーム<span class="required">必須</span><span class="opt-note">（後から変更できます）</span></label>
       <input type="text" id="reg-nick" placeholder="テキーラ太郎" maxlength="20">
       <div class="hint">全角8文字（半角16文字）以内</div>
     </div>
 
-    <div class="card" id="card-transfer" style="display:none">
-      <div class="card-title">来場履歴の引継ぎ</div>
-      <label>引継コード</label>
-      <input type="text" id="reg-transfer" placeholder="XXXXXXXX" maxlength="8" autocomplete="off" style="text-transform:uppercase;letter-spacing:.15em;font-family:monospace">
-      <div class="hint">来場時に発行された8桁のコードを入力してください</div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">連絡先（任意）</div>
-      <label>メールアドレス</label>
-      <input type="email" id="reg-email" placeholder="example@email.com" autocomplete="email">
-      <div class="hint">入力するとメールアドレスでもログインできます</div>
-    </div>
-
+    <!-- ログイン情報 -->
     <div class="card">
       <div class="card-title">ログイン情報 <span class="required">必須</span></div>
+      <label>メールアドレス<span class="required">必須</span></label>
+      <input type="email" id="reg-email" placeholder="example@email.com" autocomplete="email">
+      <div class="hint">このメールアドレスでログインします</div>
       <label>パスワード <span class="required">*</span></label>
       <div class="pw-wrap">
         <input type="password" id="reg-pass" placeholder="8文字以上" autocomplete="new-password">
@@ -87,6 +79,14 @@ input:focus,select:focus{border-color:#c8921e;}
     </div>
 
     <div class="err" id="reg-err"></div>
+
+    <!-- 来場履歴の引継ぎ（会員登録ボタンの直上） -->
+    <div class="card" id="card-transfer">
+      <label>引継コード<span class="opt-note">（※ゲスト来場済の方のみ）</span></label>
+      <input type="text" id="reg-transfer" placeholder="XXXXXXXX" maxlength="8" autocomplete="off" style="text-transform:uppercase;letter-spacing:.15em;font-family:monospace">
+      <div class="hint">来場時に発行された8桁のコードを入力してください</div>
+    </div>
+
     <button class="btn" id="reg-btn" onclick="doRegister()">会員登録</button>
     <a href="/mypage.html" class="back">← ログインはこちら</a>
   </div>
@@ -95,7 +95,7 @@ input:focus,select:focus{border-color:#c8921e;}
     <div class="done-icon">🎉</div>
     <div style="font-size:14px;color:#4a3820;">登録完了！あなたの会員番号は</div>
     <div class="done-id" id="done-id">——</div>
-    <div class="done-note">
+    <div class="done-note" id="done-note">
       この番号とパスワードでログインできます。<br>
       ※ メモしておいてください
     </div>
@@ -109,20 +109,19 @@ var auth = firebase.auth();
 var db   = firebase.firestore();
 var VIRTUAL_DOMAIN = '@tequiladojo.member';
 
-// URL パラメータから引継コードを読み込む
+// URL パラメータからニックネーム・引継コードをセット
 (function(){
   var params=new URLSearchParams(window.location.search);
   var transfer=params.get('transfer');
+  var nick=params.get('nick');
+
+  if(nick){
+    var nickEl=document.getElementById('reg-nick');
+    if(nickEl){ nickEl.value=decodeURIComponent(nick); nickEl.readOnly=true; }
+  }
   if(transfer){
-    var cardTransfer=document.getElementById('card-transfer');
-    if(cardTransfer) cardTransfer.style.display='block';
     var el=document.getElementById('reg-transfer');
-    if(el) el.value=transfer.toUpperCase();
-    document.querySelector('h1').textContent='会員登録（来場履歴引継ぎ）';
-  } else {
-    // 引継カードは通常も表示（コード所持者がURLなしで直接入力できるよう）
-    var cardTransfer=document.getElementById('card-transfer');
-    if(cardTransfer) cardTransfer.style.display='block';
+    if(el){ el.value=transfer.toUpperCase(); el.readOnly=true; }
   }
 })();
 
@@ -162,11 +161,13 @@ function doRegister(){
   var btn = document.getElementById('reg-btn');
   err.textContent='';
 
-  if(!nick)        { err.textContent='ニックネームを入力してください'; return; }
+  if(!nick)              { err.textContent='ニックネームを入力してください'; return; }
   if(nickByteLen(nick)>16){ err.textContent='ニックネームは全角8文字以内'; return; }
-  if(!pass)        { err.textContent='パスワードを入力してください'; return; }
-  if(pass.length<8){ err.textContent='パスワードは8文字以上'; return; }
-  if(pass!==pass2) { err.textContent='パスワードが一致しません'; return; }
+  if(!email)             { err.textContent='メールアドレスを入力してください'; return; }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ err.textContent='正しいメールアドレスを入力してください'; return; }
+  if(!pass)              { err.textContent='パスワードを入力してください'; return; }
+  if(pass.length<8)      { err.textContent='パスワードは8文字以上'; return; }
+  if(pass!==pass2)       { err.textContent='パスワードが一致しません'; return; }
 
   btn.disabled=true; btn.textContent='登録中...';
 
@@ -187,27 +188,19 @@ function doRegisterWithTransfer(transferCode, pass, email, nick, err, btn){
       if(new Date(d.expiresAt)<new Date()){ throw new Error('引継コードの有効期限が切れています'); }
       var tempId=d.tempId;
       var guestNick=nick||d.nickname;
-      var authEmail=email||('tmp_'+Date.now()+VIRTUAL_DOMAIN);
-      return auth.createUserWithEmailAndPassword(authEmail, pass)
+      return auth.createUserWithEmailAndPassword(email, pass)
         .then(function(cred){
           var uid=cred.user.uid;
-          if(email){
-            var as={url:'https://tequiladojo.com/member_register.html',handleCodeInApp:false};
-            cred.user.sendEmailVerification(as).catch(function(){});
-          }
-          var finalAuthEmail=email||(tempId+VIRTUAL_DOMAIN);
-          var p=email?Promise.resolve():cred.user.updateEmail(finalAuthEmail).catch(function(){});
-          return p.then(function(){
-            var batch=db.batch();
-            batch.update(db.collection('members').doc(tempId),{
-              authUid:uid, email:email||null, nickname:guestNick,
-              status:email?'pending':'temp', registeredAt:now,
-              isGuest:false
-            });
-            batch.set(db.collection('memberIndex').doc(tempId),{email:finalAuthEmail});
-            batch.update(db.collection('tempRegistrations').doc(transferCode),{used:true});
-            return batch.commit().then(function(){ return {memberId:tempId,hasEmail:!!email}; });
+          var as={url:'https://tequiladojo.com/member_register.html',handleCodeInApp:false};
+          cred.user.sendEmailVerification(as).catch(function(){});
+          var batch=db.batch();
+          batch.update(db.collection('members').doc(tempId),{
+            authUid:uid, email:email, nickname:guestNick,
+            status:'pending', registeredAt:now, isGuest:false
           });
+          batch.set(db.collection('memberIndex').doc(tempId),{email:email});
+          batch.update(db.collection('tempRegistrations').doc(transferCode),{used:true});
+          return batch.commit().then(function(){ return {memberId:tempId}; });
         });
     })
     .then(function(result){
@@ -215,11 +208,7 @@ function doRegisterWithTransfer(transferCode, pass, email, nick, err, btn){
       document.getElementById('done-area').style.display='block';
       document.getElementById('done-id').textContent=result.memberId;
       var noteEl=document.getElementById('done-note');
-      if(result.hasEmail){
-        if(noteEl) noteEl.innerHTML='認証メールを送信しました。<br>メールのリンクをクリックして認証を完了してください。<br><br>認証後、マイページにログインできます。';
-      } else {
-        if(noteEl) noteEl.innerHTML='この番号とパスワードでログインできます。<br>来場履歴が引き継がれました。<br>※ メモしておいてください';
-      }
+      if(noteEl) noteEl.innerHTML='認証メールを送信しました。<br>メールのリンクをクリックして認証を完了してください。<br><br>認証後、マイページにログインできます。<br>来場履歴が引き継がれました。';
     })
     .catch(function(e){
       err.textContent='登録失敗: '+e.message;
@@ -229,36 +218,27 @@ function doRegisterWithTransfer(transferCode, pass, email, nick, err, btn){
 
 function doRegisterNew(pass, email, nick, err, btn){
   var now=new Date().toISOString().slice(0,10);
-  var tempAuthEmail=email||('tmp_'+Date.now()+VIRTUAL_DOMAIN);
-  auth.createUserWithEmailAndPassword(tempAuthEmail, pass)
+  auth.createUserWithEmailAndPassword(email, pass)
     .then(function(cred){
       var uid=cred.user.uid;
-      if(email){
-        var as2={url:'https://tequiladojo.com/member_register.html',handleCodeInApp:false};
-        cred.user.sendEmailVerification(as2).catch(function(){});
-      }
+      var as2={url:'https://tequiladojo.com/member_register.html',handleCodeInApp:false};
+      cred.user.sendEmailVerification(as2).catch(function(){});
       return fetchNextMemberId().then(function(memberId){
-        var authEmail=email?(email):(memberId+VIRTUAL_DOMAIN);
-        var p2=email?Promise.resolve():cred.user.updateEmail(authEmail).catch(function(){});
-        return p2.then(function(){
-          var batch=db.batch();
-          batch.set(db.collection('memberIndex').doc(memberId),{email:authEmail});
-          batch.set(db.collection('members').doc(memberId),{
-            authUid:uid, memberId:memberId, email:email||null,
-            status:email?'pending':'temp', nickname:nick, registeredAt:now
-          });
-          return batch.commit().then(function(){ return {memberId:memberId,hasEmail:!!email}; });
+        var batch=db.batch();
+        batch.set(db.collection('memberIndex').doc(memberId),{email:email});
+        batch.set(db.collection('members').doc(memberId),{
+          authUid:uid, memberId:memberId, email:email,
+          status:'pending', nickname:nick, registeredAt:now
         });
+        return batch.commit().then(function(){ return {memberId:memberId}; });
       });
     })
     .then(function(result){
       document.getElementById('form-area').style.display='none';
       document.getElementById('done-area').style.display='block';
       document.getElementById('done-id').textContent=result.memberId;
-      if(result.hasEmail){
-        var note=document.getElementById('done-note');
-        if(note) note.innerHTML='認証メールを送信しました。<br>メールのリンクをクリックして認証を完了してください。<br><br>認証後、マイページにログインできます。';
-      }
+      var note=document.getElementById('done-note');
+      if(note) note.innerHTML='認証メールを送信しました。<br>メールのリンクをクリックして認証を完了してください。<br><br>認証後、マイページにログインできます。';
     })
     .catch(function(e){
       err.textContent='登録失敗: '+e.message;
