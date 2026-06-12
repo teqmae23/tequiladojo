@@ -1310,19 +1310,54 @@ function renderSessions(){
 }
 
 async function recalcSession(sesId){
-  var ses=cache.sessions.find(function(s){return s.id===sesId;});
+  var ses=cache.sessions.find(function(s){return s.id===sesId;})
+        ||_treeSessions.find(function(s){return s.id===sesId;});
   if(!ses){ toast("セッションが見つかりません","err"); return; }
   var yymmdd=ses.date||sesId.slice(0,6);
   try{
-    var snap=await db.collection('visits').where('visitDate','==',yymmdd).get();
-    var allVisits=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    // 1. 当日の来場を取得してセッション時間帯でフィルタ
+    var visSnap=await db.collection('visits').where('visitDate','==',yymmdd).get();
+    var allVisits=visSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
     var sesVisits=getSessionVisits(ses,allVisits);
+
+    // 2. セッション来場の注文を取得
+    var visitIds=sesVisits.map(function(v){return v.id;});
+    var allOrders=[];
+    if(visitIds.length){
+      var chunks=[];
+      for(var i=0;i<visitIds.length;i+=30) chunks.push(visitIds.slice(i,i+30));
+      for(var ci=0;ci<chunks.length;ci++){
+        var oSnap=await db.collection('orders').where('visitKey','in',chunks[ci]).get();
+        oSnap.docs.forEach(function(d){allOrders.push(Object.assign({id:d.id},d.data()));});
+      }
+    }
+
+    // 3. 来場ごとに注文から金額を再計算してバッチ更新
+    var batch=db.batch();
+    var visitAmounts={};
+    sesVisits.forEach(function(vis){
+      var visOrds=allOrders.filter(function(o){return (o.visitKey||o.visitId)===vis.id&&o.served!==0;});
+      var amt=visOrds.reduce(function(s,o){
+        if(o.unitPrice==null) return s;
+        var isMl=o.productType==='tequila'||o.productType==='other';
+        var mult=o.isGiftPayer?(o.giftCount||0):1;
+        return s+Math.round(isMl?o.unitPrice*o.qty/10:o.unitPrice*o.qty)*mult;
+      },0);
+      visitAmounts[vis.id]=amt;
+      if(vis.amount!==amt) batch.update(db.collection('visits').doc(vis.id),{amount:amt});
+    });
+
+    // 4. セッション合計を更新
     var guestCount=sesVisits.filter(function(v){return !v.isStaff;}).length;
-    var sales=sesVisits.reduce(function(s,v){return s+(v.amount||0);},0);
-    await db.collection('sessions').doc(sesId).update({guestCount:guestCount,sales:sales});
+    var sales=sesVisits.reduce(function(s,v){return s+(visitAmounts[v.id]||0);},0);
+    batch.update(db.collection('sessions').doc(sesId),{guestCount:guestCount,sales:sales});
+    await batch.commit();
+
     writeJournal('update','sessions',sesId,null,{guestCount:guestCount,sales:sales});
     ses.guestCount=guestCount; ses.sales=sales;
+    sesVisits.forEach(function(vis){vis.amount=visitAmounts[vis.id];});
     renderSessions();
+    if(document.getElementById('page-tree').classList.contains('active')) loadTree();
     toast("再集計完了: 来場数 "+guestCount+"名 / 売上 ¥"+Number(sales).toLocaleString());
   }catch(e){ toast("再集計失敗: "+e.message,"err"); }
 }
@@ -2652,7 +2687,7 @@ function openOrderModal(id){
     sv("ord-type","tequila"); sv("ord-product-code",""); sv("ord-product-name","");
     sv("ord-qty",""); sv("ord-unit","ml"); sv("ord-unit-price","");
     sv("ord-group-id",""); sv("ord-batch-id",""); sv("ord-item-seq",1);
-    sv("ord-served","1"); sv("ord-blind","0"); sv("ord-blind-mark","");
+    sv("ord-served","3"); sv("ord-blind","0"); sv("ord-blind-mark","");
     sv("ord-set-id",""); sv("ord-visit-id","");
     if(dEl){dEl.readOnly=false; dEl.style.background="";}
     if(sEl){sEl.readOnly=false; sEl.style.background="";}
@@ -2883,6 +2918,7 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
       +' <button class="btn bp sm" style="font-size:11px;margin-left:6px;vertical-align:middle" data-tree-add-visit="'+yymmdd+'">＋ 来場追加</button></span>'
       +'<div class="tree-acts">'
       +'<button class="btn bs sm" data-edit-session="'+escHtml(ses.id)+'">編集</button>'
+      +'<button class="btn bs sm" data-recalc-session="'+escHtml(ses.id)+'" title="注文から来場金額・来場数・売上を再集計">🔄 再集計</button>'
       +'<button class="btn bd sm" data-tree-del-session="'+escHtml(ses.id)+'" data-date="'+yymmdd+'" title="セッション＋来場＋注文を全削除">削除</button>'
       +'</div></div>';
 
