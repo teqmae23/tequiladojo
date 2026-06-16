@@ -144,6 +144,9 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 .ccard{background:var(--white);border-radius:var(--rl);padding:28px;max-width:340px;width:100%;box-shadow:var(--shadow-lg);text-align:center}
 .cmsg{font-size:14px;margin-bottom:20px;color:var(--ink2);line-height:1.7}
 .cacts{display:flex;gap:8px;justify-content:center}
+/* 会員編集: 未入力欄 薄オレンジ / placeholder非表示 */
+#m-member .fi:not([readonly]):not([type=hidden])::placeholder{color:transparent;}
+#m-member .fi:not([readonly]):not([type=hidden]):placeholder-shown{background:rgba(255,140,40,.10);}
 </style>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
@@ -187,7 +190,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
     <div class="page active" id="page-members">
       <div class="meta-bar" id="meta-members"></div>
       <div class="phead">
-        <div><div class="ptitle">会員マスタ</div><div class="pdesc">会員番号 6桁 = 西暦下2桁 + 通番4桁</div></div>
+        <div><div class="ptitle">会員マスタ<span id="mem-stats" style="font-size:11px;font-weight:400;font-family:var(--sans);color:var(--ink3);margin-left:14px;vertical-align:middle;letter-spacing:.02em;"></span></div><div class="pdesc">会員番号 6桁 = 西暦下2桁 + 通番4桁</div></div>
         <button class="btn bp" id="btn-open-member">＋ 会員登録</button>
       </div>
       <div class="card">
@@ -202,9 +205,9 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           </div>
         </div>
         <div class="tw"><table id="tbl-members">
-          <colgroup><col style="width:70px"><col style="width:110px"><col><col style="width:150px"><col style="width:60px"><col style="width:60px"><col><col style="width:84px"><col></colgroup>
-          <thead><tr><th>会員番号</th><th>会員名</th><th>ニックネーム</th><th>カタカナ</th><th>性別</th><th>都道府県</th><th style="padding-right:6px">メールアドレス</th><th style="padding-left:6px;padding-right:6px">登録日</th><th style="padding-left:6px">✏️</th></tr></thead>
-          <tbody id="tb-members"><tr><td colspan="9" class="ec">読み込み中...</td></tr></tbody>
+          <colgroup><col style="width:70px"><col style="width:120px"><col style="width:152px"><col style="width:234px"><col style="width:60px"><col style="width:60px"><col><col style="width:72px"><col style="width:84px"><col></colgroup>
+          <thead><tr><th>会員番号</th><th>ニックネーム</th><th>会員名</th><th>カタカナ</th><th>性別</th><th>都道府県</th><th style="padding-right:6px">メールアドレス</th><th style="padding-left:6px;padding-right:6px">会員種別</th><th style="padding-left:6px;padding-right:6px">登録日</th><th style="padding-left:6px">✏️</th></tr></thead>
+          <tbody id="tb-members"><tr><td colspan="10" class="ec">読み込み中...</td></tr></tbody>
         </table></div>
       </div>
     </div>
@@ -741,10 +744,12 @@ var sortState = {};
 function applySortToList(list,col){
   var st=sortState[col]; if(!st) return list;
   var key=st.key, dir=st.dir;
+  var DATE_KEYS={registeredAt:1,birthday:1};
   return list.slice().sort(function(a,b){
-    var av=a[key]!=null?a[key]:"", bv=b[key]!=null?b[key]:"";
+    var av=String(a[key]!=null?a[key]:""), bv=String(b[key]!=null?b[key]:"");
+    if(DATE_KEYS[key]){ av=av.replace(/-/g,""); bv=bv.replace(/-/g,""); }
     var an=parseFloat(av), bn=parseFloat(bv);
-    var cmp=(!isNaN(an)&&!isNaN(bn))?(an-bn):String(av).localeCompare(String(bv),"ja");
+    var cmp=(!isNaN(an)&&!isNaN(bn))?(an-bn):av.localeCompare(bv,"ja");
     return dir==="desc"?-cmp:cmp;
   });
 }
@@ -776,16 +781,30 @@ function renderMembers(){
   });
   list=applySortToList(list,"members");
   var tb=g("tb-members");
-  if(!list.length){ tb.innerHTML='<tr><td colspan="9" class="ec">データがありません</td></tr>'; return; }
+  if(!list.length){ tb.innerHTML='<tr><td colspan="10" class="ec">データがありません</td></tr>'; return; }
+  // 人数統計更新
+  var _st={full:0,pending:0,prov:0,guest:0};
+  cache.members.forEach(function(m){
+    if(m.isGuest) _st.guest++;
+    else if(m.pendingEmail) _st.pending++;
+    else if(m.email&&m.email.indexOf('@tequiladojo.member')<0) _st.full++;
+    else _st.prov++;
+  });
+  var _sEl=g('mem-stats');
+  if(_sEl) _sEl.textContent='本会員 '+_st.full+' ／ 認証待ち '+_st.pending+' ／ 仮登録 '+_st.prov+' ／ ゲスト '+_st.guest;
   tb.innerHTML=list.map(function(r){
     var gBadge=r.gender==="男"?'<span class="badge bg-blue">男</span>':r.gender==="女"?'<span class="badge bg-teal">女</span>':'<span class="badge bg-gray">他</span>';
     var emailVal=r.email&&r.email.indexOf('@tequiladojo.member')<0?r.email:'';
     var emailCell=emailVal?'<span class="mono" style="font-size:11px">'+emailVal+'</span>':'<span class="dim">—</span>';
     if(r.pendingEmail) emailCell+='<br><span style="font-size:10px;color:var(--orange)">'+r.pendingEmail+' (確認待ち)</span>';
-    var guestBadge=r.isGuest?'<span class="badge bg-gray" style="font-size:9px;padding:1px 5px;margin-left:4px">ゲスト</span>':'';
     var transferBtn=r.isGuest?'<button class="btn bs sm" style="color:var(--teal);border-color:var(--teal)" data-transfer-id="'+r.id+'">引継コード</button>':'';
     var deletedStyle=r.deleted?'opacity:.5;':'';
-    return '<tr style="'+deletedStyle+'"><td class="mono">'+r.id+'</td><td>'+(r.name||"—")+guestBadge+'</td><td style="font-size:12px;color:var(--teal)">'+(r.nickname||"—")+'</td><td class="dim" style="font-size:12px">'+(r.nameKana||"—")+'</td><td>'+gBadge+'</td><td class="dim" style="font-size:11px">'+(r.prefecture||"—")+'</td><td style="padding-right:6px">'+emailCell+'</td><td class="mono dim" style="font-size:11px;padding-left:6px;padding-right:6px">'+(normDateStr(r.registeredAt)||r.registeredAt||"—")+'</td><td style="padding-left:6px"><div class="acts" style="justify-content:flex-start"><button class="btn bs sm" data-edit-member="'+r.id+'">編集</button><button class="btn bs sm" data-copy-member="'+r.id+'">コピー</button>'+transferBtn+'<button class="btn bd sm" onclick="openMemberDelModal(\''+r.id+'\',\''+escHtml(r.name||r.nickname||r.id)+'\','+!!r.deleted+')">削除</button></div></td></tr>';
+    var typeBadge;
+    if(r.isGuest) typeBadge='<span class="badge bg-gray" style="font-size:10px">ゲスト</span>';
+    else if(r.pendingEmail) typeBadge='<span class="badge" style="font-size:10px;background:var(--orange);color:#fff">認証待ち</span>';
+    else if(emailVal) typeBadge='<span class="badge bg-teal" style="font-size:10px">本会員</span>';
+    else typeBadge='<span class="badge" style="font-size:10px;background:#b8860b;color:#fff">仮登録</span>';
+    return '<tr style="'+deletedStyle+'"><td class="mono">'+r.id+'</td><td style="font-size:12px;color:var(--teal)">'+(r.nickname||"—")+'</td><td>'+(r.name||"—")+'</td><td class="dim" style="font-size:12px">'+(r.nameKana||"—")+'</td><td>'+gBadge+'</td><td class="dim" style="font-size:11px">'+(r.prefecture||"—")+'</td><td style="padding-right:6px">'+emailCell+'</td><td style="padding-left:6px;padding-right:6px">'+typeBadge+'</td><td class="mono dim" style="font-size:11px;padding-left:6px;padding-right:6px">'+(normDateStr(r.registeredAt)||r.registeredAt||"—")+'</td><td style="padding-left:6px"><div class="acts" style="justify-content:flex-start"><button class="btn bs sm" data-edit-member="'+r.id+'">編集</button><button class="btn bs sm" data-copy-member="'+r.id+'">コピー</button>'+transferBtn+'<button class="btn bd sm" onclick="openMemberDelModal(\''+r.id+'\',\''+escHtml(r.name||r.nickname||r.id)+'\','+!!r.deleted+')">削除</button></div></td></tr>';
   }).join("");
 }
 
