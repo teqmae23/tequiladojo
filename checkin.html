@@ -383,8 +383,24 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       <div id="checkout-persons-area"></div>
 
       <!-- 総合計 -->
-      <div class="checkout-summary" style="margin-bottom:12px">
+      <div class="checkout-summary" style="margin-bottom:8px">
         <div><div class="cs-label">総合計金額</div><div class="cs-value" id="co-grand-total">¥0</div></div>
+      </div>
+
+      <!-- 割引 -->
+      <div id="discount-section" style="background:var(--cream2);border-radius:var(--r);padding:8px 12px;margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:11px;font-weight:600;color:var(--ink2);flex-shrink:0">割引</span>
+        <label style="display:flex;align-items:center;gap:3px;font-size:12px;cursor:pointer;white-space:nowrap">
+          <input type="radio" name="discount-type" value="amount" checked onchange="recalcDiscount()"> 金額
+        </label>
+        <label style="display:flex;align-items:center;gap:3px;font-size:12px;cursor:pointer;white-space:nowrap">
+          <input type="radio" name="discount-type" value="percent" onchange="recalcDiscount()"> 割合(%)
+        </label>
+        <input type="number" id="discount-value" min="0" value="" placeholder="0"
+          style="width:72px;padding:4px 6px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;text-align:right"
+          oninput="recalcDiscount()">
+        <span id="discount-unit" style="font-size:12px;color:var(--ink2);white-space:nowrap">円引き</span>
+        <span id="discount-note" style="font-size:12px;color:var(--red);font-weight:600;margin-left:auto"></span>
       </div>
 
       <!-- 割り勘セクション（複数人時のみ表示） -->
@@ -785,8 +801,8 @@ function openOrdersModal(visitKey, visitorName){
   var totalAmt=calcAmount(orders);
   var totalTq=calcTequila(orders);
 
-  var TYPE_LABEL={'tequila':'テキーラ','other':'他酒','misc':'その他'};
-  var TYPE_BG={'tequila':'background:#fdf0d0;color:#7a5610','other':'background:#E6F1FB;color:#0C447C','misc':'background:#e0f0eb;color:#1a6e58'};
+  var TYPE_LABEL={'tequila':'テキーラ','other':'他酒','misc':'その他','adjustment':'調整'};
+  var TYPE_BG={'tequila':'background:#fdf0d0;color:#7a5610','other':'background:#E6F1FB;color:#0C447C','misc':'background:#e0f0eb;color:#1a6e58','adjustment':'background:#f0f0ee;color:#555'};
   var ol=g('orders-list');
   if(!orders.length){
     ol.innerHTML='<div style="font-size:12px;color:var(--ink3);padding:12px;text-align:center;background:var(--cream2);border-radius:var(--r)">注文記録なし</div>';
@@ -1527,7 +1543,44 @@ function getSelectedVisitIds(){
 
 // ── お会計（複数対応） ─────────────────────────────────────────
 var bulkCheckoutVisitKeys=[];
-var warikanAmounts={};  // visitKey → 入力金額
+var warikanAmounts={};       // visitKey → 入力金額（割引後）
+var warikanRawAmounts={};    // visitKey → 割引前の個別金額
+var rawGrandTotal=0;
+
+function recalcDiscount(){
+  var typeEl=document.querySelector('input[name="discount-type"]:checked');
+  var typeVal=typeEl?typeEl.value:'amount';
+  var val=parseFloat(g('discount-value').value)||0;
+  var unitEl=g('discount-unit');
+  if(unitEl) unitEl.textContent=typeVal==='percent'?'% 割引（十の位切り上げ）':'円引き';
+  var discounted, noteEl=g('discount-note');
+  if(!val){
+    discounted=rawGrandTotal;
+    if(noteEl) noteEl.textContent='';
+  } else if(typeVal==='amount'){
+    discounted=Math.max(0,rawGrandTotal-val);
+    if(noteEl) noteEl.textContent='−¥'+val.toLocaleString();
+  } else {
+    var rate=Math.min(100,Math.max(0,val));
+    // 割引後金額を十の位で切り上げ
+    discounted=Math.ceil(rawGrandTotal*(1-rate/100)/10)*10;
+    var saved=rawGrandTotal-discounted;
+    if(noteEl) noteEl.textContent='−¥'+saved.toLocaleString();
+  }
+  g('co-grand-total').textContent='¥'+discounted.toLocaleString();
+  if(bulkCheckoutVisitKeys.length>1){
+    var ratio=rawGrandTotal>0?discounted/rawGrandTotal:0;
+    bulkCheckoutVisitKeys.forEach(function(vk){
+      var newAmt=Math.round((warikanRawAmounts[vk]||0)*ratio);
+      warikanAmounts[vk]=newAmt;
+      var el=g('wk-'+vk); if(el) el.value=newAmt;
+    });
+    updateWarikanDiff();
+  } else if(bulkCheckoutVisitKeys.length===1){
+    warikanAmounts[bulkCheckoutVisitKeys[0]]=discounted;
+    g('m-checkout-save').disabled=false;
+  }
+}
 
 function openBulkCheckout(){
   bulkCheckoutVisitKeys=getSelectedVisitIds();
@@ -1548,8 +1601,8 @@ function openBulkCheckout(){
 
     var personsHtml='';
     var grandTotal=0;
-    var TYPE_LABEL={'tequila':'テキーラ','other':'他酒','misc':'その他'};
-    var TYPE_BG={'tequila':'background:#fdf0d0;color:#7a5610','other':'background:#E6F1FB;color:#0C447C','misc':'background:#e0f0eb;color:#1a6e58'};
+    var TYPE_LABEL={'tequila':'テキーラ','other':'他酒','misc':'その他','adjustment':'調整'};
+    var TYPE_BG={'tequila':'background:#fdf0d0;color:#7a5610','other':'background:#E6F1FB;color:#0C447C','misc':'background:#e0f0eb;color:#1a6e58','adjustment':'background:#f0f0ee;color:#555'};
 
     warikanAmounts={};
 
@@ -1613,7 +1666,14 @@ function openBulkCheckout(){
     });
 
     g('checkout-persons-area').innerHTML=personsHtml;
+    rawGrandTotal=grandTotal;
+    warikanRawAmounts=Object.assign({},warikanAmounts);
     g('co-grand-total').textContent='¥'+grandTotal.toLocaleString();
+    // 割引リセット
+    var dv=g('discount-value'); if(dv) dv.value='';
+    var dn=g('discount-note'); if(dn) dn.textContent='';
+    var ar=document.querySelector('input[name="discount-type"][value="amount"]'); if(ar) ar.checked=true;
+    var du=g('discount-unit'); if(du) du.textContent='円引き';
 
     // 1人の場合は割り勘セクション非表示・確定ボタン即有効化
     var ws=g('warikan-section');
@@ -1656,10 +1716,13 @@ function applyWarikan(mode){
     });
     // 残りは残金欄に表示（自動で差分として出る）
   } else {
-    // 個別会計: 各人の実際の注文合計を再セット
+    // 個別会計: 割引率を按分して各人の金額をセット
+    var grandTotalStr2=g('co-grand-total').textContent.replace(/[^0-9]/g,'');
+    var discountedGrand=parseInt(grandTotalStr2)||0;
+    var ratio2=rawGrandTotal>0?discountedGrand/rawGrandTotal:1;
     bulkCheckoutVisitKeys.forEach(function(vk){
-      var orders=cache.orders.filter(function(o){ return o.visitKey===vk||o.visitId===vk; });
-      var amt=calcAmount(orders);
+      var rawAmt=warikanRawAmounts[vk]||(calcAmount(cache.orders.filter(function(o){return o.visitKey===vk||o.visitId===vk;})));
+      var amt=Math.round(rawAmt*ratio2);
       var el=g('wk-'+vk); if(el) el.value=amt;
       warikanAmounts[vk]=amt;
     });
@@ -1735,7 +1798,7 @@ function doCheckoutSave(){
   bulkCheckoutVisitKeys.forEach(function(visitKey){
     var orders=cache.orders.filter(function(o){ return o.visitKey===visitKey||o.visitId===visitKey; });
     var wkEl=g('wk-'+visitKey);
-    var totalAmt=wkEl?parseInt(wkEl.value)||0:calcAmount(orders);
+    var totalAmt=wkEl?parseInt(wkEl.value)||0:(warikanAmounts[visitKey]!=null?warikanAmounts[visitKey]:calcAmount(orders));
     var totalTq=calcTequila(orders);
     var updateData={
       amount: totalAmt,
@@ -1755,6 +1818,44 @@ function doCheckoutSave(){
     }
   });
 
+  // 割引・案分調整の注文明細を生成
+  var discTypeEl2=document.querySelector('input[name="discount-type"]:checked');
+  var discTypeStr2=discTypeEl2?discTypeEl2.value:'amount';
+  var discInputVal2=parseFloat(g('discount-value').value)||0;
+  var discountedGrandSave=parseInt((g('co-grand-total').textContent||'0').replace(/[^0-9]/g,''))||0;
+  var totalDiscountSave=rawGrandTotal-discountedGrandSave;
+  var nowTime=now.slice(0,4);
+  bulkCheckoutVisitKeys.forEach(function(visitKey){
+    var rawAmt=warikanRawAmounts[visitKey]!=null?warikanRawAmounts[visitKey]:calcAmount(cache.orders.filter(function(o){return o.visitKey===visitKey||o.visitId===visitKey;}));
+    var finalAmt=warikanAmounts[visitKey]!=null?warikanAmounts[visitKey]:rawAmt;
+    // 1. 割引レコード（按分）
+    var perDisc=totalDiscountSave>0&&rawGrandTotal>0?Math.round(rawAmt/rawGrandTotal*totalDiscountSave):0;
+    if(perDisc!==0){
+      var dName=discTypeStr2==='percent'?'値引('+discInputVal2+'%)':'割引額';
+      fbBatch.set(db.collection('orders').doc(),{
+        visitKey:visitKey,visitId:visitKey,
+        productName:dName,productType:'adjustment',
+        unitPrice:-perDisc,qty:1,unit:'円',served:2,
+        orderTime:nowTime,
+        orderGroupId:now+'_d_'+visitKey.slice(-4),
+        isAdjustment:true
+      });
+    }
+    // 2. 案分調整レコード（割引後の個別按分と実際の支払額の差）
+    var postDiscAmt=rawAmt-perDisc;
+    var wkAdj=finalAmt-postDiscAmt;
+    if(Math.abs(wkAdj)>=1){
+      fbBatch.set(db.collection('orders').doc(),{
+        visitKey:visitKey,visitId:visitKey,
+        productName:'案分調整',productType:'adjustment',
+        unitPrice:wkAdj,qty:1,unit:'円',served:2,
+        orderTime:nowTime,
+        orderGroupId:now+'_w_'+visitKey.slice(-4),
+        isAdjustment:true
+      });
+    }
+  });
+
   // お会計確定時にmembersのtotalAmount・totalTequilaを更新
   var memberUpdateBatch=db.batch();
   var memberUpdatePromises=[];
@@ -1763,7 +1864,7 @@ function doCheckoutSave(){
     if(!v||!v.memberId) return;
     var mid=v.memberId;
     var wkEl=g('wk-'+visitKey);
-    var amt=wkEl?parseInt(wkEl.value)||0:calcAmount(cache.orders.filter(function(o){ return o.visitKey===visitKey||o.visitId===visitKey; }));
+    var amt=wkEl?parseInt(wkEl.value)||0:(warikanAmounts[visitKey]!=null?warikanAmounts[visitKey]:calcAmount(cache.orders.filter(function(o){ return o.visitKey===visitKey||o.visitId===visitKey; })));
     var tq=calcTequila(cache.orders.filter(function(o){ return o.visitKey===visitKey||o.visitId===visitKey; }));
     memberUpdatePromises.push(
       db.collection('members').doc(mid).get().then(function(snap){
