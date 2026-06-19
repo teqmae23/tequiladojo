@@ -78,6 +78,19 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);min-height
 .dis-link-name{font-size:14px;font-weight:500;}
 .dis-link-arrow{margin-left:auto;color:var(--ink3);font-size:14px;}
 
+/* ── Bottles ── */
+.bottle-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:28px;}
+.bottle-table th{text-align:left;font-size:10px;font-weight:600;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;padding:6px 10px;border-bottom:2px solid var(--cream3);}
+.bottle-table td{padding:9px 10px;border-bottom:1px solid var(--cream3);vertical-align:middle;}
+.bottle-table tr:last-child td{border-bottom:none;}
+.bottle-table tr:hover td{background:var(--cream2);}
+.bt-name-es{font-weight:500;color:var(--ink);}
+.bt-name-ja{font-size:11px;color:var(--ink3);}
+.bt-badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:500;}
+.bt-serving-0{background:rgba(26,110,88,.1);color:var(--teal);}
+.bt-serving-1{background:rgba(74,56,32,.08);color:var(--ink3);}
+.bt-prod-1{background:rgba(200,146,30,.1);color:var(--gold-d);}
+
 /* ── State ── */
 .state-msg{text-align:center;padding:80px 20px;color:var(--ink3);font-size:14px;}
 
@@ -112,7 +125,7 @@ var TYPE_LABEL={0:'蒸留所ブランド',1:'委託ブランド'};
 
 function esc(s){var d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
 
-function render(brand,dis){
+function render(brand,dis,bottles,classMap){
   var st=String(brand.brandStatus||'0');
   var tp=String(brand.brandType||'0');
 
@@ -168,6 +181,32 @@ function render(brand,dis){
     html+='<div class="links-row">'+linksHtml+'</div>';
   }
 
+  // Bottles
+  html+='<hr class="divider">';
+  html+='<div style="font-size:11px;font-weight:600;color:var(--ink3);letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px;">ボトル</div>';
+  if(!bottles||!bottles.length){
+    html+='<div style="font-size:12px;color:var(--ink3);margin-bottom:24px;">登録なし</div>';
+  } else {
+    var sorted=bottles.slice().sort(function(a,b){return (a.bottleId||'').localeCompare(b.bottleId||'');});
+    html+='<table class="bottle-table"><thead><tr><th>ボトル名</th><th>クラス</th><th>ABV</th><th>状態</th></tr></thead><tbody>';
+    sorted.forEach(function(bt){
+      var cls=classMap&&bt.classId?classMap[bt.classId]||bt.classId:bt.classId||'—';
+      var abv=bt.abv?bt.abv+'%':'—';
+      var serving=String(bt.servingStatus||'0');
+      var servingLabel=serving==='0'?'提供中':'提供終了';
+      html+='<tr>';
+      html+='<td><div class="bt-name-es">'+esc(bt.bottleEs||'—')+'</div>';
+      if(bt.bottleJa) html+='<div class="bt-name-ja">'+esc(bt.bottleJa)+'</div>';
+      if(bt.production==='1'||bt.production===1) html+=' <span class="bt-badge bt-prod-1">限定</span>';
+      html+='</td>';
+      html+='<td>'+esc(cls)+'</td>';
+      html+='<td>'+esc(abv)+'</td>';
+      html+='<td><span class="bt-badge bt-serving-'+serving+'">'+servingLabel+'</span></td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table>';
+  }
+
   document.getElementById('page-content').innerHTML=html;
 }
 
@@ -181,7 +220,9 @@ function loadBrand(){
   var disId=id.length>=4?id.slice(0,4):null;
   Promise.all([
     db.collection('brands').doc(id).get(),
-    disId?db.collection('distilleries').doc(disId).get():Promise.resolve(null)
+    disId?db.collection('distilleries').doc(disId).get():Promise.resolve(null),
+    db.collection('bottles').where('brandId','==',id).get(),
+    db.collection('classes').get()
   ]).then(function(results){
     var snap=results[0];
     if(!snap.exists){
@@ -191,7 +232,10 @@ function loadBrand(){
     var brand=Object.assign({id:snap.id},snap.data());
     var disSnap=results[1];
     var dis=disSnap&&disSnap.exists?Object.assign({id:disSnap.id},disSnap.data()):null;
-    render(brand,dis);
+    var bottles=results[2].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    var classMap={};
+    results[3].docs.forEach(function(d){var c=d.data(); classMap[d.id]=c.classEs||c.className||d.id;});
+    render(brand,dis,bottles,classMap);
   }).catch(function(e){
     document.getElementById('state-msg').textContent='読み込み失敗: '+e.message;
   });
