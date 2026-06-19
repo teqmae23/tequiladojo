@@ -101,11 +101,6 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
   <select id="filter-district">
     <option value="">すべての地区</option>
   </select>
-  <select id="filter-scale">
-    <option value="">規模：すべて</option>
-    <option value="0">小中規模</option>
-    <option value="1">大規模</option>
-  </select>
   <button id="btn-labels" class="ctrl-btn" onclick="toggleLabels()">名前 OFF</button>
   <button id="btn-topo" class="ctrl-btn" onclick="toggleTopo()">地形 OFF</button>
   <span id="map-count"></span>
@@ -114,8 +109,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 <div id="map" class="labels-off">
   <div id="map-loading">読み込み中...</div>
   <div class="legend">
-    <div class="legend-item"><div class="legend-dot" style="background:#c8921e"></div>小中規模蒸留所</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#b03020"></div>大規模蒸留所</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#c8921e"></div>蒸留所</div>
   </div>
 </div>
 
@@ -130,25 +124,35 @@ var layerOSM=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
   attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   maxZoom:18
 });
-var layerTerrain=L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.png?api_key=378e3626-20aa-4634-8172-c2efd21fbd3c',{
+var layerStadia=L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.png?api_key=378e3626-20aa-4634-8172-c2efd21fbd3c',{
   attribution:'© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com">Stamen Design</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   maxZoom:18
 });
+var layerJawg=L.tileLayer('https://tile.jawg.io/jawg-terrain/{z}/{x}/{y}{r}.png?access-token=DYqZFB797em5PAIwSXdzu4yBhETaCOwrr2sj0N8V0MHC4vZ8JssOi3bH1HFlJ9pf',{
+  attribution:'© <a href="https://www.jawg.io">Jawg Maps</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  maxZoom:22
+});
 layerOSM.addTo(map);
+
+// 地形ボタン：OFF → Stadia → Jawg → OFF とサイクル
+var topoIdx=0;
+var TOPO_LAYERS=[null,layerStadia,layerJawg];
+var TOPO_LABELS=['地形 OFF','地形: Stadia','地形: Jawg'];
 
 function toggleTopo(){
   var btn=document.getElementById('btn-topo');
-  if(map.hasLayer(layerTerrain)){
-    map.removeLayer(layerTerrain);
+  var prev=TOPO_LAYERS[topoIdx];
+  if(prev&&map.hasLayer(prev)) map.removeLayer(prev);
+  topoIdx=(topoIdx+1)%3;
+  if(topoIdx===0){
     layerOSM.addTo(map);
-    btn.textContent='地形 OFF';
     btn.classList.remove('on');
   } else {
-    map.removeLayer(layerOSM);
-    layerTerrain.addTo(map);
-    btn.textContent='地形 ON';
+    if(map.hasLayer(layerOSM)) map.removeLayer(layerOSM);
+    TOPO_LAYERS[topoIdx].addTo(map);
     btn.classList.add('on');
   }
+  btn.textContent=TOPO_LABELS[topoIdx];
 }
 
 function makeIcon(color){
@@ -157,7 +161,7 @@ function makeIcon(color){
     iconSize:[16,16],iconAnchor:[8,8],className:''
   });
 }
-var iGold=makeIcon('#c8921e'), iRed=makeIcon('#b03020');
+var iGold=makeIcon('#c8921e');
 
 var allMarkers=[], districtNames={};
 
@@ -180,12 +184,9 @@ function buildDistrictFilter(dists){
 
 function applyFilters(){
   var distFilter=document.getElementById('filter-district').value;
-  var scaleFilter=document.getElementById('filter-scale').value;
   var visible=0;
   allMarkers.forEach(function(m){
-    var show=true;
-    if(distFilter&&m.dis.districtId!==distFilter) show=false;
-    if(scaleFilter!==''&&String(m.dis.scale||'0')!==scaleFilter) show=false;
+    var show=!distFilter||m.dis.districtId===distFilter;
     if(show){ m.marker.addTo(map); visible++; }
     else { map.removeLayer(m.marker); }
   });
@@ -193,7 +194,6 @@ function applyFilters(){
 }
 
 document.getElementById('filter-district').addEventListener('change',applyFilters);
-document.getElementById('filter-scale').addEventListener('change',applyFilters);
 
 function loadData(){
   Promise.all([
@@ -239,9 +239,7 @@ function loadData(){
         var dist=dis.districtId?distMap[dis.districtId]:null;
         var locName=loc?loc.locationName:'';
         var distName=dist?dist.districtName:'';
-        var isLarge=dis.scale===1||dis.scale==='1';
-
-        var marker=L.marker([lat,lng],{icon:isLarge?iRed:iGold});
+        var marker=L.marker([lat,lng],{icon:iGold});
 
         var sharedNote=n>1?'<div class="p-shared">📌 同所在地に '+n+' 件</div>':'';
         var pop='<div class="dis-pop">'
