@@ -78,6 +78,18 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);min-height
 .method-tag{background:var(--cream2);border:1px solid var(--cream3);color:var(--ink);font-size:12px;padding:3px 10px;border-radius:20px;}
 .method-tag-none{font-size:12px;color:var(--ink3);}
 
+/* ── Brands ── */
+.brand-list{display:flex;flex-direction:column;gap:8px;margin-bottom:28px;}
+.brand-card{background:var(--cream2);border-radius:var(--r);padding:12px 16px;}
+.brand-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;}
+.brand-name-es{font-size:15px;font-weight:500;color:var(--ink);}
+.brand-name-ja{font-size:12px;color:var(--ink3);}
+.brand-st{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:500;margin-left:auto;}
+.brand-st-0{background:rgba(26,110,88,.1);color:var(--teal);}
+.brand-st-1{background:rgba(74,56,32,.08);color:var(--ink3);}
+.brand-st-2{background:rgba(200,146,30,.1);color:var(--gold-d);}
+.brand-links{display:flex;gap:6px;flex-wrap:wrap;}
+
 /* ── Links ── */
 .links-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:28px;}
 .ext-link{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:var(--r);border:1px solid var(--cream3);background:var(--cream2);color:var(--ink);font-size:12px;text-decoration:none;transition:.15s;}
@@ -138,7 +150,7 @@ function decodeMethod(str,labels){
 function esc(s){ var d=document.createElement('div');d.textContent=s||'';return d.innerHTML; }
 
 // ── Render ───────────────────────────────────────────────────────
-function render(dis,loc,dist){
+function render(dis,loc,dist,brands){
   var nom=dis.nom||dis.id||'—';
   var locName=loc?esc(loc.locationName):'—';
   var distName=dist?esc(dist.districtName):'—';
@@ -195,6 +207,33 @@ function render(dis,loc,dist){
   // Links
   if(linksHtml) html+='<div class="links-row">'+linksHtml+'</div>';
 
+  // Brands
+  var BRAND_ST_LABEL={0:'稼働中',1:'終売',2:'移転'};
+  var BRAND_ST_CLASS={0:'brand-st-0',1:'brand-st-1',2:'brand-st-2'};
+  html+='<hr class="divider">';
+  html+='<div class="sec-title">ブランド</div>';
+  if(!brands||!brands.length){
+    html+='<div style="font-size:12px;color:var(--ink3);margin-bottom:24px;">登録なし</div>';
+  } else {
+    html+='<div class="brand-list">';
+    brands.sort(function(a,b){return (a.seq||'').localeCompare(b.seq||'');}).forEach(function(b){
+      var st=String(b.brandStatus||'0');
+      html+='<div class="brand-card">';
+      html+='<div class="brand-top">';
+      html+='<span class="brand-name-es">'+esc(b.brandEs||'—')+'</span>';
+      if(b.brandJa) html+='<span class="brand-name-ja">'+esc(b.brandJa)+'</span>';
+      html+='<span class="brand-st '+(BRAND_ST_CLASS[st]||'brand-st-0')+'">'+(BRAND_ST_LABEL[st]||'—')+'</span>';
+      html+='</div>';
+      var blinks='';
+      if(b.annUrl) blinks+='<a class="ext-link" href="'+esc(b.annUrl)+'" target="_blank" rel="noopener">📋 ANNブランドページ</a>';
+      if(b.ammUrl) blinks+='<a class="ext-link" href="'+esc(b.ammUrl)+'" target="_blank" rel="noopener">🌵 AMM</a>';
+      if(b.infoUrl) blinks+='<a class="ext-link" href="'+esc(b.infoUrl)+'" target="_blank" rel="noopener">🔗 詳細情報</a>';
+      if(blinks) html+='<div class="brand-links">'+blinks+'</div>';
+      html+='</div>';
+    });
+    html+='</div>';
+  }
+
   // Production methods
   html+='<hr class="divider">';
   html+='<div class="sec-title">製造工程</div>';
@@ -244,7 +283,8 @@ function loadDistillery(){
   Promise.all([
     db.collection('distilleries').doc(nom).get(),
     db.collection('locations').get(),
-    db.collection('districts').get()
+    db.collection('districts').get(),
+    db.collection('brands').where('distilleryId','==',nom).get()
   ]).then(function(results){
     var disSnap=results[0];
     if(!disSnap.exists){
@@ -258,7 +298,8 @@ function loadDistillery(){
     results[2].docs.forEach(function(d){distMap[d.id]=d.data();});
     var loc=dis.locationId?locMap[dis.locationId]:null;
     var dist=dis.districtId?distMap[dis.districtId]:null;
-    render(dis,loc,dist);
+    var brands=results[3].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    render(dis,loc,dist,brands);
   }).catch(function(e){
     document.getElementById('state-msg').textContent='読み込み失敗: '+e.message;
   });
