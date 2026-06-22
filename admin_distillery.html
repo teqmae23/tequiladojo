@@ -732,10 +732,10 @@ g("btn-fetch-elevation").addEventListener("click", async function(){
   if(!lat||!lng){ toast("先に緯度経度を入力してください","err"); return; }
   var btn=this; btn.textContent="取得中…"; btn.disabled=true;
   try {
-    var res=await fetch("https://api.opentopodata.org/v1/srtm30m?locations="+lat+","+lng);
+    var res=await fetch("https://api.open-meteo.com/v1/elevation?latitude="+lat+"&longitude="+lng);
     var json=await res.json();
-    if(json.status==="OK"&&json.results&&json.results[0]){
-      var elev=Math.round(json.results[0].elevation);
+    if(json.elevation&&json.elevation.length){
+      var elev=Math.round(json.elevation[0]);
       sv("dis-elevation",elev);
       toast("標高: "+elev+"m","inf");
     } else { toast("標高の取得に失敗しました","err"); }
@@ -967,16 +967,17 @@ g("btn-fetch-elevation-all").addEventListener("click", async function(){
     var total=targets.length, done=0;
     if(!total){ statusEl.textContent="取得対象なし（全件設定済み）"; statusEl.style.color="var(--teal)"; btn.disabled=false; return; }
     statusEl.textContent="0 / "+total+" 件";
-    // 100件ずつ OpenTopoData に送る (rate: 1 req/sec)
+    // 100件ずつ Open-Meteo に送る
     for(var i=0;i<total;i+=100){
       var chunk=targets.slice(i,i+100);
-      var locs=chunk.map(function(d){ return d.data().latitude+","+d.data().longitude; }).join("|");
-      var res=await fetch("https://api.opentopodata.org/v1/srtm30m?locations="+locs);
+      var lats=chunk.map(function(d){ return d.data().latitude; }).join(",");
+      var lngs=chunk.map(function(d){ return d.data().longitude; }).join(",");
+      var res=await fetch("https://api.open-meteo.com/v1/elevation?latitude="+lats+"&longitude="+lngs);
       var json=await res.json();
-      if(json.status!=="OK") throw new Error("API error: "+json.error);
+      if(!json.elevation) throw new Error("API error");
       var batch=db.batch();
-      json.results.forEach(function(r,idx){
-        if(r.elevation!=null) batch.update(chunk[idx].ref,{elevation:Math.round(r.elevation)});
+      json.elevation.forEach(function(elev,idx){
+        if(elev!=null) batch.update(chunk[idx].ref,{elevation:Math.round(elev)});
       });
       await batch.commit();
       done+=chunk.length;
@@ -984,7 +985,6 @@ g("btn-fetch-elevation-all").addEventListener("click", async function(){
       g("elev-prog-bar").style.width=pct+"%";
       g("elev-prog-txt").textContent=done+" / "+total+" 件 ("+pct+"%)";
       statusEl.textContent=done+" / "+total+" 件";
-      if(i+100<total) await new Promise(function(r){ setTimeout(r,1100); }); // 1 req/sec
     }
     statusEl.textContent="✓ 完了 — "+total+"件の標高を取得しました"; statusEl.style.color="var(--teal)";
     toast("標高取得完了: "+total+"件");
