@@ -308,10 +308,16 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <div class="card" style="margin-top:18px;">
         <div style="font-weight:600;margin-bottom:6px;font-size:13px;">DOT原産地呼称自治区マスタ</div>
         <div style="font-size:11px;color:var(--ink3);margin-bottom:10px;">Firestore <code>dotMunicipios</code> コレクション管理。Overpass APIから境界ポリゴンを取得・保存します（61件）。</div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
           <button class="btn bp" id="btn-dot-fetch-missing" style="font-size:12px;">未取得を一括取得・保存</button>
           <button class="btn bs" id="btn-dot-reload" style="font-size:12px;">一覧を更新</button>
           <span id="dot-admin-status" style="font-size:11px;color:var(--ink3);margin-left:4px;"></span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+          <label style="font-size:11px;color:var(--ink2);white-space:nowrap;">塗り透過度:</label>
+          <input type="range" id="dot-opacity-slider" min="0" max="50" step="1" value="7" style="width:120px;cursor:pointer;">
+          <span id="dot-opacity-val" style="font-size:11px;color:var(--ink3);width:28px;">7%</span>
+          <button class="btn bs sm" id="btn-dot-save-opacity" style="font-size:11px;padding:2px 8px;">保存</button>
         </div>
         <div id="dot-master-list" style="font-size:12px;"></div>
       </div>
@@ -1273,8 +1279,8 @@ async function overpassFetchAdm(query,timeoutMs){
 async function fetchDotGeomAdm(entry, searchName){
   var sq=entry.sq;
   if(entry.entryType==='dotState'||entry.entryType==='stateBoundary'){
-    var q='[out:json][timeout:60];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
-    var json=await overpassFetchAdm(q,65000);
+    var q='[out:json][timeout:90];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
+    var json=await overpassFetchAdm(q,120000);
     var feats=osmtogeojson(json).features.filter(function(f){var t=f.geometry&&f.geometry.type;return t&&t!=='Point'&&t!=='MultiPoint';});
     return feats.length?feats[0].geometry:null;
   }
@@ -1311,8 +1317,13 @@ var _dotAdminSnap=null;
 
 function isDotGeomValid(d){
   if(!d||!d.geomJson) return false;
-  try{ var g=JSON.parse(d.geomJson); return !!(g&&g.type&&g.type!=='Point'&&g.type!=='MultiPoint'); }
-  catch(e){ return false; }
+  try{
+    var g=JSON.parse(d.geomJson);
+    if(!g||!g.type) return false;
+    // stateBoundaryは線なので線系ジオメトリも許可、それ以外はポリゴン必須
+    if(d.entryType==='stateBoundary') return g.type!=='Point'&&g.type!=='MultiPoint';
+    return g.type==='Polygon'||g.type==='MultiPolygon';
+  }catch(e){ return false; }
 }
 
 async function loadDotMasterList(){
@@ -1324,6 +1335,11 @@ async function loadDotMasterList(){
     _dotAdminSnap=snap;
     var fetchedMap={};
     snap.docs.forEach(function(doc){fetchedMap[doc.id]=doc.data();});
+    // 透過度設定を読み込んでスライダーに反映
+    var settingsD=fetchedMap['__settings__'];
+    var savedOpacity=(settingsD&&typeof settingsD.fillOpacity==='number')?settingsD.fillOpacity:0.07;
+    var slider=g('dot-opacity-slider'), valSpan=g('dot-opacity-val');
+    if(slider){ slider.value=Math.round(savedOpacity*100); if(valSpan) valSpan.textContent=Math.round(savedOpacity*100)+'%'; }
     var entries=dotExpectedEntries();
     var okCount=entries.filter(function(e){return isDotGeomValid(fetchedMap[e.docId]);}).length;
     var allDone=okCount===entries.length;
@@ -1432,6 +1448,17 @@ async function fetchAndSaveDotEntry(btn,entry,searchName){
 }
 
 g('btn-dot-reload').addEventListener('click',function(){loadDotMasterList();});
+
+(function(){
+  var slider=g('dot-opacity-slider'), valSpan=g('dot-opacity-val'), saveBtn=g('btn-dot-save-opacity');
+  if(slider&&valSpan) slider.addEventListener('input',function(){ valSpan.textContent=slider.value+'%'; });
+  if(saveBtn) saveBtn.addEventListener('click',async function(){
+    var v=parseInt(g('dot-opacity-slider').value);
+    await db.collection('dotMunicipios').doc('__settings__').set(
+      {fillOpacity:v/100,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});
+    toast('透過度を保存しました: '+v+'%');
+  });
+})();
 
 g('btn-dot-fetch-missing').addEventListener('click',async function(){
   var entries=dotExpectedEntries();
