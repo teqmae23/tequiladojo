@@ -135,7 +135,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 </div>
 
 <div id="map" class="labels-off">
-  <div class="dot-sp" id="dot-sp">
+  <div class="dot-sp open" id="dot-sp">
     <div class="dot-sp-head">
       <span>DOT境界 取得状況</span>
       <button onclick="toggleDotStatus()">×</button>
@@ -522,7 +522,9 @@ var OVERPASS_ENDPOINTS=[
 ];
 
 var dotLayer=null, dotLoading=false, dotGJ=null, dotFetchStatus=null;
-var DOT_CACHE_KEY='dot_geojson_v8';
+var DOT_CACHE_KEY='dot_geojson_v7';
+// stateLevel州（Jalisco）の色セット — スタイル判別用（キャッシュ再取得不要）
+var _dotStateLevelColors=new Set(DOT_STATES.filter(function(s){return s.stateLevel;}).map(function(s){return s.color;}));
 
 async function overpassFetch(query, timeoutMs){
   timeoutMs=timeoutMs||45000;
@@ -580,7 +582,6 @@ async function fetchStateGeoJSON(sq){
   features.forEach(function(f){
     f.properties=f.properties||{};
     f.properties._dotColor=sq.color;
-    if(sq.stateLevel) f.properties._stateLevel=true;
   });
   return {features:features, unmatched:unmatched};
 }
@@ -662,10 +663,13 @@ async function fetchItemFeatures(item){
 // ── DOTレイヤースタイル ──────────────────────────────────────────
 function dotLayerStyle(f){
   var c=(f.properties&&f.properties._dotColor)||'#2e7d32';
-  if(f.properties&&(f.properties._isStateOutline||f.properties._stateLevel)){
-    // 州境界: 太い実線
-    var fillOp=f.properties._stateLevel?0.06:0;
-    return {color:c,weight:3,fillColor:c,fillOpacity:fillOp,opacity:0.9};
+  if(f.properties&&f.properties._isStateOutline){
+    // 非Jalisco州境界ライン: 太い実線・塗りなし
+    return {color:c,weight:3,fillOpacity:0,opacity:0.9};
+  }
+  if(_dotStateLevelColors.has(c)){
+    // Jalisco DOT（州全体=DOT自治区）: 太い実線ボーダー＋薄い塗り
+    return {color:c,weight:3,fillColor:c,fillOpacity:0.06,opacity:0.9};
   }
   // DOT自治区境界: 極細線
   return {color:c,weight:0.6,fillColor:c,fillOpacity:0.07,opacity:0.7};
