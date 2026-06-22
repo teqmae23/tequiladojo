@@ -360,9 +360,29 @@ auth.onAuthStateChanged(async function(user){
   if(_authDone) return; _authDone=true;
   isAdmin=await checkAdmin(user);
   await loadElevSettings();
-  if(user){loadData();return;}
-  auth.signInAnonymously().then(loadData).catch(loadData);
+  if(user){loadData();loadOverlays();return;}
+  auth.signInAnonymously().then(function(){ loadData(); loadOverlays(); }).catch(function(){ loadData(); loadOverlays(); });
 });
+
+// ── マップオーバーレイ ──────────────────────────────────
+var overlayLayers=[];
+function drawOverlay(o){
+  var layer;
+  var opts={color:o.color||'#1565c0',weight:o.weight||2,fillColor:o.fillColor||o.color||'#1565c0',fillOpacity:o.fillOpacity!=null?o.fillOpacity:0.08};
+  if(o.type==='polygon') layer=L.polygon(o.coords,opts);
+  else if(o.type==='polyline') layer=L.polyline(o.coords,{color:opts.color,weight:opts.weight,dashArray:o.dashArray||null});
+  else if(o.type==='circle') layer=L.circle(o.coords[0],Object.assign({radius:o.radius||10000},opts));
+  if(!layer) return;
+  if(o.label) layer.bindTooltip(o.label,{sticky:true,className:'dis-label'});
+  layer.addTo(map);
+  overlayLayers.push(layer);
+}
+function loadOverlays(){
+  db.collection('mapOverlays').where('active','==',true).get().then(function(snap){
+    overlayLayers.forEach(function(l){map.removeLayer(l);}); overlayLayers=[];
+    snap.docs.forEach(function(doc){ drawOverlay(doc.data()); });
+  }).catch(function(){});
+}
 </script>
 </body>
 </html>
