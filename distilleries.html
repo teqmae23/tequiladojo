@@ -484,7 +484,10 @@ async function overpassFetch(query){
   var lastErr;
   for(var i=0;i<OVERPASS_ENDPOINTS.length;i++){
     try{
-      var resp=await fetch(OVERPASS_ENDPOINTS[i],{method:'POST',body:'data='+encodeURIComponent(query)});
+      var ctrl=new AbortController();
+      var tid=setTimeout(function(){ctrl.abort();},20000); // 20秒でクライアント側タイムアウト
+      var resp=await fetch(OVERPASS_ENDPOINTS[i],{method:'POST',body:'data='+encodeURIComponent(query),signal:ctrl.signal});
+      clearTimeout(tid);
       if(!resp.ok) throw new Error('HTTP '+resp.status);
       return await resp.json();
     }catch(e){ lastErr=e; }
@@ -495,11 +498,10 @@ async function overpassFetch(query){
 async function fetchStateGeoJSON(sq){
   var query;
   if(sq.stateLevel){
-    // 州全域 → admin_level=4 の境界1ポリゴン（高速・タイムアウト回避）
-    query='[out:json][timeout:30];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
+    query='[out:json][timeout:20];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
   } else {
     var pat=sq.municipios.map(function(n){return n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}).join('|');
-    query='[out:json][timeout:45];area["ISO3166-2"="'+sq.iso+'"]->.s;rel["admin_level"="8"]["name"~"'+pat+'"](area.s);out geom qt;';
+    query='[out:json][timeout:40];area["ISO3166-2"="'+sq.iso+'"]->.s;rel["admin_level"="8"]["name"~"'+pat+'"](area.s);out geom qt;';
   }
   var json=await overpassFetch(query);
   return osmtogeojson(json).features;
@@ -515,19 +517,23 @@ async function toggleDOT(){
   if(dotLoading) return;
   dotLoading=true; btn.disabled=true;
   try{
-    var CACHE_KEY='dot_geojson_v2';
+    var CACHE_KEY='dot_geojson_v3';
     var cached=sessionStorage.getItem(CACHE_KEY);
     var gj;
     if(cached){
       btn.textContent='読込中...';
       gj=JSON.parse(cached);
     } else {
-      var allFeatures=[];
-      for(var i=0;i<DOT_STATES.length;i++){
-        btn.textContent=DOT_STATES[i].state+' 取得中 ('+(i+1)+'/'+DOT_STATES.length+')';
-        var feats=await fetchStateGeoJSON(DOT_STATES[i]);
-        allFeatures=allFeatures.concat(feats);
-      }
+      btn.textContent='DOT境界取得中...';
+      // 全州を並列取得 — 一部失敗しても残りを表示
+      var results=await Promise.allSettled(DOT_STATES.map(function(sq){return fetchStateGeoJSON(sq);}));
+      var allFeatures=[], failed=[];
+      results.forEach(function(r,i){
+        if(r.status==='fulfilled') allFeatures=allFeatures.concat(r.value);
+        else failed.push(DOT_STATES[i].state);
+      });
+      if(!allFeatures.length) throw new Error('全州の取得に失敗しました');
+      if(failed.length) console.warn('DOT取得失敗:',failed.join(', '));
       gj={type:'FeatureCollection',features:allFeatures};
       try{sessionStorage.setItem(CACHE_KEY,JSON.stringify(gj));}catch(e){}
     }
