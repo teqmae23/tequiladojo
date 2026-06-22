@@ -167,11 +167,43 @@ var DISTRICT_LABELS={
   '41':'Nayarit','51':'Tamaulipas'
 };
 var colorMode='district';
+var elevSettings={min:0,max:2500};
+var isAdmin=false;
+
+async function loadElevSettings(){
+  try{
+    var doc=await db.collection('settings').doc('map').get();
+    if(doc.exists){
+      var d=doc.data();
+      if(d.elevMinM!=null) elevSettings.min=Number(d.elevMinM);
+      if(d.elevMaxM!=null) elevSettings.max=Number(d.elevMaxM);
+    }
+  }catch(e){}
+}
+async function checkAdmin(user){
+  if(!user||user.isAnonymous) return false;
+  try{
+    var snap=await db.collection('staffRoles').doc(user.uid).get();
+    var role=snap.exists?snap.data().role:null;
+    return role==='owner'||role==='staff';
+  }catch(e){return false;}
+}
+async function saveElevSettings(){
+  var minEl=document.getElementById('elev-min-input'), maxEl=document.getElementById('elev-max-input');
+  if(!minEl||!maxEl) return;
+  var newMin=parseInt(minEl.value), newMax=parseInt(maxEl.value);
+  if(isNaN(newMin)||isNaN(newMax)||newMin>=newMax){alert('最小値 < 最大値 になるよう入力してください');return;}
+  elevSettings.min=newMin; elevSettings.max=newMax;
+  try{
+    await db.collection('settings').doc('map').set({elevMinM:newMin,elevMaxM:newMax},{merge:true});
+    recolorMarkers();
+  }catch(e){alert('保存失敗: '+e.message);}
+}
 
 function elevationColor(elev){
   if(elev==null||isNaN(elev)) return '#ffffff';
-  var t=Math.max(0,Math.min(1,elev/2500));
-  // white(255,255,255) → red(229,57,53)
+  var range=elevSettings.max-elevSettings.min||1;
+  var t=Math.max(0,Math.min(1,(elev-elevSettings.min)/range));
   return 'rgb('+Math.round(255+(229-255)*t)+','+Math.round(255+(57-255)*t)+','+Math.round(255+(53-255)*t)+')';
 }
 function getMarkerColor(dis){
@@ -185,10 +217,18 @@ function updateLegend(){
       return '<div class="legend-item"><div class="legend-dot" style="background:'+DISTRICT_COLORS[id]+'"></div>'+DISTRICT_LABELS[id]+'</div>';
     }).join('')+'<div class="legend-item"><div class="legend-dot" style="background:#c8921e"></div>その他</div>';
   } else {
+    var adminHtml=isAdmin
+      ?'<div style="margin-top:7px;padding-top:6px;border-top:1px solid var(--cream3);display:flex;gap:4px;align-items:center;flex-wrap:wrap;">'
+        +'<input id="elev-min-input" type="number" value="'+elevSettings.min+'" style="width:54px;font-size:11px;padding:2px 4px;border:1px solid var(--cream3);border-radius:3px;background:#fff;">m〜'
+        +'<input id="elev-max-input" type="number" value="'+elevSettings.max+'" style="width:54px;font-size:11px;padding:2px 4px;border:1px solid var(--cream3);border-radius:3px;background:#fff;">m'
+        +'<button onclick="saveElevSettings()" style="font-size:10px;padding:2px 7px;border:1px solid var(--cream3);border-radius:3px;background:var(--ink);color:var(--cream);cursor:pointer;">保存</button>'
+        +'</div>'
+      :'';
     el.innerHTML='<div style="font-size:10px;color:var(--ink3);margin-bottom:4px;">標高</div>'
       +'<div class="legend-grade"></div>'
-      +'<div class="legend-scale"><span>0m</span><span>2500m</span></div>'
-      +'<div class="legend-item" style="margin-top:4px;"><div class="legend-dot" style="background:#fff;border:1px solid var(--cream3);"></div>未設定</div>';
+      +'<div class="legend-scale"><span>'+elevSettings.min+'m</span><span>'+elevSettings.max+'m</span></div>'
+      +'<div class="legend-item" style="margin-top:4px;"><div class="legend-dot" style="background:#fff;border:1px solid var(--cream3);"></div>未設定</div>'
+      +adminHtml;
   }
 }
 function recolorMarkers(){
@@ -316,8 +356,10 @@ function loadData(){
 }
 
 var _authDone=false;
-auth.onAuthStateChanged(function(user){
+auth.onAuthStateChanged(async function(user){
   if(_authDone) return; _authDone=true;
+  isAdmin=await checkAdmin(user);
+  await loadElevSettings();
   if(user){loadData();return;}
   auth.signInAnonymously().then(loadData).catch(loadData);
 });
