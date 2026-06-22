@@ -639,6 +639,7 @@ auth.onAuthStateChanged(function(user){
   refreshButtons();
   renderBasicPreview();
   initUrlForm();
+  loadSavedUrlsFromFirestore();
 });
 
 function refreshButtons(){
@@ -741,6 +742,7 @@ var URL_PRESETS=[
 
 // ハードコード済みの145件NOMセット（初期値）
 var BASE_NOMS=new Set(Object.keys(URL_MAP));
+var _urlsLoaded=false; // Firestore読み込みを1回だけ実行するガード
 
 function updateUrlState(){
   var total=RAW.length;
@@ -819,6 +821,38 @@ function initUrlForm(){
     container.appendChild(buildUrlRow(p.nom, p.name, false));
   });
   updateUrlState();
+}
+
+// ページ読み込み時にFirestoreから保存済みURLを復元する
+async function loadSavedUrlsFromFirestore(){
+  if(_urlsLoaded) return;
+  _urlsLoaded=true;
+  try{
+    // ammUrl が設定されているドキュメントを全取得
+    var snap=await db.collection('ammDistilleries').where('ammUrl','>','').get();
+    var container=document.getElementById('url-form-rows');
+    snap.docs.forEach(function(doc){
+      var nom=doc.id;
+      var url=doc.data().ammUrl;
+      if(!url) return;
+      if(BASE_NOMS.has(nom)) return; // ハードコード済み145件はスキップ
+      URL_MAP[nom]=url;
+      // プリセット行があれば入力欄を埋める
+      var presetRow=container.querySelector('.url-row[data-nom="'+nom+'"]');
+      if(presetRow){
+        presetRow.querySelector('.url-row-input').value=url;
+      } else {
+        // ＋1件追加で登録された追加NOM：編集可能行として復元
+        var row=buildUrlRow('','',true);
+        row.querySelector('.url-row-nom-input').value=nom;
+        row.querySelector('.url-row-input').value=url;
+        container.appendChild(row);
+      }
+    });
+    updateUrlState();
+  }catch(e){
+    console.warn('Firestore URL読み込みエラー:',e.message);
+  }
 }
 
 function buildUrlRow(nom, name, editable){
