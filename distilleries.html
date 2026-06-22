@@ -379,13 +379,52 @@ auth.onAuthStateChanged(async function(user){
 
 // ── マップオーバーレイ ──────────────────────────────────
 var overlayLayers=[];
+
+function smoothChaikin(pts, iter){
+  if(!iter||iter<1) return pts;
+  var r=pts;
+  for(var k=0;k<iter;k++){
+    var n=[];
+    for(var i=0;i<r.length;i++){
+      var p0=r[i], p1=r[(i+1)%r.length];
+      n.push([p0[0]*0.75+p1[0]*0.25, p0[1]*0.75+p1[1]*0.25]);
+      n.push([p0[0]*0.25+p1[0]*0.75, p0[1]*0.25+p1[1]*0.75]);
+    }
+    r=n;
+  }
+  return r;
+}
+
+function generateEllipsePoints(lat, lng, radiusX, radiusY, rotation){
+  var n=64, R=6371000;
+  var rad=(rotation||0)*Math.PI/180;
+  var cosR=Math.cos(rad), sinR=Math.sin(rad);
+  var latR=lat*Math.PI/180;
+  var pts=[];
+  for(var i=0;i<n;i++){
+    var a=2*Math.PI*i/n;
+    var dx=radiusX*Math.cos(a), dy=radiusY*Math.sin(a);
+    var rx=dx*cosR-dy*sinR, ry=dx*sinR+dy*cosR;
+    pts.push([lat+ry/R*(180/Math.PI), lng+rx/(R*Math.cos(latR))*(180/Math.PI)]);
+  }
+  return pts;
+}
+
 function drawOverlay(o){
   var layer;
   var opts={color:o.color||'#1565c0',weight:o.weight||2,fillColor:o.fillColor||o.color||'#1565c0',fillOpacity:o.fillOpacity!=null?o.fillOpacity:0.08};
   var latlngs=(o.coords||[]).map(function(c){return Array.isArray(c)?[c[0],c[1]]:[c.lat,c.lng];});
-  if(o.type==='polygon') layer=L.polygon(latlngs,opts);
-  else if(o.type==='polyline') layer=L.polyline(latlngs,{color:opts.color,weight:opts.weight,dashArray:o.dashArray||null});
-  else if(o.type==='circle') layer=L.circle(latlngs[0],Object.assign({radius:o.radius||10000},opts));
+  if(o.type==='polygon'){
+    if(o.smooth>0) latlngs=smoothChaikin(latlngs,o.smooth);
+    layer=L.polygon(latlngs,opts);
+  } else if(o.type==='polyline'){
+    layer=L.polyline(latlngs,{color:opts.color,weight:opts.weight,dashArray:o.dashArray||null});
+  } else if(o.type==='circle'){
+    layer=L.circle(latlngs[0],Object.assign({radius:o.radius||10000},opts));
+  } else if(o.type==='ellipse'&&latlngs.length){
+    var epts=generateEllipsePoints(latlngs[0][0],latlngs[0][1],o.radiusX||10000,o.radiusY||5000,o.rotation||0);
+    layer=L.polygon(epts,opts);
+  }
   if(!layer) return;
   if(o.label) layer.bindTooltip(o.label,{sticky:true,className:'dis-label'});
   layer.addTo(map);
