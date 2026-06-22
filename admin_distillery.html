@@ -167,6 +167,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <button class="tab active" data-page="districts">地区 <span class="cnt" id="cnt-districts">—</span></button>
       <button class="tab" data-page="locations">所在地 <span class="cnt" id="cnt-locations">—</span></button>
       <button class="tab" data-page="distilleries">蒸留所 <span class="cnt" id="cnt-distilleries">—</span></button>
+      <button class="tab" data-page="crt-sync">CRT同期</button>
     </div>
     <div class="tuser">
       <span class="temail" id="temail"></span>
@@ -222,6 +223,36 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           </div>
         </div>
         <div class="tw"><table id="tbl-distilleries"><colgroup><col style="width:60px"><col><col><col style="width:120px"><col style="width:100px"><col style="width:50px"><col style="width:50px"><col style="width:42px"><col style="width:120px"></colgroup><thead><tr><th>NOM</th><th>蒸留所名（A）</th><th>蒸留所名（日本語）</th><th>地区</th><th>所在地</th><th>公式HP</th><th>AMM</th><th>地図</th><th>✏️ レコード操作</th></tr></thead><tbody id="tb-distilleries"><tr><td colspan="9" class="ec">読み込み中...</td></tr></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- CRT同期 -->
+    <div class="page" id="page-crt-sync">
+      <div class="phead">
+        <div>
+          <div class="ptitle">CRT → 蒸留所マスタ 同期</div>
+          <div class="pdesc">crtDistilleries の情報を distilleries に書き込みます。既存レコードは CRT フィールドを更新（導入=1）、未登録 NOM は新規作成（導入=0）。</div>
+        </div>
+      </div>
+      <div class="card" style="padding:18px 20px;">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
+          <button class="btn bp" id="btn-crt-preview">① プレビュー取得</button>
+          <button class="btn bp" id="btn-crt-sync" disabled>② 蒸留所マスタへ同期</button>
+          <span id="crt-sync-status" style="font-size:12px;color:var(--ink3);"></span>
+        </div>
+        <div id="crt-prog-wrap" style="display:none;margin-bottom:12px;">
+          <div style="background:var(--cream3);border-radius:10px;height:6px;overflow:hidden;">
+            <div id="crt-prog-bar" style="background:var(--gold);height:6px;border-radius:10px;transition:width .3s;width:0;"></div>
+          </div>
+          <div id="crt-prog-txt" style="font-size:11px;color:var(--ink3);margin-top:4px;"></div>
+        </div>
+        <div class="tw">
+          <table id="tbl-crt-sync">
+            <colgroup><col style="width:60px"><col style="width:80px"><col><col><col style="width:100px"><col style="width:70px"></colgroup>
+            <thead><tr><th>NOM</th><th>操作</th><th>CRT蒸留所名</th><th>CRT住所</th><th>CRT DOT</th><th>導入</th></tr></thead>
+            <tbody id="tb-crt-sync"><tr><td colspan="6" class="ec">「プレビュー取得」を押してください</td></tr></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -697,6 +728,121 @@ g("btn-save-distillery").addEventListener("click",function(){
     .then(function(){ toast(editId.distillery?"蒸留所を更新しました":"蒸留所を登録しました"); closeM("m-distillery"); bumpAndRender("distilleries"); loadCol("distilleries"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
+
+// ── CRT → 蒸留所マスタ 同期 ─────────────────────────────────────
+var crtSyncRows = []; // [{nom, empresa, direccion, dot, isNew, introduced}]
+
+function crtSt(msg, cls){
+  var el = g("crt-sync-status");
+  el.textContent = msg;
+  el.style.color = cls === "err" ? "var(--red)" : cls === "ok" ? "var(--teal)" : "var(--ink3)";
+}
+
+g("btn-crt-preview").addEventListener("click", async function(){
+  crtSt("読み込み中…");
+  g("btn-crt-sync").disabled = true;
+  g("tb-crt-sync").innerHTML = '<tr><td colspan="6" class="ec">読み込み中…</td></tr>';
+  try {
+    // crtDistilleries: NOM ごとに最新日付のみ
+    var crtSnap = await db.collection("crtDistilleries").get();
+    var crtMap = {};
+    crtSnap.docs.forEach(function(doc){
+      var d = doc.data();
+      var nom = String(d.nom || "");
+      if (!crtMap[nom] || (d.collectionDate || "") > crtMap[nom].collectionDate) {
+        crtMap[nom] = {empresa: d.empresa||"", direccion: d.direccion||"", dot: d.dot||"", collectionDate: d.collectionDate||""};
+      }
+    });
+
+    // 既存蒸留所マスタの NOM セット
+    var disSnap = await db.collection("distilleries").get();
+    var existingNoms = new Set(disSnap.docs.map(function(d){ return d.id; }));
+
+    crtSyncRows = Object.keys(crtMap).sort().map(function(nom){
+      var c = crtMap[nom];
+      var isNew = !existingNoms.has(nom);
+      return {nom: nom, empresa: c.empresa, direccion: c.direccion, dot: c.dot, isNew: isNew, introduced: isNew ? 0 : 1};
+    });
+
+    var newCount = crtSyncRows.filter(function(r){ return r.isNew; }).length;
+    var updCount = crtSyncRows.length - newCount;
+    crtSt("取得完了 — 更新: "+updCount+"件（導入=1）/ 新規作成: "+newCount+"件（導入=0）", "ok");
+
+    var tbody = g("tb-crt-sync");
+    tbody.innerHTML = crtSyncRows.map(function(r){
+      var badge = r.isNew
+        ? '<span style="background:rgba(200,146,30,.15);color:var(--gold-d);border:1px solid rgba(200,146,30,.3);border-radius:10px;padding:1px 8px;font-size:10px;">新規作成</span>'
+        : '<span style="background:rgba(26,110,88,.1);color:var(--teal);border:1px solid rgba(26,110,88,.2);border-radius:10px;padding:1px 8px;font-size:10px;">更新</span>';
+      return "<tr>"
+        + "<td style='font-family:var(--mono);font-weight:600;'>" + r.nom + "</td>"
+        + "<td>" + badge + "</td>"
+        + "<td>" + esc(r.empresa) + "</td>"
+        + "<td style='font-size:11px;color:var(--ink3);'>" + esc(r.direccion) + "</td>"
+        + "<td style='font-family:var(--mono);font-size:11px;'>" + esc(r.dot) + "</td>"
+        + "<td style='text-align:center;font-family:var(--mono);font-weight:600;color:"+(r.isNew?"var(--gold-d)":"var(--teal)")+"'>"
+        + r.introduced + "</td>"
+        + "</tr>";
+    }).join("");
+    g("btn-crt-sync").disabled = crtSyncRows.length === 0;
+  } catch(e) {
+    crtSt("エラー: " + e.message, "err");
+    g("tb-crt-sync").innerHTML = '<tr><td colspan="6" class="ec" style="color:var(--red);">' + e.message + '</td></tr>';
+  }
+});
+
+g("btn-crt-sync").addEventListener("click", async function(){
+  if (!crtSyncRows.length) return;
+  if (!confirm("蒸留所マスタを " + crtSyncRows.length + " 件同期します。続行しますか？")) return;
+  g("btn-crt-sync").disabled = true;
+  g("btn-crt-preview").disabled = true;
+  g("crt-prog-wrap").style.display = "block";
+  crtSt("同期中…");
+
+  try {
+    var total = crtSyncRows.length, done = 0;
+    for (var i = 0; i < total; i += 499) {
+      var batch = db.batch();
+      crtSyncRows.slice(i, i + 499).forEach(function(r){
+        var ref = db.collection("distilleries").doc(r.nom);
+        if (r.isNew) {
+          batch.set(ref, {
+            nom: r.nom,
+            crtEmpresa: r.empresa,
+            crtDireccion: r.direccion,
+            crtDot: r.dot,
+            introduced: 0,
+            crtSyncedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+        } else {
+          batch.update(ref, {
+            crtEmpresa: r.empresa,
+            crtDireccion: r.direccion,
+            crtDot: r.dot,
+            introduced: 1,
+            crtSyncedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+        }
+      });
+      await batch.commit();
+      done += Math.min(499, total - i);
+      var pct = Math.round(done / total * 100);
+      g("crt-prog-bar").style.width = pct + "%";
+      g("crt-prog-txt").textContent = done + " / " + total + " 件 (" + pct + "%)";
+    }
+    var newCount = crtSyncRows.filter(function(r){ return r.isNew; }).length;
+    crtSt("✓ 同期完了 — 更新: "+(total-newCount)+"件 / 新規作成: "+newCount+"件", "ok");
+    toast("CRT同期完了: " + total + "件");
+    bumpAndRender("distilleries");
+    loadCol("distilleries");
+  } catch(e) {
+    crtSt("エラー: " + e.message, "err");
+    toast("同期エラー: " + e.message, "err");
+  }
+  g("btn-crt-sync").disabled = false;
+  g("btn-crt-preview").disabled = false;
+});
+
+function esc(s){ var d=document.createElement("div"); d.textContent=String(s||""); return d.innerHTML; }
 </script>
 </body>
 </html>
