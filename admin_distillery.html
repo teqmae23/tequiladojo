@@ -294,7 +294,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <tbody id="tb-overlays"><tr><td colspan="6" class="ec">読み込み中...</td></tr></tbody>
         </table></div>
       </div>
-      <div class="card" style="margin-top:18px;">
+      <div class="card" style="margin-top:18px;padding:12px 14px;">
         <div style="font-weight:600;margin-bottom:10px;font-size:13px;">標高グラデーション設定</div>
         <div style="font-size:11px;color:var(--ink3);margin-bottom:10px;">蒸留所マップの標高カラーリングに使う色分け点を設定します。標高値（m）と色を2点以上設定してください。</div>
         <div id="elev-stops-list"></div>
@@ -307,7 +307,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       </div>
       <div class="card" style="margin-top:18px;">
         <div style="font-weight:600;margin-bottom:6px;font-size:13px;">DOT原産地呼称自治区マスタ</div>
-        <div style="font-size:11px;color:var(--ink3);margin-bottom:10px;">Firestore <code>dotMunicipios</code> コレクション管理。Overpass APIから境界ポリゴンを取得・保存します（61件）。</div>
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:10px;">Firestore <code>dotMunicipios</code> コレクション管理。Overpass APIから境界ポリゴンを取得・保存します。</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
           <button class="btn bp" id="btn-dot-fetch-missing" style="font-size:12px;">未取得を一括取得・保存</button>
           <button class="btn bs" id="btn-dot-reload" style="font-size:12px;">一覧を更新</button>
@@ -315,7 +315,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         </div>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
           <label style="font-size:11px;color:var(--ink2);white-space:nowrap;">塗り透過度:</label>
-          <input type="range" id="dot-opacity-slider" min="0" max="50" step="1" value="7" style="width:120px;cursor:pointer;">
+          <input type="range" id="dot-opacity-slider" min="0" max="100" step="1" value="7" style="width:120px;cursor:pointer;">
           <span id="dot-opacity-val" style="font-size:11px;color:var(--ink3);width:28px;">7%</span>
           <button class="btn bs sm" id="btn-dot-save-opacity" style="font-size:11px;padding:2px 8px;">保存</button>
         </div>
@@ -1237,17 +1237,27 @@ var OVERPASS_ENDPOINTS_ADM=[
 var _nrmFnAdm=function(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim();};
 
 function dotDocIdAdm(sq,name){
-  if(sq.stateLevel) return sq.iso+'_dotState';
-  if(!name) return sq.iso+'_stateBoundary';
+  if(!name) return sq.stateLevel?sq.iso+'_dotState':sq.iso+'_stateBoundary';
   return sq.iso+'_municipio_'+name.replace(/\s+/g,'_');
 }
 
-// 全期待エントリを生成
-function dotExpectedEntries(){
+// 全期待エントリを生成（fetchedMap: Firestoreスナップデータ）
+function dotExpectedEntries(fetchedMap){
   var entries=[];
   DOT_ADMIN_STATES.forEach(function(sq){
     if(sq.stateLevel){
-      entries.push({docId:dotDocIdAdm(sq),sq:sq,name:null,entryType:'dotState',label:'DOT境界（全州）'});
+      // stateLevel州: Firestoreにmunicipio_*があればそれを使用、なければdotState
+      var prefix=sq.iso+'_municipio_';
+      var jalMunis=fetchedMap?Object.keys(fetchedMap).filter(function(id){return id.startsWith(prefix);}):[];
+      if(jalMunis.length>0){
+        jalMunis.sort().forEach(function(docId){
+          var d=fetchedMap[docId];
+          var mName=d&&d.name?d.name:docId.slice(prefix.length).replace(/_/g,' ');
+          entries.push({docId:docId,sq:sq,name:mName,entryType:'municipio',label:mName,isJalMuni:true});
+        });
+      } else {
+        entries.push({docId:dotDocIdAdm(sq),sq:sq,name:null,entryType:'dotState',label:'DOT境界（全州）'});
+      }
     } else {
       entries.push({docId:dotDocIdAdm(sq),sq:sq,name:null,entryType:'stateBoundary',label:sq.state+' 州境界'});
       sq.municipios.forEach(function(m){
@@ -1256,6 +1266,35 @@ function dotExpectedEntries(){
     }
   });
   return entries;
+}
+
+// Jalisco全自治区一括取得
+async function fetchAllJaliscoMunicipios(statusEl){
+  var sq=DOT_ADMIN_STATES.find(function(s){return s.iso==='MX-JAL';});
+  var q='[out:json][timeout:120];area["ISO3166-2"="MX-JAL"]->.s;rel["admin_level"="6"](area.s);out geom qt;';
+  if(statusEl) statusEl.textContent='Jalisco全自治区を取得中（最大2分）...';
+  var json=await overpassFetchAdm(q,150000);
+  var feats=osmtogeojson(json).features.filter(function(f){
+    var t=f.geometry&&f.geometry.type; return t==='Polygon'||t==='MultiPolygon';
+  });
+  if(!feats.length) throw new Error('Jaliscoの自治区が取得できませんでした');
+  var ok=0,fail=0;
+  for(var i=0;i<feats.length;i++){
+    var f=feats[i];
+    var nm=(f.properties&&(f.properties.name||f.properties['name:es']))||'';
+    if(!nm){fail++;continue;}
+    var docId='MX-JAL_municipio_'+nm.replace(/\s+/g,'_');
+    try{
+      await db.collection('dotMunicipios').doc(docId).set({
+        state:'Jalisco',iso:'MX-JAL',name:nm,color:sq.color,
+        entryType:'municipio',geomJson:JSON.stringify(f.geometry),
+        fetchedAt:firebase.firestore.FieldValue.serverTimestamp()
+      },{merge:true});
+      ok++;
+    }catch(e2){fail++;}
+    if(statusEl) statusEl.textContent='JAL保存中: '+(i+1)+'/'+feats.length;
+  }
+  return {ok:ok,fail:fail,total:feats.length};
 }
 
 async function overpassFetchAdm(query,timeoutMs){
@@ -1340,9 +1379,12 @@ async function loadDotMasterList(){
     var savedOpacity=(settingsD&&typeof settingsD.fillOpacity==='number')?settingsD.fillOpacity:0.07;
     var slider=g('dot-opacity-slider'), valSpan=g('dot-opacity-val');
     if(slider){ slider.value=Math.round(savedOpacity*100); if(valSpan) valSpan.textContent=Math.round(savedOpacity*100)+'%'; }
-    var entries=dotExpectedEntries();
+    // fetchedMapを使って動的エントリを生成（Jalisco municipioを含む）
+    var entries=dotExpectedEntries(fetchedMap);
+    var jalSq=DOT_ADMIN_STATES.find(function(s){return s.iso==='MX-JAL';});
+    var hasJalMunis=entries.some(function(e){return e.isJalMuni;});
     var okCount=entries.filter(function(e){return isDotGeomValid(fetchedMap[e.docId]);}).length;
-    var allDone=okCount===entries.length;
+    var allDone=okCount===entries.length&&entries.length>0;
     g('dot-admin-status').textContent=allDone
       ? '全 '+entries.length+' 件取得完了（マップデータ確定・変更不可）'
       : okCount+' / '+entries.length+' 件取得済み';
@@ -1350,6 +1392,7 @@ async function loadDotMasterList(){
     if(fetchBtn) fetchBtn.style.display=allDone?'none':'';
 
     var curState='';
+    var numCols=allDone?3:4;
     var html='<table style="width:100%;border-collapse:collapse;font-size:12px;">';
     if(allDone){
       html+='<colgroup><col style="width:84px"><col><col style="width:36px"></colgroup>'
@@ -1364,6 +1407,17 @@ async function loadDotMasterList(){
         +'<th style="padding:5px 8px;text-align:center;font-weight:500;"></th>'
         +'<th style="padding:5px 8px;text-align:center;font-weight:500;">操作</th>'
         +'</tr></thead><tbody>';
+      // Jalisco municipioがまだない場合、一括取得ボタン行を先に表示
+      if(!hasJalMunis&&jalSq){
+        var jalDotOk=isDotGeomValid(fetchedMap[dotDocIdAdm(jalSq)]);
+        html+='<tr style="background:rgba(46,125,50,.05);border-bottom:1px solid var(--cream3);">'
+          +'<td style="padding:6px 8px;vertical-align:middle;white-space:nowrap;"><span style="color:'+jalSq.color+';font-weight:500;">Jalisco</span></td>'
+          +'<td colspan="3" style="padding:6px 8px;vertical-align:middle;">'
+          +'<button class="btn bp sm" id="btn-jal-fetch-all" style="font-size:11px;padding:3px 10px;">全自治区を一括取得（Overpass）</button>'
+          +(jalDotOk?' <span style="font-size:10px;color:var(--ink3);margin-left:6px;">州全体ポリゴンは取得済</span>':'')
+          +'</td></tr>';
+        curState='Jalisco';
+      }
     }
 
     entries.forEach(function(e,ei){
@@ -1375,7 +1429,6 @@ async function loadDotMasterList(){
 
       var labelCell;
       if(ok||allDone){
-        // 取得済み: 読み取り専用テキスト
         var displayName=e.entryType==='dotState'?((d&&d.name)||e.sq.state)
           :e.entryType==='stateBoundary'?'州境界ライン'
           :((d&&d.name)||e.name);
@@ -1384,7 +1437,6 @@ async function loadDotMasterList(){
           :'<span style="font-size:11px;color:var(--ink2);">'+esc(displayName)+'</span>';
         labelCell=badge;
       } else {
-        // 未取得: 検索名を編集可能
         if(e.entryType==='dotState'){
           labelCell='<input type="text" id="dot-n-'+ei+'" value="'+esc((d&&d.name)||e.sq.state)+'" '
             +'style="width:calc(100% - 2px);padding:2px 5px;border:1px solid #e0a0a0;border-radius:3px;font-size:11px;font-family:var(--sans);background:#fff;" '
@@ -1401,7 +1453,8 @@ async function loadDotMasterList(){
       var statusCell=ok
         ?'<span style="color:#2e7d32;font-weight:600;">✓</span>'
         :'<span style="color:#b03020;font-weight:600;">✗</span>';
-      var actionCell=(!allDone&&!ok)
+      // JAL municipioは一括取得のみ、個別取得ボタンは不要
+      var actionCell=(!allDone&&!ok&&!e.isJalMuni)
         ?'<button class="btn bs sm" style="font-size:10px;padding:2px 7px;" data-dot-fetch="'+ei+'">取得</button>'
         :'';
 
@@ -1423,6 +1476,24 @@ async function loadDotMasterList(){
         fetchAndSaveDotEntry(btn,entries[ei],searchName);
       });
     });
+
+    // Jalisco全自治区一括取得ボタン
+    var jalAllBtn=el.querySelector('#btn-jal-fetch-all');
+    if(jalAllBtn){
+      jalAllBtn.addEventListener('click',async function(){
+        if(!confirm('JaliscoのDOT自治区全件をOverpassから一括取得します（1〜2分かかります）。続行しますか？')) return;
+        jalAllBtn.disabled=true; jalAllBtn.textContent='取得中...';
+        var statusEl=g('dot-admin-status');
+        try{
+          var res=await fetchAllJaliscoMunicipios(statusEl);
+          toast('Jalisco '+res.ok+'件保存'+(res.fail?'、'+res.fail+'件失敗':''));
+          await loadDotMasterList();
+        }catch(e3){
+          jalAllBtn.disabled=false; jalAllBtn.textContent='全自治区を一括取得（Overpass）';
+          toast('Jalisco取得失敗: '+e3.message,'err');
+        }
+      });
+    }
   }catch(e2){
     el.innerHTML='<div style="color:var(--red);padding:6px 0;">読み込み失敗: '+esc(e2.message)+'</div>';
   }
@@ -1461,12 +1532,13 @@ g('btn-dot-reload').addEventListener('click',function(){loadDotMasterList();});
 })();
 
 g('btn-dot-fetch-missing').addEventListener('click',async function(){
-  var entries=dotExpectedEntries();
-  // Firestoreのスナップを再取得
+  // Firestoreのスナップを再取得してエントリを構築
   var snap=await db.collection('dotMunicipios').get();
   var fetchedMap={};
   snap.docs.forEach(function(doc){fetchedMap[doc.id]=doc.data();});
-  var missing=entries.filter(function(e){return !(fetchedMap[e.docId]&&fetchedMap[e.docId].geomJson);});
+  var entries=dotExpectedEntries(fetchedMap);
+  // JAL municipioは一括取得のみ（未取得一括からは除外）
+  var missing=entries.filter(function(e){return !e.isJalMuni&&!(fetchedMap[e.docId]&&fetchedMap[e.docId].geomJson);});
   if(!missing.length){toast('取得済みです（未取得なし）'); return;}
   if(!confirm(missing.length+'件の未取得エントリを一括取得します。\nOverpass APIへのアクセスが発生します。続行しますか？')) return;
   var btn=this; btn.disabled=true;

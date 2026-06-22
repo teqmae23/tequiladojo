@@ -528,14 +528,16 @@ var OVERPASS_ENDPOINTS=[
 var dotLayer=null, dotLoading=false, dotGJ=null, dotFetchStatus=null, dotFirestoreSnap=null;
 var dotLayerMap={}; // origName → Leaflet layer (for click-to-highlight)
 var dotFillOpacity=0.07; // loaded from Firestore __settings__
-// stateLevel州（Jalisco）の色セット — スタイル判別用
-var _dotStateLevelColors=new Set(DOT_STATES.filter(function(s){return s.stateLevel;}).map(function(s){return s.color;}));
-
 // Firestore doc ID ヘルパー
 function dotDocId(sq,name){
-  if(sq.stateLevel) return sq.iso+'_dotState';
-  if(!name) return sq.iso+'_stateBoundary';
+  if(!name) return sq.stateLevel?sq.iso+'_dotState':sq.iso+'_stateBoundary';
   return sq.iso+'_municipio_'+name.replace(/\s+/g,'_');
+}
+
+// ジオメトリが有効な Polygon/MultiPolygon か確認
+function _dotGeomOk(d){
+  if(!d||!d.geomJson) return false;
+  try{ var g=JSON.parse(d.geomJson); return g&&(g.type==='Polygon'||g.type==='MultiPolygon'); }catch(e){ return false; }
 }
 
 // Firestoreスナップから取得状況を派生
@@ -544,8 +546,19 @@ function deriveDotFetchStatusFromFirestore(snap){
   snap.docs.forEach(function(doc){ if(doc.data().geomJson) fetchedSet.add(doc.id); });
   return DOT_STATES.map(function(sq){
     if(sq.stateLevel){
+      // stateLevel州はFirestoreの municipio_ ドキュメントを動的に集計
+      var prefix=sq.iso+'_municipio_';
+      var munis=[];
+      snap.docs.forEach(function(doc){
+        if(doc.id.startsWith(prefix)){
+          var d=doc.data();
+          var mName=d.name||(doc.id.slice(prefix.length).replace(/_/g,' '));
+          munis.push({name:mName,ok:_dotGeomOk(d)});
+        }
+      });
       return {state:sq.state,iso:sq.iso,color:sq.color,stateLevel:true,
-        stateBoundaryOk:fetchedSet.has(dotDocId(sq)),municipioResults:null};
+        stateBoundaryOk:fetchedSet.has(dotDocId(sq)),
+        municipioResults:munis.length?munis:null};
     } else {
       return {state:sq.state,iso:sq.iso,color:sq.color,stateLevel:false,
         stateBoundaryOk:fetchedSet.has(dotDocId(sq)),
@@ -659,11 +672,11 @@ async function fetchSingleMunicipio(iso,color,name){
 // ── DOTレイヤースタイル ──────────────────────────────────────────
 function dotLayerStyle(f){
   var c=(f.properties&&f.properties._dotColor)||'#2e7d32';
-  var fo=dotFillOpacity||0.07;
+  var fo=typeof dotFillOpacity==='number'?dotFillOpacity:0.07;
   if(f.properties&&f.properties._isStateOutline){
     return {color:c,weight:3,fillOpacity:0,opacity:0.9};
   }
-  if(_dotStateLevelColors.has(c)){
+  if(f.properties&&f.properties._isDotState){
     return {color:c,weight:3,fillColor:c,fillOpacity:fo,opacity:0.9};
   }
   return {color:c,weight:0.6,fillColor:c,fillOpacity:fo,opacity:0.7};
@@ -692,20 +705,31 @@ async function toggleDOT(){
       }
     });
 
+    // stateLevel州で municipio_ ドキュメントが存在する場合は dotState をスキップ
+    var stateLevelMuniIsos=new Set();
+    snap.docs.forEach(function(doc){
+      var m=doc.id.match(/^([^_]+-[^_]+)_municipio_/);
+      if(m){
+        var sq=DOT_STATES.find(function(s){return s.stateLevel&&s.iso===m[1];});
+        if(sq) stateLevelMuniIsos.add(m[1]);
+      }
+    });
+
     var features=[];
     snap.docs.forEach(function(doc){
       var d=doc.data(); if(!d.geomJson) return;
+      // municipio docs が存在する stateLevel 州の dotState はスキップ
+      if(d.entryType==='dotState'&&stateLevelMuniIsos.has(d.iso)) return;
       try{
         var geom=JSON.parse(d.geomJson);
-        // _displayName: popup text (saved name or fallback)
         var nm=d.entryType==='municipio'?d.name:(d.entryType==='dotState'?(d.name||d.state):null);
-        // _mapKey: key into dotLayerMap — use original name from docId for consistent panel matching
         var mOrig=doc.id.match(/_municipio_(.+)$/);
         var mapKey=mOrig?(mOrig[1].replace(/_/g,' ')):(d.entryType==='dotState'?d.state:null);
         features.push({type:'Feature',geometry:geom,properties:{
           _dotColor:d.color,
           _municipioName:mapKey,
           _isStateOutline:d.entryType==='stateBoundary',
+          _isDotState:d.entryType==='dotState',
           _displayName:nm,
           _mapKey:mapKey
         }});
@@ -761,11 +785,24 @@ function buildStatusPanel(){
       +'<span style="width:9px;height:9px;border-radius:50%;background:'+st.color+';display:inline-block;flex-shrink:0"></span>'
       +'<strong>'+st.state+'</strong></div>';
     if(st.stateLevel){
-      html+='<div class="dot-sp-row">'
-        +(st.stateBoundaryOk?'<span class="dot-sp-ok">✓</span>':'<span class="dot-sp-err">✗</span>')
-        +' <span class="dot-sp-name" data-dot-name="'+st.state+'">DOT境界</span>';
-      if(!st.stateBoundaryOk&&isAdmin) html+=' <button class="dot-sp-retry" data-retry-bnd data-si="'+si+'">再取得</button>';
-      html+='</div>';
+      if(!st.municipioResults||!st.municipioResults.length){
+        // 全州ポリゴンのみ
+        html+='<div class="dot-sp-row">'
+          +(st.stateBoundaryOk?'<span class="dot-sp-ok">✓</span>':'<span class="dot-sp-err">✗</span>')
+          +' <span class="dot-sp-name" data-dot-name="'+st.state+'">DOT境界</span>';
+        if(!st.stateBoundaryOk&&isAdmin) html+=' <button class="dot-sp-retry" data-retry-bnd data-si="'+si+'">再取得</button>';
+        html+='</div>';
+      } else {
+        // 個別自治区を表示
+        var okN=st.municipioResults.filter(function(m){return m.ok;}).length;
+        html+='<div class="dot-sp-sub">DOT自治区 '+okN+' / '+st.municipioResults.length+'</div>';
+        st.municipioResults.forEach(function(m){
+          html+='<div class="dot-sp-row">'
+            +(m.ok?'<span class="dot-sp-ok">✓</span>':'<span class="dot-sp-err">✗</span>')
+            +' <span class="dot-sp-name" data-dot-name="'+m.name+'">'+m.name+'</span>'
+            +'</div>';
+        });
+      }
     } else {
       html+='<div class="dot-sp-row">'
         +(st.stateBoundaryOk?'<span class="dot-sp-ok">✓</span>':'<span class="dot-sp-err">✗</span>')
