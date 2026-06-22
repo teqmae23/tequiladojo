@@ -464,26 +464,44 @@ function loadOverlays(){
 
 // ── DOT原産地呼称自治区オーバーレイ ─────────────────────────────
 var DOT_STATES=[
-  {state:'Jalisco',  iso:'MX-JAL',allMunicipios:true},
+  // Jalisco は全域対象 → 州境界(admin_level=4)を1ポリゴンで取得（高速）
+  {state:'Jalisco',  iso:'MX-JAL',stateLevel:true},
   {state:'Guanajuato', iso:'MX-GUA',municipios:['Abasolo','Ciudad Manuel Doblado','Cuerámaro','Huanímaro','Pénjamo','Purísima del Rincón','Romita']},
   {state:'Michoacán', iso:'MX-MIC',municipios:['Briseñas de Matamoros','Chavinda','Chilchota','Churintzio','Cotija','Ecuandureo','Jacona','Jiquilpan','Maravatío','Marcos Castellanos','Nuevo Parangaricutiro','Numarán','Pajacuarán','Peribán','La Piedad','Régules','Los Reyes','Sahuayo','Tancítaro','Tangamandapio','Tangancícuaro','Tanhuato','Tingüindín','Tocumbo','Venustiano Carranza','Villa Mar','Vista Hermosa','Yurécuaro','Zamora','Zináparo']},
   {state:'Nayarit',   iso:'MX-NAY',municipios:['Ahuacatlán','Amatlán de Cañas','Ixtlán del Río','Jala','Xalisco','San Pedro Lagunillas','Santa María del Oro','Tepic']},
   {state:'Tamaulipas',iso:'MX-TAM',municipios:['Aldama','Altamira','Antiguo Morelos','Gómez Farías','González','Llera','El Mante','Nuevo Morelos','Ocampo','Tula','Xicotencatl']}
 ];
 
+var OVERPASS_ENDPOINTS=[
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://lz4.overpass-api.de/api/interpreter'
+];
+
 var dotLayer=null, dotLoading=false;
+
+async function overpassFetch(query){
+  var lastErr;
+  for(var i=0;i<OVERPASS_ENDPOINTS.length;i++){
+    try{
+      var resp=await fetch(OVERPASS_ENDPOINTS[i],{method:'POST',body:'data='+encodeURIComponent(query)});
+      if(!resp.ok) throw new Error('HTTP '+resp.status);
+      return await resp.json();
+    }catch(e){ lastErr=e; }
+  }
+  throw lastErr;
+}
 
 async function fetchStateGeoJSON(sq){
   var query;
-  if(sq.allMunicipios){
-    query='[out:json][timeout:60];area["ISO3166-2"="'+sq.iso+'"]->.s;rel["admin_level"="8"](area.s);out geom qt;';
+  if(sq.stateLevel){
+    // 州全域 → admin_level=4 の境界1ポリゴン（高速・タイムアウト回避）
+    query='[out:json][timeout:30];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
   } else {
     var pat=sq.municipios.map(function(n){return n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}).join('|');
-    query='[out:json][timeout:30];area["ISO3166-2"="'+sq.iso+'"]->.s;rel["admin_level"="8"]["name"~"'+pat+'"](area.s);out geom qt;';
+    query='[out:json][timeout:45];area["ISO3166-2"="'+sq.iso+'"]->.s;rel["admin_level"="8"]["name"~"'+pat+'"](area.s);out geom qt;';
   }
-  var resp=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(query)});
-  if(!resp.ok) throw new Error(sq.state+': HTTP '+resp.status);
-  var json=await resp.json();
+  var json=await overpassFetch(query);
   return osmtogeojson(json).features;
 }
 
@@ -497,7 +515,8 @@ async function toggleDOT(){
   if(dotLoading) return;
   dotLoading=true; btn.disabled=true;
   try{
-    var cached=sessionStorage.getItem('dot_geojson');
+    var CACHE_KEY='dot_geojson_v2';
+    var cached=sessionStorage.getItem(CACHE_KEY);
     var gj;
     if(cached){
       btn.textContent='読込中...';
@@ -505,12 +524,12 @@ async function toggleDOT(){
     } else {
       var allFeatures=[];
       for(var i=0;i<DOT_STATES.length;i++){
-        btn.textContent=DOT_STATES[i].state+'取得中 ('+(i+1)+'/'+DOT_STATES.length+')';
+        btn.textContent=DOT_STATES[i].state+' 取得中 ('+(i+1)+'/'+DOT_STATES.length+')';
         var feats=await fetchStateGeoJSON(DOT_STATES[i]);
         allFeatures=allFeatures.concat(feats);
       }
       gj={type:'FeatureCollection',features:allFeatures};
-      try{sessionStorage.setItem('dot_geojson',JSON.stringify(gj));}catch(e){}
+      try{sessionStorage.setItem(CACHE_KEY,JSON.stringify(gj));}catch(e){}
     }
     dotLayer=L.geoJSON(gj,{
       style:{color:'#c8921e',weight:1.2,fillColor:'#c8921e',fillOpacity:0.10,opacity:0.6}
