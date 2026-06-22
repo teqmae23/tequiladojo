@@ -579,6 +579,16 @@ async function loadDotStatusFromFirestore(){
   buildStatusPanel();
 }
 
+// _config（透過度等）のリアルタイム監視 — 管理者が変更したら即反映
+db.collection('dotMunicipios').doc('_config').onSnapshot(function(doc){
+  if(!doc.exists) return;
+  var data=doc.data();
+  if(typeof data.fillOpacity==='number'){
+    dotFillOpacity=data.fillOpacity;
+    if(dotLayer) dotLayer.setStyle(dotLayerStyle);
+  }
+});
+
 async function overpassFetch(query, timeoutMs){
   timeoutMs=timeoutMs||45000;
   var lastErr;
@@ -699,7 +709,7 @@ async function toggleDOT(){
 
     // 透過度設定を読み込む
     snap.docs.forEach(function(doc){
-      if(doc.id==='__settings__'){
+      if(doc.id==='_config'){
         var s=doc.data();
         if(typeof s.fillOpacity==='number') dotFillOpacity=s.fillOpacity;
       }
@@ -718,18 +728,18 @@ async function toggleDOT(){
     var features=[];
     snap.docs.forEach(function(doc){
       var d=doc.data(); if(!d.geomJson) return;
-      // municipio docs が存在する stateLevel 州の dotState はスキップ
-      if(d.entryType==='dotState'&&stateLevelMuniIsos.has(d.iso)) return;
       try{
         var geom=JSON.parse(d.geomJson);
         var nm=d.entryType==='municipio'?d.name:(d.entryType==='dotState'?(d.name||d.state):null);
         var mOrig=doc.id.match(/_municipio_(.+)$/);
         var mapKey=mOrig?(mOrig[1].replace(/_/g,' ')):(d.entryType==='dotState'?d.state:null);
+        // dotStateかつmunicipio存在→州外枠線として表示（塗りなし）
+        var isOutline=d.entryType==='stateBoundary'||(d.entryType==='dotState'&&stateLevelMuniIsos.has(d.iso));
         features.push({type:'Feature',geometry:geom,properties:{
           _dotColor:d.color,
           _municipioName:mapKey,
-          _isStateOutline:d.entryType==='stateBoundary',
-          _isDotState:d.entryType==='dotState',
+          _isStateOutline:isOutline,
+          _isDotState:d.entryType==='dotState'&&!stateLevelMuniIsos.has(d.iso),
           _displayName:nm,
           _mapKey:mapKey
         }});
