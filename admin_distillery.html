@@ -1273,26 +1273,47 @@ async function overpassFetchAdm(query,timeoutMs){
 async function fetchDotGeomAdm(entry, searchName){
   var sq=entry.sq;
   if(entry.entryType==='dotState'||entry.entryType==='stateBoundary'){
-    var q='[out:json][timeout:25];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
-    var json=await overpassFetchAdm(q,25000);
+    var q='[out:json][timeout:60];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
+    var json=await overpassFetchAdm(q,65000);
     var feats=osmtogeojson(json).features.filter(function(f){var t=f.geometry&&f.geometry.type;return t&&t!=='Point'&&t!=='MultiPoint';});
     return feats.length?feats[0].geometry:null;
   }
   if(entry.entryType==='municipio'){
-    // アクセントを除去せず原文のままキーワード抽出（ñ→nにするとOverpassでマッチしない）
     var nm=(searchName&&searchName.trim())||entry.name;
-    var stopWords=/^(de|del|el|la|los|las|san|santa|nuevo|nueva|general)$/i;
-    var kw=nm.split(/\s+/).find(function(w){return w.length>3&&!stopWords.test(w);})||nm;
-    kw=kw.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); // regexエスケープ
+    var kw;
+    if(searchName&&searchName.trim()){
+      // ユーザー指定時はフルネームで検索（Nuevo/Antiguo等の区別のため）
+      kw=nm.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    } else {
+      // デフォルト: キーワード抽出（ñ→nにするとOverpassでマッチしない）
+      var stopWords=/^(de|del|el|la|los|las|san|santa|nuevo|nueva|general)$/i;
+      kw=nm.split(/\s+/).find(function(w){return w.length>3&&!stopWords.test(w);})||nm;
+      kw=kw.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    }
     var q='[out:json][timeout:30];area["ISO3166-2"="'+sq.iso+'"]->.s;rel["admin_level"="6"]["name"~"'+kw+'",i](area.s);out geom qt;';
     var json=await overpassFetchAdm(q,35000);
     var feats=osmtogeojson(json).features.filter(function(f){var t=f.geometry&&f.geometry.type;return t&&t!=='Point'&&t!=='MultiPoint';});
+    // 複数マッチ時は名前が完全一致するものを優先
+    if(feats.length>1){
+      var nmLow=nm.toLowerCase();
+      var best=feats.find(function(f){
+        var fn=((f.properties&&(f.properties.name||f.properties['name:es']))||'').toLowerCase();
+        return fn===nmLow;
+      });
+      if(best) feats=[best];
+    }
     return feats.length?feats[0].geometry:null;
   }
   return null;
 }
 
 var _dotAdminSnap=null;
+
+function isDotGeomValid(d){
+  if(!d||!d.geomJson) return false;
+  try{ var g=JSON.parse(d.geomJson); return !!(g&&g.type&&g.type!=='Point'&&g.type!=='MultiPoint'); }
+  catch(e){ return false; }
+}
 
 async function loadDotMasterList(){
   var el=g('dot-master-list'); if(!el) return;
@@ -1304,7 +1325,7 @@ async function loadDotMasterList(){
     var fetchedMap={};
     snap.docs.forEach(function(doc){fetchedMap[doc.id]=doc.data();});
     var entries=dotExpectedEntries();
-    var okCount=entries.filter(function(e){return fetchedMap[e.docId]&&fetchedMap[e.docId].geomJson;}).length;
+    var okCount=entries.filter(function(e){return isDotGeomValid(fetchedMap[e.docId]);}).length;
     g('dot-admin-status').textContent=okCount+' / '+entries.length+' 件取得済み';
 
     var curState='';
@@ -1317,7 +1338,7 @@ async function loadDotMasterList(){
 
     entries.forEach(function(e,ei){
       var d=fetchedMap[e.docId];
-      var ok=d&&d.geomJson;
+      var ok=isDotGeomValid(d);
       var stateName=e.sq.state;
       var stateCell=stateName!==curState?'<span style="color:'+e.sq.color+';font-weight:500;">'+stateName+'</span>':'';
       if(stateName!==curState) curState=stateName;
