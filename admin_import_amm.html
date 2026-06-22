@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>テキーラ道場 — AMM蒸留所マスタ インポート</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
+};
+</script>
+<style>
+body{font-family:'Noto Sans JP',sans-serif;background:#F1EFE8;color:#18110a;padding:20px;}
+h1{font-size:18px;margin-bottom:4px;}
+.sub{font-size:12px;color:#9a8470;margin-bottom:20px;}
+.btn{padding:10px 24px;background:#18110a;color:#F1EFE8;border:none;border-radius:6px;font-size:14px;cursor:pointer;margin-right:8px;}
+.btn:disabled{background:#ccc;cursor:not-allowed;}
+.btn-danger{background:#b03020;}
+#status{margin:16px 0;font-size:13px;color:#4a3820;min-height:20px;}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:16px;}
+th{background:#18110a;color:#F1EFE8;padding:6px 8px;text-align:left;}
+td{padding:5px 8px;border-bottom:1px solid #DDD8C8;}
+tr:hover td{background:#E8E4D8;}
+.nom{font-family:monospace;}
+</style>
+</head>
+<body>
+<h1>AMM蒸留所マスタ インポート</h1>
+<div class="sub">コレクション: <code>ammDistilleries</code> | 件数: 152件 | 集計日: 2025-12-31</div>
+<div>
+  <button class="btn" id="btn-import" onclick="doImport()">Firestoreへインポート実行</button>
+  <button class="btn btn-danger" id="btn-clear" onclick="doClear()">コレクションを全削除</button>
+</div>
+<div id="status">ログイン確認中...</div>
+
+<table>
+<thead><tr><th>Rank</th><th>NOM</th><th>蒸留所名</th><th>平均点</th><th>評価数</th><th>所在地</th></tr></thead>
+<tbody id="preview"></tbody>
+</table>
+
+<script>
+if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth();
+var db=firebase.firestore();
+
+// ── データ（tastetequila.com より 2025-12-31 時点） ──────────────
+var COLLECTION_DATE='2025-12-31';
+var RAW=[
+["1","Tequila Los Abuelos, S.A. de C.V.","1493","89.14","18400","Jalisco (Los Valles)"],
+["2","Destileria El Pandillo, S.A. de C.V.","1579","88.14","17911","Jalisco (Los Altos Southern)"],
+["3","Tequila Cascahuin, S.A.","1123","87.95","16246","Jalisco (Los Valles)"],
+["4","Destileria El Sabino, S.A. de C.V.","1643","87.69","579","Jalisco (Los Altos Southern)"],
+["5","Cía. Tequilera Los Alambiques, S.A. de C.V.","1474","87.18","14284","Jalisco (Los Altos Southern)"],
+["6","Plantaciones Tequilana, S.P.R. de R.L. de C.V.","1635","86.9","871","Jalisco (Los Altos Southern)"],
+["7","Tequila Siete Leguas, S.A. de C.V.","1120","86.78","8015","Jalisco (Ciénega)"],
+["8","Tequila Tapatio, S.A. de C.V. (La Alteña)","1139","86.46","17692","Jalisco (Los Altos Southern)"],
+["9","Grupo Tequilero Mexico, S.A. de C.V.","1468","86.31","5941","Jalisco (Los Altos Southern)"],
+["10","Tequila El Rocio, S.A. de C.V.","1636","86.29","277","Jalisco (Southeast)"],
+["11","Feliciano Vivanco y Asociados, S.A. de C.V.","1414","86.26","9931","Jalisco (Los Altos Southern)"],
+["12","JP&VC Spirit Co, S.A. De C.V.","1651","85.99","1370","Jalisco (Los Altos Southern)"],
+["13","Familia Landeros S.C. de R.L. de C.V.","1599","85.96","1443","Jalisco (Los Valles)"],
+["14","Tequileña, S.A. de C.V.","1146","85.78","14956","Jalisco (Los Valles)"],
+["15","Destiladora de Los Altos, S.A. de C.V.","1412","85.52","2982","Jalisco (Los Altos Southern)"],
+["16","Tequila Casa de Los Gonzalez, S.A. de C.V.","1518","85.17","344","Jalisco (Ciénega)"],
+["17","Tequilera Simbolo, S.A. de C.V.","1530","85.13","2758","Jalisco (Ciénega)"],
+["18","Tequilas El Mexicano, S.A. De C.V.","1588","84.92","1019","Jalisco (Los Altos Southern)"],
+["19","Tequila El Tepozan, S.A. De C.V.","1584","84.8","2009","Jalisco (Los Altos Southern)"],
+["20","Tequila Quiote, S.A. de C.V.","1433","84.66","1393","Jalisco (Ciénega)"],
+["21","Destiladora La Roca, S.A. de C.V.","1646","84.66","993","Jalisco (Los Valles)"],
+["22","Jorge Salles Cuervo y Sucesores, S.A. de C.V.","1108","84.45","7303","Jalisco (Los Valles)"],
+["23","Agaveros Unidos de Amatitan, S.A. de C.V. (Rancho Miravalle)","1426","84.31","470","Jalisco (Los Valles)"],
+["24","Grupo Peña Blanca De Los Altos, S. De R.L. De C.V.","1639","84.27","186","Jalisco (Los Altos Southern)"],
+["25","Hacienda de Oro, S.A. de C.V.","1522","84.15","1332","Jalisco (Los Valles)"],
+["26","Tequileria Trujillo, S.A. de C.V.","1634","84.09","2300","Jalisco (Los Altos Southern)"],
+["27","Tequilera Santa Teresa, S.A. de C.V.","1624","84.05","42","Jalisco (Los Valles)"],
+["28","Productos Unicos de Agave, S.P.R. de R.L.","1641","83.81","36","Jalisco (Los Valles)"],
+["29","Tequilera La Herencia, S. De R.L. De C.V.","1590","83.68","154","Jalisco (Los Altos Southern)"],
+["30","Tequila Las Americas, S.A. de C.V.","1480","83.65","5005","Jalisco (Los Valles)"],
+["31","Tequilas Gonzalez Lara, S.A. de C.V. (Casa Marengo)","1560","83.47","512","Jalisco (Los Valles)"],
+["32","Casa Reyes Barajas S.A. de C.V.","1507","83.32","254","Jalisco (Los Valles)"],
+["33","Tequila Arette de Jalisco, S.A. de C.V.","1109","83.21","6170","Jalisco (Los Valles)"],
+["34","Destiladora Refugio, S.A. de C.V.","1549","83.17","181","Jalisco (Los Valles)"],
+["35","Vinos y Licores Azteca, S.A. de C.V.","1533","83.08","2586","Jalisco (Los Altos Southern)"],
+["36","Fabrica de Tequila el Eden, S.A. de C.V.","1465","82.97","69","Jalisco (Los Altos Southern)"],
+["37","Destileria El Magnifico, S.A. De C.V.","1258","82.85","479","Jalisco (Los Valles)"],
+["38","Tequilera Puerta de Hierro (Leticia Hermosillo Ravelero)","1477","82.82","3045","Jalisco (Los Valles)"],
+["39","Tequila Embajador, S.A. de C.V.","1509","82.8","736","Jalisco (Ciénega)"],
+["40","Tequilera Tap, S. De R.L. De C.V.","1614","82.75","5388","Jalisco (Los Valles)"],
+["41","Destileria Casa De Piedra, S.A. de C.V.","1586","82.67","1618","Jalisco (Los Valles)"],
+["42","Compañia Tequilera Hacienda Sahuayo, S.A. de C.V.","1511","82.64","83","Michoacán"],
+["43","Tequilas De Autor, S.P.R. De R.L. De C.V.","1652","82.63","278","Jalisco (Southern)"],
+["44","Grupo Industrial Tequilero de Los Altos de Jalisco, S.A. de C.V.","1443","82.58","1248","Jalisco (Los Altos Southern)"],
+["45","Casa Tradición, S.A. De C.V.","1595","82.5","4742","Jalisco (Central)"],
+["46","Inulina y Miel de Agave, S.A. de C.V.","1605","82.49","626","Jalisco (Los Altos Southern)"],
+["47","Metlalli, S.A. de C.V.","1419","82.47","59","Jalisco (Los Valles)"],
+["48","Destileria La Alborada","1445","82.38","341","Jalisco (Los Valles)"],
+["49","Cooperativa Tequilera la Magdalena, S.C. de R.L.","1463","82.28","146","Jalisco (Los Valles)"],
+["50","Spirits Production Services, S.A. De C.V.","1662","82.28","917","Jalisco (Ciénega)"],
+["51","Fabrica de Tequila Don Nacho, S.A. de C.V.","1508","82.22","463","Jalisco (Los Altos Southern)"],
+["52","Procesadora de Agave Penjamo, S.A. de C.V.","1434","82.22","55","Guanajuato"],
+["53","Agrotequilera de Jalisco, S.A. de C.V.","1523","82.2","2137","Jalisco (Los Valles)"],
+["54","Destilería Rivesca, S.A. De C.V.","1531","82.19","1015","Jalisco (Los Valles)"],
+["55","Premium de Jalisco, S.A. de C.V.","1558","82.04","3214","Jalisco (Southeast)"],
+["56","Proveedora y Procesadora de Agave Tres Hermanos, S.A. de C.V.","1439","81.96","623","Jalisco (Los Valles)"],
+["57","Corporacion Ansan, S.A. de C.V.","1360","81.81","562","Jalisco (Los Valles)"],
+["58","Tequila San Matias de Jalisco, S.A. de C.V.","1103","81.69","5099","Jalisco (Los Altos Southern)"],
+["59","Agroindustria Guadalajara, S.A. de C.V.","1068","81.63","972","Jalisco (Los Altos Southern)"],
+["60","Varo Destileria, S. De R.L. De C.V.","1616","81.55","2172","Jalisco (Los Valles)"],
+["61","Agroindustrias Casa Ramirez, S.A. de C.V.","1519","81.53","195","Guanajuato"],
+["62","Altos Cienega Unidos, S. de P.R. de R.L.","1570","81.48","319","Jalisco (Ciénega)"],
+["63","Tequila Galindo, S.A. de C.V.","1517","81.47","217","Jalisco (Los Altos Southern)"],
+["64","Grupo IKAM, S.A. de C.V.","1655","81.43","106","Jalisco (Central)"],
+["65","Compañia Tequilera Los Valores, S.A. de C.V.","1608","81.32","514","Jalisco (Central)"],
+["66","Destiladora Juanacatlan, S.P.R. de R.L. de C.V.","1551","81.29","393","Jalisco (Central)"],
+["67","Tequilera Las Juntas, S.A. de C.V.","1500","81.18","400","Jalisco (Los Valles)"],
+["68","Hacienda Casa Macías, S.A. de C.V.","1621","81.13","1121","Jalisco (Los Valles)"],
+["69","Agabe Tequilana Productores y Comercializadores","1079","81.13","2121","Jalisco (Los Altos Southern)"],
+["70","IBEV Casa Tequilera, S.A. De C.V.","1598","81.03","117","Jalisco (Los Valles)"],
+["71","Tequila Tres Mujeres, S.A. de C.V.","1466","81.02","1415","Jalisco (Los Valles)"],
+["72","Tequila Artesanal de Los Altos de Jalisco, S.A. de C.V.","1436","81","196","Jalisco (Ciénega)"],
+["73","Joaquin Robles Robles","1600","80.98","88","Jalisco (Los Valles)"],
+["74","Tequilera de la Barranca de Amatitan, S.A. de C.V.","1473","80.98","385","Jalisco (Los Valles)"],
+["75","Destiladora Santa Virginia, S.A. de C.V.","1515","80.97","130","Jalisco (Los Altos Southern)"],
+["76","Tequilera Tateposco, S.A. de C.V.","1632","80.9","70","Jalisco (Los Valles)"],
+["77","Cavas de Don Max, S.A. de C.V.","1554","80.78","820","Jalisco (Central)"],
+["78","Cia. Tequilera Los Generales, S.A. de C.V.","1486","80.51","237","Jalisco (Los Valles)"],
+["79","Productores de Agave y Derivados de Degollado, S.P.R. de R.L.","1514","80.5","314","Jalisco (Ciénega)"],
+["80","Destileria La Experiencia, S.A. de C.V.","1585","80.32","289","Jalisco (Ciénega)"],
+["81","Agave Azul San Jose, S.A. de C.V.","1504","80.29","103","Jalisco (Central)"],
+["82","Tequila Selecto de Amatitan, S.A. de C.V.","1459","80.16","2524","Jalisco (Los Valles)"],
+["83","Diageo México Operaciones, S.A. De C.V.","1449","80.13","22141","Jalisco (Ciénega)"],
+["84","Casa Tequilera Alcardan K & Asociados, S.A. De C.V.","1594","80.04","51","Jalisco (Los Altos Southern)"],
+["85","Marco Antonio Jauregui Huerta","1450","80.04","139","Jalisco (Los Valles)"],
+["86","Compañia Tequilera Don Cayo S. de R.L. de C.V.","1649","79.99","536","Jalisco (Los Valles)"],
+["87","La Cofradia, S.A. de C.V.","1137","79.83","4380","Jalisco (Los Valles)"],
+["88","Tequilera la Noria, S.A. de C.V.","1494","79.83","136","Jalisco (Los Valles)"],
+["89","Gildardo Partida Hermosillo","1653","79.81","2159","Jalisco (Los Valles)"],
+["90","Fabrica de Tequila el Nacimiento, S.A. de C.V.","1455","79.65","163","Jalisco (Los Altos Southern)"],
+["91","Destiladora De Tequila Marava S.P.R de R.L.","1574","79.6","98","Michoacán"],
+["92","Casa Tequilera de Arandas, S.A. de C.V.","1499","79.55","1736","Jalisco (Los Altos Southern)"],
+["93","Tequilera Don Roberto, S.A. de C.V.","1437","79.52","7470","Jalisco (Los Valles)"],
+["94","Destiladora Arandas, S.A. de C.V.","1490","79.47","34","Jalisco (Central)"],
+["95","Tequila Rubio, S.A. de C.V.","1567","79.45","166","Jalisco (Los Valles)"],
+["96","Tequilera la Gonzaleña, S.A. de C.V.","1127","79.44","818","Tamaulípas"],
+["97","Destiladora el Paisano, S.A. de C.V.","1561","79.31","59","Jalisco (Ciénega)"],
+["98","Vinicola Jaliciense, S. de R.L. de C.V.","1625","79.3","47","Jalisco (Los Altos Southern)"],
+["99","Tequilera De Los Altos Casa Loy, S.A. de C.V.","1633","79.28","241","Jalisco (Los Altos Southern)"],
+["100","Hacienda Capellania, S.A. de C.V.","1545","79.17","628","Jalisco (Los Altos Southern)"],
+["101","Compañia Tequilera de Arandas, S.A. de C.V.","1460","79.17","1332","Jalisco (Los Altos Southern)"],
+["102","Autentica Tequilera, S.A. de C.V.","1502","79.11","197","Jalisco (Los Valles)"],
+["103","Tequila el Viejito, S.A. de C.V.","1107","79.1","3685","Jalisco (Ciénega)"],
+["104","Integradora San Agustin, S.A. de C.V.","1547","79.02","315","Jalisco (Ciénega)"],
+["105","Tequilas del Señor, S.A. de C.V.","1124","79.02","1067","Jalisco (Central)"],
+["106","Tequilera Punto Azul, S.A. de C.V.","1631","78.93","328","Jalisco (Los Altos Southern)"],
+["107","Casa Tequilera Dinastía Arandina S.A. de C.V. (Casa Camarena)","1610","78.91","1728","Jalisco (Los Altos Southern)"],
+["108","Pernod Ricard Mexico, S.A. de C.V.","1111","78.78","4211","Jalisco (Los Altos Southern)"],
+["109","Tequila Centinela, S.A. de C.V.","1140","78.67","1365","Jalisco (Los Altos Southern)"],
+["110","Agaves Selectos De Amatitan, S.A. De C.V.","1645","78.55","666","Nayarit"],
+["111","Productos Finos de Agave, S.A. de C.V.","1416","78.43","3679","Jalisco (Los Altos Southern)"],
+["112","Casa Montes Leyva, S. De R.L. De C.V.","1601","78.23","1090","Jalisco (Los Altos Southern)"],
+["113","Destiladora de Los Altos La Joya, S.A. de C.V.","1555","78.12","34","Jalisco (Ciénega)"],
+["114","Mujeres Amigas Del Tequila, S.A. de C.V.","1622","78.07","30","Jalisco (Los Valles)"],
+["115","Campari Mexico, S.A. de C.V.","1440","77.96","5147","Jalisco (Los Altos Southern)"],
+["116","Grupo Tequilero de Los Altos, S.A. de C.V.","1548","77.94","125","Jalisco (Los Altos Southern)"],
+["117","Compañia Tequilera Hacienda la Capilla, S.A. de C.V","1479","77.77","984","Jalisco (Los Altos Southern)"],
+["118","Tequila Orendain de Jalisco, S.A. de C.V.","1110","77.7","2709","Jalisco (Los Valles)"],
+["119","Impulsora Rombo, S.A. de C.V.","1467","77.68","692","Jalisco (Los Altos Southern)"],
+["120","Envasadora De Productos Lideres, S.A. De C.V.","1592","77.66","357","Jalisco (Los Altos Southern)"],
+["121","DGL Destiladores, S. De R.L. De C.V.","1603","77.65","1226","Jalisco (Los Altos Southern)"],
+["122","Patrón Spirits Mexico, S.A. de C.V.","1492","77.46","12607","Jalisco (Ciénega)"],
+["123","FTPSA, S.A. de C.V.","1581","77.36","112","Jalisco (Los Valles)"],
+["124","Diageo México Spirits, S.A. De C.V.","1647","77.35","222","Jalisco (Ciénega)"],
+["125","El Patriota Agave Spirits (La Galería Distillery)","1589","77.2","198","Jalisco (Central)"],
+["126","Destiladora de Agave Azul, S.A. de C.V.","1424","77.13","135","Jalisco (Los Valles)"],
+["127","Destiladora del Valle de Tequila (Casa Maestri)","1438","77.08","3854","Jalisco (Los Valles)"],
+["128","Destiladora Los Magos, S.A. de C.V.","1431","76.95","186","Jalisco (Central)"],
+["129","Brown Forman Tequila Mexico, S. de R.L. de C.V.","1119","76.69","9315","Jalisco (Los Valles)"],
+["130","Tequilera Milagro, S.A. de C.V.","1559","76.47","3339","Jalisco (Los Altos Southern)"],
+["131","Tequilera el Triangulo, S.A. de C.V.","1501","76.46","50","Jalisco (Southern)"],
+["132","Fabrica de Tequilas Finos, S.A. de C.V.","1472","76.14","3722","Jalisco (Los Valles)"],
+["133","Destileria Leyros, S.A. de C.V.","1489","75.52","3374","Jalisco (Los Valles)"],
+["134","Corporativo Destileria Santa Lucia, S.A. de C.V. (Newton)","1173","75.5","484","Jalisco (Central)"],
+["135","Destilería Morales, S.A. de C.V.","1535","75.3","533","Jalisco (Los Altos Southern)"],
+["136","Agaves Selectos Corona, S.P.R. de R.L. de C.V.","1615","75.29","55","Jalisco (Southern)"],
+["137","Tequilera Corralejo, S.A. de C.V.","1368","74.79","3068","Guanajuato"],
+["138","Industrializadora Integral del Agave, S.A.P.I. de C.V.","1417","74.78","51","Jalisco (Central)"],
+["139","Tierra de Agaves, S. de R.L. de C.V.","1513","73.96","1599","Jalisco (Los Valles)"],
+["140","Destileria 501, S.A. de C.V.","1464","73.8","96","Jalisco (Los Valles)"],
+["141","Bacardi y Compañia, S.A. de C.V.","1487","73.7","654","Jalisco (Los Altos Southern)"],
+["142","Destileria Teremana De Agave, S.A. De C.V.","1613","73.64","3268","Jalisco (Los Altos Southern)"],
+["143","La Madrileña, S.A. de C.V.","1142","72.93","1226","Jalisco (Ciénega)"],
+["144","Tequilera BSC, S.A.P.I. de C.V.","1629","71.97","466","Jalisco (Central)"],
+["145","Jose Cuervo","1104","71.8","17414","Jalisco (Central)"],
+["146","Grupo Solave, SA de CV","1607","71.19","1491","Jalisco (Los Valles)"],
+["147","Tequila Sauza, S. de R.L. de C.V.","1102","70.65","6504","Jalisco (Los Valles)"],
+["148","Destiladora Rubio, S.A. de C.V.","1476","70.34","35","Jalisco (Los Valles)"],
+["149","Productos Selectos de Agave, S.P.R. de R.L. de C.V.","1566","69.8","160","Michoacán"],
+["150","Jarabes Y Destilados De Jalisco, S.A. De C.V.","1618","69.58","33","Jalisco (Central)"],
+["151","Destiladora Gonzalez Gonzalez, S.A. de C.V.","1143","69.49","248","Jalisco (Central)"],
+["152","Destilerias Sierra Unidas S.A. de C.V.","1451","45.44","276","Jalisco (Central)"]
+];
+
+// プレビューテーブル
+var tbody=document.getElementById('preview');
+RAW.forEach(function(r){
+  var tr=document.createElement('tr');
+  tr.innerHTML='<td>'+r[0]+'</td><td class="nom">'+r[2]+'</td><td>'+r[1]+'</td><td>'+r[3]+'</td><td>'+r[4]+'</td><td>'+r[5]+'</td>';
+  tbody.appendChild(tr);
+});
+
+// 認証確認
+auth.onAuthStateChanged(function(user){
+  if(user){
+    document.getElementById('status').textContent='ログイン済み: '+user.email+' — インポートボタンで152件を書き込みます';
+  } else {
+    document.getElementById('status').textContent='⚠️ ログインが必要です。管理者アカウントでログインしてください。';
+    document.getElementById('btn-import').disabled=true;
+    document.getElementById('btn-clear').disabled=true;
+  }
+});
+
+async function doImport(){
+  if(!confirm('ammDistilleries コレクションに152件を書き込みます。既存データは上書きされます。続行しますか？')) return;
+  document.getElementById('btn-import').disabled=true;
+  document.getElementById('status').textContent='書き込み中...';
+  try{
+    var batch=db.batch();
+    RAW.forEach(function(r){
+      var nom=r[2];
+      var ref=db.collection('ammDistilleries').doc(nom);
+      batch.set(ref,{
+        nom:nom,
+        distilleryName:r[1],
+        rank:parseInt(r[0]),
+        avgRating:parseFloat(r[3]),
+        ratingCount:parseInt(r[4]),
+        region:r[5],
+        collectionDate:COLLECTION_DATE
+      });
+    });
+    await batch.commit();
+    document.getElementById('status').textContent='✅ 完了！152件を ammDistilleries に書き込みました。';
+  }catch(e){
+    document.getElementById('status').textContent='❌ エラー: '+e.message;
+    document.getElementById('btn-import').disabled=false;
+  }
+}
+
+async function doClear(){
+  if(!confirm('ammDistilleries の全データを削除します。よろしいですか？')) return;
+  document.getElementById('btn-clear').disabled=true;
+  document.getElementById('status').textContent='削除中...';
+  try{
+    var snap=await db.collection('ammDistilleries').get();
+    var batch=db.batch();
+    snap.docs.forEach(function(d){batch.delete(d.ref);});
+    await batch.commit();
+    document.getElementById('status').textContent='✅ 全件削除しました（'+snap.size+'件）';
+    document.getElementById('btn-clear').disabled=false;
+  }catch(e){
+    document.getElementById('status').textContent='❌ エラー: '+e.message;
+    document.getElementById('btn-clear').disabled=false;
+  }
+}
+</script>
+</body>
+</html>
