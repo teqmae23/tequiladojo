@@ -255,6 +255,14 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           </table>
         </div>
       </div>
+      <div class="card" style="padding:18px 20px;margin-top:16px;border-left:3px solid var(--gold);">
+        <div style="font-weight:600;margin-bottom:8px;">導入フラグ一括修正</div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:12px;">蒸留所名（A）が空欄のレコードを未導入（0）、入力済みを導入（1）に一括更新します。</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button class="btn bd" id="btn-fix-introduced">導入フラグを修正する</button>
+          <span id="fix-introduced-status" style="font-size:12px;color:var(--ink3);"></span>
+        </div>
+      </div>
     </div>
 
   </div><!-- /content -->
@@ -372,6 +380,13 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         <label class="cbitem"><input type="checkbox" id="dis-sti-2">ステンレス製単式＋銅部品</label>
         <label class="cbitem"><input type="checkbox" id="dis-sti-3">連続式</label>
         <label class="cbitem"><input type="checkbox" id="dis-sti-4">その他</label>
+      </div>
+      <div class="fsec">CRT情報</div>
+      <div class="fg"><label class="fl">CRT蒸留所名</label><input class="fi" id="dis-crt-empresa" placeholder="CASA HERRADURA S.A. DE C.V."></div>
+      <div class="fg"><label class="fl">CRT住所</label><input class="fi" id="dis-crt-direccion" placeholder="Amatitán, Jalisco"></div>
+      <div class="frow">
+        <div class="fg"><label class="fl">CRT DOT</label><input class="fi" id="dis-crt-dot" placeholder="NOM-1079-TEQUILA-SC6"></div>
+        <div class="fg"><label class="fl">導入フラグ</label><select class="fs" id="dis-introduced"><option value="0">0: 未導入</option><option value="1">1: 導入</option></select></div>
       </div>
     </div>
     <div class="mfoot"><button class="btn bg2" data-close="m-distillery">キャンセル</button><button class="btn bp" id="btn-save-distillery">保存</button></div>
@@ -695,10 +710,12 @@ function openDistilleryModal(id){
     sv("dis-parent",r.parentCompany||""); sv("dis-parentcountry",r.parentCountry||"");
     strToCb("dis-sac-",5,r.sacMethod||""); strToCb("dis-ext-",6,r.extMethod||"");
     strToCb("dis-fer-",4,r.ferMethod||""); strToCb("dis-yea-",3,r.yeastType||""); strToCb("dis-sti-",5,r.stillType||"");
+    sv("dis-crt-empresa",r.crtEmpresa||""); sv("dis-crt-direccion",r.crtDireccion||""); sv("dis-crt-dot",r.crtDot||"");
+    sv("dis-introduced", r.introduced!=null ? String(r.introduced) : "0");
     var link=g("dis-map-link"); if(link){ if(r.mapUrl){ link.href=r.mapUrl; link.style.display=""; } else link.style.display="none"; }
   } else {
-    ["dis-nom","dis-es","dis-ja","dis-fullname","dis-mapurl","dis-lat","dis-lng","dis-web","dis-amm","dis-year","dis-parent","dis-parentcountry"].forEach(function(f){ sv(f,""); });
-    sv("dis-scale","0"); sv("dis-contract","0");
+    ["dis-nom","dis-es","dis-ja","dis-fullname","dis-mapurl","dis-lat","dis-lng","dis-web","dis-amm","dis-year","dis-parent","dis-parentcountry","dis-crt-empresa","dis-crt-direccion","dis-crt-dot"].forEach(function(f){ sv(f,""); });
+    sv("dis-scale","0"); sv("dis-contract","0"); sv("dis-introduced","0");
     ["dis-sac-","dis-ext-","dis-fer-","dis-yea-","dis-sti-"].forEach(function(p){ for(var i=0;i<6;i++){ var el=g(p+i); if(el) el.checked=false; } });
     var link=g("dis-map-link"); if(link) link.style.display="none";
     var status=g("dis-geocode-status"); if(status) status.textContent="";
@@ -723,7 +740,9 @@ g("btn-save-distillery").addEventListener("click",function(){
     scale:gv("dis-scale"),contract:gv("dis-contract"),
     parentCompany:gv("dis-parent")||null,parentCountry:gv("dis-parentcountry")||null,
     sacMethod:cbToStr("dis-sac-",5),extMethod:cbToStr("dis-ext-",6),
-    ferMethod:cbToStr("dis-fer-",4),yeastType:cbToStr("dis-yea-",3),stillType:cbToStr("dis-sti-",5)
+    ferMethod:cbToStr("dis-fer-",4),yeastType:cbToStr("dis-yea-",3),stillType:cbToStr("dis-sti-",5),
+    crtEmpresa:gv("dis-crt-empresa")||null,crtDireccion:gv("dis-crt-direccion")||null,
+    crtDot:gv("dis-crt-dot")||null,introduced:parseInt(gv("dis-introduced"))||0
   };
   db.collection("distilleries").doc(nom).set(data)
     .then(function(){ toast(editId.distillery?"蒸留所を更新しました":"蒸留所を登録しました"); closeM("m-distillery"); bumpAndRender("distilleries"); loadCol("distilleries"); })
@@ -844,6 +863,40 @@ g("btn-crt-sync").addEventListener("click", async function(){
 });
 
 function esc(s){ var d=document.createElement("div"); d.textContent=String(s||""); return d.innerHTML; }
+
+g("btn-fix-introduced").addEventListener("click", async function(){
+  if (!confirm("全蒸留所の導入フラグを「蒸留所名（A）の有無」で一括更新します。続行しますか？")) return;
+  var btn = this;
+  btn.disabled = true;
+  var statusEl = g("fix-introduced-status");
+  statusEl.textContent = "読み込み中…";
+  statusEl.style.color = "var(--ink3)";
+  try {
+    var snap = await db.collection("distilleries").get();
+    var docs = snap.docs;
+    var total = docs.length, done = 0;
+    for (var i = 0; i < total; i += 499) {
+      var batch = db.batch();
+      docs.slice(i, i + 499).forEach(function(doc){
+        var d = doc.data();
+        var intro = (d.nomEs && d.nomEs.trim()) ? 1 : 0;
+        batch.update(doc.ref, {introduced: intro});
+      });
+      await batch.commit();
+      done += Math.min(499, total - i);
+      statusEl.textContent = "処理中… " + done + " / " + total + " 件";
+    }
+    statusEl.textContent = "✓ 完了 — " + total + " 件の導入フラグを更新しました";
+    statusEl.style.color = "var(--teal)";
+    toast("導入フラグ修正完了: " + total + "件");
+    loadCol("distilleries");
+  } catch(e) {
+    statusEl.textContent = "エラー: " + e.message;
+    statusEl.style.color = "var(--red)";
+    toast("エラー: " + e.message, "err");
+  }
+  btn.disabled = false;
+});
 </script>
 </body>
 </html>
