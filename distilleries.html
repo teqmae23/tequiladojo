@@ -245,10 +245,15 @@ function updateLegend(){
       +'<div class="legend-scale"><span>'+(firstStop?firstStop.elev+'m':'')+'</span><span>'+(lastStop?lastStop.elev+'m':'')+'</span></div>'
       +'<div class="legend-item" style="margin-top:4px;"><div class="legend-dot" style="background:#fff;border:1px solid var(--cream3);"></div>未設定</div>';
   }
-  // DOT原産地呼称境界
+  // DOT原産地呼称境界（州ごとの色）
   if(dotLayer){
     el.innerHTML+='<div style="margin-top:7px;padding-top:6px;border-top:1px solid var(--cream3);">'
-      +'<div class="legend-item"><div style="width:14px;height:10px;background:rgba(200,146,30,0.2);border:1.5px solid #c8921e;border-radius:2px;flex-shrink:0;box-sizing:border-box;"></div>DOT原産地呼称区域</div>'
+      +'<div style="font-size:10px;color:var(--ink3);margin-bottom:4px;">DOT原産地呼称</div>'
+      +DOT_STATES.map(function(s){
+        return '<div class="legend-item">'
+          +'<div style="width:14px;height:10px;border:2px solid '+s.color+';border-radius:2px;flex-shrink:0;box-sizing:border-box;"></div>'
+          +s.state+'</div>';
+      }).join('')
       +'</div>';
   }
   // オーバーレイ凡例（ラベルのある図形のみ）
@@ -464,12 +469,11 @@ function loadOverlays(){
 
 // ── DOT原産地呼称自治区オーバーレイ ─────────────────────────────
 var DOT_STATES=[
-  // Jalisco は全域対象 → 州境界(admin_level=4)を1ポリゴンで取得（高速）
-  {state:'Jalisco',  iso:'MX-JAL',stateLevel:true},
-  {state:'Guanajuato', iso:'MX-GUA',municipios:['Abasolo','Ciudad Manuel Doblado','Cuerámaro','Huanímaro','Pénjamo','Purísima del Rincón','Romita']},
-  {state:'Michoacán', iso:'MX-MIC',municipios:['Briseñas de Matamoros','Chavinda','Chilchota','Churintzio','Cotija','Ecuandureo','Jacona','Jiquilpan','Maravatío','Marcos Castellanos','Nuevo Parangaricutiro','Numarán','Pajacuarán','Peribán','La Piedad','Régules','Los Reyes','Sahuayo','Tancítaro','Tangamandapio','Tangancícuaro','Tanhuato','Tingüindín','Tocumbo','Venustiano Carranza','Villa Mar','Vista Hermosa','Yurécuaro','Zamora','Zináparo']},
-  {state:'Nayarit',   iso:'MX-NAY',municipios:['Ahuacatlán','Amatlán de Cañas','Ixtlán del Río','Jala','Xalisco','San Pedro Lagunillas','Santa María del Oro','Tepic']},
-  {state:'Tamaulipas',iso:'MX-TAM',municipios:['Aldama','Altamira','Antiguo Morelos','Gómez Farías','González','Llera','El Mante','Nuevo Morelos','Ocampo','Tula','Xicotencatl']}
+  {state:'Jalisco',   iso:'MX-JAL',stateLevel:true,   color:'#2e7d32'},
+  {state:'Guanajuato',iso:'MX-GUA',color:'#7b1fa2',municipios:['Abasolo','Ciudad Manuel Doblado','Cuerámaro','Huanímaro','Pénjamo','Purísima del Rincón','Romita']},
+  {state:'Michoacán', iso:'MX-MIC',color:'#e65100',municipios:['Briseñas de Matamoros','Chavinda','Chilchota','Churintzio','Cotija','Ecuandureo','Jacona','Jiquilpan','Maravatío','Marcos Castellanos','Nuevo Parangaricutiro','Numarán','Pajacuarán','Peribán','La Piedad','Régules','Los Reyes','Sahuayo','Tancítaro','Tangamandapio','Tangancícuaro','Tanhuato','Tingüindín','Tocumbo','Venustiano Carranza','Villa Mar','Vista Hermosa','Yurécuaro','Zamora','Zináparo']},
+  {state:'Nayarit',   iso:'MX-NAY',color:'#f9a825',municipios:['Ahuacatlán','Amatlán de Cañas','Ixtlán del Río','Jala','Xalisco','San Pedro Lagunillas','Santa María del Oro','Tepic']},
+  {state:'Tamaulipas',iso:'MX-TAM',color:'#1565c0',municipios:['Aldama','Altamira','Antiguo Morelos','Gómez Farías','González','Llera','El Mante','Nuevo Morelos','Ocampo','Tula','Xicotencatl']}
 ];
 
 var OVERPASS_ENDPOINTS=[
@@ -485,9 +489,14 @@ async function overpassFetch(query){
   for(var i=0;i<OVERPASS_ENDPOINTS.length;i++){
     try{
       var ctrl=new AbortController();
-      var tid=setTimeout(function(){ctrl.abort();},20000); // 20秒でクライアント側タイムアウト
+      var tid=setTimeout(function(){ctrl.abort();},20000);
       var resp=await fetch(OVERPASS_ENDPOINTS[i],{method:'POST',body:'data='+encodeURIComponent(query),signal:ctrl.signal});
       clearTimeout(tid);
+      if(resp.status===429){
+        // レートリミット → 3秒待って次のエンドポイントへ
+        await new Promise(function(r){setTimeout(r,3000);});
+        throw new Error('429');
+      }
       if(!resp.ok) throw new Error('HTTP '+resp.status);
       return await resp.json();
     }catch(e){ lastErr=e; }
@@ -504,7 +513,13 @@ async function fetchStateGeoJSON(sq){
     query='[out:json][timeout:40];area["ISO3166-2"="'+sq.iso+'"]->.s;rel["admin_level"="8"]["name"~"'+pat+'"](area.s);out geom qt;';
   }
   var json=await overpassFetch(query);
-  return osmtogeojson(json).features;
+  // フィーチャーに州の色を付与
+  var features=osmtogeojson(json).features;
+  features.forEach(function(f){
+    f.properties=f.properties||{};
+    f.properties._dotColor=sq.color;
+  });
+  return features;
 }
 
 async function toggleDOT(){
@@ -517,28 +532,32 @@ async function toggleDOT(){
   if(dotLoading) return;
   dotLoading=true; btn.disabled=true;
   try{
-    var CACHE_KEY='dot_geojson_v3';
+    var CACHE_KEY='dot_geojson_v4';
     var cached=sessionStorage.getItem(CACHE_KEY);
     var gj;
     if(cached){
       btn.textContent='読込中...';
       gj=JSON.parse(cached);
     } else {
-      btn.textContent='DOT境界取得中...';
-      // 全州を並列取得 — 一部失敗しても残りを表示
-      var results=await Promise.allSettled(DOT_STATES.map(function(sq){return fetchStateGeoJSON(sq);}));
+      // 順次取得（州間1.5秒ディレイで429回避）
       var allFeatures=[], failed=[];
-      results.forEach(function(r,i){
-        if(r.status==='fulfilled') allFeatures=allFeatures.concat(r.value);
-        else failed.push(DOT_STATES[i].state);
-      });
+      for(var i=0;i<DOT_STATES.length;i++){
+        if(i>0) await new Promise(function(r){setTimeout(r,1500);});
+        btn.textContent=DOT_STATES[i].state+' 取得中 ('+(i+1)+'/'+DOT_STATES.length+')';
+        try{
+          var feats=await fetchStateGeoJSON(DOT_STATES[i]);
+          allFeatures=allFeatures.concat(feats);
+        }catch(e){ failed.push(DOT_STATES[i].state); console.warn('DOT取得失敗:',DOT_STATES[i].state,e.message); }
+      }
       if(!allFeatures.length) throw new Error('全州の取得に失敗しました');
-      if(failed.length) console.warn('DOT取得失敗:',failed.join(', '));
       gj={type:'FeatureCollection',features:allFeatures};
       try{sessionStorage.setItem(CACHE_KEY,JSON.stringify(gj));}catch(e){}
     }
     dotLayer=L.geoJSON(gj,{
-      style:{color:'#c8921e',weight:1.2,fillColor:'#c8921e',fillOpacity:0.10,opacity:0.6}
+      style:function(f){
+        var c=(f.properties&&f.properties._dotColor)||'#2e7d32';
+        return {color:c,weight:1.5,fillColor:c,fillOpacity:0.08,opacity:0.75};
+      }
     }).addTo(map);
     btn.classList.add('on'); btn.textContent='DOT境界 ON';
     updateLegend();
