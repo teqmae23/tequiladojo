@@ -90,6 +90,21 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 /* ── Elevation legend ── */
 .legend-grade{height:8px;width:86px;border-radius:3px;margin-bottom:3px;border:1px solid var(--cream3);}
 .legend-scale{display:flex;justify-content:space-between;font-size:10px;width:86px;color:var(--ink3);}
+
+/* ── DOT境界ステータスパネル ── */
+.dot-sp{position:absolute;top:10px;right:10px;z-index:998;background:rgba(241,239,232,.97);border:1px solid var(--cream3);border-radius:6px;width:268px;max-height:calc(100vh - 130px);overflow-y:auto;font-size:11px;color:var(--ink2);display:none;box-shadow:0 3px 14px rgba(0,0,0,.18);}
+.dot-sp.open{display:block;}
+.dot-sp-head{background:var(--ink);color:var(--cream);padding:8px 12px;font-size:12px;font-weight:500;display:flex;align-items:center;justify-content:space-between;border-radius:5px 5px 0 0;position:sticky;top:0;z-index:1;}
+.dot-sp-head button{background:none;border:none;color:rgba(241,239,232,.7);cursor:pointer;font-size:18px;line-height:1;padding:0 0 1px 0;}
+.dot-sp-head button:hover{color:var(--cream);}
+.dot-sp-state{padding:6px 10px 2px;margin-top:2px;font-weight:500;color:var(--ink);display:flex;align-items:center;gap:5px;}
+.dot-sp-row{display:flex;align-items:center;gap:5px;padding:2px 10px 2px 20px;line-height:1.5;}
+.dot-sp-ok{color:#2e7d32;}
+.dot-sp-err{color:#b03020;}
+.dot-sp-sub{padding:1px 10px 3px 20px;color:var(--ink3);font-size:10px;}
+.dot-sp-retry{padding:1px 7px;font-size:10px;border:1px solid var(--cream3);border-radius:3px;background:#fff;cursor:pointer;color:var(--ink2);flex-shrink:0;}
+.dot-sp-retry:hover{border-color:var(--gold);}
+.dot-sp-retry:disabled{opacity:.5;cursor:default;}
 </style>
 </head>
 <body>
@@ -115,10 +130,18 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
   <button id="btn-topo" class="ctrl-btn" onclick="toggleTopo()">地形 OFF</button>
   <button id="btn-color-mode" class="ctrl-btn" onclick="toggleColorMode()">色: 地区</button>
   <button id="btn-dot" class="ctrl-btn" onclick="toggleDOT()">DOT境界</button>
+  <button id="btn-dot-status" class="ctrl-btn" onclick="toggleDotStatus()" style="display:none">境界確認</button>
   <span id="map-count"></span>
 </div>
 
 <div id="map" class="labels-off">
+  <div class="dot-sp" id="dot-sp">
+    <div class="dot-sp-head">
+      <span>DOT境界 取得状況</span>
+      <button onclick="toggleDotStatus()">×</button>
+    </div>
+    <div id="dot-sp-body" style="padding-bottom:8px;"></div>
+  </div>
   <div id="map-loading">読み込み中...</div>
   <div class="legend" id="map-legend">
     <div id="legend-content"></div>
@@ -497,7 +520,7 @@ var OVERPASS_ENDPOINTS=[
   'https://lz4.overpass-api.de/api/interpreter'
 ];
 
-var dotLayer=null, dotLoading=false;
+var dotLayer=null, dotLoading=false, dotGJ=null, dotFetchStatus=null;
 
 async function overpassFetch(query, timeoutMs){
   timeoutMs=timeoutMs||45000;
@@ -520,6 +543,8 @@ async function overpassFetch(query, timeoutMs){
   throw lastErr;
 }
 
+var _nrmFn=function(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim();};
+
 async function fetchStateGeoJSON(sq){
   var query;
   if(sq.stateLevel){
@@ -530,23 +555,31 @@ async function fetchStateGeoJSON(sq){
   }
   var json=await overpassFetch(query, sq.stateLevel ? 25000 : 65000);
   var features=osmtogeojson(json).features;
+  var unmatched=[];
+
   if(!sq.stateLevel && sq.municipios){
-    var nrm=function(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim();};
-    var allowed=sq.municipios.map(nrm);
+    var allowed=sq.municipios.map(_nrmFn);
+    var matchedNames=new Set();
     features=features.filter(function(f){
-      var nm=nrm((f.properties&&(f.properties.name||f.properties['name:es']))||'');
+      var nm=_nrmFn((f.properties&&(f.properties.name||f.properties['name:es']))||'');
       if(!nm) return false;
-      return allowed.some(function(a){
-        // 完全一致 or 双方向前方一致（表記揺れ対応）
-        return a===nm || (nm.length>=4 && (a.indexOf(nm)===0 || nm.indexOf(a)===0));
-      });
+      for(var i=0;i<allowed.length;i++){
+        var a=allowed[i];
+        if(a===nm||(nm.length>=4&&(a.indexOf(nm)===0||nm.indexOf(a)===0))){
+          matchedNames.add(sq.municipios[i]);
+          f.properties._municipioName=sq.municipios[i];
+          return true;
+        }
+      }
+      return false;
     });
+    unmatched=sq.municipios.filter(function(m){return !matchedNames.has(m);});
   }
   features.forEach(function(f){
     f.properties=f.properties||{};
     f.properties._dotColor=sq.color;
   });
-  return features;
+  return {features:features, unmatched:unmatched};
 }
 
 async function fetchStateBoundaryGeoJSON(sq){
@@ -564,9 +597,12 @@ async function fetchStateBoundaryGeoJSON(sq){
 
 async function toggleDOT(){
   var btn=document.getElementById('btn-dot');
+  var btnStatus=document.getElementById('btn-dot-status');
   if(dotLayer){
-    map.removeLayer(dotLayer); dotLayer=null;
+    map.removeLayer(dotLayer); dotLayer=null; dotGJ=null; dotFetchStatus=null;
     btn.classList.remove('on'); btn.textContent='DOT境界';
+    btnStatus.style.display='none';
+    document.getElementById('dot-sp').classList.remove('open');
     updateLegend(); return;
   }
   if(dotLoading) return;
@@ -580,14 +616,14 @@ async function toggleDOT(){
       gj=JSON.parse(cached);
     } else {
       // Phase1: DOT自治区フィーチャー取得（州間1.5秒ディレイで429回避）
-      var allFeatures=[], failed=[];
+      var allFeatures=[];
       for(var i=0;i<DOT_STATES.length;i++){
         if(i>0) await new Promise(function(r){setTimeout(r,1500);});
         btn.textContent=DOT_STATES[i].state+' 取得中 ('+(i+1)+'/'+DOT_STATES.length+')';
         try{
-          var feats=await fetchStateGeoJSON(DOT_STATES[i]);
-          allFeatures=allFeatures.concat(feats);
-        }catch(e){ failed.push(DOT_STATES[i].state); console.warn('DOT取得失敗:',DOT_STATES[i].state,e.message); }
+          var result=await fetchStateGeoJSON(DOT_STATES[i]);
+          allFeatures=allFeatures.concat(result.features);
+        }catch(e){ console.warn('DOT取得失敗:',DOT_STATES[i].state,e.message); }
       }
       // Phase2: 非Jalisco州の州境界ライン取得
       var outlineStates=DOT_STATES.filter(function(s){return !s.stateLevel;});
@@ -603,6 +639,7 @@ async function toggleDOT(){
       gj={type:'FeatureCollection',features:allFeatures};
       try{sessionStorage.setItem(CACHE_KEY,JSON.stringify(gj));}catch(e){}
     }
+    dotGJ=gj;
     dotLayer=L.geoJSON(gj,{
       filter:function(f){ var t=f.geometry&&f.geometry.type; return t&&t!=='Point'&&t!=='MultiPoint'; },
       style:function(f){
@@ -614,12 +651,153 @@ async function toggleDOT(){
       }
     }).addTo(map);
     btn.classList.add('on'); btn.textContent='DOT境界 ON';
+    btnStatus.style.display='';
+    dotFetchStatus=deriveDotFetchStatus(gj);
+    buildStatusPanel();
     updateLegend();
   }catch(e){
     alert('DOT境界の取得に失敗しました:\n'+e.message);
     btn.textContent='DOT境界';
   }finally{
     btn.disabled=false; dotLoading=false;
+  }
+}
+
+// ── DOT境界ステータス派生 ──────────────────────────────────────────
+function deriveDotFetchStatus(gj){
+  return DOT_STATES.map(function(sq){
+    var stFeats=gj.features.filter(function(f){return f.properties&&f.properties._dotColor===sq.color;});
+    if(sq.stateLevel){
+      var dotFeats=stFeats.filter(function(f){return !f.properties._isStateOutline;});
+      return {state:sq.state,iso:sq.iso,color:sq.color,stateLevel:true,
+        stateBoundaryOk:dotFeats.length>0, municipioResults:null};
+    } else {
+      var bnd=stFeats.filter(function(f){return f.properties._isStateOutline;});
+      var dot=stFeats.filter(function(f){return !f.properties._isStateOutline;});
+      var matched=new Set();
+      dot.forEach(function(f){
+        if(f.properties._municipioName){ matched.add(f.properties._municipioName); return; }
+        // フォールバック: _municipioNameなし（古いキャッシュ）
+        var nm=_nrmFn((f.properties.name||f.properties['name:es'])||'');
+        var allowed=sq.municipios.map(_nrmFn);
+        for(var i=0;i<allowed.length;i++){
+          var a=allowed[i];
+          if(a===nm||(nm.length>=4&&(a.indexOf(nm)===0||nm.indexOf(a)===0))){
+            matched.add(sq.municipios[i]); break;
+          }
+        }
+      });
+      return {state:sq.state,iso:sq.iso,color:sq.color,stateLevel:false,
+        stateBoundaryOk:bnd.length>0,
+        municipioResults:sq.municipios.map(function(m){return {name:m,ok:matched.has(m)};})};
+    }
+  });
+}
+
+// ── DOT境界ステータスパネル ──────────────────────────────────────
+function toggleDotStatus(){
+  document.getElementById('dot-sp').classList.toggle('open');
+}
+
+function buildStatusPanel(){
+  var body=document.getElementById('dot-sp-body');
+  if(!dotFetchStatus){body.innerHTML='<div style="padding:12px;color:var(--ink3)">DOT境界を読み込んでください</div>';return;}
+  var html='';
+  dotFetchStatus.forEach(function(st,si){
+    var dot=st.stateLevel ? [st.color,'(DOT州境界)'] : [st.color,'DOT自治区'];
+    html+='<div class="dot-sp-state">'
+      +'<span style="width:9px;height:9px;border-radius:50%;background:'+st.color+';display:inline-block;flex-shrink:0"></span>'
+      +'<strong>'+st.state+'</strong></div>';
+
+    if(st.stateLevel){
+      html+='<div class="dot-sp-row">'
+        +(st.stateBoundaryOk?'<span class="dot-sp-ok">✓</span>':'<span class="dot-sp-err">✗</span>')
+        +' 州境界 (DOT塗り)';
+      if(!st.stateBoundaryOk) html+=' <button class="dot-sp-retry" data-retry-bnd data-si="'+si+'">再取得</button>';
+      html+='</div>';
+    } else {
+      html+='<div class="dot-sp-row">'
+        +(st.stateBoundaryOk?'<span class="dot-sp-ok">✓</span>':'<span class="dot-sp-err">✗</span>')
+        +' 州境界 (ライン)';
+      if(!st.stateBoundaryOk) html+=' <button class="dot-sp-retry" data-retry-bnd data-si="'+si+'">再取得</button>';
+      html+='</div>';
+      if(st.municipioResults){
+        var okN=st.municipioResults.filter(function(m){return m.ok;}).length;
+        html+='<div class="dot-sp-sub">DOT自治区 '+okN+' / '+st.municipioResults.length+'</div>';
+        st.municipioResults.forEach(function(m,mi){
+          html+='<div class="dot-sp-row">'
+            +(m.ok?'<span class="dot-sp-ok">✓</span>':'<span class="dot-sp-err">✗</span>')
+            +' <span style="flex:1">'+m.name+'</span>';
+          if(!m.ok) html+='<button class="dot-sp-retry" data-retry-muni data-si="'+si+'" data-mi="'+mi+'">再取得</button>';
+          html+='</div>';
+        });
+      }
+    }
+  });
+  body.innerHTML=html;
+
+  // イベントリスナーをアタッチ（onclick属性で特殊文字エスケープ問題回避）
+  body.querySelectorAll('[data-retry-bnd]').forEach(function(btn){
+    var si=parseInt(btn.dataset.si);
+    btn.addEventListener('click',function(){retryStateBoundary(btn,dotFetchStatus[si].iso);});
+  });
+  body.querySelectorAll('[data-retry-muni]').forEach(function(btn){
+    var si=parseInt(btn.dataset.si),mi=parseInt(btn.dataset.mi);
+    btn.addEventListener('click',function(){
+      var st=dotFetchStatus[si]; retryMunicipio(btn,st.iso,st.color,st.municipioResults[mi].name);
+    });
+  });
+}
+
+// ── 自治区 個別再取得 ─────────────────────────────────────────────
+async function retryMunicipio(btn,iso,color,name){
+  btn.disabled=true; btn.textContent='取得中...';
+  // キーワード抽出：冠詞・前置詞を除いた最初の長い単語
+  var stopWords=/^(de|del|el|la|los|las|san|santa|nuevo|nueva|general)$/i;
+  var kw=_nrmFn(name).split(/\s+/).find(function(w){return w.length>3&&!stopWords.test(w);})||_nrmFn(name);
+  try{
+    var query='[out:json][timeout:30];area["ISO3166-2"="'+iso+'"]->.s;rel["admin_level"="6"]["name"~"'+kw+'",i](area.s);out geom qt;';
+    var json=await overpassFetch(query,35000);
+    var feats=osmtogeojson(json).features.filter(function(f){
+      var t=f.geometry&&f.geometry.type; return t&&t!=='Point'&&t!=='MultiPoint';
+    });
+    if(!feats.length){btn.textContent='見つからず';btn.disabled=false;return;}
+    var feat=feats[0];
+    feat.properties=feat.properties||{};
+    feat.properties._dotColor=color;
+    feat.properties._municipioName=name;
+    if(dotLayer) dotLayer.addData(feat);
+    dotGJ.features.push(feat);
+    try{sessionStorage.setItem('dot_geojson_v6',JSON.stringify(dotGJ));}catch(e){}
+    dotFetchStatus=deriveDotFetchStatus(dotGJ);
+    buildStatusPanel();
+  }catch(e){
+    btn.textContent='再取得'; btn.disabled=false;
+    console.warn('retryMunicipio failed:',name,e.message);
+  }
+}
+
+// ── 州境界 再取得 ─────────────────────────────────────────────────
+async function retryStateBoundary(btn,iso){
+  btn.disabled=true; btn.textContent='取得中...';
+  var sq=DOT_STATES.find(function(s){return s.iso===iso;});
+  if(!sq){btn.disabled=false;btn.textContent='再取得';return;}
+  try{
+    var feats;
+    if(sq.stateLevel){
+      var r=await fetchStateGeoJSON(sq); feats=r.features;
+    } else {
+      feats=await fetchStateBoundaryGeoJSON(sq);
+    }
+    if(!feats.length){btn.textContent='見つからず';btn.disabled=false;return;}
+    if(dotLayer) dotLayer.addData({type:'FeatureCollection',features:feats});
+    dotGJ.features=dotGJ.features.concat(feats);
+    try{sessionStorage.setItem('dot_geojson_v6',JSON.stringify(dotGJ));}catch(e){}
+    dotFetchStatus=deriveDotFetchStatus(dotGJ);
+    buildStatusPanel();
+  }catch(e){
+    btn.textContent='再取得'; btn.disabled=false;
+    console.warn('retryStateBoundary failed:',iso,e.message);
   }
 }
 </script>
