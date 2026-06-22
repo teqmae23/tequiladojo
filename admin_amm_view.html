@@ -134,6 +134,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);min-height
 
   <div class="tab-bar">
     <button class="tab-btn active" id="tab-btn-amm" onclick="switchTab('amm')">🌵 AMM蒸留所マスタ</button>
+    <button class="tab-btn" id="tab-btn-dis" onclick="switchTab('dis')">🏭 CRT蒸留所マスタ</button>
     <button class="tab-btn" id="tab-btn-brand" onclick="switchTab('brand')">🏷️ CRTブランドマスタ</button>
   </div>
 
@@ -168,7 +169,35 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);min-height
     </div>
   </div>
 
-  <!-- ② CRTブランド -->
+  <!-- ② CRT蒸留所 -->
+  <div id="panel-dis" class="panel" style="display:none">
+    <div class="toolbar">
+      <span class="count-pill" id="dis-count">読み込み中…</span>
+      <span class="date-pill" id="dis-date"></span>
+      <input class="search-box" id="dis-search" type="text"
+        placeholder="NOM・蒸留所名・住所で検索…" oninput="filterDis()">
+      <button class="clear-btn" onclick="clearSearch('dis')" title="検索クリア">✕</button>
+    </div>
+    <div class="tbl-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="min-width:58px">NOM</th>
+            <th style="min-width:220px">蒸留所名（empresa）</th>
+            <th>住所（direccion）</th>
+            <th style="min-width:80px">DOT</th>
+            <th style="min-width:90px">取得日</th>
+            <th style="min-width:80px">道場ページ</th>
+          </tr>
+        </thead>
+        <tbody id="dis-tbody">
+          <tr class="msg-row"><td colspan="6">読み込み中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ③ CRTブランド -->
   <div id="panel-brand" class="panel" style="display:none">
     <div class="toolbar">
       <span class="count-pill" id="brand-count">読み込み中…</span>
@@ -201,6 +230,7 @@ var auth=firebase.auth();
 var db=firebase.firestore();
 
 var ammRows=[];   // {rank, nom, distilleryName, region, avgRating, ratingCount, ammUrl}
+var disRows=[];   // {nom, empresa, direccion, dot, collectionDate}
 var brandRows=[];  // {nom, empresa, marca, collectionDate}
 
 function esc(s){var d=document.createElement('div');d.textContent=String(s||'');return d.innerHTML;}
@@ -224,25 +254,28 @@ auth.onAuthStateChanged(function(user){
   if(_loadStarted) return;
   _loadStarted=true;
   loadAmm();
-  loadBrand();
+  loadCrt();
 });
 
 // ── Tab ──────────────────────────────────────────────────────────
+var TABS=['amm','dis','brand'];
 function switchTab(t){
-  document.getElementById('panel-amm').style.display=t==='amm'?'':'none';
-  document.getElementById('panel-brand').style.display=t==='brand'?'':'none';
-  document.getElementById('tab-btn-amm').className='tab-btn'+(t==='amm'?' active':'');
-  document.getElementById('tab-btn-brand').className='tab-btn'+(t==='brand'?' active':'');
+  TABS.forEach(function(id){
+    document.getElementById('panel-'+id).style.display=t===id?'':'none';
+    document.getElementById('tab-btn-'+id).className='tab-btn'+(t===id?' active':'');
+  });
 }
 
 function clearSearch(tab){
   document.getElementById(tab+'-search').value='';
-  if(tab==='amm') filterAmm(); else filterBrand();
+  if(tab==='amm') filterAmm();
+  else if(tab==='dis') filterDis();
+  else filterBrand();
 }
 
+var TAB_LABELS={amm:'🌵 AMM蒸留所マスタ',dis:'🏭 CRT蒸留所マスタ',brand:'🏷️ CRTブランドマスタ'};
 function updateTabLabel(tab,count){
-  document.getElementById('tab-btn-'+tab).textContent=
-    (tab==='amm'?'🌵 AMM蒸留所マスタ':'🏷️ CRTブランドマスタ')+' ('+count+'件)';
+  document.getElementById('tab-btn-'+tab).textContent=TAB_LABELS[tab]+' ('+count+'件)';
 }
 
 // ── AMM蒸留所 ────────────────────────────────────────────────────
@@ -321,25 +354,39 @@ function filterAmm(){
   }):ammRows);
 }
 
-// ── CRTブランド ──────────────────────────────────────────────────
-async function loadBrand(){
+// ── CRT（蒸留所 + ブランド）並行ロード ──────────────────────────
+async function loadCrt(){
   try{
     var [disSnap,brandSnap]=await Promise.all([
       db.collection('crtDistilleries').get(),
       db.collection('crtBrands').get()
     ]);
 
-    // nom → latest empresa
-    var empMap={};
+    // ── CRT蒸留所: nom → latest doc ──────────────────────────────
+    var disMap={};
     disSnap.docs.forEach(function(doc){
       var d=doc.data();
       var nom=String(d.nom||'');
-      if(!empMap[nom]||(d.collectionDate||'')>empMap[nom].date){
-        empMap[nom]={empresa:d.empresa||'',date:d.collectionDate||''};
+      if(!disMap[nom]||(d.collectionDate||'')>disMap[nom].collectionDate){
+        disMap[nom]={nom:nom,empresa:d.empresa||'',direccion:d.direccion||'',
+          dot:d.dot||'',collectionDate:d.collectionDate||''};
       }
     });
+    disRows=Object.values(disMap).sort(function(a,b){return a.nom.localeCompare(b.nom);});
 
-    // (nom, marca) → latest collectionDate
+    var disDates=[...new Set(disRows.map(function(r){return r.collectionDate;}).filter(Boolean))].sort();
+    if(disDates.length){
+      var el=document.getElementById('dis-date');
+      el.textContent='取得日 '+disDates[disDates.length-1];
+      el.style.display='';
+    }
+    updateTabLabel('dis',disRows.length);
+    renderDis(disRows);
+
+    // ── CRTブランド: (nom, marca) → latest ───────────────────────
+    var empMap={};
+    disRows.forEach(function(r){empMap[r.nom]=r.empresa;});
+
     var bmap={};
     brandSnap.docs.forEach(function(doc){
       var d=doc.data();
@@ -350,30 +397,55 @@ async function loadBrand(){
         bmap[key]={nom:nom,marca:marca,collectionDate:d.collectionDate||''};
       }
     });
-
     brandRows=Object.values(bmap)
       .sort(function(a,b){
         if(a.nom!==b.nom) return a.nom.localeCompare(b.nom);
         return a.marca.localeCompare(b.marca,'ja');
       })
-      .map(function(r){
-        return {nom:r.nom,empresa:(empMap[r.nom]||{}).empresa||'',
-          marca:r.marca,collectionDate:r.collectionDate};
-      });
+      .map(function(r){return {nom:r.nom,empresa:empMap[r.nom]||'',marca:r.marca,collectionDate:r.collectionDate};});
 
-    var dates=[...new Set(brandRows.map(function(r){return r.collectionDate;}).filter(Boolean))].sort();
-    if(dates.length){
-      var el=document.getElementById('brand-date');
-      el.textContent='取得日 '+dates[dates.length-1];
-      el.style.display='';
+    var brandDates=[...new Set(brandRows.map(function(r){return r.collectionDate;}).filter(Boolean))].sort();
+    if(brandDates.length){
+      var el2=document.getElementById('brand-date');
+      el2.textContent='取得日 '+brandDates[brandDates.length-1];
+      el2.style.display='';
     }
     updateTabLabel('brand',brandRows.length);
     renderBrand(brandRows);
   }catch(e){
-    document.getElementById('brand-count').textContent='エラー';
-    document.getElementById('brand-tbody').innerHTML=
-      '<tr class="err-row"><td colspan="4">読み込みエラー: '+esc(e.message)+'</td></tr>';
+    ['dis','brand'].forEach(function(tab){
+      document.getElementById(tab+'-count').textContent='エラー';
+      var cols=tab==='dis'?6:4;
+      document.getElementById(tab+'-tbody').innerHTML=
+        '<tr class="err-row"><td colspan="'+cols+'">読み込みエラー: '+esc(e.message)+'</td></tr>';
+    });
   }
+}
+
+// ── CRT蒸留所 render / filter ────────────────────────────────────
+function renderDis(rows){
+  document.getElementById('dis-count').textContent=
+    rows.length===disRows.length?disRows.length+'件':rows.length+'件 / '+disRows.length+'件';
+  var tbody=document.getElementById('dis-tbody');
+  if(!rows.length){tbody.innerHTML='<tr class="msg-row"><td colspan="6">該当なし</td></tr>';return;}
+  tbody.innerHTML=rows.map(function(r){
+    var dojoCell='<a class="link-a" href="distillery.html?nom='+encodeURIComponent(r.nom)+'" target="_blank">🏭 詳細</a>';
+    return '<tr>'
+      +'<td class="nom-cell">'+esc(r.nom)+'</td>'
+      +'<td style="font-size:11px;">'+esc(r.empresa)+'</td>'
+      +'<td style="font-size:11px;color:var(--ink3);">'+esc(r.direccion)+'</td>'
+      +'<td style="font-family:var(--mono);font-size:11px;color:var(--ink3);">'+esc(r.dot)+'</td>'
+      +'<td style="font-family:var(--mono);font-size:11px;color:var(--ink3);">'+esc(r.collectionDate)+'</td>'
+      +'<td>'+dojoCell+'</td>'
+      +'</tr>';
+  }).join('');
+}
+
+function filterDis(){
+  var q=document.getElementById('dis-search').value.trim().toLowerCase();
+  renderDis(q?disRows.filter(function(r){
+    return r.nom.includes(q)||r.empresa.toLowerCase().includes(q)||r.direccion.toLowerCase().includes(q);
+  }):disRows);
 }
 
 function renderBrand(rows){
