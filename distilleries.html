@@ -527,6 +527,7 @@ var OVERPASS_ENDPOINTS=[
 
 var dotLayer=null, dotLoading=false, dotGJ=null, dotFetchStatus=null, dotFirestoreSnap=null;
 var dotLayerMap={}; // origName → Leaflet layer (for click-to-highlight)
+var dotFillOpacity=0.07; // loaded from Firestore __settings__
 // stateLevel州（Jalisco）の色セット — スタイル判別用
 var _dotStateLevelColors=new Set(DOT_STATES.filter(function(s){return s.stateLevel;}).map(function(s){return s.color;}));
 
@@ -591,12 +592,12 @@ var _nrmFn=function(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerC
 async function fetchStateGeoJSON(sq){
   var query;
   if(sq.stateLevel){
-    query='[out:json][timeout:60];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
+    query='[out:json][timeout:90];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
   } else {
     // 全自治区を取得してクライアント側でフィルタ（特殊文字・表記揺れ対応）
     query='[out:json][timeout:60];area["ISO3166-2"="'+sq.iso+'"]->.s;rel["admin_level"="6"](area.s);out geom qt;';
   }
-  var json=await overpassFetch(query, 65000);
+  var json=await overpassFetch(query, sq.stateLevel ? 120000 : 65000);
   var features=osmtogeojson(json).features;
   var unmatched=[];
 
@@ -626,8 +627,8 @@ async function fetchStateGeoJSON(sq){
 }
 
 async function fetchStateBoundaryGeoJSON(sq){
-  var query='[out:json][timeout:60];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
-  var json=await overpassFetch(query, 65000);
+  var query='[out:json][timeout:90];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
+  var json=await overpassFetch(query, 120000);
   var features=osmtogeojson(json).features;
   features=features.filter(function(f){ var t=f.geometry&&f.geometry.type; return t&&t!=='Point'&&t!=='MultiPoint'; });
   features.forEach(function(f){
@@ -658,16 +659,14 @@ async function fetchSingleMunicipio(iso,color,name){
 // ── DOTレイヤースタイル ──────────────────────────────────────────
 function dotLayerStyle(f){
   var c=(f.properties&&f.properties._dotColor)||'#2e7d32';
+  var fo=dotFillOpacity||0.07;
   if(f.properties&&f.properties._isStateOutline){
-    // 非Jalisco州境界ライン: 太い実線・塗りなし
     return {color:c,weight:3,fillOpacity:0,opacity:0.9};
   }
   if(_dotStateLevelColors.has(c)){
-    // Jalisco DOT（州全体=DOT自治区）: 太い実線ボーダー＋薄い塗り
-    return {color:c,weight:3,fillColor:c,fillOpacity:0.06,opacity:0.9};
+    return {color:c,weight:3,fillColor:c,fillOpacity:fo,opacity:0.9};
   }
-  // DOT自治区境界: 極細線
-  return {color:c,weight:0.6,fillColor:c,fillOpacity:0.07,opacity:0.7};
+  return {color:c,weight:0.6,fillColor:c,fillOpacity:fo,opacity:0.7};
 }
 
 async function toggleDOT(){
@@ -684,6 +683,14 @@ async function toggleDOT(){
     var snap=await db.collection('dotMunicipios').get();
     dotFirestoreSnap=snap;
     dotFetchStatus=deriveDotFetchStatusFromFirestore(snap);
+
+    // 透過度設定を読み込む
+    snap.docs.forEach(function(doc){
+      if(doc.id==='__settings__'){
+        var s=doc.data();
+        if(typeof s.fillOpacity==='number') dotFillOpacity=s.fillOpacity;
+      }
+    });
 
     var features=[];
     snap.docs.forEach(function(doc){
