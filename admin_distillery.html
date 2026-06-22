@@ -311,7 +311,6 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
           <button class="btn bp" id="btn-dot-fetch-missing" style="font-size:12px;">未取得を一括取得・保存</button>
           <button class="btn bs" id="btn-dot-reload" style="font-size:12px;">一覧を更新</button>
-          <button class="btn bg2" id="btn-dot-clear-all" style="font-size:12px;">全件削除</button>
           <span id="dot-admin-status" style="font-size:11px;color:var(--ink3);margin-left:4px;"></span>
         </div>
         <div id="dot-master-list" style="font-size:12px;"></div>
@@ -1330,13 +1329,11 @@ async function loadDotMasterList(){
       if(e.entryType==='dotState'||e.entryType==='stateBoundary'){
         var typeLabel=e.entryType==='dotState'?'DOT全域（Jalisco全州）':'州境界ライン';
         labelCell='<span style="background:var(--cream2);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px;color:var(--ink3);">'+typeLabel+'</span>';
-      } else if(ok){
-        labelCell='<span style="color:var(--ink);">'+esc(e.name)+'</span>';
       } else {
-        // ✗ 自治区: 検索名を編集可能なinputとして表示
+        // 自治区: ✓✗ 問わず検索名を編集可能に（再取得時にOSM表記へ変更可）
         labelCell='<input type="text" id="dot-n-'+ei+'" value="'+esc(e.name)+'" '
-          +'style="width:calc(100% - 2px);padding:2px 5px;border:1px solid var(--cream3);border-radius:3px;font-size:11px;font-family:var(--sans);background:#fff;" '
-          +'title="Overpass検索名。OSMの表記に合わせて編集できます。">';
+          +'style="width:calc(100% - 2px);padding:2px 5px;border:1px solid '+(ok?'var(--cream3)':'#e0a0a0')+';border-radius:3px;font-size:11px;font-family:var(--sans);background:#fff;" '
+          +'title="Overpass検索名。OSMの表記に合わせて変更し再取得できます。">';
       }
 
       html+='<tr style="border-bottom:1px solid var(--cream3);'+(ok?'':'background:rgba(176,48,32,.03)')+'">'
@@ -1345,8 +1342,7 @@ async function loadDotMasterList(){
         +'<td style="padding:4px 8px;text-align:center;vertical-align:middle;">'+(ok?'<span style="color:#2e7d32;font-weight:600;">✓</span>':'<span style="color:#b03020;font-weight:600;">✗</span>')+'</td>'
         +'<td style="padding:4px 8px;text-align:center;vertical-align:middle;color:var(--ink3);font-size:11px;">'+dateStr+'</td>'
         +'<td style="padding:4px 8px;text-align:center;vertical-align:middle;">'
-        +(!ok?'<button class="btn bs sm" style="font-size:10px;padding:2px 7px;" data-dot-fetch="'+ei+'">取得</button>'
-             :'<button class="btn bd sm" style="font-size:10px;padding:2px 7px;" data-dot-del="'+ei+'">削除</button>')
+        +'<button class="btn bs sm" style="font-size:10px;padding:2px 7px;" data-dot-fetch="'+ei+'">'+(ok?'再取得':'取得')+'</button>'
         +'</td></tr>';
     });
     html+='</tbody></table>';
@@ -1362,10 +1358,6 @@ async function loadDotMasterList(){
         }
         fetchAndSaveDotEntry(btn,entries[ei],searchName);
       });
-    });
-    el.querySelectorAll('[data-dot-del]').forEach(function(btn){
-      var ei=parseInt(btn.dataset.dotDel);
-      btn.addEventListener('click',function(){deleteDotEntry(btn,entries[ei]);});
     });
   }catch(e2){
     el.innerHTML='<div style="color:var(--red);padding:6px 0;">読み込み失敗: '+esc(e2.message)+'</div>';
@@ -1388,19 +1380,6 @@ async function fetchAndSaveDotEntry(btn,entry,searchName){
   }catch(e){
     btn.textContent='取得'; btn.disabled=false;
     toast('失敗: '+entry.label+' — '+e.message,'err');
-  }
-}
-
-async function deleteDotEntry(btn,entry){
-  if(!confirm(entry.label+' の境界データを削除しますか？')) return;
-  btn.disabled=true;
-  try{
-    await db.collection('dotMunicipios').doc(entry.docId).update({geomJson:null,fetchedAt:null});
-    toast('削除: '+entry.label);
-    await loadDotMasterList();
-  }catch(e){
-    btn.disabled=false;
-    toast('削除失敗: '+e.message,'err');
   }
 }
 
@@ -1446,19 +1425,6 @@ g('btn-dot-fetch-missing').addEventListener('click',async function(){
   await loadDotMasterList();
 });
 
-g('btn-dot-clear-all').addEventListener('click',async function(){
-  if(!confirm('dotMunicipiosコレクションの全ジオメトリデータを削除しますか？')) return;
-  var statusEl=g('dot-admin-status'); statusEl.textContent='削除中...';
-  try{
-    var snap=await db.collection('dotMunicipios').get();
-    if(snap.empty){statusEl.textContent='データなし';return;}
-    var batch=db.batch();
-    snap.docs.forEach(function(d){batch.delete(d.ref);});
-    await batch.commit();
-    toast('dotMunicipiosを全件削除しました'); statusEl.textContent='';
-    await loadDotMasterList();
-  }catch(e){toast('削除失敗: '+e.message,'err'); statusEl.textContent='';}
-});
 
 g("btn-fetch-elevation-all").addEventListener("click", async function(){
   if(!confirm("座標登録済みで標高が未設定の蒸留所に標高を一括取得します。続行しますか？")) return;
