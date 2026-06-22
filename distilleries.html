@@ -251,7 +251,13 @@ function updateLegend(){
       +'<div style="font-size:10px;color:var(--ink3);margin-bottom:4px;">DOT原産地呼称</div>'
       +DOT_STATES.map(function(s){
         return '<div class="legend-item">'
-          +'<div style="width:14px;height:10px;border:2px solid '+s.color+';border-radius:2px;flex-shrink:0;box-sizing:border-box;"></div>'
+          +'<div style="width:14px;height:10px;border:2px solid '+s.color+';border-radius:2px;background:'+s.color+'22;flex-shrink:0;box-sizing:border-box;"></div>'
+          +s.state+'</div>';
+      }).join('')
+      +'<div style="font-size:10px;color:var(--ink3);margin:5px 0 3px;">州境界</div>'
+      +DOT_STATES.filter(function(s){return !s.stateLevel;}).map(function(s){
+        return '<div class="legend-item">'
+          +'<div style="width:14px;height:0;border-top:2px dashed '+s.color+';margin-top:5px;flex-shrink:0;"></div>'
           +s.state+'</div>';
       }).join('')
       +'</div>';
@@ -484,12 +490,13 @@ var OVERPASS_ENDPOINTS=[
 
 var dotLayer=null, dotLoading=false;
 
-async function overpassFetch(query){
+async function overpassFetch(query, timeoutMs){
+  timeoutMs=timeoutMs||45000;
   var lastErr;
   for(var i=0;i<OVERPASS_ENDPOINTS.length;i++){
     try{
       var ctrl=new AbortController();
-      var tid=setTimeout(function(){ctrl.abort();},20000);
+      var tid=setTimeout(function(){ctrl.abort();},timeoutMs);
       var resp=await fetch(OVERPASS_ENDPOINTS[i],{method:'POST',body:'data='+encodeURIComponent(query),signal:ctrl.signal});
       clearTimeout(tid);
       if(resp.status===429){
@@ -507,17 +514,41 @@ async function overpassFetch(query){
 async function fetchStateGeoJSON(sq){
   var query;
   if(sq.stateLevel){
-    query='[out:json][timeout:20];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
+    query='[out:json][timeout:25];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
   } else {
-    var pat=sq.municipios.map(function(n){return n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}).join('|');
-    query='[out:json][timeout:40];area["ISO3166-2"="'+sq.iso+'"]->.s;rel["admin_level"="6"]["name"~"'+pat+'"](area.s);out geom qt;';
+    // 全自治区を取得してクライアント側でフィルタ（特殊文字・表記揺れ対応）
+    query='[out:json][timeout:60];area["ISO3166-2"="'+sq.iso+'"]->.s;rel["admin_level"="6"](area.s);out geom qt;';
   }
-  var json=await overpassFetch(query);
-  // フィーチャーに州の色を付与
+  var json=await overpassFetch(query, sq.stateLevel ? 25000 : 65000);
   var features=osmtogeojson(json).features;
+  if(!sq.stateLevel && sq.municipios){
+    var nrm=function(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim();};
+    var allowed=sq.municipios.map(nrm);
+    features=features.filter(function(f){
+      var nm=nrm((f.properties&&(f.properties.name||f.properties['name:es']))||'');
+      if(!nm) return false;
+      return allowed.some(function(a){
+        // 完全一致 or 双方向前方一致（表記揺れ対応）
+        return a===nm || (nm.length>=4 && (a.indexOf(nm)===0 || nm.indexOf(a)===0));
+      });
+    });
+  }
   features.forEach(function(f){
     f.properties=f.properties||{};
     f.properties._dotColor=sq.color;
+  });
+  return features;
+}
+
+async function fetchStateBoundaryGeoJSON(sq){
+  var query='[out:json][timeout:25];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
+  var json=await overpassFetch(query, 25000);
+  var features=osmtogeojson(json).features;
+  features=features.filter(function(f){ var t=f.geometry&&f.geometry.type; return t&&t!=='Point'&&t!=='MultiPoint'; });
+  features.forEach(function(f){
+    f.properties=f.properties||{};
+    f.properties._dotColor=sq.color;
+    f.properties._isStateOutline=true;
   });
   return features;
 }
@@ -532,14 +563,14 @@ async function toggleDOT(){
   if(dotLoading) return;
   dotLoading=true; btn.disabled=true;
   try{
-    var CACHE_KEY='dot_geojson_v5';
+    var CACHE_KEY='dot_geojson_v6';
     var cached=sessionStorage.getItem(CACHE_KEY);
     var gj;
     if(cached){
       btn.textContent='読込中...';
       gj=JSON.parse(cached);
     } else {
-      // 順次取得（州間1.5秒ディレイで429回避）
+      // Phase1: DOT自治区フィーチャー取得（州間1.5秒ディレイで429回避）
       var allFeatures=[], failed=[];
       for(var i=0;i<DOT_STATES.length;i++){
         if(i>0) await new Promise(function(r){setTimeout(r,1500);});
@@ -549,6 +580,16 @@ async function toggleDOT(){
           allFeatures=allFeatures.concat(feats);
         }catch(e){ failed.push(DOT_STATES[i].state); console.warn('DOT取得失敗:',DOT_STATES[i].state,e.message); }
       }
+      // Phase2: 非Jalisco州の州境界ライン取得
+      var outlineStates=DOT_STATES.filter(function(s){return !s.stateLevel;});
+      for(var j=0;j<outlineStates.length;j++){
+        await new Promise(function(r){setTimeout(r,1500);});
+        btn.textContent=outlineStates[j].state+' 州境界取得中 ('+(j+1)+'/'+outlineStates.length+')';
+        try{
+          var outFeats=await fetchStateBoundaryGeoJSON(outlineStates[j]);
+          allFeatures=allFeatures.concat(outFeats);
+        }catch(e){ console.warn('州境界取得失敗:',outlineStates[j].state,e.message); }
+      }
       if(!allFeatures.length) throw new Error('全州の取得に失敗しました');
       gj={type:'FeatureCollection',features:allFeatures};
       try{sessionStorage.setItem(CACHE_KEY,JSON.stringify(gj));}catch(e){}
@@ -557,6 +598,9 @@ async function toggleDOT(){
       filter:function(f){ var t=f.geometry&&f.geometry.type; return t&&t!=='Point'&&t!=='MultiPoint'; },
       style:function(f){
         var c=(f.properties&&f.properties._dotColor)||'#2e7d32';
+        if(f.properties&&f.properties._isStateOutline){
+          return {color:c,weight:2,fillOpacity:0,opacity:0.85,dashArray:'8,5'};
+        }
         return {color:c,weight:1.5,fillColor:c,fillOpacity:0.08,opacity:0.75};
       }
     }).addTo(map);
