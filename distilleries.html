@@ -130,7 +130,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
   <button id="btn-topo" class="ctrl-btn" onclick="toggleTopo()">地形 OFF</button>
   <button id="btn-color-mode" class="ctrl-btn" onclick="toggleColorMode()">色: 地区</button>
   <button id="btn-dot" class="ctrl-btn" onclick="toggleDOT()">DOT境界</button>
-  <button id="btn-dot-status" class="ctrl-btn" onclick="toggleDotStatus()" style="display:none">境界確認</button>
+  <button id="btn-dot-status" class="ctrl-btn" onclick="toggleDotStatus()">境界確認</button>
   <span id="map-count"></span>
 </div>
 
@@ -439,6 +439,7 @@ auth.onAuthStateChanged(async function(user){
   if(_authDone) return; _authDone=true;
   isAdmin=await checkAdmin(user);
   await loadElevSettings();
+  buildStatusPanel(); // 境界確認パネルを初期状態で描画
   if(user){loadData();loadOverlays();return;}
   auth.signInAnonymously().then(function(){ loadData(); loadOverlays(); }).catch(function(){ loadData(); loadOverlays(); });
 });
@@ -668,12 +669,11 @@ function dotLayerStyle(f){
 
 async function toggleDOT(){
   var btn=document.getElementById('btn-dot');
-  var btnStatus=document.getElementById('btn-dot-status');
   if(dotLayer){
     map.removeLayer(dotLayer); dotLayer=null; dotGJ=null; dotFetchStatus=null;
     btn.classList.remove('on'); btn.textContent='DOT境界';
-    btnStatus.style.display='none';
     document.getElementById('dot-sp').classList.remove('open');
+    buildStatusPanel();
     updateLegend(); return;
   }
   if(dotLoading) return;
@@ -700,7 +700,6 @@ async function toggleDOT(){
     if(!gj.features.length){
       btn.textContent='DOT境界'; btn.disabled=false; dotLoading=false;
       document.getElementById('dot-sp').classList.add('open');
-      btnStatus.style.display='';
       dotFetchStatus=deriveDotFetchStatus(gj); buildStatusPanel();
       return;
     }
@@ -711,7 +710,6 @@ async function toggleDOT(){
       style:dotLayerStyle
     }).addTo(map);
     btn.classList.add('on'); btn.textContent='DOT境界 ON';
-    btnStatus.style.display='';
     dotFetchStatus=deriveDotFetchStatus(gj);
     buildStatusPanel();
     // 不足があった場合はパネルを自動で開く
@@ -763,9 +761,14 @@ function toggleDotStatus(){
 
 function buildStatusPanel(){
   var body=document.getElementById('dot-sp-body');
-  if(!dotFetchStatus){body.innerHTML='<div style="padding:12px;color:var(--ink3)">DOT境界を読み込んでください</div>';return;}
+  // dotFetchStatus が null の場合は静的リスト（全件 ✗）を表示
+  var status=dotFetchStatus||DOT_STATES.map(function(sq){
+    return {state:sq.state,iso:sq.iso,color:sq.color,stateLevel:!!sq.stateLevel,
+      stateBoundaryOk:false,
+      municipioResults:sq.stateLevel?null:sq.municipios.map(function(m){return {name:m,ok:false};})};
+  });
   var html='';
-  dotFetchStatus.forEach(function(st,si){
+  status.forEach(function(st,si){
     html+='<div class="dot-sp-state">'
       +'<span style="width:9px;height:9px;border-radius:50%;background:'+st.color+';display:inline-block;flex-shrink:0"></span>'
       +'<strong>'+st.state+'</strong></div>';
@@ -805,21 +808,21 @@ function buildStatusPanel(){
     if(dotLayer){map.removeLayer(dotLayer);dotLayer=null;}
     dotGJ=null;dotFetchStatus=null;
     document.getElementById('dot-sp').classList.remove('open');
-    document.getElementById('btn-dot-status').style.display='none';
     document.getElementById('btn-dot').classList.remove('on');
     document.getElementById('btn-dot').textContent='DOT境界';
+    buildStatusPanel();
     updateLegend();
   });
 
   // イベントリスナーをアタッチ（onclick属性で特殊文字エスケープ問題回避）
   body.querySelectorAll('[data-retry-bnd]').forEach(function(btn){
     var si=parseInt(btn.dataset.si);
-    btn.addEventListener('click',function(){retryStateBoundary(btn,dotFetchStatus[si].iso);});
+    btn.addEventListener('click',function(){retryStateBoundary(btn,status[si].iso);});
   });
   body.querySelectorAll('[data-retry-muni]').forEach(function(btn){
     var si=parseInt(btn.dataset.si),mi=parseInt(btn.dataset.mi);
     btn.addEventListener('click',function(){
-      var st=dotFetchStatus[si]; retryMunicipio(btn,st.iso,st.color,st.municipioResults[mi].name);
+      var st=status[si]; retryMunicipio(btn,st.iso,st.color,st.municipioResults[mi].name);
     });
   });
 }
