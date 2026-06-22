@@ -9,6 +9,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://unpkg.com/osmtogeojson@3.0.0-beta.5/osmtogeojson.js"></script>
 <script src="/auth-role.js"></script>
 
 <script>
@@ -305,17 +306,15 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         <div id="elev-gradient-preview" style="margin-top:12px;height:12px;border-radius:4px;border:1px solid var(--cream3);"></div>
       </div>
       <div class="card" style="margin-top:18px;">
-        <div style="font-weight:600;margin-bottom:6px;font-size:13px;">DOT原産地呼称自治区</div>
-        <div style="font-size:11px;color:var(--ink3);margin-bottom:10px;">NOM-006-SCFI-2012に基づくテキーラ生産許可自治区（5州・計181自治区）をFirestoreに保存します。</div>
-        <div style="font-size:11px;margin-bottom:10px;">
-          <b>Jalisco</b>（全125自治区）、
-          <b>Michoacán</b>（30）、<b>Tamaulipas</b>（11）、<b>Nayarit</b>（8）、<b>Guanajuato</b>（7）
+        <div style="font-weight:600;margin-bottom:6px;font-size:13px;">DOT原産地呼称自治区マスタ</div>
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:10px;">Firestore <code>dotMunicipios</code> コレクション管理。Overpass APIから境界ポリゴンを取得・保存します（61件）。</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+          <button class="btn bp" id="btn-dot-fetch-missing" style="font-size:12px;">未取得を一括取得・保存</button>
+          <button class="btn bs" id="btn-dot-reload" style="font-size:12px;">一覧を更新</button>
+          <button class="btn bg2" id="btn-dot-clear-all" style="font-size:12px;">全件削除</button>
+          <span id="dot-admin-status" style="font-size:11px;color:var(--ink3);margin-left:4px;"></span>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <button class="btn bp" id="btn-seed-dot" style="font-size:12px;">Firestoreにシード</button>
-          <button class="btn bg2" id="btn-clear-dot" style="font-size:12px;">データ削除</button>
-          <span id="dot-seed-status" style="font-size:11px;color:var(--ink3);"></span>
-        </div>
+        <div id="dot-master-list" style="font-size:12px;"></div>
       </div>
     </div>
 
@@ -1143,7 +1142,7 @@ g('btn-save-overlay').addEventListener('click',function(){
 // タブ切り替え時にオーバーレイ一覧を更新
 document.querySelectorAll('.tab[data-page]').forEach(function(btn){
   btn.addEventListener('click',function(){
-    if(btn.dataset.page==='map-overlays'){ loadOverlayTab(); loadElevStops(); }
+    if(btn.dataset.page==='map-overlays'){ loadOverlayTab(); loadElevStops(); loadDotMasterList(); }
   });
 });
 
@@ -1215,57 +1214,237 @@ async function saveElevStops(){
 g('btn-add-elev-stop').addEventListener('click',addElevStop);
 g('btn-save-elev-stops').addEventListener('click',saveElevStops);
 
-// ── DOT原産地呼称自治区 ────────────────────────────────────────
-var DOT_STATES=[
-  {state:'Jalisco',  stateCode:'14',iso:'MX-JAL',allMunicipios:true,count:125},
-  {state:'Guanajuato', stateCode:'11',iso:'MX-GUA',municipios:['Abasolo','Ciudad Manuel Doblado','Cuerámaro','Huanímaro','Pénjamo','Purísima del Rincón','Romita']},
-  {state:'Michoacán', stateCode:'16',iso:'MX-MIC',municipios:['Briseñas de Matamoros','Chavinda','Chilchota','Churintzio','Cotija','Ecuandureo','Jacona','Jiquilpan','Maravatío','Marcos Castellanos','Nuevo Parangaricutiro','Numarán','Pajacuarán','Peribán','La Piedad','Régules','Los Reyes','Sahuayo','Tancítaro','Tangamandapio','Tangancícuaro','Tanhuato','Tingüindín','Tocumbo','Venustiano Carranza','Villa Mar','Vista Hermosa','Yurécuaro','Zamora','Zináparo']},
-  {state:'Nayarit',   stateCode:'18',iso:'MX-NAY',municipios:['Ahuacatlán','Amatlán de Cañas','Ixtlán del Río','Jala','Xalisco','San Pedro Lagunillas','Santa María del Oro','Tepic']},
-  {state:'Tamaulipas',stateCode:'28',iso:'MX-TAM',municipios:['Aldama','Altamira','Antiguo Morelos','Gómez Farías','González','Llera','El Mante','Nuevo Morelos','Ocampo','Tula','Xicotencatl']}
+// ── DOT原産地呼称自治区マスタ ─────────────────────────────────────
+var DOT_ADMIN_STATES=[
+  {state:'Jalisco',   iso:'MX-JAL',stateLevel:true,   color:'#2e7d32'},
+  {state:'Guanajuato',iso:'MX-GUA',color:'#7b1fa2',municipios:['Abasolo','Ciudad Manuel Doblado','Cuerámaro','Huanímaro','Pénjamo','Purísima del Rincón','Romita']},
+  {state:'Michoacán', iso:'MX-MIC',color:'#e65100',municipios:['Briseñas de Matamoros','Chavinda','Chilchota','Churintzio','Cotija','Ecuandureo','Jacona','Jiquilpan','Maravatío','Marcos Castellanos','Nuevo Parangaricutiro','Numarán','Pajacuarán','Peribán','La Piedad','Régules','Los Reyes','Sahuayo','Tancítaro','Tangamandapio','Tangancícuaro','Tanhuato','Tingüindín','Tocumbo','Venustiano Carranza','Villa Mar','Vista Hermosa','Yurécuaro','Zamora','Zináparo']},
+  {state:'Nayarit',   iso:'MX-NAY',color:'#f9a825',municipios:['Ahuacatlán','Amatlán de Cañas','Ixtlán del Río','Jala','Xalisco','San Pedro Lagunillas','Santa María del Oro','Tepic']},
+  {state:'Tamaulipas',iso:'MX-TAM',color:'#1565c0',municipios:['Aldama','Altamira','Antiguo Morelos','Gómez Farías','González','Llera','El Mante','Nuevo Morelos','Ocampo','Tula','Xicotencatl']}
 ];
 
-g('btn-seed-dot').addEventListener('click',async function(){
-  if(!confirm('dotMunicipiosコレクションに181件のデータを保存します。')) return;
-  var st=g('dot-seed-status'); st.textContent='保存中...';
-  try{
-    // 既存データ削除
-    var existing=await db.collection('dotMunicipios').get();
-    if(!existing.empty){
-      var delBatch=db.batch();
-      existing.docs.forEach(function(d){delBatch.delete(d.ref);});
-      await delBatch.commit();
-    }
-    // バッチ書き込み（499件上限に注意、今回は57件なので一括OK）
-    var batch=db.batch();
-    DOT_STATES.forEach(function(s){
-      if(s.allMunicipios){
-        var ref=db.collection('dotMunicipios').doc(s.iso);
-        batch.set(ref,{state:s.state,stateCode:s.stateCode,iso:s.iso,allMunicipios:true,count:s.count||null});
-      } else {
-        s.municipios.forEach(function(m){
-          batch.set(db.collection('dotMunicipios').doc(),{state:s.state,stateCode:s.stateCode,iso:s.iso,municipio:m});
-        });
-      }
-    });
-    await batch.commit();
-    var total=1+DOT_STATES.filter(function(s){return !s.allMunicipios;}).reduce(function(a,s){return a+s.municipios.length;},0);
-    toast('DOT自治区データを'+total+'件保存しました');
-    st.textContent='✓ 完了（'+total+'件）';
-    setTimeout(function(){st.textContent='';},4000);
-  }catch(e){toast('失敗: '+e.message,'err'); st.textContent='';}
-});
+var OVERPASS_ENDPOINTS_ADM=[
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://lz4.overpass-api.de/api/interpreter'
+];
 
-g('btn-clear-dot').addEventListener('click',async function(){
-  if(!confirm('dotMunicipiosコレクションの全データを削除します。')) return;
-  var st=g('dot-seed-status'); st.textContent='削除中...';
+var _nrmFnAdm=function(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim();};
+
+function dotDocIdAdm(sq,name){
+  if(sq.stateLevel) return sq.iso+'_dotState';
+  if(!name) return sq.iso+'_stateBoundary';
+  return sq.iso+'_municipio_'+name.replace(/\s+/g,'_');
+}
+
+// 全期待エントリを生成
+function dotExpectedEntries(){
+  var entries=[];
+  DOT_ADMIN_STATES.forEach(function(sq){
+    if(sq.stateLevel){
+      entries.push({docId:dotDocIdAdm(sq),sq:sq,name:null,entryType:'dotState',label:'DOT境界（全州）'});
+    } else {
+      entries.push({docId:dotDocIdAdm(sq),sq:sq,name:null,entryType:'stateBoundary',label:sq.state+' 州境界'});
+      sq.municipios.forEach(function(m){
+        entries.push({docId:dotDocIdAdm(sq,m),sq:sq,name:m,entryType:'municipio',label:m});
+      });
+    }
+  });
+  return entries;
+}
+
+async function overpassFetchAdm(query,timeoutMs){
+  timeoutMs=timeoutMs||45000;
+  var lastErr;
+  for(var i=0;i<OVERPASS_ENDPOINTS_ADM.length;i++){
+    try{
+      var ctrl=new AbortController();
+      var tid=setTimeout(function(){ctrl.abort();},timeoutMs);
+      var resp=await fetch(OVERPASS_ENDPOINTS_ADM[i],{method:'POST',body:'data='+encodeURIComponent(query),signal:ctrl.signal});
+      clearTimeout(tid);
+      if(resp.status===429){await new Promise(function(r){setTimeout(r,3000);}); throw new Error('429');}
+      if(!resp.ok) throw new Error('HTTP '+resp.status);
+      return await resp.json();
+    }catch(e){lastErr=e;}
+  }
+  throw lastErr;
+}
+
+async function fetchDotGeomAdm(entry){
+  var sq=entry.sq;
+  if(entry.entryType==='dotState'){
+    var q='[out:json][timeout:25];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
+    var json=await overpassFetchAdm(q,25000);
+    var feats=osmtogeojson(json).features.filter(function(f){var t=f.geometry&&f.geometry.type;return t&&t!=='Point'&&t!=='MultiPoint';});
+    return feats.length?feats[0].geometry:null;
+  }
+  if(entry.entryType==='stateBoundary'){
+    var q='[out:json][timeout:25];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
+    var json=await overpassFetchAdm(q,25000);
+    var feats=osmtogeojson(json).features.filter(function(f){var t=f.geometry&&f.geometry.type;return t&&t!=='Point'&&t!=='MultiPoint';});
+    return feats.length?feats[0].geometry:null;
+  }
+  if(entry.entryType==='municipio'){
+    var stopWords=/^(de|del|el|la|los|las|san|santa|nuevo|nueva|general)$/i;
+    var kw=_nrmFnAdm(entry.name).split(/\s+/).find(function(w){return w.length>3&&!stopWords.test(w);})||_nrmFnAdm(entry.name);
+    var q='[out:json][timeout:30];area["ISO3166-2"="'+sq.iso+'"]->.s;rel["admin_level"="6"]["name"~"'+kw+'",i](area.s);out geom qt;';
+    var json=await overpassFetchAdm(q,35000);
+    var feats=osmtogeojson(json).features.filter(function(f){var t=f.geometry&&f.geometry.type;return t&&t!=='Point'&&t!=='MultiPoint';});
+    return feats.length?feats[0].geometry:null;
+  }
+  return null;
+}
+
+var _dotAdminSnap=null;
+
+async function loadDotMasterList(){
+  var el=g('dot-master-list'); if(!el) return;
+  el.innerHTML='<div style="color:var(--ink3);padding:6px 0;">読み込み中...</div>';
+  g('dot-admin-status').textContent='';
   try{
     var snap=await db.collection('dotMunicipios').get();
-    if(snap.empty){st.textContent='データなし';return;}
+    _dotAdminSnap=snap;
+    var fetchedMap={};
+    snap.docs.forEach(function(doc){fetchedMap[doc.id]=doc.data();});
+    var entries=dotExpectedEntries();
+    var okCount=entries.filter(function(e){return fetchedMap[e.docId]&&fetchedMap[e.docId].geomJson;}).length;
+    g('dot-admin-status').textContent=okCount+' / '+entries.length+' 件取得済み';
+
+    var curState='';
+    var html='<table style="width:100%;border-collapse:collapse;font-size:12px;">'
+      +'<colgroup><col style="width:90px"><col><col style="width:64px"><col style="width:70px"><col style="width:62px"></colgroup>'
+      +'<thead><tr style="background:var(--cream2);"><th style="padding:5px 8px;text-align:left;font-weight:500;">州</th>'
+      +'<th style="padding:5px 8px;text-align:left;font-weight:500;">エントリ</th>'
+      +'<th style="padding:5px 8px;text-align:center;font-weight:500;">状態</th>'
+      +'<th style="padding:5px 8px;text-align:center;font-weight:500;">取得日</th>'
+      +'<th style="padding:5px 8px;text-align:center;font-weight:500;">操作</th></tr></thead><tbody>';
+
+    entries.forEach(function(e,ei){
+      var d=fetchedMap[e.docId];
+      var ok=d&&d.geomJson;
+      var dateStr='—';
+      if(d&&d.fetchedAt){try{var dt=d.fetchedAt.toDate();dateStr=dt.getMonth()+1+'/'+dt.getDate();}catch(x){}}
+      var stateName=e.sq.state;
+      var stateCell=stateName!==curState?'<span style="color:'+e.sq.color+';font-weight:500;">'+stateName+'</span>':'';
+      if(stateName!==curState) curState=stateName;
+
+      var typeLabel=e.entryType==='dotState'?'DOT全域':e.entryType==='stateBoundary'?'州境界':'';
+      var labelCell=typeLabel
+        ?'<span style="background:var(--cream2);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px;color:var(--ink3);">'+typeLabel+'</span>'
+        :'<span style="color:var(--ink);">'+esc(e.name)+'</span>';
+
+      html+='<tr style="border-bottom:1px solid var(--cream3);'+(ei%2===0?'':'background:rgba(0,0,0,.015)')+'">'
+        +'<td style="padding:4px 8px;vertical-align:middle;">'+stateCell+'</td>'
+        +'<td style="padding:4px 8px;vertical-align:middle;">'+labelCell+'</td>'
+        +'<td style="padding:4px 8px;text-align:center;vertical-align:middle;">'+(ok?'<span style="color:#2e7d32;font-weight:600;">✓</span>':'<span style="color:#b03020;">✗</span>')+'</td>'
+        +'<td style="padding:4px 8px;text-align:center;vertical-align:middle;color:var(--ink3);font-size:11px;">'+dateStr+'</td>'
+        +'<td style="padding:4px 8px;text-align:center;vertical-align:middle;">'
+        +(!ok?'<button class="btn bs sm" style="font-size:10px;padding:2px 7px;" data-dot-fetch="'+ei+'">取得</button>'
+             :'<button class="btn bd sm" style="font-size:10px;padding:2px 7px;" data-dot-del="'+ei+'">削除</button>')
+        +'</td></tr>';
+    });
+    html+='</tbody></table>';
+    el.innerHTML=html;
+
+    el.querySelectorAll('[data-dot-fetch]').forEach(function(btn){
+      var ei=parseInt(btn.dataset.dotFetch);
+      btn.addEventListener('click',function(){fetchAndSaveDotEntry(btn,entries[ei]);});
+    });
+    el.querySelectorAll('[data-dot-del]').forEach(function(btn){
+      var ei=parseInt(btn.dataset.dotDel);
+      btn.addEventListener('click',function(){deleteDotEntry(btn,entries[ei]);});
+    });
+  }catch(e2){
+    el.innerHTML='<div style="color:var(--red);padding:6px 0;">読み込み失敗: '+esc(e2.message)+'</div>';
+  }
+}
+
+async function fetchAndSaveDotEntry(btn,entry){
+  btn.disabled=true; btn.textContent='取得中...';
+  var statusEl=g('dot-admin-status');
+  try{
+    var geom=await fetchDotGeomAdm(entry);
+    if(!geom){btn.textContent='見つからず';btn.disabled=false;statusEl.textContent='取得できませんでした: '+entry.label;return;}
+    await db.collection('dotMunicipios').doc(entry.docId).set({
+      state:entry.sq.state,iso:entry.sq.iso,name:entry.name||null,color:entry.sq.color,
+      entryType:entry.entryType,geomJson:JSON.stringify(geom),
+      fetchedAt:firebase.firestore.FieldValue.serverTimestamp()
+    },{merge:true});
+    toast('保存: '+entry.label);
+    await loadDotMasterList();
+  }catch(e){
+    btn.textContent='取得'; btn.disabled=false;
+    toast('失敗: '+entry.label+' — '+e.message,'err');
+  }
+}
+
+async function deleteDotEntry(btn,entry){
+  if(!confirm(entry.label+' の境界データを削除しますか？')) return;
+  btn.disabled=true;
+  try{
+    await db.collection('dotMunicipios').doc(entry.docId).update({geomJson:null,fetchedAt:null});
+    toast('削除: '+entry.label);
+    await loadDotMasterList();
+  }catch(e){
+    btn.disabled=false;
+    toast('削除失敗: '+e.message,'err');
+  }
+}
+
+g('btn-dot-reload').addEventListener('click',function(){loadDotMasterList();});
+
+g('btn-dot-fetch-missing').addEventListener('click',async function(){
+  var entries=dotExpectedEntries();
+  // Firestoreのスナップを再取得
+  var snap=await db.collection('dotMunicipios').get();
+  var fetchedMap={};
+  snap.docs.forEach(function(doc){fetchedMap[doc.id]=doc.data();});
+  var missing=entries.filter(function(e){return !(fetchedMap[e.docId]&&fetchedMap[e.docId].geomJson);});
+  if(!missing.length){toast('取得済みです（未取得なし）'); return;}
+  if(!confirm(missing.length+'件の未取得エントリを一括取得します。\nOverpass APIへのアクセスが発生します。続行しますか？')) return;
+  var btn=this; btn.disabled=true;
+  var statusEl=g('dot-admin-status');
+  var ok=0,fail=0;
+  for(var i=0;i<missing.length;i++){
+    var entry=missing[i];
+    statusEl.textContent='取得中 '+(i+1)+'/'+missing.length+': '+entry.label;
+    if(i>0) await new Promise(function(r){setTimeout(r,1500);});
+    try{
+      var geom=await fetchDotGeomAdm(entry);
+      if(geom){
+        await db.collection('dotMunicipios').doc(entry.docId).set({
+          state:entry.sq.state,iso:entry.sq.iso,name:entry.name||null,color:entry.sq.color,
+          entryType:entry.entryType,geomJson:JSON.stringify(geom),
+          fetchedAt:firebase.firestore.FieldValue.serverTimestamp()
+        },{merge:true});
+        ok++;
+      } else {
+        fail++;
+        console.warn('取得できず:',entry.label);
+      }
+    }catch(e2){
+      fail++;
+      console.warn('エラー:',entry.label,e2.message);
+    }
+  }
+  btn.disabled=false;
+  statusEl.textContent='完了: '+ok+'件保存 / '+fail+'件失敗';
+  toast('一括取得完了: '+ok+'件保存'+(fail?'、'+fail+'件失敗':''));
+  await loadDotMasterList();
+});
+
+g('btn-dot-clear-all').addEventListener('click',async function(){
+  if(!confirm('dotMunicipiosコレクションの全ジオメトリデータを削除しますか？')) return;
+  var statusEl=g('dot-admin-status'); statusEl.textContent='削除中...';
+  try{
+    var snap=await db.collection('dotMunicipios').get();
+    if(snap.empty){statusEl.textContent='データなし';return;}
     var batch=db.batch();
     snap.docs.forEach(function(d){batch.delete(d.ref);});
     await batch.commit();
-    toast('dotMunicipiosを削除しました'); st.textContent='';
-  }catch(e){toast('失敗: '+e.message,'err'); st.textContent='';}
+    toast('dotMunicipiosを全件削除しました'); statusEl.textContent='';
+    await loadDotMasterList();
+  }catch(e){toast('削除失敗: '+e.message,'err'); statusEl.textContent='';}
 });
 
 g("btn-fetch-elevation-all").addEventListener("click", async function(){
