@@ -87,7 +87,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 #map.labels-off .dis-label{display:none!important;}
 
 /* ── Elevation legend ── */
-.legend-grade{height:8px;width:86px;border-radius:3px;margin-bottom:3px;background:linear-gradient(to right,#ffffff,rgb(229,57,53));border:1px solid var(--cream3);}
+.legend-grade{height:8px;width:86px;border-radius:3px;margin-bottom:3px;border:1px solid var(--cream3);}
 .legend-scale{display:flex;justify-content:space-between;font-size:10px;width:86px;color:var(--ink3);}
 </style>
 </head>
@@ -167,7 +167,7 @@ var DISTRICT_LABELS={
   '41':'Nayarit','51':'Tamaulipas'
 };
 var colorMode='district';
-var elevSettings={min:0,max:2500};
+var elevSettings={stops:[{elev:0,color:'#ffffff'},{elev:2500,color:'#e53935'}]};
 var isAdmin=false;
 
 async function loadElevSettings(){
@@ -175,8 +175,11 @@ async function loadElevSettings(){
     var doc=await db.collection('settings').doc('map').get();
     if(doc.exists){
       var d=doc.data();
-      if(d.elevMinM!=null) elevSettings.min=Number(d.elevMinM);
-      if(d.elevMaxM!=null) elevSettings.max=Number(d.elevMaxM);
+      if(d.elevStops&&d.elevStops.length>=2){
+        elevSettings.stops=d.elevStops.slice().sort(function(a,b){return a.elev-b.elev;});
+      } else if(d.elevMinM!=null&&d.elevMaxM!=null){
+        elevSettings.stops=[{elev:Number(d.elevMinM),color:'#ffffff'},{elev:Number(d.elevMaxM),color:'#e53935'}];
+      }
     }
   }catch(e){}
 }
@@ -188,23 +191,37 @@ async function checkAdmin(user){
     return role==='owner'||role==='staff';
   }catch(e){return false;}
 }
-async function saveElevSettings(){
-  var minEl=document.getElementById('elev-min-input'), maxEl=document.getElementById('elev-max-input');
-  if(!minEl||!maxEl) return;
-  var newMin=parseInt(minEl.value), newMax=parseInt(maxEl.value);
-  if(isNaN(newMin)||isNaN(newMax)||newMin>=newMax){alert('最小値 < 最大値 になるよう入力してください');return;}
-  elevSettings.min=newMin; elevSettings.max=newMax;
-  try{
-    await db.collection('settings').doc('map').set({elevMinM:newMin,elevMaxM:newMax},{merge:true});
-    recolorMarkers();
-  }catch(e){alert('保存失敗: '+e.message);}
-}
 
+function hexToRgb(hex){
+  var m=(hex||'').replace('#','').match(/.{2}/g);
+  return m?{r:parseInt(m[0],16),g:parseInt(m[1],16),b:parseInt(m[2],16)}:{r:255,g:255,b:255};
+}
+function lerpColor(c1,c2,t){
+  var a=hexToRgb(c1),b=hexToRgb(c2);
+  return 'rgb('+Math.round(a.r+(b.r-a.r)*t)+','+Math.round(a.g+(b.g-a.g)*t)+','+Math.round(a.b+(b.b-a.b)*t)+')';
+}
+function stopsToGradientCss(stops){
+  if(!stops||stops.length===0) return '#ffffff';
+  if(stops.length===1) return stops[0].color;
+  var min=stops[0].elev,max=stops[stops.length-1].elev,range=max-min||1;
+  return 'linear-gradient(to right,'+stops.map(function(s){
+    return s.color+' '+Math.round((s.elev-min)/range*100)+'%';
+  }).join(',')+')';
+}
 function elevationColor(elev){
   if(elev==null||isNaN(elev)) return '#ffffff';
-  var range=elevSettings.max-elevSettings.min||1;
-  var t=Math.max(0,Math.min(1,(elev-elevSettings.min)/range));
-  return 'rgb('+Math.round(255+(229-255)*t)+','+Math.round(255+(57-255)*t)+','+Math.round(255+(53-255)*t)+')';
+  var stops=elevSettings.stops;
+  if(!stops||stops.length===0) return '#ffffff';
+  if(stops.length===1) return stops[0].color;
+  if(elev<=stops[0].elev) return stops[0].color;
+  if(elev>=stops[stops.length-1].elev) return stops[stops.length-1].color;
+  for(var i=0;i<stops.length-1;i++){
+    if(elev>=stops[i].elev&&elev<=stops[i+1].elev){
+      var t=(elev-stops[i].elev)/((stops[i+1].elev-stops[i].elev)||1);
+      return lerpColor(stops[i].color,stops[i+1].color,t);
+    }
+  }
+  return '#ffffff';
 }
 function getMarkerColor(dis){
   if(colorMode==='elevation') return elevationColor(dis.elevation!=null?Number(dis.elevation):null);
@@ -217,18 +234,14 @@ function updateLegend(){
       return '<div class="legend-item"><div class="legend-dot" style="background:'+DISTRICT_COLORS[id]+'"></div>'+DISTRICT_LABELS[id]+'</div>';
     }).join('')+'<div class="legend-item"><div class="legend-dot" style="background:#c8921e"></div>その他</div>';
   } else {
-    var adminHtml=isAdmin
-      ?'<div style="margin-top:7px;padding-top:6px;border-top:1px solid var(--cream3);display:flex;gap:4px;align-items:center;flex-wrap:wrap;">'
-        +'<input id="elev-min-input" type="number" value="'+elevSettings.min+'" style="width:54px;font-size:11px;padding:2px 4px;border:1px solid var(--cream3);border-radius:3px;background:#fff;">m〜'
-        +'<input id="elev-max-input" type="number" value="'+elevSettings.max+'" style="width:54px;font-size:11px;padding:2px 4px;border:1px solid var(--cream3);border-radius:3px;background:#fff;">m'
-        +'<button onclick="saveElevSettings()" style="font-size:10px;padding:2px 7px;border:1px solid var(--cream3);border-radius:3px;background:var(--ink);color:var(--cream);cursor:pointer;">保存</button>'
-        +'</div>'
-      :'';
+    var stops=elevSettings.stops;
+    var firstStop=stops&&stops.length?stops[0]:null;
+    var lastStop=stops&&stops.length?stops[stops.length-1]:null;
+    var gradCss=stopsToGradientCss(stops);
     el.innerHTML='<div style="font-size:10px;color:var(--ink3);margin-bottom:4px;">標高</div>'
-      +'<div class="legend-grade"></div>'
-      +'<div class="legend-scale"><span>'+elevSettings.min+'m</span><span>'+elevSettings.max+'m</span></div>'
-      +'<div class="legend-item" style="margin-top:4px;"><div class="legend-dot" style="background:#fff;border:1px solid var(--cream3);"></div>未設定</div>'
-      +adminHtml;
+      +'<div class="legend-grade" style="background:'+gradCss+'"></div>'
+      +'<div class="legend-scale"><span>'+(firstStop?firstStop.elev+'m':'')+'</span><span>'+(lastStop?lastStop.elev+'m':'')+'</span></div>'
+      +'<div class="legend-item" style="margin-top:4px;"><div class="legend-dot" style="background:#fff;border:1px solid var(--cream3);"></div>未設定</div>';
   }
 }
 function recolorMarkers(){
@@ -369,9 +382,10 @@ var overlayLayers=[];
 function drawOverlay(o){
   var layer;
   var opts={color:o.color||'#1565c0',weight:o.weight||2,fillColor:o.fillColor||o.color||'#1565c0',fillOpacity:o.fillOpacity!=null?o.fillOpacity:0.08};
-  if(o.type==='polygon') layer=L.polygon(o.coords,opts);
-  else if(o.type==='polyline') layer=L.polyline(o.coords,{color:opts.color,weight:opts.weight,dashArray:o.dashArray||null});
-  else if(o.type==='circle') layer=L.circle(o.coords[0],Object.assign({radius:o.radius||10000},opts));
+  var latlngs=(o.coords||[]).map(function(c){return Array.isArray(c)?[c[0],c[1]]:[c.lat,c.lng];});
+  if(o.type==='polygon') layer=L.polygon(latlngs,opts);
+  else if(o.type==='polyline') layer=L.polyline(latlngs,{color:opts.color,weight:opts.weight,dashArray:o.dashArray||null});
+  else if(o.type==='circle') layer=L.circle(latlngs[0],Object.assign({radius:o.radius||10000},opts));
   if(!layer) return;
   if(o.label) layer.bindTooltip(o.label,{sticky:true,className:'dis-label'});
   layer.addTo(map);

@@ -293,6 +293,17 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <tbody id="tb-overlays"><tr><td colspan="6" class="ec">読み込み中...</td></tr></tbody>
         </table></div>
       </div>
+      <div class="card" style="margin-top:18px;">
+        <div style="font-weight:600;margin-bottom:10px;font-size:13px;">標高グラデーション設定</div>
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:10px;">蒸留所マップの標高カラーリングに使う色分け点を設定します。標高値（m）と色を2点以上設定してください。</div>
+        <div id="elev-stops-list"></div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+          <button class="btn" id="btn-add-elev-stop" style="font-size:12px;">＋ 追加</button>
+          <button class="btn bp" id="btn-save-elev-stops" style="font-size:12px;">保存</button>
+          <span id="elev-stops-status" style="font-size:11px;color:var(--ink3);"></span>
+        </div>
+        <div id="elev-gradient-preview" style="margin-top:12px;height:12px;border-radius:4px;border:1px solid var(--cream3);"></div>
+      </div>
     </div>
 
   </div><!-- /content -->
@@ -1036,7 +1047,7 @@ function openOverlayModal(id){
       sv('ov-color',o.color||'#1565c0'); sv('ov-fillcolor',o.fillColor||o.color||'#1565c0');
       sv('ov-fillopacity',o.fillOpacity!=null?o.fillOpacity:0.08); sv('ov-weight',o.weight||2);
       sv('ov-radius',o.radius||10000);
-      var coordsStr=(o.coords||[]).map(function(c){return c[0]+','+c[1];}).join('\n');
+      var coordsStr=(o.coords||[]).map(function(c){return Array.isArray(c)?c[0]+','+c[1]:c.lat+','+c.lng;}).join('\n');
       sv('ov-coords',coordsStr);
       g('ov-radius-wrap').style.display=o.type==='circle'?'':'none';
       openM('m-overlay');
@@ -1064,8 +1075,8 @@ g('btn-save-overlay').addEventListener('click',function(){
   if(!rawCoords){ toast('座標を入力してください','err'); return; }
   var coords=rawCoords.split('\n').map(function(line){
     var parts=line.trim().split(',');
-    return [parseFloat(parts[0]),parseFloat(parts[1])];
-  }).filter(function(c){return !isNaN(c[0])&&!isNaN(c[1]);});
+    return {lat:parseFloat(parts[0]),lng:parseFloat(parts[1])};
+  }).filter(function(c){return !isNaN(c.lat)&&!isNaN(c.lng);});
   if(!coords.length){ toast('座標の形式が正しくありません（緯度,経度）','err'); return; }
   var data={
     type:type, label:label, coords:coords,
@@ -1084,9 +1095,77 @@ g('btn-save-overlay').addEventListener('click',function(){
 // タブ切り替え時にオーバーレイ一覧を更新
 document.querySelectorAll('.tab[data-page]').forEach(function(btn){
   btn.addEventListener('click',function(){
-    if(btn.dataset.page==='map-overlays') loadOverlayTab();
+    if(btn.dataset.page==='map-overlays'){ loadOverlayTab(); loadElevStops(); }
   });
 });
+
+// ── 標高グラデーション設定 ──────────────────────────────────────────
+var elevStopsData=[{elev:0,color:'#ffffff'},{elev:2500,color:'#e53935'}];
+
+async function loadElevStops(){
+  try{
+    var doc=await db.collection('settings').doc('map').get();
+    if(doc.exists){
+      var d=doc.data();
+      if(d.elevStops&&d.elevStops.length>=1){
+        elevStopsData=d.elevStops.slice().sort(function(a,b){return a.elev-b.elev;});
+      } else if(d.elevMinM!=null&&d.elevMaxM!=null){
+        elevStopsData=[{elev:Number(d.elevMinM),color:'#ffffff'},{elev:Number(d.elevMaxM),color:'#e53935'}];
+      }
+    }
+  }catch(e){}
+  renderElevStops();
+}
+
+function renderElevStops(){
+  var list=g('elev-stops-list'); if(!list) return;
+  list.innerHTML=elevStopsData.map(function(s,i){
+    return '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">'
+      +'<input type="number" value="'+s.elev+'" style="width:72px;padding:4px 6px;border:1px solid var(--cream3);border-radius:4px;font-size:12px;" '
+        +'onchange="elevStopsData['+i+'].elev=parseInt(this.value)||0;updateElevGradPreview();">m'
+      +'<input type="color" value="'+s.color+'" style="width:34px;height:28px;padding:2px;border:1px solid var(--cream3);border-radius:4px;cursor:pointer;" '
+        +'onchange="elevStopsData['+i+'].color=this.value;updateElevGradPreview();">'
+      +'<button onclick="removeElevStop('+i+')" style="font-size:12px;color:var(--red);background:none;border:none;cursor:pointer;padding:2px 6px;line-height:1;">✕</button>'
+      +'</div>';
+  }).join('');
+  updateElevGradPreview();
+}
+
+function addElevStop(){
+  var last=elevStopsData.length?elevStopsData[elevStopsData.length-1]:{elev:0,color:'#888888'};
+  elevStopsData.push({elev:last.elev+500,color:'#ff8800'});
+  renderElevStops();
+}
+
+function removeElevStop(i){
+  elevStopsData.splice(i,1);
+  renderElevStops();
+}
+
+function updateElevGradPreview(){
+  var prev=g('elev-gradient-preview'); if(!prev) return;
+  var sorted=elevStopsData.slice().sort(function(a,b){return a.elev-b.elev;});
+  if(!sorted.length){prev.style.background='#fff';return;}
+  if(sorted.length===1){prev.style.background=sorted[0].color;return;}
+  var min=sorted[0].elev,max=sorted[sorted.length-1].elev,range=max-min||1;
+  var parts=sorted.map(function(s){return s.color+' '+Math.round((s.elev-min)/range*100)+'%';});
+  prev.style.background='linear-gradient(to right,'+parts.join(',')+')';
+}
+
+async function saveElevStops(){
+  var sorted=elevStopsData.slice().sort(function(a,b){return a.elev-b.elev;});
+  if(sorted.length<2){toast('グラデーションは2点以上必要です','err');return;}
+  var st=g('elev-stops-status'); if(st) st.textContent='保存中...';
+  try{
+    await db.collection('settings').doc('map').set({elevStops:sorted},{merge:true});
+    toast('標高グラデーションを保存しました');
+    if(st) st.textContent='✓ 保存済み';
+    setTimeout(function(){if(st)st.textContent='';},3000);
+  }catch(e){toast('保存失敗: '+e.message,'err'); if(st)st.textContent='';}
+}
+
+g('btn-add-elev-stop').addEventListener('click',addElevStop);
+g('btn-save-elev-stops').addEventListener('click',saveElevStops);
 
 g("btn-fetch-elevation-all").addEventListener("click", async function(){
   if(!confirm("座標登録済みで標高が未設定の蒸留所に標高を一括取得します。続行しますか？")) return;
@@ -1139,7 +1218,7 @@ async function seedOverlaysIfEmpty(){
     await db.collection('mapOverlays').add({
       type:'polygon',
       label:'Los Altos (Arandas / Atotonilco el Alto / Jesús María)',
-      coords:[[20.7082,-102.3421],[20.5522,-102.5108],[20.9333,-102.3667]],
+      coords:[{lat:20.7082,lng:-102.3421},{lat:20.5522,lng:-102.5108},{lat:20.9333,lng:-102.3667}],
       color:'#1565c0', fillColor:'#1565c0', fillOpacity:0.08, weight:2, active:true
     });
     console.info('mapOverlays: 三角形をシードしました');
