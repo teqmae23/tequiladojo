@@ -263,6 +263,20 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <span id="fix-introduced-status" style="font-size:12px;color:var(--ink3);"></span>
         </div>
       </div>
+      <div class="card" style="padding:18px 20px;margin-top:16px;border-left:3px solid #1565c0;">
+        <div style="font-weight:600;margin-bottom:8px;">標高 一括取得</div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:12px;">座標が登録済みで標高が未設定の蒸留所を OpenTopoData (SRTM30m) から一括取得します。</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+          <button class="btn bp" id="btn-fetch-elevation-all">標高を一括取得</button>
+          <span id="elev-fetch-status" style="font-size:12px;color:var(--ink3);"></span>
+        </div>
+        <div id="elev-prog-wrap" style="display:none;">
+          <div style="background:var(--cream3);border-radius:10px;height:6px;overflow:hidden;">
+            <div id="elev-prog-bar" style="background:#1565c0;height:6px;border-radius:10px;transition:width .3s;width:0;"></div>
+          </div>
+          <div id="elev-prog-txt" style="font-size:11px;color:var(--ink3);margin-top:4px;"></div>
+        </div>
+      </div>
     </div>
 
   </div><!-- /content -->
@@ -351,6 +365,13 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <div class="frow">
         <div class="fg"><label class="fl">緯度</label><input class="fi" id="dis-lat" type="number" step="0.000001" placeholder="20.8333"></div>
         <div class="fg"><label class="fl">経度</label><input class="fi" id="dis-lng" type="number" step="0.000001" placeholder="-103.7167"></div>
+      </div>
+      <div class="fg">
+        <label class="fl">標高（m）</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input class="fi" id="dis-elevation" type="number" step="1" placeholder="1800" style="flex:1">
+          <button type="button" class="btn bs" id="btn-fetch-elevation" style="white-space:nowrap;flex-shrink:0;">標高取得</button>
+        </div>
       </div>
       <div class="frow">
         <div class="fg"><label class="fl">公式HP</label><input class="fi" id="dis-web" type="url" placeholder="https://..."></div>
@@ -706,6 +727,22 @@ if(disMapUrlEl) disMapUrlEl.addEventListener("input",function(){
   else { status.textContent=""; }
 });
 
+g("btn-fetch-elevation").addEventListener("click", async function(){
+  var lat=gv("dis-lat"), lng=gv("dis-lng");
+  if(!lat||!lng){ toast("先に緯度経度を入力してください","err"); return; }
+  var btn=this; btn.textContent="取得中…"; btn.disabled=true;
+  try {
+    var res=await fetch("https://api.opentopodata.org/v1/srtm30m?locations="+lat+","+lng);
+    var json=await res.json();
+    if(json.status==="OK"&&json.results&&json.results[0]){
+      var elev=Math.round(json.results[0].elevation);
+      sv("dis-elevation",elev);
+      toast("標高: "+elev+"m","inf");
+    } else { toast("標高の取得に失敗しました","err"); }
+  } catch(e){ toast("エラー: "+e.message,"err"); }
+  btn.textContent="標高取得"; btn.disabled=false;
+});
+
 var disCrtEmpresaEl=g("dis-crt-empresa");
 if(disCrtEmpresaEl) disCrtEmpresaEl.addEventListener("input",function(){
   var name=this.value.trim();
@@ -741,7 +778,7 @@ function openDistilleryModal(id){
     var r=cache.distilleries.find(function(d){return d.id===id;}); if(!r) return;
     sv("dis-nom",r.nom||r.id); sv("dis-es",r.nomEs||""); sv("dis-ja",r.nomJa||"");
     sv("dis-dist",r.districtId||""); updateLocSel(r.districtId||""); sv("dis-loc",r.locationId||"");
-    sv("dis-fullname",r.fullName||""); sv("dis-mapurl",r.mapUrl||""); sv("dis-lat",r.latitude||""); sv("dis-lng",r.longitude||"");
+    sv("dis-fullname",r.fullName||""); sv("dis-mapurl",r.mapUrl||""); sv("dis-lat",r.latitude||""); sv("dis-lng",r.longitude||""); sv("dis-elevation",r.elevation!=null?r.elevation:"");
     sv("dis-web",r.webUrl||""); sv("dis-amm",r.ammUrl||"");
     sv("dis-year",r.foundedYear||""); sv("dis-scale",r.scale||"0"); sv("dis-contract",r.contract||"0");
     sv("dis-parent",r.parentCompany||""); sv("dis-parentcountry",r.parentCountry||"");
@@ -753,7 +790,7 @@ function openDistilleryModal(id){
     var crtLink=g("dis-crt-map-link"); if(crtLink){ if(r.crtDireccion){ crtLink.href="https://www.google.com/maps/search/"+encodeURIComponent(r.crtDireccion); crtLink.style.display=""; } else crtLink.style.display="none"; }
     var crtEmpLink=g("dis-crt-empresa-map-link"); if(crtEmpLink){ if(r.crtEmpresa){ crtEmpLink.href="https://www.google.com/maps/search/"+encodeURIComponent(r.crtEmpresa); crtEmpLink.style.display=""; } else crtEmpLink.style.display="none"; }
   } else {
-    ["dis-nom","dis-es","dis-ja","dis-fullname","dis-mapurl","dis-lat","dis-lng","dis-web","dis-amm","dis-year","dis-parent","dis-parentcountry","dis-crt-empresa","dis-crt-direccion","dis-crt-dot"].forEach(function(f){ sv(f,""); });
+    ["dis-nom","dis-es","dis-ja","dis-fullname","dis-mapurl","dis-lat","dis-lng","dis-elevation","dis-web","dis-amm","dis-year","dis-parent","dis-parentcountry","dis-crt-empresa","dis-crt-direccion","dis-crt-dot"].forEach(function(f){ sv(f,""); });
     sv("dis-scale","0"); sv("dis-contract","0"); sv("dis-introduced","0");
     ["dis-sac-","dis-ext-","dis-fer-","dis-yea-","dis-sti-"].forEach(function(p){ for(var i=0;i<6;i++){ var el=g(p+i); if(el) el.checked=false; } });
     var link=g("dis-map-link"); if(link) link.style.display="none";
@@ -776,6 +813,7 @@ g("btn-save-distillery").addEventListener("click",function(){
   var data={nom:nom,nomEs:es,nomJa:gv("dis-ja"),districtId:dist,locationId:gv("dis-loc")||null,
     fullName:gv("dis-fullname")||null,mapUrl:gv("dis-mapurl")||null,
     latitude:gv("dis-lat")?parseFloat(gv("dis-lat")):null,longitude:gv("dis-lng")?parseFloat(gv("dis-lng")):null,
+    elevation:gv("dis-elevation")?parseFloat(gv("dis-elevation")):null,
     webUrl:gv("dis-web")||null,ammUrl:gv("dis-amm")||null,
     foundedYear:gv("dis-year")?parseInt(gv("dis-year")):null,
     scale:gv("dis-scale"),contract:gv("dis-contract"),
@@ -913,6 +951,50 @@ g("btn-crt-sync").addEventListener("click", async function(){
 });
 
 function esc(s){ var d=document.createElement("div"); d.textContent=String(s||""); return d.innerHTML; }
+
+g("btn-fetch-elevation-all").addEventListener("click", async function(){
+  if(!confirm("座標登録済みで標高が未設定の蒸留所に標高を一括取得します。続行しますか？")) return;
+  var btn=this; btn.disabled=true;
+  var statusEl=g("elev-fetch-status");
+  g("elev-prog-wrap").style.display="block";
+  statusEl.textContent="蒸留所を読み込み中…"; statusEl.style.color="var(--ink3)";
+  try {
+    var snap=await db.collection("distilleries").get();
+    var targets=snap.docs.filter(function(d){
+      var data=d.data();
+      return data.latitude&&data.longitude&&data.elevation==null;
+    });
+    var total=targets.length, done=0;
+    if(!total){ statusEl.textContent="取得対象なし（全件設定済み）"; statusEl.style.color="var(--teal)"; btn.disabled=false; return; }
+    statusEl.textContent="0 / "+total+" 件";
+    // 100件ずつ OpenTopoData に送る (rate: 1 req/sec)
+    for(var i=0;i<total;i+=100){
+      var chunk=targets.slice(i,i+100);
+      var locs=chunk.map(function(d){ return d.data().latitude+","+d.data().longitude; }).join("|");
+      var res=await fetch("https://api.opentopodata.org/v1/srtm30m?locations="+locs);
+      var json=await res.json();
+      if(json.status!=="OK") throw new Error("API error: "+json.error);
+      var batch=db.batch();
+      json.results.forEach(function(r,idx){
+        if(r.elevation!=null) batch.update(chunk[idx].ref,{elevation:Math.round(r.elevation)});
+      });
+      await batch.commit();
+      done+=chunk.length;
+      var pct=Math.round(done/total*100);
+      g("elev-prog-bar").style.width=pct+"%";
+      g("elev-prog-txt").textContent=done+" / "+total+" 件 ("+pct+"%)";
+      statusEl.textContent=done+" / "+total+" 件";
+      if(i+100<total) await new Promise(function(r){ setTimeout(r,1100); }); // 1 req/sec
+    }
+    statusEl.textContent="✓ 完了 — "+total+"件の標高を取得しました"; statusEl.style.color="var(--teal)";
+    toast("標高取得完了: "+total+"件");
+    loadCol("distilleries");
+  } catch(e){
+    statusEl.textContent="エラー: "+e.message; statusEl.style.color="var(--red)";
+    toast("エラー: "+e.message,"err");
+  }
+  btn.disabled=false;
+});
 
 async function autoFixIntroduced(){
   try {
