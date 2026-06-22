@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AMM / CRT マスタ確認 — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
+};
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#F1EFE8;--cream2:#E8E4D8;--cream3:#DDD8C8;
+  --teal:#1a6e58;--red:#b03020;--red-l:rgba(176,48,32,.1);
+  --sans:'Noto Sans JP',sans-serif;--serif:'Cormorant Garamond',serif;--mono:'DM Mono',monospace;
+  --r:6px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--cream);color:var(--ink);font-family:var(--sans);min-height:100vh;}
+
+/* Header */
+.hdr{background:var(--ink);padding:0 20px;display:flex;align-items:center;gap:12px;height:52px;}
+.hdr-logo{font-family:var(--serif);font-size:17px;color:var(--gold-l);letter-spacing:.04em;}
+.hdr-sub{font-size:11px;color:var(--ink3);margin-top:1px;}
+.hdr-nav{margin-left:auto;display:flex;gap:14px;}
+.hdr-nav a{color:var(--gold-l);font-size:12px;text-decoration:none;opacity:.8;}
+.hdr-nav a:hover{opacity:1;}
+
+.page{max-width:1120px;margin:0 auto;padding:24px 16px 80px;}
+
+#auth-bar{padding:8px 14px;font-size:12px;border-radius:var(--r);margin-bottom:20px;}
+#auth-bar.ok{background:rgba(26,110,88,.1);color:var(--teal);}
+#auth-bar.ng{background:var(--red-l);color:var(--red);}
+
+/* Tabs */
+.tab-bar{display:flex;gap:0;border-bottom:2px solid var(--cream3);}
+.tab-btn{padding:10px 24px;font-size:13px;font-weight:500;border:none;
+  border-bottom:2px solid transparent;margin-bottom:-2px;
+  background:none;color:var(--ink3);cursor:pointer;font-family:var(--sans);transition:.12s;}
+.tab-btn.active{color:var(--gold-d);border-bottom-color:var(--gold);font-weight:600;}
+.tab-btn:hover:not(.active){color:var(--ink2);}
+
+/* Panel */
+.panel{background:var(--cream);border:1px solid var(--cream3);border-top:none;
+  border-radius:0 0 10px 10px;padding:18px 20px;}
+
+/* Toolbar */
+.toolbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+.count-pill{font-size:11px;font-family:var(--mono);background:var(--cream2);
+  border:1px solid var(--cream3);border-radius:20px;padding:4px 13px;
+  color:var(--ink2);white-space:nowrap;}
+.date-pill{font-size:11px;font-family:var(--mono);background:rgba(200,146,30,.1);
+  border:1px solid rgba(200,146,30,.25);border-radius:20px;padding:4px 13px;
+  color:var(--gold-d);white-space:nowrap;display:none;}
+.search-box{flex:1;min-width:220px;max-width:400px;padding:7px 12px;
+  border:1px solid var(--cream3);border-radius:var(--r);
+  font-size:12px;background:var(--cream);color:var(--ink);outline:none;font-family:var(--sans);}
+.search-box:focus{border-color:var(--gold);}
+.search-box::placeholder{color:var(--ink3);}
+.clear-btn{padding:5px 10px;border:1px solid var(--cream3);border-radius:var(--r);
+  background:none;font-size:11px;color:var(--ink3);cursor:pointer;transition:.1s;}
+.clear-btn:hover{background:var(--cream3);color:var(--ink);}
+
+/* Table */
+.tbl-wrap{overflow-x:auto;max-height:68vh;overflow-y:auto;
+  border-radius:var(--r);border:1px solid var(--cream3);}
+.data-table{width:100%;border-collapse:collapse;font-size:12px;}
+.data-table thead{position:sticky;top:0;z-index:2;}
+.data-table th{text-align:left;font-size:10px;font-weight:700;color:var(--ink3);
+  letter-spacing:.06em;text-transform:uppercase;padding:8px 10px;
+  border-bottom:2px solid var(--cream3);background:var(--cream2);white-space:nowrap;}
+.data-table th.r{text-align:right;}
+.data-table td{padding:6px 10px;border-bottom:1px solid var(--cream3);vertical-align:middle;}
+.data-table tr:last-child td{border-bottom:none;}
+.data-table tbody tr:hover td{background:rgba(200,146,30,.05);}
+
+/* Cell types */
+.nom-cell{font-family:var(--mono);font-weight:600;font-size:12px;color:var(--ink2);}
+.rank-cell{font-family:var(--mono);font-size:11px;color:var(--ink3);text-align:right;}
+.num-cell{font-family:var(--mono);text-align:right;}
+.rating-hi{color:#1a6e58;font-weight:600;}
+.rating-md{color:var(--gold-d);font-weight:600;}
+.rating-lo{color:var(--ink3);}
+.badge-url{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:10px;
+  background:rgba(26,110,88,.1);color:var(--teal);font-size:10px;font-weight:600;}
+.badge-none{display:inline-block;padding:2px 9px;border-radius:10px;
+  background:var(--cream3);color:var(--ink3);font-size:10px;}
+.link-a{color:var(--gold-d);text-decoration:none;font-size:11px;
+  display:inline-flex;align-items:center;gap:3px;}
+.link-a:hover{color:var(--gold);text-decoration:underline;}
+.region-text{font-size:11px;color:var(--ink3);}
+
+/* NOM group stripe */
+.stripe td{background:rgba(0,0,0,.02);}
+.stripe:hover td{background:rgba(200,146,30,.06)!important;}
+
+/* Loading / msg */
+.msg-row td{text-align:center;color:var(--ink3);padding:32px;font-size:12px;}
+.err-row td{text-align:center;color:var(--red);padding:24px;font-size:12px;}
+
+/* AMM URL count indicator */
+.url-stats{font-size:11px;color:var(--ink3);margin-left:auto;}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div>
+    <div class="hdr-logo">テキーラ道場</div>
+    <div class="hdr-sub">AMM / CRT マスタ確認</div>
+  </div>
+  <nav class="hdr-nav">
+    <a href="admin.html">← 管理ハブ</a>
+    <a href="admin_import_amm.html">AMM インポート</a>
+    <a href="index.html">ホーム</a>
+  </nav>
+</div>
+
+<div class="page">
+  <div id="auth-bar" class="ng">ログイン確認中...</div>
+
+  <div class="tab-bar">
+    <button class="tab-btn active" id="tab-btn-amm" onclick="switchTab('amm')">🌵 AMM蒸留所マスタ</button>
+    <button class="tab-btn" id="tab-btn-brand" onclick="switchTab('brand')">🏷️ CRTブランドマスタ</button>
+  </div>
+
+  <!-- ① AMM蒸留所 -->
+  <div id="panel-amm" class="panel">
+    <div class="toolbar">
+      <span class="count-pill" id="amm-count">読み込み中…</span>
+      <span class="date-pill" id="amm-date"></span>
+      <input class="search-box" id="amm-search" type="text"
+        placeholder="NOM・蒸留所名・地域で検索…" oninput="filterAmm()">
+      <button class="clear-btn" onclick="clearSearch('amm')" title="検索クリア">✕</button>
+      <span class="url-stats" id="amm-url-stats"></span>
+    </div>
+    <div class="tbl-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th class="r" style="min-width:44px">Rank</th>
+            <th style="min-width:58px">NOM</th>
+            <th>蒸留所名</th>
+            <th style="min-width:160px">地域</th>
+            <th class="r" style="min-width:64px">評価点</th>
+            <th class="r" style="min-width:64px">評価数</th>
+            <th style="min-width:90px">AMM URL</th>
+          </tr>
+        </thead>
+        <tbody id="amm-tbody">
+          <tr class="msg-row"><td colspan="7">読み込み中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ② CRTブランド -->
+  <div id="panel-brand" class="panel" style="display:none">
+    <div class="toolbar">
+      <span class="count-pill" id="brand-count">読み込み中…</span>
+      <span class="date-pill" id="brand-date"></span>
+      <input class="search-box" id="brand-search" type="text"
+        placeholder="NOM・蒸留所名・ブランド名で検索…" oninput="filterBrand()">
+      <button class="clear-btn" onclick="clearSearch('brand')" title="検索クリア">✕</button>
+    </div>
+    <div class="tbl-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="min-width:58px">NOM</th>
+            <th style="min-width:200px">蒸留所名（CRT）</th>
+            <th>ブランド名</th>
+            <th style="min-width:90px">取得日</th>
+          </tr>
+        </thead>
+        <tbody id="brand-tbody">
+          <tr class="msg-row"><td colspan="4">読み込み中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth();
+var db=firebase.firestore();
+
+var ammRows=[];   // {rank, nom, distilleryName, region, avgRating, ratingCount, ammUrl}
+var brandRows=[];  // {nom, empresa, marca, collectionDate}
+
+function esc(s){var d=document.createElement('div');d.textContent=String(s||'');return d.innerHTML;}
+
+// ── Auth ─────────────────────────────────────────────────────────
+var _loadStarted=false;
+auth.onAuthStateChanged(function(user){
+  var bar=document.getElementById('auth-bar');
+  if(user&&!user.isAnonymous){
+    bar.className='ok';
+    bar.textContent='✓ 管理者ログイン中: '+user.email;
+  } else if(user&&user.isAnonymous){
+    bar.className='ng';
+    bar.textContent='⚠ 匿名ログイン（読み取りのみ）';
+  } else {
+    bar.className='ng';
+    bar.textContent='✗ 未ログイン';
+    auth.signInAnonymously();
+    return;
+  }
+  if(_loadStarted) return;
+  _loadStarted=true;
+  loadAmm();
+  loadBrand();
+});
+
+// ── Tab ──────────────────────────────────────────────────────────
+function switchTab(t){
+  document.getElementById('panel-amm').style.display=t==='amm'?'':'none';
+  document.getElementById('panel-brand').style.display=t==='brand'?'':'none';
+  document.getElementById('tab-btn-amm').className='tab-btn'+(t==='amm'?' active':'');
+  document.getElementById('tab-btn-brand').className='tab-btn'+(t==='brand'?' active':'');
+}
+
+function clearSearch(tab){
+  document.getElementById(tab+'-search').value='';
+  if(tab==='amm') filterAmm(); else filterBrand();
+}
+
+function updateTabLabel(tab,count){
+  document.getElementById('tab-btn-'+tab).textContent=
+    (tab==='amm'?'🌵 AMM蒸留所マスタ':'🏷️ CRTブランドマスタ')+' ('+count+'件)';
+}
+
+// ── AMM蒸留所 ────────────────────────────────────────────────────
+async function loadAmm(){
+  try{
+    var snap=await db.collection('ammDistilleries').get();
+    ammRows=snap.docs.map(function(doc){
+      var d=doc.data();
+      return {rank:d.rank!=null?d.rank:9999,nom:doc.id,
+        distilleryName:d.distilleryName||'',region:d.region||'',
+        avgRating:d.avgRating!=null?d.avgRating:null,
+        ratingCount:d.ratingCount!=null?d.ratingCount:null,
+        ammUrl:d.ammUrl||'',
+        collectionDate:d.collectionDate||''};
+    }).sort(function(a,b){return a.rank-b.rank;});
+
+    // 取得日
+    var dates=[...new Set(ammRows.map(function(r){return r.collectionDate;}).filter(Boolean))].sort();
+    if(dates.length){
+      var el=document.getElementById('amm-date');
+      el.textContent='取得日 '+dates[dates.length-1];
+      el.style.display='';
+    }
+    // URL設定状況
+    var withUrl=ammRows.filter(function(r){return r.ammUrl;}).length;
+    document.getElementById('amm-url-stats').textContent='URL設定済: '+withUrl+' / '+ammRows.length+'件';
+
+    updateTabLabel('amm',ammRows.length);
+    renderAmm(ammRows);
+  }catch(e){
+    document.getElementById('amm-count').textContent='エラー';
+    document.getElementById('amm-tbody').innerHTML=
+      '<tr class="err-row"><td colspan="7">読み込みエラー: '+esc(e.message)+'</td></tr>';
+  }
+}
+
+function ratingCls(v){
+  if(v==null) return '';
+  return v>=85?'rating-hi':v>=80?'rating-md':'rating-lo';
+}
+
+function renderAmm(rows){
+  document.getElementById('amm-count').textContent=
+    rows.length===ammRows.length?ammRows.length+'件':rows.length+'件 / '+ammRows.length+'件';
+  var tbody=document.getElementById('amm-tbody');
+  if(!rows.length){
+    tbody.innerHTML='<tr class="msg-row"><td colspan="7">該当なし</td></tr>';
+    return;
+  }
+  tbody.innerHTML=rows.map(function(r){
+    var urlCell=r.ammUrl
+      ?'<a class="link-a" href="'+esc(r.ammUrl)+'" target="_blank" rel="noopener">🔗 開く</a>'
+      :'<span class="badge-none">未設定</span>';
+    return '<tr>'
+      +'<td class="rank-cell">'+esc(r.rank<9999?r.rank:'')+'</td>'
+      +'<td class="nom-cell">'+esc(r.nom)+'</td>'
+      +'<td>'+esc(r.distilleryName)+'</td>'
+      +'<td class="region-text">'+esc(r.region)+'</td>'
+      +'<td class="num-cell"><span class="'+ratingCls(r.avgRating)+'">'
+        +(r.avgRating!=null?r.avgRating.toFixed(2):'—')+'</span></td>'
+      +'<td class="num-cell" style="color:var(--ink3);">'
+        +(r.ratingCount!=null?r.ratingCount.toLocaleString():'—')+'</td>'
+      +'<td>'+urlCell+'</td>'
+      +'</tr>';
+  }).join('');
+}
+
+function filterAmm(){
+  var q=document.getElementById('amm-search').value.trim().toLowerCase();
+  renderAmm(q?ammRows.filter(function(r){
+    return r.nom.includes(q)
+      ||r.distilleryName.toLowerCase().includes(q)
+      ||r.region.toLowerCase().includes(q);
+  }):ammRows);
+}
+
+// ── CRTブランド ──────────────────────────────────────────────────
+async function loadBrand(){
+  try{
+    var [disSnap,brandSnap]=await Promise.all([
+      db.collection('crtDistilleries').get(),
+      db.collection('crtBrands').get()
+    ]);
+
+    // nom → latest empresa
+    var empMap={};
+    disSnap.docs.forEach(function(doc){
+      var d=doc.data();
+      var nom=String(d.nom||'');
+      if(!empMap[nom]||(d.collectionDate||'')>empMap[nom].date){
+        empMap[nom]={empresa:d.empresa||'',date:d.collectionDate||''};
+      }
+    });
+
+    // (nom, marca) → latest collectionDate
+    var bmap={};
+    brandSnap.docs.forEach(function(doc){
+      var d=doc.data();
+      var nom=String(d.nom||'');
+      var marca=d.marca||'';
+      var key=nom+'|'+marca;
+      if(!bmap[key]||(d.collectionDate||'')>bmap[key].collectionDate){
+        bmap[key]={nom:nom,marca:marca,collectionDate:d.collectionDate||''};
+      }
+    });
+
+    brandRows=Object.values(bmap)
+      .sort(function(a,b){
+        if(a.nom!==b.nom) return a.nom.localeCompare(b.nom);
+        return a.marca.localeCompare(b.marca,'ja');
+      })
+      .map(function(r){
+        return {nom:r.nom,empresa:(empMap[r.nom]||{}).empresa||'',
+          marca:r.marca,collectionDate:r.collectionDate};
+      });
+
+    var dates=[...new Set(brandRows.map(function(r){return r.collectionDate;}).filter(Boolean))].sort();
+    if(dates.length){
+      var el=document.getElementById('brand-date');
+      el.textContent='取得日 '+dates[dates.length-1];
+      el.style.display='';
+    }
+    updateTabLabel('brand',brandRows.length);
+    renderBrand(brandRows);
+  }catch(e){
+    document.getElementById('brand-count').textContent='エラー';
+    document.getElementById('brand-tbody').innerHTML=
+      '<tr class="err-row"><td colspan="4">読み込みエラー: '+esc(e.message)+'</td></tr>';
+  }
+}
+
+function renderBrand(rows){
+  var noms=new Set(rows.map(function(r){return r.nom;}));
+  document.getElementById('brand-count').textContent=
+    (rows.length===brandRows.length?brandRows.length+'件':rows.length+'件 / '+brandRows.length+'件')
+    +'（'+noms.size+'蒸留所）';
+  var tbody=document.getElementById('brand-tbody');
+  if(!rows.length){
+    tbody.innerHTML='<tr class="msg-row"><td colspan="4">該当なし</td></tr>';
+    return;
+  }
+  var prevNom='', stripe=false;
+  tbody.innerHTML=rows.map(function(r){
+    if(r.nom!==prevNom){prevNom=r.nom;stripe=!stripe;}
+    return '<tr class="'+(stripe?'stripe':'')+'">'
+      +'<td class="nom-cell">'+esc(r.nom)+'</td>'
+      +'<td style="font-size:11px;color:var(--ink2);">'+esc(r.empresa)+'</td>'
+      +'<td>'+esc(r.marca)+'</td>'
+      +'<td style="font-family:var(--mono);font-size:11px;color:var(--ink3);">'+esc(r.collectionDate)+'</td>'
+      +'</tr>';
+  }).join('');
+}
+
+function filterBrand(){
+  var q=document.getElementById('brand-search').value.trim().toLowerCase();
+  renderBrand(q?brandRows.filter(function(r){
+    return r.nom.includes(q)
+      ||r.empresa.toLowerCase().includes(q)
+      ||r.marca.toLowerCase().includes(q);
+  }):brandRows);
+}
+</script>
+</body>
+</html>
