@@ -1326,15 +1326,29 @@ async function loadDotMasterList(){
     snap.docs.forEach(function(doc){fetchedMap[doc.id]=doc.data();});
     var entries=dotExpectedEntries();
     var okCount=entries.filter(function(e){return isDotGeomValid(fetchedMap[e.docId]);}).length;
-    g('dot-admin-status').textContent=okCount+' / '+entries.length+' 件取得済み';
+    var allDone=okCount===entries.length;
+    g('dot-admin-status').textContent=allDone
+      ? '全 '+entries.length+' 件取得完了（マップデータ確定・変更不可）'
+      : okCount+' / '+entries.length+' 件取得済み';
+    var fetchBtn=g('btn-dot-fetch-missing');
+    if(fetchBtn) fetchBtn.style.display=allDone?'none':'';
 
     var curState='';
-    var html='<table style="width:100%;border-collapse:collapse;font-size:12px;">'
-      +'<colgroup><col style="width:84px"><col><col style="width:36px"><col style="width:62px"></colgroup>'
-      +'<thead><tr style="background:var(--cream2);"><th style="padding:5px 8px;text-align:left;font-weight:500;">州</th>'
-      +'<th style="padding:5px 8px;text-align:left;font-weight:500;">名称 / 検索名</th>'
-      +'<th style="padding:5px 8px;text-align:center;font-weight:500;"></th>'
-      +'<th style="padding:5px 8px;text-align:center;font-weight:500;">操作</th></tr></thead><tbody>';
+    var html='<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    if(allDone){
+      html+='<colgroup><col style="width:84px"><col><col style="width:36px"></colgroup>'
+        +'<thead><tr style="background:var(--cream2);"><th style="padding:5px 8px;text-align:left;font-weight:500;">州</th>'
+        +'<th style="padding:5px 8px;text-align:left;font-weight:500;">名称</th>'
+        +'<th style="padding:5px 8px;text-align:center;font-weight:500;"></th>'
+        +'</tr></thead><tbody>';
+    } else {
+      html+='<colgroup><col style="width:84px"><col><col style="width:36px"><col style="width:62px"></colgroup>'
+        +'<thead><tr style="background:var(--cream2);"><th style="padding:5px 8px;text-align:left;font-weight:500;">州</th>'
+        +'<th style="padding:5px 8px;text-align:left;font-weight:500;">名称 / 検索名</th>'
+        +'<th style="padding:5px 8px;text-align:center;font-weight:500;"></th>'
+        +'<th style="padding:5px 8px;text-align:center;font-weight:500;">操作</th>'
+        +'</tr></thead><tbody>';
+    }
 
     entries.forEach(function(e,ei){
       var d=fetchedMap[e.docId];
@@ -1344,27 +1358,43 @@ async function loadDotMasterList(){
       if(stateName!==curState) curState=stateName;
 
       var labelCell;
-      if(e.entryType==='dotState'){
-        var stateDisplayName=(d&&d.name)||e.sq.state;
-        labelCell='<input type="text" id="dot-n-'+ei+'" value="'+esc(stateDisplayName)+'" '
-          +'style="width:calc(100% - 2px);padding:2px 5px;border:1px solid '+(ok?'var(--cream3)':'#e0a0a0')+';border-radius:3px;font-size:11px;font-family:var(--sans);background:#fff;" '
-          +'title="マップ上での表示名">';
-      } else if(e.entryType==='stateBoundary'){
-        labelCell='<span style="background:var(--cream2);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px;color:var(--ink3);">州境界ライン</span>';
+      if(ok||allDone){
+        // 取得済み: 読み取り専用テキスト
+        var displayName=e.entryType==='dotState'?((d&&d.name)||e.sq.state)
+          :e.entryType==='stateBoundary'?'州境界ライン'
+          :((d&&d.name)||e.name);
+        var badge=e.entryType==='stateBoundary'
+          ?'<span style="background:var(--cream2);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px;color:var(--ink3);">'+esc(displayName)+'</span>'
+          :'<span style="font-size:11px;color:var(--ink2);">'+esc(displayName)+'</span>';
+        labelCell=badge;
       } else {
-        // 自治区: ✓✗ 問わず検索名を編集可能に（再取得時にOSM表記へ変更可）
-        labelCell='<input type="text" id="dot-n-'+ei+'" value="'+esc((d&&d.name)||e.name)+'" '
-          +'style="width:calc(100% - 2px);padding:2px 5px;border:1px solid '+(ok?'var(--cream3)':'#e0a0a0')+';border-radius:3px;font-size:11px;font-family:var(--sans);background:#fff;" '
-          +'title="Overpass検索名。OSMの表記に合わせて変更し再取得できます。">';
+        // 未取得: 検索名を編集可能
+        if(e.entryType==='dotState'){
+          labelCell='<input type="text" id="dot-n-'+ei+'" value="'+esc((d&&d.name)||e.sq.state)+'" '
+            +'style="width:calc(100% - 2px);padding:2px 5px;border:1px solid #e0a0a0;border-radius:3px;font-size:11px;font-family:var(--sans);background:#fff;" '
+            +'title="マップ上での表示名">';
+        } else if(e.entryType==='stateBoundary'){
+          labelCell='<span style="background:var(--cream2);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px;color:var(--ink3);">州境界ライン</span>';
+        } else {
+          labelCell='<input type="text" id="dot-n-'+ei+'" value="'+esc((d&&d.name)||e.name)+'" '
+            +'style="width:calc(100% - 2px);padding:2px 5px;border:1px solid #e0a0a0;border-radius:3px;font-size:11px;font-family:var(--sans);background:#fff;" '
+            +'title="Overpass検索名。OSMの表記に合わせて変更できます。">';
+        }
       }
+
+      var statusCell=ok
+        ?'<span style="color:#2e7d32;font-weight:600;">✓</span>'
+        :'<span style="color:#b03020;font-weight:600;">✗</span>';
+      var actionCell=(!allDone&&!ok)
+        ?'<button class="btn bs sm" style="font-size:10px;padding:2px 7px;" data-dot-fetch="'+ei+'">取得</button>'
+        :'';
 
       html+='<tr style="border-bottom:1px solid var(--cream3);'+(ok?'':'background:rgba(176,48,32,.03)')+'">'
         +'<td style="padding:4px 8px;vertical-align:middle;white-space:nowrap;">'+stateCell+'</td>'
         +'<td style="padding:4px 8px;vertical-align:middle;">'+labelCell+'</td>'
-        +'<td style="padding:4px 8px;text-align:center;vertical-align:middle;">'+(ok?'<span style="color:#2e7d32;font-weight:600;">✓</span>':'<span style="color:#b03020;font-weight:600;">✗</span>')+'</td>'
-        +'<td style="padding:4px 8px;text-align:center;vertical-align:middle;">'
-        +'<button class="btn bs sm" style="font-size:10px;padding:2px 7px;" data-dot-fetch="'+ei+'">'+(ok?'再取得':'取得')+'</button>'
-        +'</td></tr>';
+        +'<td style="padding:4px 8px;text-align:center;vertical-align:middle;">'+statusCell+'</td>'
+        +(allDone?'':'<td style="padding:4px 8px;text-align:center;vertical-align:middle;">'+actionCell+'</td>')
+        +'</tr>';
     });
     html+='</tbody></table>';
     el.innerHTML=html;
