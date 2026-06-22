@@ -198,7 +198,7 @@ details summary{font-size:12px;color:var(--ink3);cursor:pointer;padding:5px 0;}
   <div class="sec-head"><span class="sec-num">3</span>蒸留所 詳細データインポート</div>
   <div class="card">
     <div class="card-title">🔬 ammDistilleryDetails — 詳細ページからスクレイピング</div>
-    <div class="card-sub">
+    <div class="card-sub" id="detail-card-sub">
       145件のURLの詳細ページから住所・設立年・説明などを取得します。<br>
       下のスクリプトをコピーして <strong>agavematchmaker.com</strong> 上のコンソールで実行し（5〜10分かかります）、出力JSONをここに貼り付けてください。
     </div>
@@ -405,6 +405,17 @@ async function scrapeOne(nom,url){
   console.log(json);
   return results;
 })();</div>
+    </div>
+
+    <!-- 追加分スクリプト（Step2でURL追加後に表示） -->
+    <div id="script-extra-wrap" style="display:none;margin-top:4px;">
+      <div class="script-wrap">
+        <div class="script-label" style="color:var(--gold-d);">
+          ＋ 追加分スクリプト（Step2で追加したNOMのみ）
+          <button class="copy-btn" onclick="copyScript('script-detail-extra')">コピー</button>
+        </div>
+        <div class="script-box" id="script-detail-extra" style="border:1px solid rgba(200,146,30,.3);"></div>
+      </div>
     </div>
 
     <div class="paste-label">JSONを貼り付け: <span id="detail-parse-status"></span></div>
@@ -722,13 +733,70 @@ var URL_PRESETS=[
   {nom:'1104',name:'Jose Cuervo'}
 ];
 
-function updateUrlTitle(){
+// ハードコード済みの145件NOMセット（初期値）
+var BASE_NOMS=new Set(Object.keys(URL_MAP));
+
+function updateUrlState(){
   var total=RAW.length;
   var loaded=Object.keys(URL_MAP).length;
   var missing=total-loaded;
   document.getElementById('url-card-title').textContent=
     '📎 NOM別リンクURL — '+loaded+'件ロード済み / '+missing+'件未取得';
+
+  // Step2で追加されたNOM（初期145件にない）
+  var extra=Object.keys(URL_MAP).filter(function(n){return !BASE_NOMS.has(n);});
+  var wrap=document.getElementById('script-extra-wrap');
+  if(!extra.length){wrap.style.display='none';return;}
+
+  // 追加分スクリプト生成
+  var entries=extra.map(function(n){return '{"nom":"'+n+'","url":"'+URL_MAP[n]+'"}';});
+  var script='// 追加分 '+extra.length+'件\nvar URLS=[\n'+entries.join(',\n')+'\n];\n\n'
+    +SCRAPE_FN_SRC
+    +'\n(async function(){\n'
+    +'  console.log(\'スクレイピング開始: \'+URLS.length+\' 件\');\n'
+    +'  var results=[];\n'
+    +'  for(var i=0;i<URLS.length;i++){\n'
+    +'    var d=await scrapeOne(URLS[i].nom,URLS[i].url);\n'
+    +'    results.push(d);\n'
+    +'    await new Promise(r=>setTimeout(r,600));\n'
+    +'  }\n'
+    +'  var json=JSON.stringify(results);\n'
+    +'  try{copy(json);console.log(\'✓ クリップボードにコピー済み (\'+results.length+\'件)\');}catch(e){}\n'
+    +'  console.log(json);\n'
+    +'  return results;\n'
+    +'})();';
+
+  document.getElementById('script-detail-extra').textContent=script;
+  wrap.style.display='';
+
+  // card-sub の件数も更新
+  document.getElementById('detail-card-sub').innerHTML=
+    loaded+'件のURLの詳細ページから取得します（うち追加分 '+extra.length+'件）。<br>'
+    +'下のスクリプトをコピーして <strong>agavematchmaker.com</strong> 上のコンソールで実行し、出力JSONをここに貼り付けてください。';
 }
+
+// scrapeOne 関数のソース文字列（追加分スクリプト生成用）
+var SCRAPE_FN_SRC='async function scrapeOne(nom,url){\n'
+  +'  if(!url) return {nom,error:\'no url\'};\n'
+  +'  try{\n'
+  +'    var r=await fetch(url,{credentials:\'omit\'});\n'
+  +'    if(!r.ok) return {nom,url,error:\'HTTP \'+r.status};\n'
+  +'    var html=await r.text();\n'
+  +'    var doc=new DOMParser().parseFromString(html,\'text/html\');\n'
+  +'    function txt(sels){for(var s of sels){var el=doc.querySelector(s);if(el&&el.textContent.trim()) return el.textContent.trim();}return \'\';}\n'
+  +'    function href(sels){for(var s of sels){var el=doc.querySelector(s);if(el&&el.href) return el.href;}return \'\';}\n'
+  +'    function meta(name){var el=doc.querySelector(\'meta[property="\'+name+\'"],meta[name="\'+name+\'"]\');return el?el.getAttribute(\'content\'):\'\';};\n'
+  +'    return {nom,url,\n'
+  +'      distilleryName:txt([\'h1\',\'.entry-title\',\'.distillery-name\']),\n'
+  +'      website:href([\'a.website\']),\n'
+  +'      city:txt([\'[class*="city"],[class*="municipality"]\',\'.location-city\']),\n'
+  +'      state:txt([\'[class*="state"],[class*="region"]\',\'.location-state\']),\n'
+  +'      address:txt([\'[class*="address"]\',\'.address\',\'address\']),\n'
+  +'      founded:txt([\'[class*="founded"],[class*="established"],[class*="year"]\']),\n'
+  +'      description:meta(\'og:description\')||txt([\'.entry-content p\',\'.description p\']).slice(0,500),\n'
+  +'      pageTitle:doc.title};\n'
+  +'  }catch(e){return {nom,url,error:e.message};}\n'
+  +'}';
 
 function initUrlForm(){
   var container=document.getElementById('url-form-rows');
@@ -742,7 +810,7 @@ function initUrlForm(){
   URL_PRESETS.forEach(function(p){
     container.appendChild(buildUrlRow(p.nom, p.name, false));
   });
-  updateUrlTitle();
+  updateUrlState();
 }
 
 function buildUrlRow(nom, name, editable){
@@ -820,7 +888,7 @@ async function doUrlImport(){
       document.getElementById('pt-url').textContent=done+'/'+items.length+' 件 ('+pct+'%)';
     }
     renderBasicPreview();
-    updateUrlTitle();
+    updateUrlState();
     st('st-url','✓ URL更新完了: '+done+'件','ok');
     log('✓ URL インポート完了: '+done+'件','ok');
   }catch(e){
