@@ -105,6 +105,10 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 .dot-sp-retry{padding:1px 7px;font-size:10px;border:1px solid var(--cream3);border-radius:3px;background:#fff;cursor:pointer;color:var(--ink2);flex-shrink:0;}
 .dot-sp-retry:hover{border-color:var(--gold);}
 .dot-sp-retry:disabled{opacity:.5;cursor:default;}
+.dot-sp-name{cursor:pointer;flex:1;border-radius:3px;padding:0 2px;transition:background .2s;}
+.dot-sp-name:hover{background:rgba(180,140,50,.18);}
+@keyframes dot-name-flash{0%,100%{background:transparent}20%{background:rgba(255,200,0,.5)}}
+.dot-sp-name.flash{animation:dot-name-flash 1.4s ease;}
 </style>
 </head>
 <body>
@@ -522,6 +526,7 @@ var OVERPASS_ENDPOINTS=[
 ];
 
 var dotLayer=null, dotLoading=false, dotGJ=null, dotFetchStatus=null, dotFirestoreSnap=null;
+var dotLayerMap={}; // origName → Leaflet layer (for click-to-highlight)
 // stateLevel州（Jalisco）の色セット — スタイル判別用
 var _dotStateLevelColors=new Set(DOT_STATES.filter(function(s){return s.stateLevel;}).map(function(s){return s.color;}));
 
@@ -668,7 +673,7 @@ function dotLayerStyle(f){
 async function toggleDOT(){
   var btn=document.getElementById('btn-dot');
   if(dotLayer){
-    map.removeLayer(dotLayer); dotLayer=null; dotGJ=null;
+    map.removeLayer(dotLayer); dotLayer=null; dotGJ=null; dotLayerMap={};
     btn.classList.remove('on'); btn.textContent='DOT境界';
     document.getElementById('dot-sp').classList.remove('open');
     buildStatusPanel(); updateLegend(); return;
@@ -685,24 +690,35 @@ async function toggleDOT(){
       var d=doc.data(); if(!d.geomJson) return;
       try{
         var geom=JSON.parse(d.geomJson);
-        var nm=d.entryType==='municipio'?d.name:(d.entryType==='dotState'?d.state:null);
+        // _displayName: popup text (saved name or fallback)
+        var nm=d.entryType==='municipio'?d.name:(d.entryType==='dotState'?(d.name||d.state):null);
+        // _mapKey: key into dotLayerMap — use original name from docId for consistent panel matching
+        var mOrig=doc.id.match(/_municipio_(.+)$/);
+        var mapKey=mOrig?(mOrig[1].replace(/_/g,' ')):(d.entryType==='dotState'?d.state:null);
         features.push({type:'Feature',geometry:geom,properties:{
           _dotColor:d.color,
-          _municipioName:d.entryType==='municipio'?d.name:null,
+          _municipioName:mapKey,
           _isStateOutline:d.entryType==='stateBoundary',
-          _displayName:nm
+          _displayName:nm,
+          _mapKey:mapKey
         }});
       }catch(e){}
     });
 
     dotGJ={type:'FeatureCollection',features:features};
     if(features.length){
+      dotLayerMap={};
       dotLayer=L.geoJSON(dotGJ,{
         filter:function(f){ var t=f.geometry&&f.geometry.type; return t&&t!=='Point'&&t!=='MultiPoint'; },
         style:dotLayerStyle,
         onEachFeature:function(f,layer){
           var nm=f.properties&&f.properties._displayName;
+          var mk=f.properties&&f.properties._mapKey;
           if(nm) layer.bindPopup('<div style="font-family:var(--sans);padding:4px 6px;font-size:13px;font-weight:500;">'+nm+'</div>',{maxWidth:200});
+          if(mk){
+            dotLayerMap[mk]=layer;
+            layer.on('click',function(){dotHighlightPanelEntry(mk);});
+          }
         }
       }).addTo(map);
       btn.classList.add('on'); btn.textContent='DOT境界 ON';
@@ -740,7 +756,7 @@ function buildStatusPanel(){
     if(st.stateLevel){
       html+='<div class="dot-sp-row">'
         +(st.stateBoundaryOk?'<span class="dot-sp-ok">✓</span>':'<span class="dot-sp-err">✗</span>')
-        +' DOT境界';
+        +' <span class="dot-sp-name" data-dot-name="'+st.state+'">DOT境界</span>';
       if(!st.stateBoundaryOk&&isAdmin) html+=' <button class="dot-sp-retry" data-retry-bnd data-si="'+si+'">再取得</button>';
       html+='</div>';
     } else {
@@ -755,7 +771,7 @@ function buildStatusPanel(){
         st.municipioResults.forEach(function(m,mi){
           html+='<div class="dot-sp-row">'
             +(m.ok?'<span class="dot-sp-ok">✓</span>':'<span class="dot-sp-err">✗</span>')
-            +' <span style="flex:1">'+m.name+'</span>';
+            +' <span class="dot-sp-name" data-dot-name="'+m.name+'">'+m.name+'</span>';
           if(!m.ok&&isAdmin) html+='<button class="dot-sp-retry" data-retry-muni data-si="'+si+'" data-mi="'+mi+'">再取得</button>';
           html+='</div>';
         });
@@ -773,6 +789,24 @@ function buildStatusPanel(){
       var st=status[si]; retryMunicipio(btn,st.iso,st.color,st.municipioResults[mi].name);
     });
   });
+  body.querySelectorAll('.dot-sp-name').forEach(function(span){
+    span.addEventListener('click',function(){ dotHighlightMapLayer(this.dataset.dotName); });
+  });
+}
+
+// ── DOT 相互ハイライト ────────────────────────────────────────────
+function dotHighlightMapLayer(nm){
+  var layer=dotLayerMap[nm];
+  if(!layer||!dotLayer) return;
+  try{ map.fitBounds(layer.getBounds(),{padding:[20,20],maxZoom:12}); }catch(e){}
+  layer.setStyle({weight:4,fillOpacity:0.35,opacity:1});
+  setTimeout(function(){ if(dotLayer) dotLayer.resetStyle(layer); },2000);
+}
+function dotHighlightPanelEntry(nm){
+  var el=document.querySelector('.dot-sp-name[data-dot-name="'+nm.replace(/"/g,'\\"')+'"]');
+  if(!el) return;
+  el.scrollIntoView({behavior:'smooth',block:'nearest'});
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
 }
 
 // ── 自治区 個別再取得（管理者用・Firestoreに保存）─────────────────
@@ -783,6 +817,7 @@ async function retryMunicipio(btn,iso,color,name){
     if(!feat){btn.textContent='見つからず';btn.disabled=false;return;}
     var sq=DOT_STATES.find(function(s){return s.iso===iso;});
     feat.properties._displayName=name;
+    feat.properties._mapKey=name;
     await db.collection('dotMunicipios').doc(dotDocId(sq,name)).set({
       state:sq?sq.state:iso,iso:iso,name:name,color:color,entryType:'municipio',
       geomJson:JSON.stringify(feat.geometry),
@@ -820,7 +855,8 @@ async function retryStateBoundary(btn,iso){
       geomJson:JSON.stringify(geom),
       fetchedAt:firebase.firestore.FieldValue.serverTimestamp()
     },{merge:true});
-    feats.forEach(function(f){f.properties._displayName=displayName;});
+    var stateMapKey=entryType==='dotState'?sq.state:null;
+    feats.forEach(function(f){f.properties._displayName=displayName;f.properties._mapKey=stateMapKey;});
     if(dotLayer) dotLayer.addData({type:'FeatureCollection',features:feats});
     if(dotGJ) dotGJ.features=dotGJ.features.concat(feats);
     var snap=await db.collection('dotMunicipios').get();
