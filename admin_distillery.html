@@ -169,6 +169,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <button class="tab" data-page="locations">所在地 <span class="cnt" id="cnt-locations">—</span></button>
       <button class="tab" data-page="distilleries">蒸留所 <span class="cnt" id="cnt-distilleries">—</span></button>
       <button class="tab" data-page="crt-sync">CRT同期</button>
+      <button class="tab" data-page="map-overlays">マップ図形</button>
     </div>
     <div class="tuser">
       <span class="temail" id="temail"></span>
@@ -276,6 +277,21 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           </div>
           <div id="elev-prog-txt" style="font-size:11px;color:var(--ink3);margin-top:4px;"></div>
         </div>
+      </div>
+    </div>
+
+    <!-- マップ図形 -->
+    <div class="page" id="page-map-overlays">
+      <div class="phead">
+        <div><div class="ptitle">マップ図形管理</div><div class="pdesc">蒸留所マップに表示するポリゴン・ライン・円を管理します。</div></div>
+        <button class="btn bp" id="btn-add-overlay">＋ 図形を追加</button>
+      </div>
+      <div class="card" style="padding:0;">
+        <div class="tw"><table id="tbl-overlays">
+          <colgroup><col style="width:120px"><col><col style="width:80px"><col style="width:60px"><col style="width:60px"><col style="width:120px"></colgroup>
+          <thead><tr><th>種類</th><th>ラベル</th><th>色</th><th>表示</th><th>透明度</th><th>操作</th></tr></thead>
+          <tbody id="tb-overlays"><tr><td colspan="6" class="ec">読み込み中...</td></tr></tbody>
+        </table></div>
       </div>
     </div>
 
@@ -429,6 +445,34 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
   </div>
 </div>
 
+<!-- マップ図形モーダル -->
+<div class="mbg" id="m-overlay">
+  <div class="modal modal-lg">
+    <div class="mhead"><div class="mtitle" id="mt-overlay">図形を追加</div><button class="mx" data-close="m-overlay">✕</button></div>
+    <div class="mbody">
+      <div class="frow">
+        <div class="fg"><label class="fl">種類</label><select class="fs" id="ov-type"><option value="polygon">ポリゴン</option><option value="polyline">ライン</option><option value="circle">円</option></select></div>
+        <div class="fg"><label class="fl">表示</label><select class="fs" id="ov-active"><option value="true">表示</option><option value="false">非表示</option></select></div>
+      </div>
+      <div class="fg"><label class="fl">ラベル</label><input class="fi" id="ov-label" placeholder="Los Altos Triangle"></div>
+      <div class="fg">
+        <label class="fl">座標（1行1点、緯度,経度）</label>
+        <textarea class="fi" id="ov-coords" rows="6" style="font-family:var(--mono);font-size:12px;resize:vertical;" placeholder="20.7082,-102.3421&#10;20.5522,-102.5108&#10;20.9333,-102.3667"></textarea>
+      </div>
+      <div class="frow c3">
+        <div class="fg"><label class="fl">線の色</label><input class="fi" id="ov-color" type="color" value="#1565c0" style="height:36px;padding:2px;"></div>
+        <div class="fg"><label class="fl">塗り色</label><input class="fi" id="ov-fillcolor" type="color" value="#1565c0" style="height:36px;padding:2px;"></div>
+        <div class="fg"><label class="fl">塗り透明度（0〜1）</label><input class="fi" id="ov-fillopacity" type="number" min="0" max="1" step="0.01" value="0.08"></div>
+      </div>
+      <div class="frow">
+        <div class="fg"><label class="fl">線の太さ（px）</label><input class="fi" id="ov-weight" type="number" min="1" max="10" value="2"></div>
+        <div class="fg" id="ov-radius-wrap" style="display:none;"><label class="fl">半径（m）</label><input class="fi" id="ov-radius" type="number" min="100" step="100" value="10000"></div>
+      </div>
+    </div>
+    <div class="mfoot"><button class="btn bg2" data-close="m-overlay">キャンセル</button><button class="btn bp" id="btn-save-overlay">保存</button></div>
+  </div>
+</div>
+
 <!-- 削除確認 -->
 <div class="cbg" id="confirm-bg">
   <div class="ccard">
@@ -495,6 +539,7 @@ try {
       g("temail").textContent=user.email;
       loadAll();
       autoFixIntroduced();
+      seedOverlaysIfEmpty();
     } else {
       g("login-screen").style.display="flex";
       g("app").style.display="none";
@@ -953,6 +998,96 @@ g("btn-crt-sync").addEventListener("click", async function(){
 
 function esc(s){ var d=document.createElement("div"); d.textContent=String(s||""); return d.innerHTML; }
 
+// ── マップ図形管理 ──────────────────────────────────────
+var editOverlayId=null;
+
+function loadOverlayTab(){
+  db.collection('mapOverlays').orderBy('label').get().then(function(snap){
+    if(!snap.docs.length){
+      g('tb-overlays').innerHTML='<tr><td colspan="6" class="ec">図形がありません</td></tr>'; return;
+    }
+    g('tb-overlays').innerHTML=snap.docs.map(function(doc){
+      var o=doc.data(), id=doc.id;
+      var typeLabel={polygon:'ポリゴン',polyline:'ライン',circle:'円'}[o.type]||o.type;
+      var activeBadge=o.active
+        ?'<span style="color:var(--teal);font-size:11px;">表示</span>'
+        :'<span style="color:var(--ink3);font-size:11px;">非表示</span>';
+      return '<tr>'
+        +'<td>'+typeLabel+'</td>'
+        +'<td>'+esc(o.label||'—')+'</td>'
+        +'<td><span style="display:inline-block;width:16px;height:16px;border-radius:3px;background:'+esc(o.color||'#1565c0')+';border:1px solid var(--cream3);vertical-align:middle;"></span></td>'
+        +'<td>'+activeBadge+'</td>'
+        +'<td class="mono" style="font-size:11px;">'+(o.fillOpacity!=null?o.fillOpacity:'—')+'</td>'
+        +'<td><div class="acts"><button class="btn bs sm" data-edit-overlay="'+id+'">編集</button>'
+        +'<button class="btn bd sm" data-del="mapOverlays" data-del-id="'+id+'" data-del-label="図形">削除</button></div></td>'
+        +'</tr>';
+    }).join('');
+  }).catch(function(e){ g('tb-overlays').innerHTML='<tr><td colspan="6" class="ec" style="color:var(--red);">'+e.message+'</td></tr>'; });
+}
+
+function openOverlayModal(id){
+  editOverlayId=id;
+  g('mt-overlay').textContent=id?'図形を編集':'図形を追加';
+  if(id){
+    db.collection('mapOverlays').doc(id).get().then(function(doc){
+      if(!doc.exists) return;
+      var o=doc.data();
+      sv('ov-type',o.type||'polygon'); sv('ov-label',o.label||''); sv('ov-active',String(o.active!==false));
+      sv('ov-color',o.color||'#1565c0'); sv('ov-fillcolor',o.fillColor||o.color||'#1565c0');
+      sv('ov-fillopacity',o.fillOpacity!=null?o.fillOpacity:0.08); sv('ov-weight',o.weight||2);
+      sv('ov-radius',o.radius||10000);
+      var coordsStr=(o.coords||[]).map(function(c){return c[0]+','+c[1];}).join('\n');
+      sv('ov-coords',coordsStr);
+      g('ov-radius-wrap').style.display=o.type==='circle'?'':'none';
+      openM('m-overlay');
+    });
+  } else {
+    ['ov-label','ov-coords'].forEach(function(f){sv(f,'');});
+    sv('ov-type','polygon'); sv('ov-active','true'); sv('ov-color','#1565c0'); sv('ov-fillcolor','#1565c0');
+    sv('ov-fillopacity','0.08'); sv('ov-weight','2'); sv('ov-radius','10000');
+    g('ov-radius-wrap').style.display='none';
+    openM('m-overlay');
+  }
+}
+
+g('ov-type').addEventListener('change',function(){ g('ov-radius-wrap').style.display=this.value==='circle'?'':'none'; });
+
+g('btn-add-overlay').addEventListener('click',function(){ openOverlayModal(null); });
+
+document.addEventListener('click',function(e){
+  var btn=e.target.closest('[data-edit-overlay]'); if(btn){ openOverlayModal(btn.dataset.editOverlay); }
+});
+
+g('btn-save-overlay').addEventListener('click',function(){
+  var type=gv('ov-type'), label=gv('ov-label');
+  var rawCoords=g('ov-coords').value.trim();
+  if(!rawCoords){ toast('座標を入力してください','err'); return; }
+  var coords=rawCoords.split('\n').map(function(line){
+    var parts=line.trim().split(',');
+    return [parseFloat(parts[0]),parseFloat(parts[1])];
+  }).filter(function(c){return !isNaN(c[0])&&!isNaN(c[1]);});
+  if(!coords.length){ toast('座標の形式が正しくありません（緯度,経度）','err'); return; }
+  var data={
+    type:type, label:label, coords:coords,
+    color:gv('ov-color'), fillColor:gv('ov-fillcolor'),
+    fillOpacity:parseFloat(gv('ov-fillopacity'))||0.08,
+    weight:parseInt(gv('ov-weight'))||2,
+    active:gv('ov-active')==='true'
+  };
+  if(type==='circle') data.radius=parseInt(gv('ov-radius'))||10000;
+  var ref=editOverlayId?db.collection('mapOverlays').doc(editOverlayId):db.collection('mapOverlays').doc();
+  ref.set(data,{merge:true}).then(function(){
+    toast(editOverlayId?'図形を更新しました':'図形を追加しました'); closeM('m-overlay'); loadOverlayTab();
+  }).catch(function(e){ toast('保存失敗: '+e.message,'err'); });
+});
+
+// タブ切り替え時にオーバーレイ一覧を更新
+document.querySelectorAll('.tab[data-page]').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    if(btn.dataset.page==='map-overlays') loadOverlayTab();
+  });
+});
+
 g("btn-fetch-elevation-all").addEventListener("click", async function(){
   if(!confirm("座標登録済みで標高が未設定の蒸留所に標高を一括取得します。続行しますか？")) return;
   var btn=this; btn.disabled=true;
@@ -996,6 +1131,20 @@ g("btn-fetch-elevation-all").addEventListener("click", async function(){
   }
   btn.disabled=false;
 });
+
+async function seedOverlaysIfEmpty(){
+  try{
+    var snap=await db.collection('mapOverlays').limit(1).get();
+    if(!snap.empty) return; // 既にデータあり
+    await db.collection('mapOverlays').add({
+      type:'polygon',
+      label:'Los Altos (Arandas / Atotonilco el Alto / Jesús María)',
+      coords:[[20.7082,-102.3421],[20.5522,-102.5108],[20.9333,-102.3667]],
+      color:'#1565c0', fillColor:'#1565c0', fillOpacity:0.08, weight:2, active:true
+    });
+    console.info('mapOverlays: 三角形をシードしました');
+  }catch(e){console.warn('seedOverlays:',e.message);}
+}
 
 async function autoFixIntroduced(){
   try {
