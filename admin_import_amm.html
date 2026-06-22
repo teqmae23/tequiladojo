@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>テキーラ道場 — AMM蒸留所マスタ インポート</title>
+<title>AMM蒸留所マスタ インポート — テキーラ道場</title>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -17,42 +17,454 @@ var FIREBASE_CONFIG={
   appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
 };
 </script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
-body{font-family:'Noto Sans JP',sans-serif;background:#F1EFE8;color:#18110a;padding:20px;}
-h1{font-size:18px;margin-bottom:4px;}
-.sub{font-size:12px;color:#9a8470;margin-bottom:20px;}
-.btn{padding:10px 24px;background:#18110a;color:#F1EFE8;border:none;border-radius:6px;font-size:14px;cursor:pointer;margin-right:8px;}
-.btn:disabled{background:#ccc;cursor:not-allowed;}
-.btn-danger{background:#b03020;}
-#status{margin:16px 0;font-size:13px;color:#4a3820;min-height:20px;}
-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:16px;}
-th{background:#18110a;color:#F1EFE8;padding:6px 8px;text-align:left;}
-td{padding:5px 8px;border-bottom:1px solid #DDD8C8;}
-tr:hover td{background:#E8E4D8;}
-.nom{font-family:monospace;}
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#F1EFE8;--cream2:#E8E4D8;--cream3:#DDD8C8;
+  --teal:#1a6e58;--red:#b03020;--red-l:rgba(176,48,32,.1);
+  --sans:'Noto Sans JP',sans-serif;--serif:'Cormorant Garamond',serif;--mono:'DM Mono',monospace;
+  --r:6px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--cream);color:var(--ink);font-family:var(--sans);min-height:100vh;}
+
+.hdr{background:var(--ink);padding:0 20px;display:flex;align-items:center;gap:12px;height:52px;}
+.hdr-logo{font-family:var(--serif);font-size:17px;color:var(--gold-l);letter-spacing:.04em;}
+.hdr-sub{font-size:11px;color:var(--ink3);margin-top:1px;}
+.hdr-nav{margin-left:auto;display:flex;gap:14px;}
+.hdr-nav a{color:var(--gold-l);font-size:12px;text-decoration:none;opacity:.8;}
+.hdr-nav a:hover{opacity:1;}
+
+.page{max-width:960px;margin:0 auto;padding:24px 16px 80px;}
+
+#auth-bar{padding:8px 14px;font-size:12px;border-radius:var(--r);margin-bottom:20px;}
+#auth-bar.ok{background:rgba(26,110,88,.1);color:var(--teal);}
+#auth-bar.ng{background:var(--red-l);color:var(--red);}
+
+.sec-head{font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:8px;}
+.sec-head::after{content:'';flex:1;height:1px;background:var(--cream3);}
+.sec-num{width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--cream);font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;}
+
+.card{background:var(--cream2);border-radius:10px;border:1px solid var(--cream3);padding:18px 20px;margin-bottom:24px;}
+.card-title{font-size:14px;font-weight:600;color:var(--ink);margin-bottom:4px;}
+.card-sub{font-size:11px;color:var(--ink3);margin-bottom:14px;line-height:1.7;}
+
+/* Buttons */
+.btn{padding:10px 18px;border-radius:var(--r);border:none;font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;transition:.15s;}
+.btn-primary{background:var(--ink);color:#fff;}
+.btn-primary:hover:not(:disabled){background:var(--gold-d);}
+.btn-danger{background:var(--red-l);color:var(--red);border:1px solid rgba(176,48,32,.25);}
+.btn-danger:hover:not(:disabled){background:rgba(176,48,32,.18);}
+.btn-sm{padding:7px 14px;font-size:12px;font-weight:500;}
+.btn:disabled{opacity:.35;cursor:not-allowed;}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;}
+
+/* Script box */
+.script-wrap{margin-bottom:14px;}
+.script-label{font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;}
+.script-box{background:#1a140e;border-radius:var(--r);padding:12px 14px;font-family:var(--mono);font-size:11px;color:#c8b89a;max-height:160px;overflow-y:auto;line-height:1.7;white-space:pre-wrap;word-break:break-all;}
+.copy-btn{padding:3px 10px;border-radius:4px;background:rgba(200,146,30,.15);border:1px solid rgba(200,146,30,.3);color:var(--gold-l);font-size:10px;cursor:pointer;font-family:var(--sans);}
+.copy-btn:hover{background:rgba(200,146,30,.25);}
+
+/* Paste area */
+.paste-area{width:100%;min-height:80px;max-height:160px;border:1px solid var(--cream3);border-radius:var(--r);padding:10px 12px;font-family:var(--mono);font-size:11px;background:var(--cream);color:var(--ink);resize:vertical;outline:none;}
+.paste-area:focus{border-color:var(--gold);}
+.paste-label{font-size:11px;color:var(--ink3);margin-bottom:6px;}
+
+/* Progress */
+.prog-wrap{display:none;margin-top:10px;}
+.prog-bg{background:var(--cream3);border-radius:10px;height:6px;overflow:hidden;}
+.prog-bar{background:var(--gold);height:6px;border-radius:10px;transition:width .3s;width:0;}
+.prog-txt{font-size:11px;color:var(--ink3);margin-top:4px;}
+
+/* Status inline */
+.status-line{font-size:12px;margin-top:8px;min-height:18px;color:var(--ink3);}
+.status-ok{color:var(--teal);}
+.status-err{color:var(--red);}
+
+/* Preview table */
+.tbl-wrap{overflow-x:auto;margin-top:12px;}
+.data-table{width:100%;border-collapse:collapse;font-size:11px;}
+.data-table th{text-align:left;font-size:10px;font-weight:600;color:var(--ink3);letter-spacing:.05em;text-transform:uppercase;padding:5px 8px;border-bottom:2px solid var(--cream3);}
+.data-table td{padding:5px 8px;border-bottom:1px solid var(--cream3);vertical-align:top;}
+.data-table tr:last-child td{border-bottom:none;}
+.data-table tr:hover td{background:rgba(0,0,0,.02);}
+.mono{font-family:var(--mono);}
+.url-cell{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:var(--gold-d);}
+.badge-ok{display:inline-block;padding:1px 7px;border-radius:10px;background:rgba(26,110,88,.12);color:var(--teal);font-size:10px;}
+.badge-none{display:inline-block;padding:1px 7px;border-radius:10px;background:var(--cream3);color:var(--ink3);font-size:10px;}
+
+/* Log */
+.log-box{background:#1a140e;border-radius:var(--r);padding:14px;font-family:var(--mono);font-size:11px;color:#c8b89a;max-height:220px;overflow-y:auto;line-height:1.9;}
+.log-ok{color:#6db98a;}.log-err{color:#e07060;}.log-warn{color:#e8b84a;}.log-info{color:#9ab8d8;}
+
+.divider{border:none;border-top:1px solid var(--cream3);margin:22px 0;}
+details summary{font-size:12px;color:var(--ink3);cursor:pointer;padding:5px 0;}
 </style>
 </head>
 <body>
-<h1>AMM蒸留所マスタ インポート</h1>
-<div class="sub">コレクション: <code>ammDistilleries</code> | 件数: 152件 | 集計日: 2025-12-31</div>
-<div>
-  <button class="btn" id="btn-import" onclick="doImport()">Firestoreへインポート実行</button>
-  <button class="btn btn-danger" id="btn-clear" onclick="doClear()">コレクションを全削除</button>
-</div>
-<div id="status">ログイン確認中...</div>
 
-<table>
-<thead><tr><th>Rank</th><th>NOM</th><th>蒸留所名</th><th>平均点</th><th>評価数</th><th>所在地</th></tr></thead>
-<tbody id="preview"></tbody>
-</table>
+<div class="hdr">
+  <div>
+    <div class="hdr-logo">テキーラ道場</div>
+    <div class="hdr-sub">AMM 蒸留所マスタ インポート</div>
+  </div>
+  <nav class="hdr-nav">
+    <a href="admin.html">← 管理ハブ</a>
+    <a href="index.html">ホーム</a>
+  </nav>
+</div>
+
+<div class="page">
+
+  <div id="auth-bar" class="ng">ログイン確認中...</div>
+
+  <!-- ① 基本データ -->
+  <div class="sec-head"><span class="sec-num">1</span>基本データインポート</div>
+  <div class="card">
+    <div class="card-title">🌵 ammDistilleries — 152件（ランキング基本データ）</div>
+    <div class="card-sub">
+      出典: tastetequila.com / Agave Matchmaker &nbsp;|&nbsp; 集計日: 2025-12-31<br>
+      コレクション: <span class="mono">ammDistilleries</span> &nbsp;|&nbsp; ドキュメントID: NOM番号
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btn-import" onclick="doImport()" disabled>基本データをインポート（152件）</button>
+      <button class="btn btn-danger btn-sm" id="btn-clear" onclick="doClear()" disabled>コレクション全削除</button>
+    </div>
+    <div class="prog-wrap" id="prog-basic">
+      <div class="prog-bg"><div class="prog-bar" id="pb-basic"></div></div>
+      <div class="prog-txt" id="pt-basic"></div>
+    </div>
+    <div class="status-line" id="st-basic"></div>
+    <details style="margin-top:14px;">
+      <summary>プレビュー（先頭10件）</summary>
+      <div class="tbl-wrap">
+        <table class="data-table" id="preview-basic">
+          <thead><tr><th>Rank</th><th>NOM</th><th>蒸留所名</th><th>点数</th><th>評価数</th><th>地域</th><th>URL</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+
+  <!-- ② URLデータ補完 -->
+  <div class="sec-head"><span class="sec-num">2</span>AMMページ URL データ補完</div>
+  <div class="card">
+    <div class="card-title">📎 NOM別リンクURL — 145件ロード済み</div>
+    <div class="card-sub">
+      URLデータは既にページにハードコードされています（145件 / 152件）。<br>
+      <span style="color:var(--red);">URL未取得: NOM 1103, 1079, 1486, 1449, 1431, 1173, 1104（AMMランキングページ未掲載）</span><br>
+      ①のインポートを実行するとURLも一緒に書き込まれます。追加・修正がある場合のみ下のJSONを貼り付けてください。
+    </div>
+
+    <details style="margin-bottom:14px;">
+      <summary style="font-size:12px;color:var(--ink3);cursor:pointer;">URLリスト取得スクリプト（追加取得が必要な場合）</summary>
+      <div class="script-wrap" style="margin-top:10px;">
+        <div class="script-label">
+          ランキングページ用コンソールスクリプト
+          <button class="copy-btn" onclick="copyScript('script-url')">コピー</button>
+        </div>
+        <div class="script-box" id="script-url">(function(){
+  // AMMランキングページの各行から NOM と詳細URL を抽出
+  var rows=document.querySelectorAll('table tbody tr');
+  var result=[];
+  rows.forEach(function(row){
+    var cells=row.querySelectorAll('td');
+    var link=row.querySelector('a[href*="/distilleries/"]');
+    if(!link) return;
+    // NOM列を探す（4桁 1xxx の数字セル）
+    var nom='';
+    cells.forEach(function(cell){
+      var t=cell.textContent.trim();
+      if(/^1\d{3}$/.test(t)) nom=t;
+    });
+    if(nom) result.push({nom:nom,url:link.href});
+  });
+  var json=JSON.stringify(result);
+  try{copy(json);console.log('✓ クリップボードにコピー済み ('+result.length+'件)');}catch(e){}
+  console.log(json);
+  return result;
+})();</div>
+      </div>
+    </details>
+
+    <div class="paste-label">追加・修正URLのJSONを貼り付け（任意）: <span id="url-parse-status"></span></div>
+    <textarea class="paste-area" id="url-json" placeholder='[{"nom":"1103","url":"https://..."},...]' oninput="onUrlPaste()" style="min-height:60px;"></textarea>
+
+    <div class="btn-row" style="margin-top:10px;">
+      <button class="btn btn-primary" id="btn-url-import" onclick="doUrlImport()" disabled>URLデータを追加インポート</button>
+    </div>
+    <div class="prog-wrap" id="prog-url">
+      <div class="prog-bg"><div class="prog-bar" id="pb-url"></div></div>
+      <div class="prog-txt" id="pt-url"></div>
+    </div>
+    <div class="status-line" id="st-url"></div>
+    <div id="url-preview-wrap" style="display:none;">
+      <div class="tbl-wrap" style="margin-top:12px;">
+        <table class="data-table" id="preview-url">
+          <thead><tr><th>NOM</th><th>URL</th><th>既存データとの照合</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ③ 詳細データ -->
+  <div class="sec-head"><span class="sec-num">3</span>蒸留所 詳細データインポート</div>
+  <div class="card">
+    <div class="card-title">🔬 ammDistilleryDetails — 詳細ページからスクレイピング</div>
+    <div class="card-sub">
+      145件のURLの詳細ページから住所・設立年・説明などを取得します。<br>
+      下のスクリプトをコピーして <strong>agavematchmaker.com</strong> 上のコンソールで実行し（5〜10分かかります）、出力JSONをここに貼り付けてください。
+    </div>
+
+    <div class="script-wrap">
+      <div class="script-label">
+        詳細ページ一括取得スクリプト（agavematchmaker.com上のコンソールで実行）
+        <button class="copy-btn" onclick="copyScript('script-detail')">コピー</button>
+      </div>
+      <div class="script-box" id="script-detail">// 145件のURLリスト（NOM 1103/1079/1486/1449/1431/1173/1104 は未取得）
+var URLS=[
+{"nom":"1493","url":"https://agavematchmaker.com/distilleries/258-tequila-los-abuelos-s-a-de-c-v"},
+{"nom":"1579","url":"https://agavematchmaker.com/distilleries/309-destileria-el-pandillo-s-a-de-c-v"},
+{"nom":"1123","url":"https://agavematchmaker.com/distilleries/249-tequila-cascahuin-s-a"},
+{"nom":"1643","url":"https://agavematchmaker.com/distilleries/392-destileria-el-sabino-s-a-de-c-v"},
+{"nom":"1474","url":"https://agavematchmaker.com/distilleries/167-cia-tequilera-los-alambiques-s-a-de-c-v"},
+{"nom":"1635","url":"https://agavematchmaker.com/distilleries/381-plantaciones-tequilana-s-p-r-de-r-l-de-c-v"},
+{"nom":"1120","url":"https://agavematchmaker.com/distilleries/265-tequila-siete-leguas-s-a-de-c-v"},
+{"nom":"1139","url":"https://agavematchmaker.com/distilleries/267-tequila-tapatio-s-a-de-c-v-la-altena"},
+{"nom":"1468","url":"https://agavematchmaker.com/distilleries/217-grupo-tequilero-mexico-s-a-de-c-v"},
+{"nom":"1636","url":"https://agavematchmaker.com/distilleries/384-tequila-el-rocio-s-a-de-c-v"},
+{"nom":"1414","url":"https://agavematchmaker.com/distilleries/212-feliciano-vivanco-y-asociados-s-a-de-c-v"},
+{"nom":"1651","url":"https://agavematchmaker.com/distilleries/403-jp-vc-spirit-co-s-a-de-c-v"},
+{"nom":"1599","url":"https://agavematchmaker.com/distilleries/341-familia-landeros-s-c-de-r-l-de-c-v"},
+{"nom":"1146","url":"https://agavematchmaker.com/distilleries/273-tequilena-s-a-de-c-v"},
+{"nom":"1412","url":"https://agavematchmaker.com/distilleries/185-destiladora-de-los-altos-s-a-de-c-v"},
+{"nom":"1518","url":"https://agavematchmaker.com/distilleries/248-tequila-casa-de-los-gonzalez-s-a-de-c-v"},
+{"nom":"1530","url":"https://agavematchmaker.com/distilleries/288-tequilera-simbolo-s-a-de-c-v"},
+{"nom":"1588","url":"https://agavematchmaker.com/distilleries/325-tequilas-el-mexicano-s-a-de-c-v"},
+{"nom":"1584","url":"https://agavematchmaker.com/distilleries/319-tequila-el-tepozan-s-a-de-c-v"},
+{"nom":"1433","url":"https://agavematchmaker.com/distilleries/260-tequila-quiote-s-a-de-c-v"},
+{"nom":"1646","url":"https://agavematchmaker.com/distilleries/385-destiladora-la-roca-s-a-de-c-v"},
+{"nom":"1108","url":"https://agavematchmaker.com/distilleries/226-jorge-salles-cuervo-y-sucesores-s-a-de-c-v"},
+{"nom":"1426","url":"https://agavematchmaker.com/distilleries/150-agaveros-unidos-de-amatitan-s-a-de-c-v-rancho-miravalle"},
+{"nom":"1639","url":"https://agavematchmaker.com/distilleries/391-grupo-pena-blanca-de-los-altos-s-de-r-l-de-c-v"},
+{"nom":"1522","url":"https://agavematchmaker.com/distilleries/220-hacienda-de-oro-s-a-de-c-v"},
+{"nom":"1634","url":"https://agavematchmaker.com/distilleries/379-tequileria-trujillo-s-a-de-c-v"},
+{"nom":"1624","url":"https://agavematchmaker.com/distilleries/369-tequilera-santa-teresa-s-a-de-c-v"},
+{"nom":"1641","url":"https://agavematchmaker.com/distilleries/387-productos-unicos-de-agave-s-p-r-de-r-l"},
+{"nom":"1590","url":"https://agavematchmaker.com/distilleries/327-tequilera-la-herencia-s-de-r-l-de-c-v"},
+{"nom":"1480","url":"https://agavematchmaker.com/distilleries/257-tequila-las-americas-s-a-de-c-v"},
+{"nom":"1560","url":"https://agavematchmaker.com/distilleries/272-tequilas-gonzalez-lara-s-a-de-c-v-casa-marengo"},
+{"nom":"1507","url":"https://agavematchmaker.com/distilleries/162-casa-reyes-barajas-s-a-de-c-v"},
+{"nom":"1109","url":"https://agavematchmaker.com/distilleries/246-tequila-arette-de-jalisco-s-a-de-c-v"},
+{"nom":"1549","url":"https://agavematchmaker.com/distilleries/193-destiladora-refugio-s-a-de-c-v"},
+{"nom":"1533","url":"https://agavematchmaker.com/distilleries/291-vinos-y-licores-azteca-s-a-de-c-v"},
+{"nom":"1465","url":"https://agavematchmaker.com/distilleries/208-fabrica-de-tequila-el-eden-s-a-de-c-v"},
+{"nom":"1258","url":"https://agavematchmaker.com/distilleries/345-destileria-el-magnifico-s-a-de-c-v"},
+{"nom":"1477","url":"https://agavematchmaker.com/distilleries/229-tequilera-puerta-de-hierro-leticia-hermosillo-ravelero"},
+{"nom":"1509","url":"https://agavematchmaker.com/distilleries/254-tequila-embajador-s-a-de-c-v"},
+{"nom":"1614","url":"https://agavematchmaker.com/distilleries/357-tequilera-tap-s-de-r-l-de-c-v"},
+{"nom":"1586","url":"https://agavematchmaker.com/distilleries/326-destileria-casa-de-piedra-s-a-de-c-v"},
+{"nom":"1511","url":"https://agavematchmaker.com/distilleries/174-compania-tequilera-hacienda-sahuayo-s-a-de-c-v"},
+{"nom":"1652","url":"https://agavematchmaker.com/distilleries/393-tequilas-de-autor-s-p-r-de-r-l-de-c-v"},
+{"nom":"1443","url":"https://agavematchmaker.com/distilleries/214-grupo-industrial-tequilero-de-los-altos-de-jalisco-s-a-de-c-v"},
+{"nom":"1595","url":"https://agavematchmaker.com/distilleries/332-casa-tradicion-s-a-de-c-v"},
+{"nom":"1605","url":"https://agavematchmaker.com/distilleries/349-inulina-y-miel-de-agave-s-a-de-c-v"},
+{"nom":"1419","url":"https://agavematchmaker.com/distilleries/232-metlalli-s-a-de-c-v"},
+{"nom":"1445","url":"https://agavematchmaker.com/distilleries/290-destileria-la-alborada"},
+{"nom":"1463","url":"https://agavematchmaker.com/distilleries/176-cooperativa-tequilera-la-magdalena-s-c-de-r-l"},
+{"nom":"1662","url":"https://agavematchmaker.com/distilleries/412-spirits-production-services-s-a-de-c-v"},
+{"nom":"1508","url":"https://agavematchmaker.com/distilleries/207-fabrica-de-tequila-don-nacho-s-a-de-c-v"},
+{"nom":"1434","url":"https://agavematchmaker.com/distilleries/236-procesadora-de-agave-penjamo-s-a-de-c-v"},
+{"nom":"1523","url":"https://agavematchmaker.com/distilleries/154-agrotequilera-de-jalisco-s-a-de-c-v"},
+{"nom":"1531","url":"https://agavematchmaker.com/distilleries/243-destileria-rivesca-s-a-de-c-v"},
+{"nom":"1558","url":"https://agavematchmaker.com/distilleries/235-premium-de-jalisco-s-a-de-c-v"},
+{"nom":"1439","url":"https://agavematchmaker.com/distilleries/242-proveedora-y-procesadora-de-agave-tres-hermanos-s-a-de-c-v"},
+{"nom":"1360","url":"https://agavematchmaker.com/distilleries/177-corporacion-ansan-s-a-de-c-v"},
+{"nom":"1068","url":"https://agavematchmaker.com/distilleries/152-agroindustria-guadalajara-s-a-de-c-v"},
+{"nom":"1616","url":"https://agavematchmaker.com/distilleries/358-varo-destileria-s-de-r-l-de-c-v"},
+{"nom":"1519","url":"https://agavematchmaker.com/distilleries/153-agroindustrias-casa-ramirez-s-a-de-c-v"},
+{"nom":"1570","url":"https://agavematchmaker.com/distilleries/155-altos-cienega-unidos-s-de-p-r-de-r-l"},
+{"nom":"1517","url":"https://agavematchmaker.com/distilleries/255-tequila-galindo-s-a-de-c-v"},
+{"nom":"1655","url":"https://agavematchmaker.com/distilleries/399-grupo-ikam-s-a-de-c-v"},
+{"nom":"1608","url":"https://agavematchmaker.com/distilleries/362-compania-tequilera-los-valores-s-a-de-c-v"},
+{"nom":"1551","url":"https://agavematchmaker.com/distilleries/189-destiladora-juanacatlan-s-p-r-de-r-l-de-c-v"},
+{"nom":"1500","url":"https://agavematchmaker.com/distilleries/286-tequilera-las-juntas-s-a-de-c-v"},
+{"nom":"1621","url":"https://agavematchmaker.com/distilleries/365-hacienda-casa-macias-s-a-de-c-v"},
+{"nom":"1598","url":"https://agavematchmaker.com/distilleries/352-ibev-casa-tequilera-s-a-de-c-v"},
+{"nom":"1466","url":"https://agavematchmaker.com/distilleries/268-tequila-tres-mujeres-s-a-de-c-v"},
+{"nom":"1436","url":"https://agavematchmaker.com/distilleries/247-tequila-artesanal-de-los-altos-de-jalisco-s-a-de-c-v"},
+{"nom":"1600","url":"https://agavematchmaker.com/distilleries/347-joaquin-robles-robles"},
+{"nom":"1473","url":"https://agavematchmaker.com/distilleries/276-tequilera-de-la-barranca-de-amatitan-s-a-de-c-v"},
+{"nom":"1515","url":"https://agavematchmaker.com/distilleries/196-destiladora-santa-virginia-s-a-de-c-v"},
+{"nom":"1632","url":"https://agavematchmaker.com/distilleries/375-tequilera-tateposco-s-a-de-c-v"},
+{"nom":"1554","url":"https://agavematchmaker.com/distilleries/165-cavas-de-don-max-s-a-de-c-v"},
+{"nom":"1514","url":"https://agavematchmaker.com/distilleries/237-productores-de-agave-y-derivados-de-degollado-s-p-r-de-r-l"},
+{"nom":"1585","url":"https://agavematchmaker.com/distilleries/353-destileria-la-experiencia-s-a-de-c-v"},
+{"nom":"1504","url":"https://agavematchmaker.com/distilleries/148-agave-azul-san-jose-s-a-de-c-v"},
+{"nom":"1459","url":"https://agavematchmaker.com/distilleries/264-tequila-selecto-de-amatitan-s-a-de-c-v"},
+{"nom":"1594","url":"https://agavematchmaker.com/distilleries/334-casa-tequilera-alcardan-k-asociados-s-a-de-c-v"},
+{"nom":"1450","url":"https://agavematchmaker.com/distilleries/231-marco-antonio-jauregui-huerta"},
+{"nom":"1649","url":"https://agavematchmaker.com/distilleries/389-compania-tequilera-don-cayo-s-de-r-l-de-c-v"},
+{"nom":"1137","url":"https://agavematchmaker.com/distilleries/227-la-cofradia-s-a-de-c-v"},
+{"nom":"1494","url":"https://agavematchmaker.com/distilleries/283-tequilera-la-noria-s-a-de-c-v"},
+{"nom":"1653","url":"https://agavematchmaker.com/distilleries/394-gildardo-partida-hermosillo"},
+{"nom":"1455","url":"https://agavematchmaker.com/distilleries/209-fabrica-de-tequila-el-nacimiento-s-a-de-c-v"},
+{"nom":"1574","url":"https://agavematchmaker.com/distilleries/307-destiladora-de-tequila-marava-s-p-r-de-r-l"},
+{"nom":"1499","url":"https://agavematchmaker.com/distilleries/163-casa-tequilera-de-arandas-s-a-de-c-v"},
+{"nom":"1437","url":"https://agavematchmaker.com/distilleries/277-tequilera-don-roberto-s-a-de-c-v"},
+{"nom":"1490","url":"https://agavematchmaker.com/distilleries/179-destiladora-arandas-s-a-de-c-v"},
+{"nom":"1567","url":"https://agavematchmaker.com/distilleries/324-tequila-rubio-s-a-de-c-v"},
+{"nom":"1127","url":"https://agavematchmaker.com/distilleries/281-tequilera-la-gonzalena-s-a-de-c-v"},
+{"nom":"1561","url":"https://agavematchmaker.com/distilleries/187-destiladora-el-paisano-s-a-de-c-v"},
+{"nom":"1625","url":"https://agavematchmaker.com/distilleries/366-vinicola-jaliciense-s-de-r-l-de-c-v"},
+{"nom":"1633","url":"https://agavematchmaker.com/distilleries/374-tequilera-de-los-altos-casa-loy-s-a-de-c-v"},
+{"nom":"1545","url":"https://agavematchmaker.com/distilleries/219-hacienda-capellania-s-a-de-c-v"},
+{"nom":"1460","url":"https://agavematchmaker.com/distilleries/172-compania-tequilera-de-arandas-s-a-de-c-v"},
+{"nom":"1502","url":"https://agavematchmaker.com/distilleries/158-autentica-tequilera-s-a-de-c-v"},
+{"nom":"1107","url":"https://agavematchmaker.com/distilleries/253-tequila-el-viejito-s-a-de-c-v"},
+{"nom":"1547","url":"https://agavematchmaker.com/distilleries/225-integradora-san-agustin-s-a-de-c-v"},
+{"nom":"1124","url":"https://agavematchmaker.com/distilleries/270-tequilas-del-senor-s-a-de-c-v"},
+{"nom":"1631","url":"https://agavematchmaker.com/distilleries/383-tequilera-punto-azul-s-a-de-c-v"},
+{"nom":"1610","url":"https://agavematchmaker.com/distilleries/355-casa-tequilera-dinastia-arandina-s-a-de-c-v-casa-camarena"},
+{"nom":"1111","url":"https://agavematchmaker.com/distilleries/234-pernod-ricard-mexico-s-a-de-c-v"},
+{"nom":"1140","url":"https://agavematchmaker.com/distilleries/250-tequila-centinela-s-a-de-c-v"},
+{"nom":"1645","url":"https://agavematchmaker.com/distilleries/402-agaves-selectos-de-amatitan-s-a-de-c-v"},
+{"nom":"1416","url":"https://agavematchmaker.com/distilleries/239-productos-finos-de-agave-s-a-de-c-v"},
+{"nom":"1601","url":"https://agavematchmaker.com/distilleries/354-casa-montes-leyva-s-de-r-l-de-c-v"},
+{"nom":"1555","url":"https://agavematchmaker.com/distilleries/184-destiladora-de-los-altos-la-joya-s-a-de-c-v"},
+{"nom":"1622","url":"https://agavematchmaker.com/distilleries/371-mujeres-amigas-del-tequila-s-a-de-c-v"},
+{"nom":"1440","url":"https://agavematchmaker.com/distilleries/195-campari-mexico-s-a-de-c-v"},
+{"nom":"1548","url":"https://agavematchmaker.com/distilleries/216-grupo-tequilero-de-los-altos-s-a-de-c-v"},
+{"nom":"1479","url":"https://agavematchmaker.com/distilleries/173-compania-tequilera-hacienda-la-capilla-s-a-de-c-v"},
+{"nom":"1110","url":"https://agavematchmaker.com/distilleries/259-tequila-orendain-de-jalisco-s-a-de-c-v"},
+{"nom":"1467","url":"https://agavematchmaker.com/distilleries/222-impulsora-rombo-s-a-de-c-v"},
+{"nom":"1592","url":"https://agavematchmaker.com/distilleries/331-envasadora-de-productos-lideres-s-a-de-c-v"},
+{"nom":"1603","url":"https://agavematchmaker.com/distilleries/351-dgl-destiladores-s-de-r-l-de-c-v"},
+{"nom":"1492","url":"https://agavematchmaker.com/distilleries/233-patron-spirits-mexico-s-a-de-c-v"},
+{"nom":"1581","url":"https://agavematchmaker.com/distilleries/312-ftpsa-s-a-de-c-v"},
+{"nom":"1647","url":"https://agavematchmaker.com/distilleries/395-diageo-mexico-spirits-s-a-de-c-v"},
+{"nom":"1589","url":"https://agavematchmaker.com/distilleries/333-el-patriota-agave-spirits-la-galeria-distillery"},
+{"nom":"1424","url":"https://agavematchmaker.com/distilleries/181-destiladora-de-agave-azul-s-a-de-c-v"},
+{"nom":"1438","url":"https://agavematchmaker.com/distilleries/186-destiladora-del-valle-de-tequila-casa-maestri"},
+{"nom":"1119","url":"https://agavematchmaker.com/distilleries/160-brown-forman-tequila-mexico-s-de-r-l-de-c-v"},
+{"nom":"1559","url":"https://agavematchmaker.com/distilleries/287-tequilera-milagro-s-a-de-c-v"},
+{"nom":"1501","url":"https://agavematchmaker.com/distilleries/278-tequilera-el-triangulo-s-a-de-c-v"},
+{"nom":"1472","url":"https://agavematchmaker.com/distilleries/211-fabrica-de-tequilas-finos-s-a-de-c-v"},
+{"nom":"1489","url":"https://agavematchmaker.com/distilleries/201-destileria-leyros-s-a-de-c-v"},
+{"nom":"1535","url":"https://agavematchmaker.com/distilleries/202-destileria-morales-s-a-de-c-v"},
+{"nom":"1615","url":"https://agavematchmaker.com/distilleries/360-agaves-selectos-corona-s-p-r-de-r-l-de-c-v"},
+{"nom":"1368","url":"https://agavematchmaker.com/distilleries/275-tequilera-corralejo-s-a-de-c-v"},
+{"nom":"1417","url":"https://agavematchmaker.com/distilleries/224-industrializadora-integral-del-agave-s-a-p-i-de-c-v"},
+{"nom":"1513","url":"https://agavematchmaker.com/distilleries/289-tierra-de-agaves-s-de-r-l-de-c-v"},
+{"nom":"1464","url":"https://agavematchmaker.com/distilleries/198-destileria-501-s-a-de-c-v"},
+{"nom":"1487","url":"https://agavematchmaker.com/distilleries/159-bacardi-y-compania-s-a-de-c-v"},
+{"nom":"1613","url":"https://agavematchmaker.com/distilleries/356-destileria-teremana-de-agave-s-a-de-c-v"},
+{"nom":"1142","url":"https://agavematchmaker.com/distilleries/228-la-madrilena-s-a-de-c-v"},
+{"nom":"1629","url":"https://agavematchmaker.com/distilleries/377-tequilera-bsc-s-a-p-i-de-c-v"},
+{"nom":"1607","url":"https://agavematchmaker.com/distilleries/364-grupo-solave-sa-de-cv"},
+{"nom":"1102","url":"https://agavematchmaker.com/distilleries/263-tequila-sauza-s-de-r-l-de-c-v"},
+{"nom":"1476","url":"https://agavematchmaker.com/distilleries/194-destiladora-rubio-s-a-de-c-v"},
+{"nom":"1566","url":"https://agavematchmaker.com/distilleries/241-productos-selectos-de-agave-s-p-r-de-r-l-de-c-v"},
+{"nom":"1618","url":"https://agavematchmaker.com/distilleries/368-jarabes-y-destilados-de-jalisco-s-a-de-c-v"},
+{"nom":"1143","url":"https://agavematchmaker.com/distilleries/188-destiladora-gonzalez-gonzalez-s-a-de-c-v"},
+{"nom":"1451","url":"https://agavematchmaker.com/distilleries/203-destilerias-sierra-unidas-s-a-de-c-v"}
+];
+
+async function scrapeOne(nom,url){
+  if(!url) return {nom,error:'no url'};
+  try{
+    var r=await fetch(url,{credentials:'omit'});
+    if(!r.ok) return {nom,url,error:'HTTP '+r.status};
+    var html=await r.text();
+    var doc=new DOMParser().parseFromString(html,'text/html');
+    function txt(sels){
+      for(var s of sels){var el=doc.querySelector(s);if(el&&el.textContent.trim()) return el.textContent.trim();}
+      return '';
+    }
+    function href(sels){
+      for(var s of sels){var el=doc.querySelector(s);if(el&&el.href) return el.href;}
+      return '';
+    }
+    // メタデータをOGPやmeta description から取得
+    function meta(name){
+      var el=doc.querySelector('meta[property="'+name+'"],meta[name="'+name+'"]');
+      return el?el.getAttribute('content'):'';
+    }
+    return {
+      nom, url,
+      distilleryName: txt(['h1','.entry-title','.distillery-name','[class*="title"] h1']),
+      website:  href(['a.website,a[href*="http"]:not([href*="tastetequila"]):not([href*="twitter"]):not([href*="facebook"]):not([href*="instagram"])']),
+      city:     txt(['[class*="city"],[class*="municipality"],[class*="town"]','.location-city']),
+      state:    txt(['[class*="state"],[class*="region"]','.location-state']),
+      address:  txt(['[class*="address"]','.address','address']),
+      founded:  txt(['[class*="founded"],[class*="established"],[class*="year"]']),
+      description: meta('og:description') || txt(['.entry-content p','.description p','[class*="about"] p']).slice(0,500),
+      pageTitle: doc.title
+    };
+  }catch(e){return {nom,url,error:e.message};}
+}
+
+(async function(){
+  console.log('スクレイピング開始: '+URLS.length+' 件');
+  var results=[];
+  for(var i=0;i<URLS.length;i++){
+    var d=await scrapeOne(URLS[i].nom,URLS[i].url);
+    results.push(d);
+    if((i+1)%10===0) console.log((i+1)+'/'+URLS.length+' 完了...');
+    await new Promise(r=>setTimeout(r,600));
+  }
+  var json=JSON.stringify(results);
+  try{copy(json);console.log('✓ クリップボードにコピー済み ('+results.length+'件)');}catch(e){}
+  console.log(json);
+  return results;
+})();</div>
+    </div>
+
+    <div class="paste-label">JSONを貼り付け: <span id="detail-parse-status"></span></div>
+    <textarea class="paste-area" id="detail-json" placeholder='[{"nom":"1493","url":"https://...","distilleryName":"...","website":"...","city":"...","state":"...","address":"...","founded":"...","description":"..."},...]' oninput="onDetailPaste()"></textarea>
+
+    <div class="btn-row" style="margin-top:10px;">
+      <button class="btn btn-primary" id="btn-detail-import" onclick="doDetailImport()" disabled>詳細データをインポート</button>
+      <button class="btn btn-danger btn-sm" id="btn-detail-clear" onclick="doDetailClear()" disabled>ammDistilleryDetails 全削除</button>
+    </div>
+    <div class="prog-wrap" id="prog-detail">
+      <div class="prog-bg"><div class="prog-bar" id="pb-detail"></div></div>
+      <div class="prog-txt" id="pt-detail"></div>
+    </div>
+    <div class="status-line" id="st-detail"></div>
+    <div id="detail-preview-wrap" style="display:none;">
+      <div class="tbl-wrap" style="margin-top:12px;">
+        <table class="data-table" id="preview-detail">
+          <thead><tr><th>NOM</th><th>蒸留所名</th><th>URL</th><th>Website</th><th>City</th><th>Founded</th><th>状態</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+  <div class="sec-head">ログ</div>
+  <div class="log-box" id="log-box"><span style="color:#4a3820;">待機中...</span></div>
+
+</div><!-- /page -->
 
 <script>
 if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
 var auth=firebase.auth();
 var db=firebase.firestore();
 
-// ── データ（tastetequila.com より 2025-12-31 時点） ──────────────
+var isAdmin=false;
+var parsedUrls=[];    // [{nom, url}, ...]
+var parsedDetail=[];  // [{nom, url, distilleryName, website, city, ...}, ...]
+
 var COLLECTION_DATE='2025-12-31';
+
+// ── 基本データ ────────────────────────────────────────────────
 var RAW=[
 ["1","Tequila Los Abuelos, S.A. de C.V.","1493","89.14","18400","Jalisco (Los Valles)"],
 ["2","Destileria El Pandillo, S.A. de C.V.","1579","88.14","17911","Jalisco (Los Altos Southern)"],
@@ -208,67 +620,312 @@ var RAW=[
 ["152","Destilerias Sierra Unidas S.A. de C.V.","1451","45.44","276","Jalisco (Central)"]
 ];
 
-// プレビューテーブル
-var tbody=document.getElementById('preview');
-RAW.forEach(function(r){
-  var tr=document.createElement('tr');
-  tr.innerHTML='<td>'+r[0]+'</td><td class="nom">'+r[2]+'</td><td>'+r[1]+'</td><td>'+r[3]+'</td><td>'+r[4]+'</td><td>'+r[5]+'</td>';
-  tbody.appendChild(tr);
-});
+// URL マップ — 145件ハードコード済み（NOM 1103/1079/1486/1449/1431/1173/1104 はAMMページ未掲載）
+var URL_MAP={"1068":"https://agavematchmaker.com/distilleries/152-agroindustria-guadalajara-s-a-de-c-v","1102":"https://agavematchmaker.com/distilleries/263-tequila-sauza-s-de-r-l-de-c-v","1107":"https://agavematchmaker.com/distilleries/253-tequila-el-viejito-s-a-de-c-v","1108":"https://agavematchmaker.com/distilleries/226-jorge-salles-cuervo-y-sucesores-s-a-de-c-v","1109":"https://agavematchmaker.com/distilleries/246-tequila-arette-de-jalisco-s-a-de-c-v","1110":"https://agavematchmaker.com/distilleries/259-tequila-orendain-de-jalisco-s-a-de-c-v","1111":"https://agavematchmaker.com/distilleries/234-pernod-ricard-mexico-s-a-de-c-v","1119":"https://agavematchmaker.com/distilleries/160-brown-forman-tequila-mexico-s-de-r-l-de-c-v","1120":"https://agavematchmaker.com/distilleries/265-tequila-siete-leguas-s-a-de-c-v","1123":"https://agavematchmaker.com/distilleries/249-tequila-cascahuin-s-a","1124":"https://agavematchmaker.com/distilleries/270-tequilas-del-senor-s-a-de-c-v","1127":"https://agavematchmaker.com/distilleries/281-tequilera-la-gonzalena-s-a-de-c-v","1137":"https://agavematchmaker.com/distilleries/227-la-cofradia-s-a-de-c-v","1139":"https://agavematchmaker.com/distilleries/267-tequila-tapatio-s-a-de-c-v-la-altena","1140":"https://agavematchmaker.com/distilleries/250-tequila-centinela-s-a-de-c-v","1142":"https://agavematchmaker.com/distilleries/228-la-madrilena-s-a-de-c-v","1143":"https://agavematchmaker.com/distilleries/188-destiladora-gonzalez-gonzalez-s-a-de-c-v","1146":"https://agavematchmaker.com/distilleries/273-tequilena-s-a-de-c-v","1258":"https://agavematchmaker.com/distilleries/345-destileria-el-magnifico-s-a-de-c-v","1360":"https://agavematchmaker.com/distilleries/177-corporacion-ansan-s-a-de-c-v","1368":"https://agavematchmaker.com/distilleries/275-tequilera-corralejo-s-a-de-c-v","1412":"https://agavematchmaker.com/distilleries/185-destiladora-de-los-altos-s-a-de-c-v","1414":"https://agavematchmaker.com/distilleries/212-feliciano-vivanco-y-asociados-s-a-de-c-v","1416":"https://agavematchmaker.com/distilleries/239-productos-finos-de-agave-s-a-de-c-v","1417":"https://agavematchmaker.com/distilleries/224-industrializadora-integral-del-agave-s-a-p-i-de-c-v","1419":"https://agavematchmaker.com/distilleries/232-metlalli-s-a-de-c-v","1424":"https://agavematchmaker.com/distilleries/181-destiladora-de-agave-azul-s-a-de-c-v","1426":"https://agavematchmaker.com/distilleries/150-agaveros-unidos-de-amatitan-s-a-de-c-v-rancho-miravalle","1433":"https://agavematchmaker.com/distilleries/260-tequila-quiote-s-a-de-c-v","1434":"https://agavematchmaker.com/distilleries/236-procesadora-de-agave-penjamo-s-a-de-c-v","1436":"https://agavematchmaker.com/distilleries/247-tequila-artesanal-de-los-altos-de-jalisco-s-a-de-c-v","1437":"https://agavematchmaker.com/distilleries/277-tequilera-don-roberto-s-a-de-c-v","1438":"https://agavematchmaker.com/distilleries/186-destiladora-del-valle-de-tequila-casa-maestri","1439":"https://agavematchmaker.com/distilleries/242-proveedora-y-procesadora-de-agave-tres-hermanos-s-a-de-c-v","1440":"https://agavematchmaker.com/distilleries/195-campari-mexico-s-a-de-c-v","1443":"https://agavematchmaker.com/distilleries/214-grupo-industrial-tequilero-de-los-altos-de-jalisco-s-a-de-c-v","1445":"https://agavematchmaker.com/distilleries/290-destileria-la-alborada","1450":"https://agavematchmaker.com/distilleries/231-marco-antonio-jauregui-huerta","1451":"https://agavematchmaker.com/distilleries/203-destilerias-sierra-unidas-s-a-de-c-v","1455":"https://agavematchmaker.com/distilleries/209-fabrica-de-tequila-el-nacimiento-s-a-de-c-v","1459":"https://agavematchmaker.com/distilleries/264-tequila-selecto-de-amatitan-s-a-de-c-v","1460":"https://agavematchmaker.com/distilleries/172-compania-tequilera-de-arandas-s-a-de-c-v","1463":"https://agavematchmaker.com/distilleries/176-cooperativa-tequilera-la-magdalena-s-c-de-r-l","1464":"https://agavematchmaker.com/distilleries/198-destileria-501-s-a-de-c-v","1465":"https://agavematchmaker.com/distilleries/208-fabrica-de-tequila-el-eden-s-a-de-c-v","1466":"https://agavematchmaker.com/distilleries/268-tequila-tres-mujeres-s-a-de-c-v","1467":"https://agavematchmaker.com/distilleries/222-impulsora-rombo-s-a-de-c-v","1468":"https://agavematchmaker.com/distilleries/217-grupo-tequilero-mexico-s-a-de-c-v","1472":"https://agavematchmaker.com/distilleries/211-fabrica-de-tequilas-finos-s-a-de-c-v","1473":"https://agavematchmaker.com/distilleries/276-tequilera-de-la-barranca-de-amatitan-s-a-de-c-v","1474":"https://agavematchmaker.com/distilleries/167-cia-tequilera-los-alambiques-s-a-de-c-v","1476":"https://agavematchmaker.com/distilleries/194-destiladora-rubio-s-a-de-c-v","1477":"https://agavematchmaker.com/distilleries/229-tequilera-puerta-de-hierro-leticia-hermosillo-ravelero","1479":"https://agavematchmaker.com/distilleries/173-compania-tequilera-hacienda-la-capilla-s-a-de-c-v","1480":"https://agavematchmaker.com/distilleries/257-tequila-las-americas-s-a-de-c-v","1487":"https://agavematchmaker.com/distilleries/159-bacardi-y-compania-s-a-de-c-v","1489":"https://agavematchmaker.com/distilleries/201-destileria-leyros-s-a-de-c-v","1490":"https://agavematchmaker.com/distilleries/179-destiladora-arandas-s-a-de-c-v","1492":"https://agavematchmaker.com/distilleries/233-patron-spirits-mexico-s-a-de-c-v","1493":"https://agavematchmaker.com/distilleries/258-tequila-los-abuelos-s-a-de-c-v","1494":"https://agavematchmaker.com/distilleries/283-tequilera-la-noria-s-a-de-c-v","1499":"https://agavematchmaker.com/distilleries/163-casa-tequilera-de-arandas-s-a-de-c-v","1500":"https://agavematchmaker.com/distilleries/286-tequilera-las-juntas-s-a-de-c-v","1501":"https://agavematchmaker.com/distilleries/278-tequilera-el-triangulo-s-a-de-c-v","1502":"https://agavematchmaker.com/distilleries/158-autentica-tequilera-s-a-de-c-v","1504":"https://agavematchmaker.com/distilleries/148-agave-azul-san-jose-s-a-de-c-v","1507":"https://agavematchmaker.com/distilleries/162-casa-reyes-barajas-s-a-de-c-v","1508":"https://agavematchmaker.com/distilleries/207-fabrica-de-tequila-don-nacho-s-a-de-c-v","1509":"https://agavematchmaker.com/distilleries/254-tequila-embajador-s-a-de-c-v","1511":"https://agavematchmaker.com/distilleries/174-compania-tequilera-hacienda-sahuayo-s-a-de-c-v","1513":"https://agavematchmaker.com/distilleries/289-tierra-de-agaves-s-de-r-l-de-c-v","1514":"https://agavematchmaker.com/distilleries/237-productores-de-agave-y-derivados-de-degollado-s-p-r-de-r-l","1515":"https://agavematchmaker.com/distilleries/196-destiladora-santa-virginia-s-a-de-c-v","1517":"https://agavematchmaker.com/distilleries/255-tequila-galindo-s-a-de-c-v","1518":"https://agavematchmaker.com/distilleries/248-tequila-casa-de-los-gonzalez-s-a-de-c-v","1519":"https://agavematchmaker.com/distilleries/153-agroindustrias-casa-ramirez-s-a-de-c-v","1522":"https://agavematchmaker.com/distilleries/220-hacienda-de-oro-s-a-de-c-v","1523":"https://agavematchmaker.com/distilleries/154-agrotequilera-de-jalisco-s-a-de-c-v","1530":"https://agavematchmaker.com/distilleries/288-tequilera-simbolo-s-a-de-c-v","1531":"https://agavematchmaker.com/distilleries/243-destileria-rivesca-s-a-de-c-v","1533":"https://agavematchmaker.com/distilleries/291-vinos-y-licores-azteca-s-a-de-c-v","1535":"https://agavematchmaker.com/distilleries/202-destileria-morales-s-a-de-c-v","1545":"https://agavematchmaker.com/distilleries/219-hacienda-capellania-s-a-de-c-v","1547":"https://agavematchmaker.com/distilleries/225-integradora-san-agustin-s-a-de-c-v","1548":"https://agavematchmaker.com/distilleries/216-grupo-tequilero-de-los-altos-s-a-de-c-v","1549":"https://agavematchmaker.com/distilleries/193-destiladora-refugio-s-a-de-c-v","1551":"https://agavematchmaker.com/distilleries/189-destiladora-juanacatlan-s-p-r-de-r-l-de-c-v","1554":"https://agavematchmaker.com/distilleries/165-cavas-de-don-max-s-a-de-c-v","1555":"https://agavematchmaker.com/distilleries/184-destiladora-de-los-altos-la-joya-s-a-de-c-v","1558":"https://agavematchmaker.com/distilleries/235-premium-de-jalisco-s-a-de-c-v","1559":"https://agavematchmaker.com/distilleries/287-tequilera-milagro-s-a-de-c-v","1560":"https://agavematchmaker.com/distilleries/272-tequilas-gonzalez-lara-s-a-de-c-v-casa-marengo","1561":"https://agavematchmaker.com/distilleries/187-destiladora-el-paisano-s-a-de-c-v","1566":"https://agavematchmaker.com/distilleries/241-productos-selectos-de-agave-s-p-r-de-r-l-de-c-v","1567":"https://agavematchmaker.com/distilleries/324-tequila-rubio-s-a-de-c-v","1570":"https://agavematchmaker.com/distilleries/155-altos-cienega-unidos-s-de-p-r-de-r-l","1574":"https://agavematchmaker.com/distilleries/307-destiladora-de-tequila-marava-s-p-r-de-r-l","1579":"https://agavematchmaker.com/distilleries/309-destileria-el-pandillo-s-a-de-c-v","1581":"https://agavematchmaker.com/distilleries/312-ftpsa-s-a-de-c-v","1584":"https://agavematchmaker.com/distilleries/319-tequila-el-tepozan-s-a-de-c-v","1585":"https://agavematchmaker.com/distilleries/353-destileria-la-experiencia-s-a-de-c-v","1586":"https://agavematchmaker.com/distilleries/326-destileria-casa-de-piedra-s-a-de-c-v","1588":"https://agavematchmaker.com/distilleries/325-tequilas-el-mexicano-s-a-de-c-v","1589":"https://agavematchmaker.com/distilleries/333-el-patriota-agave-spirits-la-galeria-distillery","1590":"https://agavematchmaker.com/distilleries/327-tequilera-la-herencia-s-de-r-l-de-c-v","1592":"https://agavematchmaker.com/distilleries/331-envasadora-de-productos-lideres-s-a-de-c-v","1594":"https://agavematchmaker.com/distilleries/334-casa-tequilera-alcardan-k-asociados-s-a-de-c-v","1595":"https://agavematchmaker.com/distilleries/332-casa-tradicion-s-a-de-c-v","1598":"https://agavematchmaker.com/distilleries/352-ibev-casa-tequilera-s-a-de-c-v","1599":"https://agavematchmaker.com/distilleries/341-familia-landeros-s-c-de-r-l-de-c-v","1600":"https://agavematchmaker.com/distilleries/347-joaquin-robles-robles","1601":"https://agavematchmaker.com/distilleries/354-casa-montes-leyva-s-de-r-l-de-c-v","1603":"https://agavematchmaker.com/distilleries/351-dgl-destiladores-s-de-r-l-de-c-v","1605":"https://agavematchmaker.com/distilleries/349-inulina-y-miel-de-agave-s-a-de-c-v","1607":"https://agavematchmaker.com/distilleries/364-grupo-solave-sa-de-cv","1608":"https://agavematchmaker.com/distilleries/362-compania-tequilera-los-valores-s-a-de-c-v","1610":"https://agavematchmaker.com/distilleries/355-casa-tequilera-dinastia-arandina-s-a-de-c-v-casa-camarena","1613":"https://agavematchmaker.com/distilleries/356-destileria-teremana-de-agave-s-a-de-c-v","1614":"https://agavematchmaker.com/distilleries/357-tequilera-tap-s-de-r-l-de-c-v","1615":"https://agavematchmaker.com/distilleries/360-agaves-selectos-corona-s-p-r-de-r-l-de-c-v","1616":"https://agavematchmaker.com/distilleries/358-varo-destileria-s-de-r-l-de-c-v","1618":"https://agavematchmaker.com/distilleries/368-jarabes-y-destilados-de-jalisco-s-a-de-c-v","1621":"https://agavematchmaker.com/distilleries/365-hacienda-casa-macias-s-a-de-c-v","1622":"https://agavematchmaker.com/distilleries/371-mujeres-amigas-del-tequila-s-a-de-c-v","1624":"https://agavematchmaker.com/distilleries/369-tequilera-santa-teresa-s-a-de-c-v","1625":"https://agavematchmaker.com/distilleries/366-vinicola-jaliciense-s-de-r-l-de-c-v","1629":"https://agavematchmaker.com/distilleries/377-tequilera-bsc-s-a-p-i-de-c-v","1631":"https://agavematchmaker.com/distilleries/383-tequilera-punto-azul-s-a-de-c-v","1632":"https://agavematchmaker.com/distilleries/375-tequilera-tateposco-s-a-de-c-v","1633":"https://agavematchmaker.com/distilleries/374-tequilera-de-los-altos-casa-loy-s-a-de-c-v","1634":"https://agavematchmaker.com/distilleries/379-tequileria-trujillo-s-a-de-c-v","1635":"https://agavematchmaker.com/distilleries/381-plantaciones-tequilana-s-p-r-de-r-l-de-c-v","1636":"https://agavematchmaker.com/distilleries/384-tequila-el-rocio-s-a-de-c-v","1639":"https://agavematchmaker.com/distilleries/391-grupo-pena-blanca-de-los-altos-s-de-r-l-de-c-v","1641":"https://agavematchmaker.com/distilleries/387-productos-unicos-de-agave-s-p-r-de-r-l","1643":"https://agavematchmaker.com/distilleries/392-destileria-el-sabino-s-a-de-c-v","1645":"https://agavematchmaker.com/distilleries/402-agaves-selectos-de-amatitan-s-a-de-c-v","1646":"https://agavematchmaker.com/distilleries/385-destiladora-la-roca-s-a-de-c-v","1647":"https://agavematchmaker.com/distilleries/395-diageo-mexico-spirits-s-a-de-c-v","1649":"https://agavematchmaker.com/distilleries/389-compania-tequilera-don-cayo-s-de-r-l-de-c-v","1651":"https://agavematchmaker.com/distilleries/403-jp-vc-spirit-co-s-a-de-c-v","1652":"https://agavematchmaker.com/distilleries/393-tequilas-de-autor-s-p-r-de-r-l-de-c-v","1653":"https://agavematchmaker.com/distilleries/394-gildardo-partida-hermosillo","1655":"https://agavematchmaker.com/distilleries/399-grupo-ikam-s-a-de-c-v","1662":"https://agavematchmaker.com/distilleries/412-spirits-production-services-s-a-de-c-v"};
 
-// 認証確認
+// ── Auth ──────────────────────────────────────────────────────
 auth.onAuthStateChanged(function(user){
-  if(user){
-    document.getElementById('status').textContent='ログイン済み: '+user.email+' — インポートボタンで152件を書き込みます';
+  var bar=document.getElementById('auth-bar');
+  if(user&&!user.isAnonymous){
+    bar.className='ok';
+    bar.textContent='✓ 管理者ログイン中: '+user.email;
+    isAdmin=true;
+  } else if(user&&user.isAnonymous){
+    bar.className='ng';
+    bar.textContent='⚠ 匿名ログイン中 — admin.html から管理者アカウントでログインしてください';
   } else {
-    document.getElementById('status').textContent='⚠️ ログインが必要です。管理者アカウントでログインしてください。';
-    document.getElementById('btn-import').disabled=true;
-    document.getElementById('btn-clear').disabled=true;
+    bar.className='ng';
+    bar.textContent='✗ 未ログイン';
+    auth.signInAnonymously();
   }
+  refreshButtons();
+  renderBasicPreview();
 });
 
+function refreshButtons(){
+  document.getElementById('btn-import').disabled=!isAdmin;
+  document.getElementById('btn-clear').disabled=!isAdmin;
+  document.getElementById('btn-url-import').disabled=!(isAdmin&&parsedUrls.length>0);
+  document.getElementById('btn-detail-import').disabled=!(isAdmin&&parsedDetail.length>0);
+  document.getElementById('btn-detail-clear').disabled=!isAdmin;
+}
+
+// ── Basic preview ─────────────────────────────────────────────
+function esc(s){var d=document.createElement('div');d.textContent=String(s||'');return d.innerHTML;}
+
+function renderBasicPreview(){
+  var tbody=document.querySelector('#preview-basic tbody');
+  tbody.innerHTML='';
+  RAW.slice(0,10).forEach(function(r){
+    var nom=r[2];
+    var url=URL_MAP[nom]||'';
+    var urlCell=url
+      ?'<td class="url-cell"><a href="'+esc(url)+'" target="_blank" style="color:var(--gold-d);">'+esc(url.slice(0,40))+'…</a></td>'
+      :'<td><span class="badge-none">未設定</span></td>';
+    tbody.innerHTML+='<tr><td class="mono">'+esc(r[0])+'</td><td class="mono">'+esc(nom)+'</td>'
+      +'<td>'+esc(r[1])+'</td><td class="mono">'+esc(r[3])+'</td><td class="mono">'+esc(r[4])+'</td>'
+      +'<td>'+esc(r[5])+'</td>'+urlCell+'</tr>';
+  });
+}
+
+// ── Step1: Basic Import ───────────────────────────────────────
 async function doImport(){
-  if(!confirm('ammDistilleries コレクションに152件を書き込みます。既存データは上書きされます。続行しますか？')) return;
+  if(!isAdmin) return;
+  if(!confirm('ammDistilleries に152件を書き込みます（上書き）。続行しますか？')) return;
   document.getElementById('btn-import').disabled=true;
-  document.getElementById('status').textContent='書き込み中...';
+  document.getElementById('prog-basic').style.display='block';
+  log('基本データ インポート開始...','info');
   try{
-    var batch=db.batch();
-    RAW.forEach(function(r){
+    var writes=RAW.map(function(r){
       var nom=r[2];
-      var ref=db.collection('ammDistilleries').doc(nom);
-      batch.set(ref,{
-        nom:nom,
-        distilleryName:r[1],
-        rank:parseInt(r[0]),
-        avgRating:parseFloat(r[3]),
-        ratingCount:parseInt(r[4]),
-        region:r[5],
-        collectionDate:COLLECTION_DATE
-      });
+      var data={nom:nom,distilleryName:r[1],rank:parseInt(r[0]),
+        avgRating:parseFloat(r[3]),ratingCount:parseInt(r[4]),
+        region:r[5],collectionDate:COLLECTION_DATE,
+        importedAt:firebase.firestore.FieldValue.serverTimestamp()};
+      if(URL_MAP[nom]) data.ammUrl=URL_MAP[nom];
+      return {nom:nom,data:data};
     });
-    await batch.commit();
-    document.getElementById('status').textContent='✅ 完了！152件を ammDistilleries に書き込みました。';
+    var done=0;
+    for(var i=0;i<writes.length;i+=499){
+      var batch=db.batch();
+      writes.slice(i,i+499).forEach(function(w){
+        batch.set(db.collection('ammDistilleries').doc(w.nom),w.data);
+      });
+      await batch.commit();
+      done+=Math.min(499,writes.length-i);
+      var pct=Math.round(done/writes.length*100);
+      document.getElementById('pb-basic').style.width=pct+'%';
+      document.getElementById('pt-basic').textContent=done+'/'+writes.length+' 件 ('+pct+'%)';
+    }
+    st('st-basic','✓ インポート完了: '+writes.length+'件','ok');
+    log('✓ 基本データ インポート完了: '+writes.length+'件','ok');
   }catch(e){
-    document.getElementById('status').textContent='❌ エラー: '+e.message;
-    document.getElementById('btn-import').disabled=false;
+    st('st-basic','エラー: '+e.message,'err');
+    log('インポートエラー: '+e.message,'err');
   }
+  document.getElementById('btn-import').disabled=false;
 }
 
 async function doClear(){
+  if(!isAdmin) return;
   if(!confirm('ammDistilleries の全データを削除します。よろしいですか？')) return;
   document.getElementById('btn-clear').disabled=true;
-  document.getElementById('status').textContent='削除中...';
+  log('ammDistilleries 全削除開始...','info');
   try{
     var snap=await db.collection('ammDistilleries').get();
-    var batch=db.batch();
-    snap.docs.forEach(function(d){batch.delete(d.ref);});
-    await batch.commit();
-    document.getElementById('status').textContent='✅ 全件削除しました（'+snap.size+'件）';
-    document.getElementById('btn-clear').disabled=false;
+    var docs=snap.docs, deleted=0;
+    for(var i=0;i<docs.length;i+=499){
+      var batch=db.batch();
+      docs.slice(i,i+499).forEach(function(d){batch.delete(d.ref);});
+      await batch.commit();
+      deleted+=Math.min(499,docs.length-i);
+    }
+    st('st-basic','✓ 全削除完了: '+deleted+'件','ok');
+    log('✓ ammDistilleries 全削除: '+deleted+'件','ok');
   }catch(e){
-    document.getElementById('status').textContent='❌ エラー: '+e.message;
-    document.getElementById('btn-clear').disabled=false;
+    st('st-basic','エラー: '+e.message,'err');
+    log('削除エラー: '+e.message,'err');
   }
+  document.getElementById('btn-clear').disabled=false;
+}
+
+// ── Step2: URL paste & import ─────────────────────────────────
+function onUrlPaste(){
+  var txt=document.getElementById('url-json').value.trim();
+  var sp=document.getElementById('url-parse-status');
+  if(!txt){sp.textContent='';parsedUrls=[];refreshButtons();return;}
+  try{
+    var arr=JSON.parse(txt);
+    if(!Array.isArray(arr)) throw new Error('配列形式で貼り付けてください');
+    parsedUrls=arr.filter(function(x){return x.nom&&x.url;});
+    // ハードコード済みURL_MAPに追加・上書き
+    parsedUrls.forEach(function(x){URL_MAP[String(x.nom)]=x.url;});
+    sp.textContent='✓ '+parsedUrls.length+'件 解析OK';
+    sp.style.color='var(--teal)';
+    renderBasicPreview();
+    renderUrlPreview();
+    refreshButtons();
+  }catch(e){
+    sp.textContent='⚠ JSON解析失敗: '+e.message;
+    sp.style.color='var(--red)';
+    parsedUrls=[];
+    refreshButtons();
+  }
+}
+
+function renderUrlPreview(){
+  var wrap=document.getElementById('url-preview-wrap');
+  wrap.style.display='';
+  var tbody=document.querySelector('#preview-url tbody');
+  tbody.innerHTML='';
+  var nomSet=new Set(RAW.map(function(r){return r[2];}));
+  parsedUrls.slice(0,20).forEach(function(x){
+    var inBase=nomSet.has(String(x.nom));
+    tbody.innerHTML+='<tr><td class="mono">'+esc(x.nom)+'</td>'
+      +'<td class="url-cell"><a href="'+esc(x.url)+'" target="_blank" style="color:var(--gold-d);">'+esc(x.url)+'</a></td>'
+      +'<td>'+(inBase?'<span class="badge-ok">照合OK</span>':'<span class="badge-none">基本データに無し</span>')+'</td></tr>';
+  });
+}
+
+async function doUrlImport(){
+  if(!isAdmin||!parsedUrls.length) return;
+  if(!confirm('ammDistilleries の ammUrl フィールドを'+parsedUrls.length+'件更新します。続行しますか？')) return;
+  document.getElementById('btn-url-import').disabled=true;
+  document.getElementById('prog-url').style.display='block';
+  log('URL インポート開始: '+parsedUrls.length+'件','info');
+  try{
+    var done=0;
+    for(var i=0;i<parsedUrls.length;i+=499){
+      var batch=db.batch();
+      parsedUrls.slice(i,i+499).forEach(function(x){
+        var ref=db.collection('ammDistilleries').doc(String(x.nom));
+        batch.update(ref,{ammUrl:x.url,urlUpdatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+      });
+      await batch.commit();
+      done+=Math.min(499,parsedUrls.length-i);
+      var pct=Math.round(done/parsedUrls.length*100);
+      document.getElementById('pb-url').style.width=pct+'%';
+      document.getElementById('pt-url').textContent=done+'/'+parsedUrls.length+' 件 ('+pct+'%)';
+    }
+    st('st-url','✓ URL更新完了: '+done+'件','ok');
+    log('✓ URL インポート完了: '+done+'件','ok');
+  }catch(e){
+    st('st-url','エラー: '+e.message,'err');
+    log('URLインポートエラー: '+e.message,'err');
+  }
+  document.getElementById('btn-url-import').disabled=false;
+}
+
+// ── Step3: Detail paste & import ─────────────────────────────
+function onDetailPaste(){
+  var txt=document.getElementById('detail-json').value.trim();
+  var sp=document.getElementById('detail-parse-status');
+  if(!txt){sp.textContent='';parsedDetail=[];refreshButtons();return;}
+  try{
+    var arr=JSON.parse(txt);
+    if(!Array.isArray(arr)) throw new Error('配列形式で貼り付けてください');
+    parsedDetail=arr.filter(function(x){return x.nom;});
+    var errCount=parsedDetail.filter(function(x){return x.error;}).length;
+    sp.textContent='✓ '+parsedDetail.length+'件 解析OK'+(errCount?' (エラー'+errCount+'件含む)':'');
+    sp.style.color=errCount?'var(--warn)':'var(--teal)';
+    renderDetailPreview();
+    refreshButtons();
+  }catch(e){
+    sp.textContent='⚠ JSON解析失敗: '+e.message;
+    sp.style.color='var(--red)';
+    parsedDetail=[];
+    refreshButtons();
+  }
+}
+
+function renderDetailPreview(){
+  var wrap=document.getElementById('detail-preview-wrap');
+  wrap.style.display='';
+  var tbody=document.querySelector('#preview-detail tbody');
+  tbody.innerHTML='';
+  parsedDetail.slice(0,15).forEach(function(x){
+    var statusCell=x.error
+      ?'<td><span style="color:var(--red);font-size:10px;">⚠ '+esc(x.error)+'</span></td>'
+      :'<td><span class="badge-ok">OK</span></td>';
+    tbody.innerHTML+='<tr><td class="mono">'+esc(x.nom)+'</td>'
+      +'<td style="max-width:160px;">'+esc((x.distilleryName||'').slice(0,40))+'</td>'
+      +'<td class="url-cell"><a href="'+esc(x.url||'')+'" target="_blank" style="color:var(--gold-d);">'+esc((x.url||'').slice(0,35))+'</a></td>'
+      +'<td style="font-size:10px;">'+esc((x.website||'').slice(0,30))+'</td>'
+      +'<td>'+esc(x.city||'')+'</td>'
+      +'<td class="mono">'+esc(x.founded||'')+'</td>'
+      +statusCell+'</tr>';
+  });
+}
+
+async function doDetailImport(){
+  if(!isAdmin||!parsedDetail.length) return;
+  var valid=parsedDetail.filter(function(x){return !x.error;});
+  if(!confirm('ammDistilleryDetails に'+valid.length+'件をインポートします（エラー件数: '+(parsedDetail.length-valid.length)+'件スキップ）。続行しますか？')) return;
+  document.getElementById('btn-detail-import').disabled=true;
+  document.getElementById('prog-detail').style.display='block';
+  log('詳細データ インポート開始: '+valid.length+'件','info');
+  try{
+    var done=0;
+    for(var i=0;i<valid.length;i+=499){
+      var batch=db.batch();
+      valid.slice(i,i+499).forEach(function(x){
+        var ref=db.collection('ammDistilleryDetails').doc(String(x.nom));
+        batch.set(ref,{
+          nom:String(x.nom),
+          sourceUrl:x.url||'',
+          website:x.website||'',
+          city:x.city||'',
+          state:x.state||'',
+          address:x.address||'',
+          founded:x.founded||'',
+          description:x.description||'',
+          pageTitle:x.pageTitle||'',
+          scrapedAt:firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
+      await batch.commit();
+      done+=Math.min(499,valid.length-i);
+      var pct=Math.round(done/valid.length*100);
+      document.getElementById('pb-detail').style.width=pct+'%';
+      document.getElementById('pt-detail').textContent=done+'/'+valid.length+' 件 ('+pct+'%)';
+    }
+    st('st-detail','✓ 詳細データ インポート完了: '+done+'件','ok');
+    log('✓ 詳細データ インポート完了: '+done+'件','ok');
+  }catch(e){
+    st('st-detail','エラー: '+e.message,'err');
+    log('詳細インポートエラー: '+e.message,'err');
+  }
+  document.getElementById('btn-detail-import').disabled=false;
+}
+
+async function doDetailClear(){
+  if(!isAdmin) return;
+  if(!confirm('ammDistilleryDetails の全データを削除します。よろしいですか？')) return;
+  document.getElementById('btn-detail-clear').disabled=true;
+  log('ammDistilleryDetails 全削除開始...','info');
+  try{
+    var snap=await db.collection('ammDistilleryDetails').get();
+    var docs=snap.docs, deleted=0;
+    for(var i=0;i<docs.length;i+=499){
+      var batch=db.batch();
+      docs.slice(i,i+499).forEach(function(d){batch.delete(d.ref);});
+      await batch.commit();
+      deleted+=Math.min(499,docs.length-i);
+    }
+    st('st-detail','✓ 全削除完了: '+deleted+'件','ok');
+    log('✓ ammDistilleryDetails 全削除: '+deleted+'件','ok');
+  }catch(e){
+    st('st-detail','エラー: '+e.message,'err');
+    log('削除エラー: '+e.message,'err');
+  }
+  document.getElementById('btn-detail-clear').disabled=false;
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+function st(id, msg, type){
+  var el=document.getElementById(id);
+  el.textContent=msg;
+  el.className='status-line'+(type==='ok'?' status-ok':type==='err'?' status-err':'');
+}
+
+function log(msg,type){
+  var box=document.getElementById('log-box');
+  if(box.children.length===1&&box.querySelector('span[style]')) box.innerHTML='';
+  var ts=new Date().toLocaleTimeString('ja-JP');
+  var cls=type==='ok'?'log-ok':type==='err'?'log-err':type==='warn'?'log-warn':'log-info';
+  var line=document.createElement('div');
+  line.innerHTML='<span style="color:#4a3820;">['+ts+']</span> <span class="'+cls+'">'+esc(msg)+'</span>';
+  box.appendChild(line);
+  box.scrollTop=box.scrollHeight;
+}
+
+function copyScript(id){
+  var txt=document.getElementById(id).textContent;
+  navigator.clipboard.writeText(txt).then(function(){
+    log('スクリプトをクリップボードにコピーしました','ok');
+  }).catch(function(){
+    log('コピーに失敗しました。手動でコピーしてください','warn');
+  });
 }
 </script>
 </body>
