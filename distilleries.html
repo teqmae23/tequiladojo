@@ -439,7 +439,7 @@ auth.onAuthStateChanged(async function(user){
   if(_authDone) return; _authDone=true;
   isAdmin=await checkAdmin(user);
   await loadElevSettings();
-  buildStatusPanel(); // 境界確認パネルを初期状態で描画
+  loadDotStatusFromFirestore(); // Firestore から境界取得状況を読み込んでパネル描画
   if(user){loadData();loadOverlays();return;}
   auth.signInAnonymously().then(function(){ loadData(); loadOverlays(); }).catch(function(){ loadData(); loadOverlays(); });
 });
@@ -521,10 +521,44 @@ var OVERPASS_ENDPOINTS=[
   'https://lz4.overpass-api.de/api/interpreter'
 ];
 
-var dotLayer=null, dotLoading=false, dotGJ=null, dotFetchStatus=null;
-var DOT_CACHE_KEY='dot_geojson_v7';
-// stateLevel州（Jalisco）の色セット — スタイル判別用（キャッシュ再取得不要）
+var dotLayer=null, dotLoading=false, dotGJ=null, dotFetchStatus=null, dotFirestoreSnap=null;
+// stateLevel州（Jalisco）の色セット — スタイル判別用
 var _dotStateLevelColors=new Set(DOT_STATES.filter(function(s){return s.stateLevel;}).map(function(s){return s.color;}));
+
+// Firestore doc ID ヘルパー
+function dotDocId(sq,name){
+  if(sq.stateLevel) return sq.iso+'_dotState';
+  if(!name) return sq.iso+'_stateBoundary';
+  return sq.iso+'_municipio_'+name.replace(/\s+/g,'_');
+}
+
+// Firestoreスナップから取得状況を派生
+function deriveDotFetchStatusFromFirestore(snap){
+  var fetchedSet=new Set();
+  snap.docs.forEach(function(doc){ if(doc.data().geomJson) fetchedSet.add(doc.id); });
+  return DOT_STATES.map(function(sq){
+    if(sq.stateLevel){
+      return {state:sq.state,iso:sq.iso,color:sq.color,stateLevel:true,
+        stateBoundaryOk:fetchedSet.has(dotDocId(sq)),municipioResults:null};
+    } else {
+      return {state:sq.state,iso:sq.iso,color:sq.color,stateLevel:false,
+        stateBoundaryOk:fetchedSet.has(dotDocId(sq)),
+        municipioResults:sq.municipios.map(function(m){
+          return {name:m,ok:fetchedSet.has(dotDocId(sq,m))};
+        })};
+    }
+  });
+}
+
+// Firestore から取得状況のみ読み込み（起動時）
+async function loadDotStatusFromFirestore(){
+  try{
+    var snap=await db.collection('dotMunicipios').get();
+    dotFirestoreSnap=snap;
+    dotFetchStatus=deriveDotFetchStatusFromFirestore(snap);
+  }catch(e){}
+  buildStatusPanel();
+}
 
 async function overpassFetch(query, timeoutMs){
   timeoutMs=timeoutMs||45000;
@@ -599,33 +633,7 @@ async function fetchStateBoundaryGeoJSON(sq){
   return features;
 }
 
-// ── 不足アイテム特定 ──────────────────────────────────────────────
-function getMissingFetchItems(status){
-  var items=[];
-  status.forEach(function(st){
-    var sq=DOT_STATES.find(function(s){return s.iso===st.iso;});
-    if(st.stateLevel){
-      if(!st.stateBoundaryOk) items.push({type:'dotState',sq:sq,label:st.state+' DOT境界'});
-    } else {
-      if(!st.stateBoundaryOk) items.push({type:'stateBoundary',sq:sq,label:st.state+' 州境界'});
-      if(st.municipioResults){
-        var missing=st.municipioResults.filter(function(m){return !m.ok;});
-        if(missing.length===st.municipioResults.length){
-          // 全件未取得 → 州まとめて取得（高速）
-          items.push({type:'stateAllMunicipios',sq:sq,label:st.state+' 全自治区'});
-        } else {
-          // 一部未取得 → 個別取得
-          missing.forEach(function(m){
-            items.push({type:'municipio',iso:st.iso,color:st.color,name:m.name,label:m.name});
-          });
-        }
-      }
-    }
-  });
-  return items;
-}
-
-// ── 自治区1件取得（共通）─────────────────────────────────────────
+// ── 自治区1件取得（管理者用リトライ）─────────────────────────────
 async function fetchSingleMunicipio(iso,color,name){
   var stopWords=/^(de|del|el|la|los|las|san|santa|nuevo|nueva|general)$/i;
   var kw=_nrmFn(name).split(/\s+/).find(function(w){return w.length>3&&!stopWords.test(w);})||_nrmFn(name);
@@ -640,24 +648,6 @@ async function fetchSingleMunicipio(iso,color,name){
   feat.properties._dotColor=color;
   feat.properties._municipioName=name;
   return feat;
-}
-
-// ── アイテム取得 ─────────────────────────────────────────────────
-async function fetchItemFeatures(item){
-  if(item.type==='dotState'){
-    var r=await fetchStateGeoJSON(item.sq); return r.features;
-  }
-  if(item.type==='stateBoundary'){
-    return await fetchStateBoundaryGeoJSON(item.sq);
-  }
-  if(item.type==='stateAllMunicipios'){
-    var r=await fetchStateGeoJSON(item.sq); return r.features;
-  }
-  if(item.type==='municipio'){
-    var f=await fetchSingleMunicipio(item.iso,item.color,item.name);
-    return f?[f]:[];
-  }
-  return [];
 }
 
 // ── DOTレイヤースタイル ──────────────────────────────────────────
@@ -678,88 +668,56 @@ function dotLayerStyle(f){
 async function toggleDOT(){
   var btn=document.getElementById('btn-dot');
   if(dotLayer){
-    map.removeLayer(dotLayer); dotLayer=null; dotGJ=null; dotFetchStatus=null;
+    map.removeLayer(dotLayer); dotLayer=null; dotGJ=null;
     btn.classList.remove('on'); btn.textContent='DOT境界';
     document.getElementById('dot-sp').classList.remove('open');
-    buildStatusPanel();
-    updateLegend(); return;
+    buildStatusPanel(); updateLegend(); return;
   }
   if(dotLoading) return;
-  dotLoading=true; btn.disabled=true;
+  dotLoading=true; btn.disabled=true; btn.textContent='読み込み中...';
   try{
-    // localStorage から永続キャッシュを読み込み（一度取得した境界は再取得しない）
-    var cached=localStorage.getItem(DOT_CACHE_KEY);
-    var gj=cached?JSON.parse(cached):{type:'FeatureCollection',features:[]};
+    var snap=await db.collection('dotMunicipios').get();
+    dotFirestoreSnap=snap;
+    dotFetchStatus=deriveDotFetchStatusFromFirestore(snap);
 
-    // 不足分だけ特定して取得
-    var missing=getMissingFetchItems(deriveDotFetchStatus(gj));
-    if(missing.length>0){
-      for(var i=0;i<missing.length;i++){
-        if(i>0) await new Promise(function(r){setTimeout(r,1500);});
-        btn.textContent=missing[i].label+' 取得中 ('+(i+1)+'/'+missing.length+')';
-        try{
-          var newFeats=await fetchItemFeatures(missing[i]);
-          if(newFeats.length) gj.features=gj.features.concat(newFeats);
-        }catch(e){ console.warn('取得失敗:',missing[i].label,e.message); }
-      }
-      try{localStorage.setItem(DOT_CACHE_KEY,JSON.stringify(gj));}catch(e){}
+    var features=[];
+    snap.docs.forEach(function(doc){
+      var d=doc.data(); if(!d.geomJson) return;
+      try{
+        var geom=JSON.parse(d.geomJson);
+        var nm=d.entryType==='municipio'?d.name:(d.entryType==='dotState'?d.state:null);
+        features.push({type:'Feature',geometry:geom,properties:{
+          _dotColor:d.color,
+          _municipioName:d.entryType==='municipio'?d.name:null,
+          _isStateOutline:d.entryType==='stateBoundary',
+          _displayName:nm
+        }});
+      }catch(e){}
+    });
+
+    dotGJ={type:'FeatureCollection',features:features};
+    if(features.length){
+      dotLayer=L.geoJSON(dotGJ,{
+        filter:function(f){ var t=f.geometry&&f.geometry.type; return t&&t!=='Point'&&t!=='MultiPoint'; },
+        style:dotLayerStyle,
+        onEachFeature:function(f,layer){
+          var nm=f.properties&&f.properties._displayName;
+          if(nm) layer.bindPopup('<div style="font-family:var(--sans);padding:4px 6px;font-size:13px;font-weight:500;">'+nm+'</div>',{maxWidth:200});
+        }
+      }).addTo(map);
+      btn.classList.add('on'); btn.textContent='DOT境界 ON';
+    } else {
+      btn.textContent='DOT境界';
     }
-
-    if(!gj.features.length){
-      btn.textContent='DOT境界'; btn.disabled=false; dotLoading=false;
-      document.getElementById('dot-sp').classList.add('open');
-      dotFetchStatus=deriveDotFetchStatus(gj); buildStatusPanel();
-      return;
-    }
-
-    dotGJ=gj;
-    dotLayer=L.geoJSON(gj,{
-      filter:function(f){ var t=f.geometry&&f.geometry.type; return t&&t!=='Point'&&t!=='MultiPoint'; },
-      style:dotLayerStyle
-    }).addTo(map);
-    btn.classList.add('on'); btn.textContent='DOT境界 ON';
-    dotFetchStatus=deriveDotFetchStatus(gj);
     buildStatusPanel();
-    // 不足があった場合はパネルを自動で開く
-    if(missing.length>0) document.getElementById('dot-sp').classList.add('open');
+    document.getElementById('dot-sp').classList.add('open');
     updateLegend();
   }catch(e){
-    alert('DOT境界の取得に失敗しました:\n'+e.message);
+    alert('DOT境界の読み込みに失敗しました:\n'+e.message);
     btn.textContent='DOT境界';
   }finally{
     btn.disabled=false; dotLoading=false;
   }
-}
-
-// ── DOT境界ステータス派生 ──────────────────────────────────────────
-function deriveDotFetchStatus(gj){
-  return DOT_STATES.map(function(sq){
-    var stFeats=gj.features.filter(function(f){return f.properties&&f.properties._dotColor===sq.color;});
-    if(sq.stateLevel){
-      var dotFeats=stFeats.filter(function(f){return !f.properties._isStateOutline;});
-      return {state:sq.state,iso:sq.iso,color:sq.color,stateLevel:true,
-        stateBoundaryOk:dotFeats.length>0, municipioResults:null};
-    } else {
-      var bnd=stFeats.filter(function(f){return f.properties._isStateOutline;});
-      var dot=stFeats.filter(function(f){return !f.properties._isStateOutline;});
-      var matched=new Set();
-      dot.forEach(function(f){
-        if(f.properties._municipioName){ matched.add(f.properties._municipioName); return; }
-        // フォールバック: _municipioNameなし（古いキャッシュ）
-        var nm=_nrmFn((f.properties.name||f.properties['name:es'])||'');
-        var allowed=sq.municipios.map(_nrmFn);
-        for(var i=0;i<allowed.length;i++){
-          var a=allowed[i];
-          if(a===nm||(nm.length>=4&&(a.indexOf(nm)===0||nm.indexOf(a)===0))){
-            matched.add(sq.municipios[i]); break;
-          }
-        }
-      });
-      return {state:sq.state,iso:sq.iso,color:sq.color,stateLevel:false,
-        stateBoundaryOk:bnd.length>0,
-        municipioResults:sq.municipios.map(function(m){return {name:m,ok:matched.has(m)};})};
-    }
-  });
 }
 
 // ── DOT境界ステータスパネル ──────────────────────────────────────
@@ -769,7 +727,6 @@ function toggleDotStatus(){
 
 function buildStatusPanel(){
   var body=document.getElementById('dot-sp-body');
-  // dotFetchStatus が null の場合は静的リスト（全件 ✗）を表示
   var status=dotFetchStatus||DOT_STATES.map(function(sq){
     return {state:sq.state,iso:sq.iso,color:sq.color,stateLevel:!!sq.stateLevel,
       stateBoundaryOk:false,
@@ -783,14 +740,14 @@ function buildStatusPanel(){
     if(st.stateLevel){
       html+='<div class="dot-sp-row">'
         +(st.stateBoundaryOk?'<span class="dot-sp-ok">✓</span>':'<span class="dot-sp-err">✗</span>')
-        +' 州境界';
-      if(!st.stateBoundaryOk) html+=' <button class="dot-sp-retry" data-retry-bnd data-si="'+si+'">再取得</button>';
+        +' DOT境界';
+      if(!st.stateBoundaryOk&&isAdmin) html+=' <button class="dot-sp-retry" data-retry-bnd data-si="'+si+'">再取得</button>';
       html+='</div>';
     } else {
       html+='<div class="dot-sp-row">'
         +(st.stateBoundaryOk?'<span class="dot-sp-ok">✓</span>':'<span class="dot-sp-err">✗</span>')
         +' 州境界';
-      if(!st.stateBoundaryOk) html+=' <button class="dot-sp-retry" data-retry-bnd data-si="'+si+'">再取得</button>';
+      if(!st.stateBoundaryOk&&isAdmin) html+=' <button class="dot-sp-retry" data-retry-bnd data-si="'+si+'">再取得</button>';
       html+='</div>';
       if(st.municipioResults){
         var okN=st.municipioResults.filter(function(m){return m.ok;}).length;
@@ -799,30 +756,13 @@ function buildStatusPanel(){
           html+='<div class="dot-sp-row">'
             +(m.ok?'<span class="dot-sp-ok">✓</span>':'<span class="dot-sp-err">✗</span>')
             +' <span style="flex:1">'+m.name+'</span>';
-          if(!m.ok) html+='<button class="dot-sp-retry" data-retry-muni data-si="'+si+'" data-mi="'+mi+'">再取得</button>';
+          if(!m.ok&&isAdmin) html+='<button class="dot-sp-retry" data-retry-muni data-si="'+si+'" data-mi="'+mi+'">再取得</button>';
           html+='</div>';
         });
       }
     }
   });
-  // キャッシュクリアボタン
-  html+='<div style="padding:8px 10px;border-top:1px solid var(--cream3);margin-top:4px;">'
-    +'<button class="dot-sp-retry" id="btn-dot-cache-clear" style="width:100%;text-align:center;">キャッシュクリア（全件再取得）</button></div>';
   body.innerHTML=html;
-  var clearBtn=body.querySelector('#btn-dot-cache-clear');
-  if(clearBtn) clearBtn.addEventListener('click',function(){
-    if(!confirm('キャッシュを削除して全件再取得しますか？')) return;
-    localStorage.removeItem(DOT_CACHE_KEY);
-    if(dotLayer){map.removeLayer(dotLayer);dotLayer=null;}
-    dotGJ=null;dotFetchStatus=null;
-    document.getElementById('dot-sp').classList.remove('open');
-    document.getElementById('btn-dot').classList.remove('on');
-    document.getElementById('btn-dot').textContent='DOT境界';
-    buildStatusPanel();
-    updateLegend();
-  });
-
-  // イベントリスナーをアタッチ（onclick属性で特殊文字エスケープ問題回避）
   body.querySelectorAll('[data-retry-bnd]').forEach(function(btn){
     var si=parseInt(btn.dataset.si);
     btn.addEventListener('click',function(){retryStateBoundary(btn,status[si].iso);});
@@ -835,16 +775,23 @@ function buildStatusPanel(){
   });
 }
 
-// ── 自治区 個別再取得 ─────────────────────────────────────────────
+// ── 自治区 個別再取得（管理者用・Firestoreに保存）─────────────────
 async function retryMunicipio(btn,iso,color,name){
   btn.disabled=true; btn.textContent='取得中...';
   try{
     var feat=await fetchSingleMunicipio(iso,color,name);
     if(!feat){btn.textContent='見つからず';btn.disabled=false;return;}
+    var sq=DOT_STATES.find(function(s){return s.iso===iso;});
+    feat.properties._displayName=name;
+    await db.collection('dotMunicipios').doc(dotDocId(sq,name)).set({
+      state:sq?sq.state:iso,iso:iso,name:name,color:color,entryType:'municipio',
+      geomJson:JSON.stringify(feat.geometry),
+      fetchedAt:firebase.firestore.FieldValue.serverTimestamp()
+    },{merge:true});
     if(dotLayer) dotLayer.addData(feat);
-    dotGJ.features.push(feat);
-    try{localStorage.setItem(DOT_CACHE_KEY,JSON.stringify(dotGJ));}catch(e){}
-    dotFetchStatus=deriveDotFetchStatus(dotGJ);
+    if(dotGJ) dotGJ.features.push(feat);
+    var snap=await db.collection('dotMunicipios').get();
+    dotFirestoreSnap=snap; dotFetchStatus=deriveDotFetchStatusFromFirestore(snap);
     buildStatusPanel();
   }catch(e){
     btn.textContent='再取得'; btn.disabled=false;
@@ -852,23 +799,32 @@ async function retryMunicipio(btn,iso,color,name){
   }
 }
 
-// ── 州境界 再取得 ─────────────────────────────────────────────────
+// ── 州境界 再取得（管理者用・Firestoreに保存）─────────────────────
 async function retryStateBoundary(btn,iso){
   btn.disabled=true; btn.textContent='取得中...';
   var sq=DOT_STATES.find(function(s){return s.iso===iso;});
   if(!sq){btn.disabled=false;btn.textContent='再取得';return;}
   try{
-    var feats;
+    var feats,docId,entryType,displayName;
     if(sq.stateLevel){
       var r=await fetchStateGeoJSON(sq); feats=r.features;
+      docId=dotDocId(sq); entryType='dotState'; displayName=sq.state;
     } else {
       feats=await fetchStateBoundaryGeoJSON(sq);
+      docId=dotDocId(sq); entryType='stateBoundary'; displayName=null;
     }
     if(!feats.length){btn.textContent='見つからず';btn.disabled=false;return;}
+    var geom=feats[0].geometry;
+    await db.collection('dotMunicipios').doc(docId).set({
+      state:sq.state,iso:iso,name:displayName,color:sq.color,entryType:entryType,
+      geomJson:JSON.stringify(geom),
+      fetchedAt:firebase.firestore.FieldValue.serverTimestamp()
+    },{merge:true});
+    feats.forEach(function(f){f.properties._displayName=displayName;});
     if(dotLayer) dotLayer.addData({type:'FeatureCollection',features:feats});
-    dotGJ.features=dotGJ.features.concat(feats);
-    try{localStorage.setItem(DOT_CACHE_KEY,JSON.stringify(dotGJ));}catch(e){}
-    dotFetchStatus=deriveDotFetchStatus(dotGJ);
+    if(dotGJ) dotGJ.features=dotGJ.features.concat(feats);
+    var snap=await db.collection('dotMunicipios').get();
+    dotFirestoreSnap=snap; dotFetchStatus=deriveDotFetchStatusFromFirestore(snap);
     buildStatusPanel();
   }catch(e){
     btn.textContent='再取得'; btn.disabled=false;
