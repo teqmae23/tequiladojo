@@ -415,9 +415,15 @@ function processRows(rows){
     return a.seq-b.seq;
   });
 
-  log('解析完了: 蒸留所 '+parsedDis.length+'件 / ブランド '+parsedBrands.length+'件'+
-      (parseErrors.length?' / ⚠エラー '+parseErrors.length+'件':'')+
-      (parseWarnings.length?' / ⚠警告 '+parseWarnings.length+'件':''),'ok');
+  log('━━ 解析完了 ━━','ok');
+  log('蒸留所: '+parsedDis.length+'件 (NOM '+Object.keys(disMap).length+' 種)','ok');
+  log('ブランド: '+parsedBrands.length+'件 (インポート対象)','ok');
+  if(parseErrors.length){
+    log('[エラー] 蒸留所名不一致 '+parseErrors.length+' NOM — インポートボタン押下時に詳細を表示します','err');
+  }
+  if(parseWarnings.length){
+    log('[警告] ブランド名重複 '+parseWarnings.length+' 件除外 — インポートボタン押下時に詳細を表示します','warn');
+  }
 
   renderPreview();
   updateButtons();
@@ -510,14 +516,47 @@ async function batchWrite(writes, progressBar, progressText, chunkLabel){
   }
 }
 
+function logPreCheckDis(){
+  log('━━ 蒸留所マスタ インポート前チェック ━━','info');
+  if(parseErrors.length){
+    parseErrors.forEach(function(e){
+      log('[エラー] NOM '+e.nom+' に複数の蒸留所名が存在:','err');
+      e.names.forEach(function(n,i){
+        log('  '+(i===0?'→ 採用: ':'   除外: ')+n, i===0?'ok':'warn');
+      });
+    });
+  } else {
+    log('蒸留所名の重複エラー: なし','ok');
+  }
+  log('インポート対象: '+parsedDis.length+' 件 (crtDistilleries)','info');
+}
+
+function logPreCheckBrands(){
+  log('━━ ブランドマスタ インポート前チェック ━━','info');
+  if(parseWarnings.length){
+    var wmap={};
+    parseWarnings.forEach(function(w){
+      if(!wmap[w.nom]) wmap[w.nom]=[];
+      wmap[w.nom].push(w.marca);
+    });
+    log('[警告] 同NOM内のブランド名重複 ('+parseWarnings.length+'件除外):','warn');
+    Object.keys(wmap).map(Number).sort(function(a,b){return a-b;}).forEach(function(nom){
+      log('  NOM '+nomStr(nom)+': '+wmap[nom].join(' / '),'warn');
+    });
+  } else {
+    log('ブランド名の重複: なし','ok');
+  }
+  log('インポート対象: '+parsedBrands.length+' 件 (crtBrands)','info');
+}
+
 async function importDistilleries(){
   if(!isAdmin){log('管理者権限が必要です','err');return;}
   if(!parsedDis.length){log('データがありません','err');return;}
   document.getElementById('btn-dis-import').disabled=true;
-  var pw=document.getElementById('prog-dis');
-  pw.style.display='block';
+  document.getElementById('prog-dis').style.display='block';
+  logPreCheckDis();
   try{
-    log('蒸留所マスタ インポート開始: '+parsedDis.length+'件','info');
+    log('蒸留所マスタ 書き込み開始...','info');
     var writes=parsedDis.map(function(d){
       return {col:'crtDistilleries',id:d.docId,data:{
         nom:d.nom,empresa:d.empresa,direccion:d.direccion,
@@ -537,10 +576,10 @@ async function importBrands(){
   if(!isAdmin){log('管理者権限が必要です','err');return;}
   if(!parsedBrands.length){log('データがありません','err');return;}
   document.getElementById('btn-brand-import').disabled=true;
-  var pw=document.getElementById('prog-brand');
-  pw.style.display='block';
+  document.getElementById('prog-brand').style.display='block';
+  logPreCheckBrands();
   try{
-    log('ブランドマスタ インポート開始: '+parsedBrands.length+'件','info');
+    log('ブランドマスタ 書き込み開始...','info');
     var writes=parsedBrands.map(function(b){
       return {col:'crtBrands',id:b.docId,data:{
         nom:b.nom,seq:b.seq,marca:b.marca,collectionDate:b.collectionDate,
