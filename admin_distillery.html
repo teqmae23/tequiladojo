@@ -458,6 +458,7 @@ try {
       g("app").style.display="block";
       g("temail").textContent=user.email;
       loadAll();
+      autoFixIntroduced();
     } else {
       g("login-screen").style.display="flex";
       g("app").style.display="none";
@@ -745,7 +746,7 @@ g("btn-save-distillery").addEventListener("click",function(){
     crtEmpresa:gv("dis-crt-empresa")||null,crtDireccion:gv("dis-crt-direccion")||null,
     crtDot:gv("dis-crt-dot")||null,introduced:parseInt(gv("dis-introduced"))||0
   };
-  db.collection("distilleries").doc(nom).set(data)
+  db.collection("distilleries").doc(nom).set(data, {merge:true})
     .then(function(){ toast(editId.distillery?"蒸留所を更新しました":"蒸留所を登録しました"); closeM("m-distillery"); bumpAndRender("distilleries"); loadCol("distilleries"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
@@ -775,33 +776,43 @@ g("btn-crt-preview").addEventListener("click", async function(){
       }
     });
 
-    // 既存蒸留所マスタの NOM セット
+    // 既存蒸留所マスタの NOM セット＋導入フラグ
     var disSnap = await db.collection("distilleries").get();
     var existingNoms = new Set(disSnap.docs.map(function(d){ return d.id; }));
+    var introMap = {};
+    disSnap.docs.forEach(function(d){
+      var v = d.data().introduced;
+      introMap[d.id] = (v != null) ? v : null;
+    });
 
     crtSyncRows = Object.keys(crtMap).sort().map(function(nom){
       var c = crtMap[nom];
       var isNew = !existingNoms.has(nom);
-      return {nom: nom, empresa: c.empresa, direccion: c.direccion, dot: c.dot, isNew: isNew, introduced: isNew ? 0 : 1};
+      return {nom: nom, empresa: c.empresa, direccion: c.direccion, dot: c.dot, isNew: isNew,
+              introduced: isNew ? 0 : introMap[nom]};
     });
 
     var newCount = crtSyncRows.filter(function(r){ return r.isNew; }).length;
     var updCount = crtSyncRows.length - newCount;
-    crtSt("取得完了 — 更新: "+updCount+"件（導入=1）/ 新規作成: "+newCount+"件（導入=0）", "ok");
+    crtSt("取得完了 — CRT更新: "+updCount+"件 / 新規作成: "+newCount+"件（導入=0）", "ok");
 
     var tbody = g("tb-crt-sync");
     tbody.innerHTML = crtSyncRows.map(function(r){
       var badge = r.isNew
         ? '<span style="background:rgba(200,146,30,.15);color:var(--gold-d);border:1px solid rgba(200,146,30,.3);border-radius:10px;padding:1px 8px;font-size:10px;">新規作成</span>'
         : '<span style="background:rgba(26,110,88,.1);color:var(--teal);border:1px solid rgba(26,110,88,.2);border-radius:10px;padding:1px 8px;font-size:10px;">更新</span>';
+      var introDisp = r.isNew
+        ? '<span style="font-family:var(--mono);font-weight:600;color:var(--gold-d);">0</span>'
+        : (r.introduced == null
+            ? '<span style="color:var(--ink3);font-size:11px;">未設定</span>'
+            : '<span style="font-family:var(--mono);font-weight:600;color:'+(r.introduced?'var(--teal)':'var(--ink3)')+';">'+r.introduced+'</span>');
       return "<tr>"
         + "<td style='font-family:var(--mono);font-weight:600;'>" + r.nom + "</td>"
         + "<td>" + badge + "</td>"
         + "<td>" + esc(r.empresa) + "</td>"
         + "<td style='font-size:11px;color:var(--ink3);'>" + esc(r.direccion) + "</td>"
         + "<td style='font-family:var(--mono);font-size:11px;'>" + esc(r.dot) + "</td>"
-        + "<td style='text-align:center;font-family:var(--mono);font-weight:600;color:"+(r.isNew?"var(--gold-d)":"var(--teal)")+"'>"
-        + r.introduced + "</td>"
+        + "<td style='text-align:center;'>" + introDisp + "</td>"
         + "</tr>";
     }).join("");
     g("btn-crt-sync").disabled = crtSyncRows.length === 0;
@@ -839,7 +850,6 @@ g("btn-crt-sync").addEventListener("click", async function(){
             crtEmpresa: r.empresa,
             crtDireccion: r.direccion,
             crtDot: r.dot,
-            introduced: 1,
             crtSyncedAt: firebase.firestore.FieldValue.serverTimestamp()
           });
         }
@@ -864,6 +874,24 @@ g("btn-crt-sync").addEventListener("click", async function(){
 });
 
 function esc(s){ var d=document.createElement("div"); d.textContent=String(s||""); return d.innerHTML; }
+
+async function autoFixIntroduced(){
+  try {
+    var snap = await db.collection("distilleries").get();
+    var toFix = snap.docs.filter(function(d){ return d.data().introduced == null; });
+    if (!toFix.length) return;
+    for (var i = 0; i < toFix.length; i += 499) {
+      var batch = db.batch();
+      toFix.slice(i, i + 499).forEach(function(doc){
+        var nomEs = doc.data().nomEs;
+        batch.update(doc.ref, {introduced: (nomEs && nomEs.trim()) ? 1 : 0});
+      });
+      await batch.commit();
+    }
+    toast("導入フラグを自動修正しました（" + toFix.length + "件）", "inf");
+    loadCol("distilleries");
+  } catch(e) { console.warn("autoFixIntroduced:", e.message); }
+}
 
 g("btn-fix-introduced").addEventListener("click", async function(){
   if (!confirm("全蒸留所の導入フラグを「蒸留所名（A）の有無」で一括更新します。続行しますか？")) return;
