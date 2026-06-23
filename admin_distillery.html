@@ -1386,38 +1386,29 @@ async function loadDotMasterList(){
     var okCount=entries.filter(function(e){return isDotGeomValid(fetchedMap[e.docId]);}).length;
     var allDone=okCount===entries.length&&entries.length>0;
     g('dot-admin-status').textContent=allDone
-      ? '全 '+entries.length+' 件取得完了（マップデータ確定・変更不可）'
+      ? '全 '+entries.length+' 件取得完了'
       : okCount+' / '+entries.length+' 件取得済み';
     var fetchBtn=g('btn-dot-fetch-missing');
     if(fetchBtn) fetchBtn.style.display=allDone?'none':'';
 
     var curState='';
-    var numCols=allDone?3:4;
+    // 操作列は常に表示（修正ボタンのため）
     var html='<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-    if(allDone){
-      html+='<colgroup><col style="width:84px"><col><col style="width:36px"></colgroup>'
-        +'<thead><tr style="background:var(--cream2);"><th style="padding:5px 8px;text-align:left;font-weight:500;">州</th>'
-        +'<th style="padding:5px 8px;text-align:left;font-weight:500;">名称</th>'
-        +'<th style="padding:5px 8px;text-align:center;font-weight:500;"></th>'
-        +'</tr></thead><tbody>';
-    } else {
-      html+='<colgroup><col style="width:84px"><col><col style="width:36px"><col style="width:62px"></colgroup>'
-        +'<thead><tr style="background:var(--cream2);"><th style="padding:5px 8px;text-align:left;font-weight:500;">州</th>'
-        +'<th style="padding:5px 8px;text-align:left;font-weight:500;">名称 / 検索名</th>'
-        +'<th style="padding:5px 8px;text-align:center;font-weight:500;"></th>'
-        +'<th style="padding:5px 8px;text-align:center;font-weight:500;">操作</th>'
-        +'</tr></thead><tbody>';
-      // Jalisco municipioがまだない場合、一括取得ボタン行を先に表示
-      if(!hasJalMunis&&jalSq){
-        var jalDotOk=isDotGeomValid(fetchedMap[dotDocIdAdm(jalSq)]);
-        html+='<tr style="background:rgba(46,125,50,.05);border-bottom:1px solid var(--cream3);">'
-          +'<td style="padding:6px 8px;vertical-align:middle;white-space:nowrap;"><span style="color:'+jalSq.color+';font-weight:500;">Jalisco</span></td>'
-          +'<td colspan="3" style="padding:6px 8px;vertical-align:middle;">'
-          +'<button class="btn bp sm" id="btn-jal-fetch-all" style="font-size:11px;padding:3px 10px;">全自治区を一括取得（Overpass）</button>'
-          +(jalDotOk?' <span style="font-size:10px;color:var(--ink3);margin-left:6px;">州全体ポリゴンは取得済</span>':'')
-          +'</td></tr>';
-        curState='Jalisco';
-      }
+    html+='<colgroup><col style="width:84px"><col><col style="width:36px"><col style="width:62px"></colgroup>'
+      +'<thead><tr style="background:var(--cream2);"><th style="padding:5px 8px;text-align:left;font-weight:500;">州</th>'
+      +'<th style="padding:5px 8px;text-align:left;font-weight:500;">名称 / 検索名</th>'
+      +'<th style="padding:5px 8px;text-align:center;font-weight:500;"></th>'
+      +'<th style="padding:5px 8px;text-align:center;font-weight:500;">操作</th>'
+      +'</tr></thead><tbody>';
+    if(!hasJalMunis&&jalSq){
+      var jalDotOk=isDotGeomValid(fetchedMap[dotDocIdAdm(jalSq)]);
+      html+='<tr style="background:rgba(46,125,50,.05);border-bottom:1px solid var(--cream3);">'
+        +'<td style="padding:6px 8px;vertical-align:middle;white-space:nowrap;"><span style="color:'+jalSq.color+';font-weight:500;">Jalisco</span></td>'
+        +'<td colspan="3" style="padding:6px 8px;vertical-align:middle;">'
+        +'<button class="btn bp sm" id="btn-jal-fetch-all" style="font-size:11px;padding:3px 10px;">全自治区を一括取得（Overpass）</button>'
+        +(jalDotOk?' <span style="font-size:10px;color:var(--ink3);margin-left:6px;">州全体ポリゴンは取得済</span>':'')
+        +'</td></tr>';
+      curState='Jalisco';
     }
 
     entries.forEach(function(e,ei){
@@ -1427,11 +1418,12 @@ async function loadDotMasterList(){
       var stateCell=stateName!==curState?'<span style="color:'+e.sq.color+';font-weight:500;">'+stateName+'</span>':'';
       if(stateName!==curState) curState=stateName;
 
+      var displayName=e.entryType==='dotState'?((d&&d.name)||e.sq.state)
+        :e.entryType==='stateBoundary'?'州境界ライン'
+        :((d&&d.name)||e.name);
+
       var labelCell;
-      if(ok||allDone){
-        var displayName=e.entryType==='dotState'?((d&&d.name)||e.sq.state)
-          :e.entryType==='stateBoundary'?'州境界ライン'
-          :((d&&d.name)||e.name);
+      if(ok){
         var badge=e.entryType==='stateBoundary'
           ?'<span style="background:var(--cream2);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px;color:var(--ink3);">'+esc(displayName)+'</span>'
           :'<span style="font-size:11px;color:var(--ink2);">'+esc(displayName)+'</span>';
@@ -1453,16 +1445,22 @@ async function loadDotMasterList(){
       var statusCell=ok
         ?'<span style="color:#2e7d32;font-weight:600;">✓</span>'
         :'<span style="color:#b03020;font-weight:600;">✗</span>';
-      // JAL municipioは一括取得のみ、個別取得ボタンは不要
-      var actionCell=(!allDone&&!ok&&!e.isJalMuni)
-        ?'<button class="btn bs sm" style="font-size:10px;padding:2px 7px;" data-dot-fetch="'+ei+'">取得</button>'
-        :'';
+      var actionCell;
+      if(ok&&e.entryType!=='stateBoundary'&&!e.isJalMuni){
+        // 取得済み: 修正ボタン（上書き再取得）
+        actionCell='<button class="btn bs sm" style="font-size:10px;padding:2px 7px;" data-dot-fix="'+ei+'">修正</button>';
+      } else if(!ok&&!e.isJalMuni){
+        // 未取得: 通常取得ボタン
+        actionCell='<button class="btn bs sm" style="font-size:10px;padding:2px 7px;" data-dot-fetch="'+ei+'">取得</button>';
+      } else {
+        actionCell='';
+      }
 
       html+='<tr style="border-bottom:1px solid var(--cream3);'+(ok?'':'background:rgba(176,48,32,.03)')+'">'
         +'<td style="padding:4px 8px;vertical-align:middle;white-space:nowrap;">'+stateCell+'</td>'
         +'<td style="padding:4px 8px;vertical-align:middle;">'+labelCell+'</td>'
         +'<td style="padding:4px 8px;text-align:center;vertical-align:middle;">'+statusCell+'</td>'
-        +(allDone?'':'<td style="padding:4px 8px;text-align:center;vertical-align:middle;">'+actionCell+'</td>')
+        +'<td style="padding:4px 8px;text-align:center;vertical-align:middle;">'+actionCell+'</td>'
         +'</tr>';
     });
     html+='</tbody></table>';
@@ -1474,6 +1472,19 @@ async function loadDotMasterList(){
         var inp=el.querySelector('#dot-n-'+ei);
         var searchName=inp?inp.value.trim():null;
         fetchAndSaveDotEntry(btn,entries[ei],searchName);
+      });
+    });
+
+    // 修正ボタン: 新しい検索名でOverpassから再取得（上書き）
+    el.querySelectorAll('[data-dot-fix]').forEach(function(btn){
+      var ei=parseInt(btn.dataset.dotFix);
+      btn.addEventListener('click',function(){
+        var e=entries[ei];
+        var d=fetchedMap[e.docId];
+        var cur=(d&&d.name)||e.name||e.sq.state||'';
+        var newName=prompt('Overpass検索名を入力（現在: '+cur+'）\n※OSMの正式地名に合わせてください:', cur);
+        if(newName===null) return;
+        fetchAndSaveDotEntry(btn, e, newName.trim()||cur);
       });
     });
 
