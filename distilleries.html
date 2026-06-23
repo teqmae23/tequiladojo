@@ -97,7 +97,9 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 .dot-sp-head{background:var(--ink);color:var(--cream);padding:8px 12px;font-size:12px;font-weight:500;display:flex;align-items:center;justify-content:space-between;border-radius:5px 5px 0 0;position:sticky;top:0;z-index:1;}
 .dot-sp-head button{background:none;border:none;color:rgba(241,239,232,.7);cursor:pointer;font-size:18px;line-height:1;padding:0 0 1px 0;}
 .dot-sp-head button:hover{color:var(--cream);}
-.dot-sp-state{padding:6px 10px 2px;margin-top:2px;font-weight:500;color:var(--ink);display:flex;align-items:center;gap:5px;}
+.dot-sp-state{padding:6px 10px 2px;margin-top:2px;font-weight:500;color:var(--ink);display:flex;align-items:center;gap:5px;cursor:pointer;}
+.dot-sp-toggle{background:none;border:none;color:var(--ink3);cursor:pointer;font-size:10px;margin-left:auto;padding:0 2px;line-height:1;flex-shrink:0;}
+.dot-sp-toggle:hover{color:var(--ink);}
 .dot-sp-row{display:flex;align-items:center;gap:5px;padding:2px 10px 2px 20px;line-height:1.5;}
 .dot-sp-ok{color:#2e7d32;}
 .dot-sp-err{color:#b03020;}
@@ -133,7 +135,13 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
     <option value="2">国内</option>
   </select>
   <button id="btn-labels" class="ctrl-btn" onclick="toggleLabels()">名前 OFF</button>
-  <button id="btn-topo" class="ctrl-btn" onclick="toggleTopo()">地形 OFF</button>
+  <label style="font-size:10px;color:var(--ink2);white-space:nowrap;">地図</label>
+  <select id="sel-basemap" class="ctrl-btn" onchange="onBasemapChange(this.value)" style="cursor:pointer;">
+    <option value="osm">標準</option>
+    <option value="terrain">地形</option>
+    <option value="simple">シンプル</option>
+    <option value="mono">モノクロ</option>
+  </select>
   <button id="btn-color-mode" class="ctrl-btn" onclick="toggleColorMode()">色: 地区</button>
   <label style="font-size:10px;color:var(--ink2);white-space:nowrap;">境界</label>
   <select id="sel-dot" class="ctrl-btn" onchange="onDotSelChange(this.value)" style="cursor:pointer;">
@@ -173,28 +181,26 @@ var db=firebase.firestore();
 var map=L.map('map').setView([20.5,-103.5],8);
 
 var layerOSM=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-  attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  maxZoom:18
+  attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',maxZoom:18
 });
 var layerTerrain=L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.png?api_key=378e3626-20aa-4634-8172-c2efd21fbd3c',{
-  attribution:'© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com">Stamen Design</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  maxZoom:18
+  attribution:'© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com">Stamen Design</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',maxZoom:18
 });
+var layerSimple=L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{
+  attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/attributions">CARTO</a>',maxZoom:19
+});
+var layerMono=L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}{r}.png?api_key=378e3626-20aa-4634-8172-c2efd21fbd3c',{
+  attribution:'© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com">Stamen Design</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',maxZoom:20
+});
+var _baseLayers={osm:layerOSM,terrain:layerTerrain,simple:layerSimple,mono:layerMono};
+var _currentBase='osm';
 layerOSM.addTo(map);
 
-function toggleTopo(){
-  var btn=document.getElementById('btn-topo');
-  if(map.hasLayer(layerTerrain)){
-    map.removeLayer(layerTerrain);
-    layerOSM.addTo(map);
-    btn.textContent='地形 OFF';
-    btn.classList.remove('on');
-  } else {
-    map.removeLayer(layerOSM);
-    layerTerrain.addTo(map);
-    btn.textContent='地形 ON';
-    btn.classList.add('on');
-  }
+function onBasemapChange(val){
+  if(!_baseLayers[val]||_currentBase===val) return;
+  map.removeLayer(_baseLayers[_currentBase]);
+  _currentBase=val;
+  _baseLayers[val].addTo(map);
 }
 
 function makeIcon(color){
@@ -845,11 +851,13 @@ function buildStatusPanel(){
   var html='';
   status.forEach(function(st,si){
     var cnt=st.municipioResults?st.municipioResults.length:(st.stateLevel?125:0);
-    html+='<div class="dot-sp-state" data-dot-iso="'+st.iso+'" style="cursor:pointer;">'
+    html+='<div class="dot-sp-state" data-dot-iso="'+st.iso+'">'
       +'<span style="width:9px;height:9px;border-radius:50%;background:'+st.color+';display:inline-block;flex-shrink:0"></span>'
       +'<strong>'+st.state+'</strong>'
       +(cnt?' <span style="color:var(--ink3);font-size:10px;font-weight:normal;">（'+cnt+'自治区）</span>':'')
+      +'<button class="dot-sp-toggle" data-toggle-iso="'+st.iso+'">▶</button>'
       +'</div>';
+    html+='<div class="dot-sp-rows" data-rows-iso="'+st.iso+'" style="display:none;">';
     if(st.stateLevel){
       if(!st.municipioResults||!st.municipioResults.length){
         html+='<div class="dot-sp-row">'
@@ -873,6 +881,7 @@ function buildStatusPanel(){
         });
       }
     }
+    html+='</div>';
   });
   body.innerHTML=html;
   body.querySelectorAll('[data-retry-bnd]').forEach(function(btn){
@@ -890,6 +899,17 @@ function buildStatusPanel(){
   });
   body.querySelectorAll('.dot-sp-state[data-dot-iso]').forEach(function(div){
     div.addEventListener('click',function(){ dotHighlightState(this.dataset.dotIso); });
+  });
+  body.querySelectorAll('.dot-sp-toggle').forEach(function(btn){
+    btn.addEventListener('click',function(e){
+      e.stopPropagation();
+      var iso=this.dataset.toggleIso;
+      var rows=body.querySelector('.dot-sp-rows[data-rows-iso="'+iso+'"]');
+      if(!rows) return;
+      var open=rows.style.display!=='none';
+      rows.style.display=open?'none':'block';
+      this.textContent=open?'▶':'▼';
+    });
   });
 }
 
