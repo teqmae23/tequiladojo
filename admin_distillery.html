@@ -10,6 +10,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/osmtogeojson@3.0.0-beta.5/osmtogeojson.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 <script src="/auth-role.js"></script>
 
 <script>
@@ -1306,13 +1307,44 @@ async function overpassFetchAdm(query,timeoutMs){
   throw lastErr;
 }
 
+// Firestore の municipio ポリゴンを turf で全マージして州境界を生成
+async function buildStateBoundaryFromMunicipios(iso, statusEl){
+  var prefix=iso+'_municipio_';
+  if(statusEl) statusEl.textContent='Firestoreから自治区データを読み込み中...';
+  var snap=await db.collection('dotMunicipios').get();
+  var features=[];
+  snap.docs.forEach(function(doc){
+    if(!doc.id.startsWith(prefix)) return;
+    var d=doc.data();
+    if(!d.geomJson) return;
+    try{
+      var g=JSON.parse(d.geomJson);
+      if(g&&(g.type==='Polygon'||g.type==='MultiPolygon')) features.push(turf.feature(g));
+    }catch(e){}
+  });
+  if(!features.length) return null;
+  if(statusEl) statusEl.textContent='自治区ポリゴンをマージ中（'+features.length+'件）...';
+  var merged=features[0];
+  for(var i=1;i<features.length;i++){
+    if(statusEl&&i%20===0) statusEl.textContent='マージ中: '+(i+1)+'/'+features.length+'...';
+    try{ merged=turf.union(merged,features[i]); }catch(e){}
+  }
+  return merged&&merged.geometry?merged.geometry:null;
+}
+
 // searchName: ユーザーが編集した検索名（省略時は entry.name を使用）
 async function fetchDotGeomAdm(entry, searchName){
   var sq=entry.sq;
   if(entry.entryType==='dotState'||entry.entryType==='stateBoundary'){
     if(sq.stateLevel){
-      // Overpass はレート制限・タイムアウトが発生するため Nominatim 検索を使用
-      // （事前計算済みポリゴン・CORS対応・Overpass 不要）
+      // 1. Firestore の municipio ポリゴンからマージ（外部API不要）
+      var statusEl=document.getElementById('dot-admin-status');
+      try{
+        var merged=await buildStateBoundaryFromMunicipios(sq.iso, statusEl);
+        if(merged) return merged;
+      }catch(e2){}
+      // 2. フォールバック: Nominatim
+      if(statusEl) statusEl.textContent='Nominatimから取得中...';
       var nmCtrl=new AbortController();
       var nmTid=setTimeout(function(){nmCtrl.abort();},30000);
       try{
@@ -1325,12 +1357,10 @@ async function fetchDotGeomAdm(entry, searchName){
         if(nmResp.ok){
           var nmGj=await nmResp.json();
           var f=nmGj.features&&nmGj.features[0];
-          if(f&&f.geometry&&(f.geometry.type==='Polygon'||f.geometry.type==='MultiPolygon')){
-            return f.geometry;
-          }
+          if(f&&f.geometry&&(f.geometry.type==='Polygon'||f.geometry.type==='MultiPolygon')) return f.geometry;
         }
-      }catch(e2){clearTimeout(nmTid);}
-      // Nominatim 失敗時のみ Overpass にフォールバック
+      }catch(e3){clearTimeout(nmTid);}
+      // 3. 最終フォールバック: Overpass
     }
     var q='[out:json][timeout:150];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
     var json=await overpassFetchAdm(q,180000);
