@@ -1325,28 +1325,31 @@ async function buildStateBoundaryFromMunicipios(iso, statusEl){
   });
   if(!rings.length) return null;
   var total=rings.length;
-  // Step1: チャンク(10件)ごとにマージ → UI に制御を返して進捗表示
-  var CHUNK=10;
-  var partials=[];
-  for(var ci=0;ci<total;ci+=CHUNK){
-    var chunk=rings.slice(ci,ci+CHUNK);
-    if(statusEl) statusEl.textContent='マージ中: '+(ci+1)+'〜'+Math.min(ci+CHUNK,total)+' / '+total+'件...';
-    await new Promise(function(r){setTimeout(r,0);});
-    var m=chunk[0];
-    for(var j=1;j<chunk.length;j++){try{m=polygonClipping.union(m,chunk[j]);}catch(e){}}
-    partials.push(m);
+  // ツリー型リダクション: ペアでマージ→結果をペアでマージ→... （各ステップが均等な複雑度）
+  var current=rings.slice();
+  var round=0;
+  while(current.length>1){
+    round++;
+    var next=[];
+    var pairs=Math.ceil(current.length/2);
+    for(var pi=0;pi<current.length;pi+=2){
+      if(statusEl) statusEl.textContent='マージ中 (round'+round+'): '+(Math.floor(pi/2)+1)+'/'+pairs+'...';
+      await new Promise(function(r){setTimeout(r,0);});
+      if(pi+1<current.length){
+        var m2;
+        try{m2=polygonClipping.union(current[pi],current[pi+1]);}catch(e){m2=current[pi];}
+        next.push(m2);
+      }else{
+        next.push(current[pi]);
+      }
+    }
+    current=next;
   }
-  // Step2: チャンク結果を順次マージ
-  var merged=partials[0];
-  for(var pi=1;pi<partials.length;pi++){
-    if(statusEl) statusEl.textContent='結合中: '+(pi+1)+'/'+partials.length+'グループ...';
-    await new Promise(function(r){setTimeout(r,0);});
-    try{merged=polygonClipping.union(merged,partials[pi]);}catch(e){}
-  }
-  if(!merged||!merged.length) return null;
-  return merged.length===1
-    ?{type:'Polygon',coordinates:merged[0]}
-    :{type:'MultiPolygon',coordinates:merged};
+  var final=current[0];
+  if(!final||!final.length) return null;
+  return final.length===1
+    ?{type:'Polygon',coordinates:final[0]}
+    :{type:'MultiPolygon',coordinates:final};
 }
 
 // searchName: ユーザーが編集した検索名（省略時は entry.name を使用）
