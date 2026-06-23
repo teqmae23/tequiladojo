@@ -769,12 +769,13 @@ async function onDotSelChange(mode){
           var nm=d.entryType==='municipio'?d.name:(d.entryType==='dotState'?(d.name||d.state):null);
           var mOrig=doc.id.match(/_municipio_(.+)$/);
           var mapKey=mOrig?(mOrig[1].replace(/_/g,' ')):(d.entryType==='dotState'?d.state:null);
+          var docIso=d.iso||((doc.id.match(/^([^_]+-[^_]+)_/)||['',''])[1]);
           var isOutline=d.entryType==='stateBoundary'||(d.entryType==='dotState'&&stateLevelMuniIsos.has(d.iso));
           features.push({type:'Feature',geometry:geom,properties:{
             _dotColor:d.color,_municipioName:mapKey,
             _isStateOutline:isOutline,
             _isDotState:d.entryType==='dotState'&&!stateLevelMuniIsos.has(d.iso),
-            _displayName:nm,_mapKey:mapKey
+            _displayName:nm,_mapKey:mapKey,_iso:docIso
           }});
         }catch(e){}
       });
@@ -844,7 +845,7 @@ function buildStatusPanel(){
   var html='';
   status.forEach(function(st,si){
     var cnt=st.municipioResults?st.municipioResults.length:(st.stateLevel?125:0);
-    html+='<div class="dot-sp-state">'
+    html+='<div class="dot-sp-state" data-dot-iso="'+st.iso+'" style="cursor:pointer;">'
       +'<span style="width:9px;height:9px;border-radius:50%;background:'+st.color+';display:inline-block;flex-shrink:0"></span>'
       +'<strong>'+st.state+'</strong>'
       +(cnt?' <span style="color:var(--ink3);font-size:10px;font-weight:normal;">（'+cnt+'自治区）</span>':'')
@@ -887,6 +888,9 @@ function buildStatusPanel(){
   body.querySelectorAll('.dot-sp-name').forEach(function(span){
     span.addEventListener('click',function(){ dotHighlightMapLayer(this.dataset.dotName); });
   });
+  body.querySelectorAll('.dot-sp-state[data-dot-iso]').forEach(function(div){
+    div.addEventListener('click',function(){ dotHighlightState(this.dataset.dotIso); });
+  });
 }
 
 // ── DOT 相互ハイライト ────────────────────────────────────────────
@@ -895,6 +899,16 @@ function dotHighlightMapLayer(nm){
   if(!layer||!dotLayer) return;
   layer.setStyle({weight:4,fillOpacity:0.35,opacity:1});
   setTimeout(function(){ if(dotLayer) dotLayer.resetStyle(layer); },2000);
+}
+function dotHighlightState(iso){
+  if(!dotLayer) return;
+  var layers=[];
+  dotLayer.eachLayer(function(l){
+    var p=l.feature&&l.feature.properties;
+    if(p&&p._iso===iso) layers.push(l);
+  });
+  layers.forEach(function(l){ l.setStyle({weight:4,fillOpacity:0.35,opacity:1}); });
+  setTimeout(function(){ layers.forEach(function(l){ if(dotLayer) dotLayer.resetStyle(l); }); },2000);
 }
 function dotHighlightPanelEntry(nm){
   var el=document.querySelector('.dot-sp-name[data-dot-name="'+nm.replace(/"/g,'\\"')+'"]');
