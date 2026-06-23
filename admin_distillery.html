@@ -1343,9 +1343,12 @@ function _dpSimplify(pts, tol){
   return [p1,p2];
 }
 function _simplifyRing(ring, tol){
-  var s=_dpSimplify(ring,tol);
-  if(s.length<4) return ring;
-  if(s[0][0]!==s[s.length-1][0]||s[0][1]!==s[s.length-1][1]) s.push(s[0]);
+  // GeoJSON closed rings have first==last; strip last before DP to avoid zero-length baseline
+  var closed=ring.length>1&&ring[0][0]===ring[ring.length-1][0]&&ring[0][1]===ring[ring.length-1][1];
+  var open=closed?ring.slice(0,-1):ring;
+  var s=_dpSimplify(open,tol);
+  if(s.length<3) return ring;
+  if(closed) s=s.concat([s[0]]);
   return s;
 }
 
@@ -1410,17 +1413,17 @@ async function buildStateBoundaryFromMunicipios(iso, statusEl){
   // 簡略化の隙間で複数ポリゴンに分裂した場合は最大面積（=州本体）を採用
   var largest=_largestPolygon(final);
   if(!largest) return null;
-  var TOL2=0.002;
-  var cleanCoords=largest.map(function(ring){return _simplifyRing(ring,TOL2);});
+  var tol=0.005;
+  var cleanCoords=largest.map(function(ring){return _simplifyRing(ring,tol);});
   var geom={type:'Polygon',coordinates:cleanCoords};
   var jsonSize=JSON.stringify(geom).length;
-  console.log('[DOT merge] 最終ポリゴン: 外リング頂点='+cleanCoords[0].length+' JSONサイズ='+jsonSize+'bytes ('+Math.round(jsonSize/1024)+'KB)');
-  if(jsonSize>900000){
-    var TOL3=0.005;
-    cleanCoords=largest.map(function(ring){return _simplifyRing(ring,TOL3);});
+  console.log('[DOT merge] 簡略化(tol='+tol+'): 外リング頂点='+cleanCoords[0].length+' JSONサイズ='+Math.round(jsonSize/1024)+'KB');
+  while(jsonSize>900000&&tol<0.1){
+    tol=Math.round((tol+0.005)*1000)/1000;
+    cleanCoords=largest.map(function(ring){return _simplifyRing(ring,tol);});
     geom={type:'Polygon',coordinates:cleanCoords};
     jsonSize=JSON.stringify(geom).length;
-    console.log('[DOT merge] 再簡略化後: 外リング頂点='+cleanCoords[0].length+' JSONサイズ='+jsonSize+'bytes ('+Math.round(jsonSize/1024)+'KB)');
+    console.log('[DOT merge] 再簡略化(tol='+tol+'): 外リング頂点='+cleanCoords[0].length+' JSONサイズ='+Math.round(jsonSize/1024)+'KB');
   }
   return geom;
 }
