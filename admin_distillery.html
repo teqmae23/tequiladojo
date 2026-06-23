@@ -1246,7 +1246,9 @@ function dotExpectedEntries(fetchedMap){
   var entries=[];
   DOT_ADMIN_STATES.forEach(function(sq){
     if(sq.stateLevel){
-      // stateLevel州: Firestoreにmunicipio_*があればそれを使用、なければdotState
+      // stateLevel州: 州境界線エントリを常に追加（外周ウェイ取得で高速化）
+      entries.push({docId:sq.iso+'_stateBoundary',sq:sq,name:null,entryType:'stateBoundary',label:sq.state+' 州境界線'});
+      // municipio_* があれば個別エントリ、なければ dotState
       var prefix=sq.iso+'_municipio_';
       var jalMunis=fetchedMap?Object.keys(fetchedMap).filter(function(id){return id.startsWith(prefix);}):[];
       if(jalMunis.length>0){
@@ -1256,7 +1258,7 @@ function dotExpectedEntries(fetchedMap){
           entries.push({docId:docId,sq:sq,name:mName,entryType:'municipio',label:mName,isJalMuni:true});
         });
       } else {
-        entries.push({docId:dotDocIdAdm(sq),sq:sq,name:null,entryType:'dotState',label:'DOT境界（全州）'});
+        entries.push({docId:dotDocIdAdm(sq),sq:sq,name:null,entryType:'dotState',label:'DOT境界（全州塗り）'});
       }
     } else {
       entries.push({docId:dotDocIdAdm(sq),sq:sq,name:null,entryType:'stateBoundary',label:sq.state+' 州境界'});
@@ -1317,6 +1319,15 @@ async function overpassFetchAdm(query,timeoutMs){
 // searchName: ユーザーが編集した検索名（省略時は entry.name を使用）
 async function fetchDotGeomAdm(entry, searchName){
   var sq=entry.sq;
+  if(entry.entryType==='stateBoundary'&&sq.stateLevel){
+    // stateLevel州の州境界線: 外周ウェイのみを取得（高速・タイムアウト回避）
+    var q='[out:json][timeout:60];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"]->.r;way(r.r:"outer");out geom;';
+    var json=await overpassFetchAdm(q,80000);
+    var feats=osmtogeojson(json).features.filter(function(f){var t=f.geometry&&f.geometry.type;return t&&t!=='Point'&&t!=='MultiPoint';});
+    if(!feats.length) return null;
+    if(feats.length===1) return feats[0].geometry;
+    return {type:'GeometryCollection',geometries:feats.map(function(f){return f.geometry;})};
+  }
   if(entry.entryType==='dotState'||entry.entryType==='stateBoundary'){
     var q='[out:json][timeout:150];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
     var json=await overpassFetchAdm(q,180000);
