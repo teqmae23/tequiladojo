@@ -1310,6 +1310,33 @@ async function overpassFetchAdm(query,timeoutMs){
 async function fetchDotGeomAdm(entry, searchName){
   var sq=entry.sq;
   if(entry.entryType==='dotState'||entry.entryType==='stateBoundary'){
+    if(sq.stateLevel){
+      // stateLevel: full geom はタイムアウトするため2ステップで取得
+      // Step1: OSM relation ID のみ取得（軽い）
+      // Step2: Nominatim lookup でポリゴン取得（事前計算済み・CORS対応）
+      try{
+        var idQ='[out:json][timeout:15];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out ids qt;';
+        var idJson=await overpassFetchAdm(idQ,20000);
+        var relId=idJson.elements&&idJson.elements.length?idJson.elements[0].id:null;
+        if(relId){
+          var nmCtrl=new AbortController();
+          var nmTid=setTimeout(function(){nmCtrl.abort();},30000);
+          var nmResp=await fetch(
+            'https://nominatim.openstreetmap.org/lookup?osm_ids=R'+relId+'&format=geojson&polygon_geojson=1',
+            {signal:nmCtrl.signal}
+          );
+          clearTimeout(nmTid);
+          if(nmResp.ok){
+            var nmGj=await nmResp.json();
+            var f=nmGj.features&&nmGj.features[0];
+            if(f&&f.geometry&&(f.geometry.type==='Polygon'||f.geometry.type==='MultiPolygon')){
+              return f.geometry;
+            }
+          }
+        }
+      }catch(e2){ /* フォールバックへ */ }
+    }
+    // 通常（non-stateLevel）またはフォールバック
     var q='[out:json][timeout:150];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
     var json=await overpassFetchAdm(q,180000);
     var feats=osmtogeojson(json).features.filter(function(f){var t=f.geometry&&f.geometry.type;return t&&t!=='Point'&&t!=='MultiPoint';});
