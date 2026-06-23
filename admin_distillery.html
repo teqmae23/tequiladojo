@@ -1240,20 +1240,16 @@ function dotExpectedEntries(fetchedMap){
   var entries=[];
   DOT_ADMIN_STATES.forEach(function(sq){
     if(sq.stateLevel){
-      // stateLevel州: 州境界線エントリを常に追加（外周ウェイ取得で高速化）
-      entries.push({docId:sq.iso+'_stateBoundary',sq:sq,name:null,entryType:'stateBoundary',label:sq.state+' 州境界線'});
-      // municipio_* があれば個別エントリ、なければ dotState
+      // dotState を常に表示（municipio 取得済みの場合は表示側で outline として使う）
+      entries.push({docId:dotDocIdAdm(sq),sq:sq,name:null,entryType:'dotState',label:sq.state+' 州境界'});
+      // municipio_* があれば個別エントリも追加
       var prefix=sq.iso+'_municipio_';
       var jalMunis=fetchedMap?Object.keys(fetchedMap).filter(function(id){return id.startsWith(prefix);}):[];
-      if(jalMunis.length>0){
-        jalMunis.sort().forEach(function(docId){
-          var d=fetchedMap[docId];
-          var mName=d&&d.name?d.name:docId.slice(prefix.length).replace(/_/g,' ');
-          entries.push({docId:docId,sq:sq,name:mName,entryType:'municipio',label:mName,isJalMuni:true});
-        });
-      } else {
-        entries.push({docId:dotDocIdAdm(sq),sq:sq,name:null,entryType:'dotState',label:'DOT境界（全州塗り）'});
-      }
+      jalMunis.sort().forEach(function(docId){
+        var d=fetchedMap[docId];
+        var mName=d&&d.name?d.name:docId.slice(prefix.length).replace(/_/g,' ');
+        entries.push({docId:docId,sq:sq,name:mName,entryType:'municipio',label:mName,isJalMuni:true});
+      });
     } else {
       entries.push({docId:dotDocIdAdm(sq),sq:sq,name:null,entryType:'stateBoundary',label:sq.state+' 州境界'});
       sq.municipios.forEach(function(m){
@@ -1314,27 +1310,6 @@ async function overpassFetchAdm(query,timeoutMs){
 async function fetchDotGeomAdm(entry, searchName){
   var sq=entry.sq;
   if(entry.entryType==='dotState'||entry.entryType==='stateBoundary'){
-    if(sq.stateLevel){
-      // Nominatim の事前計算済み簡略ポリゴンを優先（Overpass の巨大 geometry タイムアウト回避）
-      try{
-        var nmCtrl=new AbortController();
-        var nmTid=setTimeout(function(){nmCtrl.abort();},30000);
-        var nmResp=await fetch(
-          'https://nominatim.openstreetmap.org/search?state='+encodeURIComponent(sq.state)
-          +'&country=Mexico&format=geojson&polygon_geojson=1&limit=1',
-          {signal:nmCtrl.signal}
-        );
-        clearTimeout(nmTid);
-        if(nmResp.ok){
-          var nmGj=await nmResp.json();
-          var f=nmGj.features&&nmGj.features[0];
-          if(f&&f.geometry&&(f.geometry.type==='Polygon'||f.geometry.type==='MultiPolygon')){
-            return f.geometry;
-          }
-        }
-      }catch(e2){ /* フォールバックへ */ }
-    }
-    // Overpass フォールバック（stateLevel 以外 or Nominatim 失敗時）
     var q='[out:json][timeout:150];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
     var json=await overpassFetchAdm(q,180000);
     var feats=osmtogeojson(json).features.filter(function(f){var t=f.geometry&&f.geometry.type;return t&&t!=='Point'&&t!=='MultiPoint';});
