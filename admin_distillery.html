@@ -306,12 +306,11 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         </div>
         <div id="elev-gradient-preview" style="margin-top:12px;height:12px;border-radius:4px;border:1px solid var(--cream3);"></div>
       </div>
-      <div class="card" style="margin-top:18px;">
+      <div class="card" style="margin-top:18px;padding-left:12px;">
         <div style="font-weight:600;margin-bottom:6px;font-size:13px;">DOT原産地呼称自治区マスタ</div>
         <div style="font-size:11px;color:var(--ink3);margin-bottom:10px;">Firestore <code>dotMunicipios</code> コレクション管理。Overpass APIから境界ポリゴンを取得・保存します。</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
           <button class="btn bp" id="btn-dot-fetch-missing" style="font-size:12px;">未取得を一括取得・保存</button>
-          <button class="btn bs" id="btn-dot-reload" style="font-size:12px;">一覧を更新</button>
           <span id="dot-admin-status" style="font-size:11px;color:var(--ink3);margin-left:4px;"></span>
         </div>
         <div id="dot-master-list" style="font-size:12px;"></div>
@@ -1376,27 +1375,19 @@ async function buildStateBoundaryFromMunicipios(iso, statusEl){
   // ツリー型リダクション: ペアでマージ→結果をペアでマージ→... （各ステップが均等な複雑度）
   var current=rings.slice();
   var round=0;
-  console.log('[DOT merge] rings:', current.length, '最初の ring 頂点数:', current[0]&&current[0][0]&&current[0][0].length);
   while(current.length>1){
     round++;
     var next=[];
     var pairs=Math.ceil(current.length/2);
-    console.log('[DOT merge] round'+round+' 開始 current.length='+current.length);
     for(var pi=0;pi<current.length;pi+=2){
       if(statusEl) statusEl.textContent='マージ中 (round'+round+'): '+(Math.floor(pi/2)+1)+'/'+pairs+'...';
       await new Promise(function(r){setTimeout(r,0);});
       if(pi+1<current.length){
         var a=current[pi], b=current[pi+1];
-        var aVerts=a&&a[0]&&a[0][0]?a[0][0].length:0;
-        var bVerts=b&&b[0]&&b[0][0]?b[0][0].length:0;
-        console.log('[DOT merge] round'+round+' pair '+(Math.floor(pi/2)+1)+': a頂点='+aVerts+' b頂点='+bVerts);
         var m2;
-        var t0=Date.now();
         try{
           m2=polygonClipping.union(a,b);
-          console.log('[DOT merge] round'+round+' pair '+(Math.floor(pi/2)+1)+' 完了 '+(Date.now()-t0)+'ms 結果polygons='+m2.length);
         }catch(e){
-          console.error('[DOT merge] round'+round+' pair '+(Math.floor(pi/2)+1)+' エラー:',e.message);
           m2=a;
         }
         next.push(m2);
@@ -1405,10 +1396,8 @@ async function buildStateBoundaryFromMunicipios(iso, statusEl){
       }
     }
     current=next;
-    console.log('[DOT merge] round'+round+' 完了 next.length='+current.length);
   }
   var final=current[0];
-  console.log('[DOT merge] 最終結果 polygons=', final&&final.length);
   if(!final||!final.length) return null;
   // 簡略化の隙間で複数ポリゴンに分裂した場合は最大面積（=州本体）を採用
   var largest=_largestPolygon(final);
@@ -1417,13 +1406,11 @@ async function buildStateBoundaryFromMunicipios(iso, statusEl){
   var cleanCoords=largest.map(function(ring){return _simplifyRing(ring,tol);});
   var geom={type:'Polygon',coordinates:cleanCoords};
   var jsonSize=JSON.stringify(geom).length;
-  console.log('[DOT merge] 簡略化(tol='+tol+'): 外リング頂点='+cleanCoords[0].length+' JSONサイズ='+Math.round(jsonSize/1024)+'KB');
   while(jsonSize>900000&&tol<0.1){
     tol=Math.round((tol+0.005)*1000)/1000;
     cleanCoords=largest.map(function(ring){return _simplifyRing(ring,tol);});
     geom={type:'Polygon',coordinates:cleanCoords};
     jsonSize=JSON.stringify(geom).length;
-    console.log('[DOT merge] 再簡略化(tol='+tol+'): 外リング頂点='+cleanCoords[0].length+' JSONサイズ='+Math.round(jsonSize/1024)+'KB');
   }
   return geom;
 }
@@ -1529,10 +1516,9 @@ async function loadDotMasterList(){
     var curState='';
     // 操作列は常に表示（修正ボタンのため）
     var html='<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-    html+='<colgroup><col style="width:84px"><col><col style="width:36px"><col style="width:62px"></colgroup>'
+    html+='<colgroup><col style="width:84px"><col><col style="width:62px"></colgroup>'
       +'<thead><tr style="background:var(--cream2);"><th style="padding:5px 8px;text-align:left;font-weight:500;">州</th>'
       +'<th style="padding:5px 8px;text-align:left;font-weight:500;">名称 / 検索名</th>'
-      +'<th style="padding:5px 8px;text-align:center;font-weight:500;"></th>'
       +'<th style="padding:5px 8px;text-align:center;font-weight:500;">操作</th>'
       +'</tr></thead><tbody>';
     if(!hasJalMunis&&jalSq){
@@ -1577,24 +1563,13 @@ async function loadDotMasterList(){
         }
       }
 
-      var statusCell=ok
-        ?'<span style="color:#2e7d32;font-weight:600;">✓</span>'
-        :'<span style="color:#b03020;font-weight:600;">✗</span>';
-      var actionCell;
-      if(ok&&e.entryType!=='stateBoundary'&&!e.isJalMuni){
-        // 取得済み: 修正ボタン（上書き再取得）
-        actionCell='<button class="btn bs sm" style="font-size:10px;padding:2px 7px;" data-dot-fix="'+ei+'">修正</button>';
-      } else if(!ok&&!e.isJalMuni){
-        // 未取得: 通常取得ボタン
-        actionCell='<button class="btn bs sm" style="font-size:10px;padding:2px 7px;" data-dot-fetch="'+ei+'">取得</button>';
-      } else {
-        actionCell='';
-      }
+      var actionCell=(!ok&&!e.isJalMuni)
+        ?'<button class="btn bs sm" style="font-size:10px;padding:2px 7px;" data-dot-fetch="'+ei+'">取得</button>'
+        :'';
 
       html+='<tr style="border-bottom:1px solid var(--cream3);'+(ok?'':'background:rgba(176,48,32,.03)')+'">'
         +'<td style="padding:4px 8px;vertical-align:middle;white-space:nowrap;">'+stateCell+'</td>'
         +'<td style="padding:4px 8px;vertical-align:middle;">'+labelCell+'</td>'
-        +'<td style="padding:4px 8px;text-align:center;vertical-align:middle;">'+statusCell+'</td>'
         +'<td style="padding:4px 8px;text-align:center;vertical-align:middle;">'+actionCell+'</td>'
         +'</tr>';
     });
@@ -1607,19 +1582,6 @@ async function loadDotMasterList(){
         var inp=el.querySelector('#dot-n-'+ei);
         var searchName=inp?inp.value.trim():null;
         fetchAndSaveDotEntry(btn,entries[ei],searchName);
-      });
-    });
-
-    // 修正ボタン: 新しい検索名でOverpassから再取得（上書き）
-    el.querySelectorAll('[data-dot-fix]').forEach(function(btn){
-      var ei=parseInt(btn.dataset.dotFix);
-      btn.addEventListener('click',function(){
-        var e=entries[ei];
-        var d=fetchedMap[e.docId];
-        var cur=(d&&d.name)||e.name||e.sq.state||'';
-        var newName=prompt('Overpass検索名を入力（現在: '+cur+'）\n※OSMの正式地名に合わせてください:', cur);
-        if(newName===null) return;
-        fetchAndSaveDotEntry(btn, e, newName.trim()||cur);
       });
     });
 
@@ -1664,7 +1626,6 @@ async function fetchAndSaveDotEntry(btn,entry,searchName){
   }
 }
 
-g('btn-dot-reload').addEventListener('click',function(){loadDotMasterList();});
 
 g('btn-dot-fetch-missing').addEventListener('click',async function(){
   // Firestoreのスナップを再取得してエントリを構築
