@@ -10,7 +10,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/osmtogeojson@3.0.0-beta.5/osmtogeojson.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+<script src="https://unpkg.com/polygon-clipping@0.15.7/dist/polygon-clipping.umd.min.js"></script>
 <script src="/auth-role.js"></script>
 
 <script>
@@ -1307,29 +1307,30 @@ async function overpassFetchAdm(query,timeoutMs){
   throw lastErr;
 }
 
-// Firestore の municipio ポリゴンを turf で全マージして州境界を生成
+// Firestore の municipio ポリゴンを polygon-clipping で全マージして州境界を生成
 async function buildStateBoundaryFromMunicipios(iso, statusEl){
   var prefix=iso+'_municipio_';
   if(statusEl) statusEl.textContent='Firestoreから自治区データを読み込み中...';
   var snap=await db.collection('dotMunicipios').get();
-  var features=[];
+  var rings=[];
   snap.docs.forEach(function(doc){
     if(!doc.id.startsWith(prefix)) return;
     var d=doc.data();
     if(!d.geomJson) return;
     try{
       var g=JSON.parse(d.geomJson);
-      if(g&&(g.type==='Polygon'||g.type==='MultiPolygon')) features.push(turf.feature(g));
+      if(g.type==='Polygon') rings.push(g.coordinates);
+      else if(g.type==='MultiPolygon') g.coordinates.forEach(function(c){rings.push(c);});
     }catch(e){}
   });
-  if(!features.length) return null;
-  if(statusEl) statusEl.textContent='自治区ポリゴンをマージ中（'+features.length+'件）...';
-  var merged=features[0];
-  for(var i=1;i<features.length;i++){
-    if(statusEl&&i%20===0) statusEl.textContent='マージ中: '+(i+1)+'/'+features.length+'...';
-    try{ merged=turf.union(merged,features[i]); }catch(e){}
-  }
-  return merged&&merged.geometry?merged.geometry:null;
+  if(!rings.length) return null;
+  if(statusEl) statusEl.textContent='自治区ポリゴンをマージ中（'+rings.length+'件）...';
+  // polygon-clipping.union は全ポリゴンを一括処理（turf より堅牢）
+  var result=polygonClipping.union(rings[0],rings.slice(1));
+  if(!result||!result.length) return null;
+  return result.length===1
+    ?{type:'Polygon',coordinates:result[0]}
+    :{type:'MultiPolygon',coordinates:result};
 }
 
 // searchName: ユーザーが編集した検索名（省略時は entry.name を使用）
