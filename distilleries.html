@@ -135,7 +135,13 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
   <button id="btn-labels" class="ctrl-btn" onclick="toggleLabels()">名前 OFF</button>
   <button id="btn-topo" class="ctrl-btn" onclick="toggleTopo()">地形 OFF</button>
   <button id="btn-color-mode" class="ctrl-btn" onclick="toggleColorMode()">色: 地区</button>
-  <button id="btn-dot" class="ctrl-btn" onclick="toggleDOT()">DOT境界</button>
+  <label style="font-size:10px;color:var(--ink2);white-space:nowrap;">境界</label>
+  <select id="sel-dot" class="ctrl-btn" onchange="onDotSelChange(this.value)" style="cursor:pointer;">
+    <option value="none">なし</option>
+    <option value="state">州境界</option>
+    <option value="municipio">自治区境界</option>
+    <option value="all">全境界</option>
+  </select>
   <span id="dot-opacity-ctrl" style="display:none;align-items:center;gap:3px;font-size:10px;color:var(--ink3);">
     <label>透過</label>
     <input type="range" id="dot-opacity-range" min="0" max="100" step="5" value="10" style="width:70px;cursor:pointer;vertical-align:middle;">
@@ -721,98 +727,96 @@ function dotLayerStyle(f){
   return {color:c,weight:0.6,fillColor:c,fillOpacity:fo,opacity:0.7};
 }
 
-async function toggleDOT(){
-  var btn=document.getElementById('btn-dot');
-  if(dotLayer){
-    map.removeLayer(dotLayer); dotLayer=null; dotGJ=null; dotLayerMap={};
-    btn.classList.remove('on'); btn.textContent='DOT境界';
+async function onDotSelChange(mode){
+  var sel=document.getElementById('sel-dot');
+  if(dotLayer){ map.removeLayer(dotLayer); dotLayer=null; dotLayerMap={}; }
+  if(mode==='none'){
+    dotGJ=null;
     var oc=document.getElementById('dot-opacity-ctrl'); if(oc) oc.style.display='none';
     document.getElementById('dot-sp').classList.remove('open');
     var dd=document.getElementById('dot-desc'); if(dd) dd.style.display='none';
     buildStatusPanel(); updateLegend(); return;
   }
-  if(dotLoading) return;
-  dotLoading=true; btn.disabled=true; btn.textContent='読み込み中...';
-  try{
-    var snap=await db.collection('dotMunicipios').get();
-    dotFirestoreSnap=snap;
-    dotFetchStatus=deriveDotFetchStatusFromFirestore(snap);
-
-    // 透過度設定を読み込んでスライダーに反映
-    snap.docs.forEach(function(doc){
-      if(doc.id==='_config'){
-        var s=doc.data();
-        if(typeof s.fillOpacity==='number'){ dotFillOpacity=s.fillOpacity; _syncOpacitySlider(s.fillOpacity); }
-      }
-    });
-    var oc=document.getElementById('dot-opacity-ctrl'); if(oc) oc.style.display='flex';
-
-    // stateLevel州で municipio_ ドキュメントが存在する場合は dotState をスキップ
-    var stateLevelMuniIsos=new Set();
-    snap.docs.forEach(function(doc){
-      var m=doc.id.match(/^([^_]+-[^_]+)_municipio_/);
-      if(m){
-        var sq=DOT_STATES.find(function(s){return s.stateLevel&&s.iso===m[1];});
-        if(sq) stateLevelMuniIsos.add(m[1]);
-      }
-    });
-
-    var features=[];
-    snap.docs.forEach(function(doc){
-      var d=doc.data(); if(!d.geomJson) return;
-      try{
-        var geom=JSON.parse(d.geomJson);
-        // dotState/stateBoundaryポリゴンのホール（内側リング）を除去
-        // DP簡略化の隙間から生成された穴の境界線が太線ゴミとして描画されるのを防ぐ
-        if((d.entryType==='dotState'||d.entryType==='stateBoundary')&&geom.type==='Polygon'&&geom.coordinates.length>1){
-          geom={type:'Polygon',coordinates:[geom.coordinates[0]]};
+  if(!dotGJ){
+    if(dotLoading) return;
+    dotLoading=true; if(sel) sel.disabled=true;
+    try{
+      var snap=await db.collection('dotMunicipios').get();
+      dotFirestoreSnap=snap;
+      dotFetchStatus=deriveDotFetchStatusFromFirestore(snap);
+      snap.docs.forEach(function(doc){
+        if(doc.id==='_config'){
+          var s=doc.data();
+          if(typeof s.fillOpacity==='number'){ dotFillOpacity=s.fillOpacity; _syncOpacitySlider(s.fillOpacity); }
         }
-        var nm=d.entryType==='municipio'?d.name:(d.entryType==='dotState'?(d.name||d.state):null);
-        var mOrig=doc.id.match(/_municipio_(.+)$/);
-        var mapKey=mOrig?(mOrig[1].replace(/_/g,' ')):(d.entryType==='dotState'?d.state:null);
-        // dotStateかつmunicipio存在→州外枠線として表示（塗りなし）
-        var isOutline=d.entryType==='stateBoundary'||(d.entryType==='dotState'&&stateLevelMuniIsos.has(d.iso));
-        features.push({type:'Feature',geometry:geom,properties:{
-          _dotColor:d.color,
-          _municipioName:mapKey,
-          _isStateOutline:isOutline,
-          _isDotState:d.entryType==='dotState'&&!stateLevelMuniIsos.has(d.iso),
-          _displayName:nm,
-          _mapKey:mapKey
-        }});
-      }catch(e){}
-    });
-
-    dotGJ={type:'FeatureCollection',features:features};
-    if(features.length){
-      dotLayerMap={};
-      dotLayer=L.geoJSON(dotGJ,{
-        filter:function(f){ var t=f.geometry&&f.geometry.type; return t&&t!=='Point'&&t!=='MultiPoint'; },
-        style:dotLayerStyle,
-        onEachFeature:function(f,layer){
-          var nm=f.properties&&f.properties._displayName;
-          var mk=f.properties&&f.properties._mapKey;
-          if(nm) layer.bindPopup('<div style="font-family:var(--sans);padding:4px 6px;font-size:13px;font-weight:500;">'+nm+'</div>',{maxWidth:200});
-          if(mk){
-            dotLayerMap[mk]=layer;
-            layer.on('click',function(){dotHighlightPanelEntry(mk);});
+      });
+      var stateLevelMuniIsos=new Set();
+      snap.docs.forEach(function(doc){
+        var m=doc.id.match(/^([^_]+-[^_]+)_municipio_/);
+        if(m){
+          var sq=DOT_STATES.find(function(s){return s.stateLevel&&s.iso===m[1];});
+          if(sq) stateLevelMuniIsos.add(m[1]);
+        }
+      });
+      var features=[];
+      snap.docs.forEach(function(doc){
+        var d=doc.data(); if(!d.geomJson) return;
+        try{
+          var geom=JSON.parse(d.geomJson);
+          if((d.entryType==='dotState'||d.entryType==='stateBoundary')&&geom.type==='Polygon'&&geom.coordinates.length>1){
+            geom={type:'Polygon',coordinates:[geom.coordinates[0]]};
           }
-        }
-      }).addTo(map);
-      btn.classList.add('on'); btn.textContent='DOT境界 ON';
-      var oc2=document.getElementById('dot-opacity-ctrl'); if(oc2) oc2.style.display='flex';
-    } else {
-      btn.textContent='DOT境界';
-      var oc2=document.getElementById('dot-opacity-ctrl'); if(oc2) oc2.style.display='none';
+          var nm=d.entryType==='municipio'?d.name:(d.entryType==='dotState'?(d.name||d.state):null);
+          var mOrig=doc.id.match(/_municipio_(.+)$/);
+          var mapKey=mOrig?(mOrig[1].replace(/_/g,' ')):(d.entryType==='dotState'?d.state:null);
+          var isOutline=d.entryType==='stateBoundary'||(d.entryType==='dotState'&&stateLevelMuniIsos.has(d.iso));
+          features.push({type:'Feature',geometry:geom,properties:{
+            _dotColor:d.color,_municipioName:mapKey,
+            _isStateOutline:isOutline,
+            _isDotState:d.entryType==='dotState'&&!stateLevelMuniIsos.has(d.iso),
+            _displayName:nm,_mapKey:mapKey
+          }});
+        }catch(e){}
+      });
+      dotGJ={type:'FeatureCollection',features:features};
+    }catch(e){
+      alert('DOT境界の読み込みに失敗しました:\n'+e.message);
+      if(sel){ sel.value='none'; sel.disabled=false; } dotLoading=false;
+      buildStatusPanel(); updateLegend(); return;
+    }finally{
+      dotLoading=false; if(sel) sel.disabled=false;
     }
-    buildStatusPanel();
-    updateLegend();
-  }catch(e){
-    alert('DOT境界の読み込みに失敗しました:\n'+e.message);
-    btn.textContent='DOT境界';
-  }finally{
-    btn.disabled=false; dotLoading=false;
   }
+  _rebuildDotLayer(mode);
+}
+
+function _rebuildDotLayer(mode){
+  if(dotLayer){ map.removeLayer(dotLayer); dotLayer=null; dotLayerMap={}; }
+  if(!dotGJ) return;
+  dotLayerMap={};
+  dotLayer=L.geoJSON(dotGJ,{
+    filter:function(f){
+      var t=f.geometry&&f.geometry.type;
+      if(!t||t==='Point'||t==='MultiPoint') return false;
+      var p=f.properties||{};
+      var isState=p._isStateOutline||p._isDotState;
+      if(mode==='state') return !!isState;
+      if(mode==='municipio') return !isState;
+      return true;
+    },
+    style:dotLayerStyle,
+    onEachFeature:function(f,layer){
+      var nm=f.properties&&f.properties._displayName;
+      var mk=f.properties&&f.properties._mapKey;
+      if(nm) layer.bindPopup('<div style="font-family:var(--sans);padding:4px 6px;font-size:13px;font-weight:500;">'+nm+'</div>',{maxWidth:200});
+      if(mk){
+        dotLayerMap[mk]=layer;
+        layer.on('click',function(){dotHighlightPanelEntry(mk);});
+      }
+    }
+  }).addTo(map);
+  var oc=document.getElementById('dot-opacity-ctrl'); if(oc) oc.style.display='flex';
+  buildStatusPanel(); updateLegend();
 }
 
 // ── DOT境界ステータスパネル ──────────────────────────────────────
