@@ -1307,6 +1307,24 @@ async function overpassFetchAdm(query,timeoutMs){
   throw lastErr;
 }
 
+// 外リングの面積（shoelace）
+function _ringArea(ring){
+  var a=0;
+  for(var i=0;i<ring.length-1;i++) a+=ring[i][0]*ring[i+1][1]-ring[i+1][0]*ring[i][1];
+  return Math.abs(a)/2;
+}
+// MultiPolygon の座標配列から最大面積のポリゴンを選択
+function _largestPolygon(coords){
+  if(!coords||!coords.length) return null;
+  if(coords.length===1) return coords[0];
+  var best=coords[0], bestA=_ringArea(coords[0][0]||[]);
+  for(var i=1;i<coords.length;i++){
+    var a=_ringArea(coords[i][0]||[]);
+    if(a>bestA){bestA=a;best=coords[i];}
+  }
+  return best;
+}
+
 // ダグラス・ポーカー簡略化（表示用途で十分な精度を保ちつつ頂点数を削減）
 function _dpSimplify(pts, tol){
   if(pts.length<=2) return pts;
@@ -1387,10 +1405,12 @@ async function buildStateBoundaryFromMunicipios(iso, statusEl){
     console.log('[DOT merge] round'+round+' 完了 next.length='+current.length);
   }
   var final=current[0];
+  console.log('[DOT merge] 最終結果 polygons=', final&&final.length);
   if(!final||!final.length) return null;
-  return final.length===1
-    ?{type:'Polygon',coordinates:final[0]}
-    :{type:'MultiPolygon',coordinates:final};
+  // 簡略化の隙間で複数ポリゴンに分裂した場合は最大面積（=州本体）を採用
+  var largest=_largestPolygon(final);
+  if(!largest) return null;
+  return {type:'Polygon',coordinates:largest};
 }
 
 // searchName: ユーザーが編集した検索名（省略時は entry.name を使用）
