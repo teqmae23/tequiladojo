@@ -1307,6 +1307,30 @@ async function overpassFetchAdm(query,timeoutMs){
   throw lastErr;
 }
 
+// ダグラス・ポーカー簡略化（表示用途で十分な精度を保ちつつ頂点数を削減）
+function _dpSimplify(pts, tol){
+  if(pts.length<=2) return pts;
+  var p1=pts[0],p2=pts[pts.length-1];
+  var dx=p2[0]-p1[0],dy=p2[1]-p1[1],len=Math.sqrt(dx*dx+dy*dy)||1;
+  var maxD=0,idx=0;
+  for(var i=1;i<pts.length-1;i++){
+    var d=Math.abs(dy*(pts[i][0]-p1[0])-dx*(pts[i][1]-p1[1]))/len;
+    if(d>maxD){maxD=d;idx=i;}
+  }
+  if(maxD>tol){
+    var l=_dpSimplify(pts.slice(0,idx+1),tol);
+    var r=_dpSimplify(pts.slice(idx),tol);
+    return l.slice(0,-1).concat(r);
+  }
+  return [p1,p2];
+}
+function _simplifyRing(ring, tol){
+  var s=_dpSimplify(ring,tol);
+  if(s.length<4) return ring;
+  if(s[0][0]!==s[s.length-1][0]||s[0][1]!==s[s.length-1][1]) s.push(s[0]);
+  return s;
+}
+
 // Firestore の municipio ポリゴンを polygon-clipping で全マージして州境界を生成
 async function buildStateBoundaryFromMunicipios(iso, statusEl){
   var prefix=iso+'_municipio_';
@@ -1319,8 +1343,11 @@ async function buildStateBoundaryFromMunicipios(iso, statusEl){
     if(!d.geomJson) return;
     try{
       var g=JSON.parse(d.geomJson);
-      if(g.type==='Polygon') rings.push(g.coordinates);
-      else if(g.type==='MultiPolygon') g.coordinates.forEach(function(c){rings.push(c);});
+      var TOL=0.005; // ≈500m 簡略化（表示用途で十分）
+      if(g.type==='Polygon') rings.push(g.coordinates.map(function(r){return _simplifyRing(r,TOL);}));
+      else if(g.type==='MultiPolygon') g.coordinates.forEach(function(c){
+        rings.push(c.map(function(r){return _simplifyRing(r,TOL);}));
+      });
     }catch(e){}
   });
   if(!rings.length) return null;
