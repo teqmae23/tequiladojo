@@ -298,6 +298,15 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         </div>
         <div id="geo-preview-box" style="display:none;max-height:480px;overflow-y:auto;font-size:12px;"></div>
       </div>
+      <div class="card" style="padding:18px 20px;margin-top:16px;border-left:3px solid var(--red);">
+        <div style="font-weight:600;margin-bottom:4px;">重複座標クリア</div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:12px;">同一座標に複数件集まっている蒸留所を検出し、座標・標高・mapUrlを一括削除します（ジオコーディング再実行のため）。</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+          <button class="btn bd" id="btn-find-dup-coords">重複座標を検索</button>
+          <span id="dup-coords-status" style="font-size:12px;color:var(--ink3);"></span>
+        </div>
+        <div id="dup-coords-result" style="display:none;font-size:12px;"></div>
+      </div>
     </div>
 
     <!-- マップ図形 -->
@@ -2043,6 +2052,67 @@ async function geoManualRegister(idx) {
     if (statusEl) { statusEl.textContent = "エラー: " + e.message; statusEl.style.color = "var(--red)"; }
     alert("登録エラー: " + e.message);
   }
+}
+
+// ── 重複座標クリア ──────────────────────────────────────────────
+g("btn-find-dup-coords").addEventListener("click", async function(){
+  var btn=this, statusEl=g("dup-coords-status"), resultEl=g("dup-coords-result");
+  btn.disabled=true; statusEl.textContent="検索中…"; statusEl.style.color="var(--ink3)";
+  resultEl.style.display="none";
+  try {
+    var snap=await db.collection("distilleries").get();
+    var groups={};
+    snap.docs.forEach(function(d){
+      var dat=d.data();
+      if(!dat.latitude||!dat.longitude) return;
+      var key=parseFloat(dat.latitude).toFixed(5)+","+parseFloat(dat.longitude).toFixed(5);
+      if(!groups[key]) groups[key]={lat:dat.latitude,lng:dat.longitude,items:[]};
+      groups[key].items.push({id:d.id,nom:dat.nom||d.id,nomJa:dat.nomJa||""});
+    });
+    var dups=Object.keys(groups).filter(function(k){return groups[k].items.length>=2;})
+      .sort(function(a,b){return groups[b].items.length-groups[a].items.length;})
+      .map(function(k){return Object.assign({key:k},groups[k]);});
+    if(!dups.length){
+      statusEl.textContent="重複なし（全件ユニーク）"; statusEl.style.color="var(--teal)";
+      btn.disabled=false; return;
+    }
+    statusEl.textContent=dups.length+"グループ（"+dups.reduce(function(s,g){return s+g.items.length;},0)+"件）検出";
+    statusEl.style.color="var(--red)";
+    resultEl.innerHTML=dups.map(function(gr,gi){
+      return '<div style="border:1px solid var(--cream3);border-radius:5px;padding:8px 10px;margin-bottom:8px;">'
+        +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">'
+        +'<span style="font-family:var(--mono);color:var(--ink3);">'+gr.lat.toFixed(5)+', '+gr.lng.toFixed(5)+'</span>'
+        +'<span style="color:var(--red);font-weight:600;">'+gr.items.length+'件</span>'
+        +'<button class="btn bd" style="font-size:11px;padding:2px 8px;" onclick="clearDupGroup('+gi+')">座標・mapUrlをクリア</button>'
+        +'</div>'
+        +'<div style="font-size:11px;color:var(--ink2);max-height:80px;overflow-y:auto;">'
+        +gr.items.map(function(it){return 'NOM '+it.nom+(it.nomJa?' '+it.nomJa:'');}).join('　')
+        +'</div></div>';
+    }).join('');
+    resultEl._dups=dups;
+    resultEl.style.display="block";
+  } catch(e) {
+    statusEl.textContent="エラー: "+e.message; statusEl.style.color="var(--red)";
+  }
+  btn.disabled=false;
+});
+
+async function clearDupGroup(gi){
+  var resultEl=g("dup-coords-result");
+  var gr=resultEl._dups&&resultEl._dups[gi]; if(!gr) return;
+  if(!confirm(gr.items.length+"件の座標・標高・mapUrlをクリアします。よろしいですか？")) return;
+  try {
+    for(var i=0;i<gr.items.length;i+=499){
+      var batch=db.batch();
+      gr.items.slice(i,i+499).forEach(function(it){
+        batch.update(db.collection("distilleries").doc(it.id),{latitude:null,longitude:null,elevation:null,mapUrl:null});
+      });
+      await batch.commit();
+    }
+    toast("✓ "+gr.items.length+"件の座標をクリアしました");
+    gr.items=[];
+    g("btn-find-dup-coords").click();
+  } catch(e) { alert("エラー: "+e.message); }
 }
 
 async function seedOverlaysIfEmpty(){
