@@ -97,8 +97,8 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 .dis-label.leaflet-tooltip-right::before{border-right-color:var(--cream3);}
 #map.labels-off .dis-label{display:none!important;}
 
-/* ── Scale control ── */
-.leaflet-control-scale-line{font-size:12px;font-family:var(--mono);padding:2px 6px;border:2px solid var(--ink3);border-top:none;background:rgba(241,239,232,.85);color:var(--ink2);min-width:80px;text-align:center;}
+/* ── Ruler control ── */
+.ruler-ctrl{background:rgba(241,239,232,.9);padding:5px 8px 4px;border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.2);}
 
 /* ── Elevation legend ── */
 .legend-grade{height:10px;width:100px;border-radius:3px;margin-bottom:4px;border:1px solid var(--cream3);}
@@ -215,7 +215,36 @@ var auth=firebase.auth();
 var db=firebase.firestore();
 
 var map=L.map('map',{zoomControl:true}).setView([20.5,-103.5],8);
-L.control.scale({imperial:false,maxWidth:200,position:'bottomleft'}).addTo(map);
+
+L.Control.Ruler=L.Control.extend({
+  options:{position:'bottomleft',maxWidth:200},
+  onAdd:function(map){
+    this._div=L.DomUtil.create('div','ruler-ctrl');
+    L.DomEvent.disableClickPropagation(this._div);
+    this._update();
+    map.on('zoomend moveend',this._update,this);
+    return this._div;
+  },
+  onRemove:function(map){map.off('zoomend moveend',this._update,this);},
+  _nice:function(n){var r=Math.pow(10,Math.floor(Math.log(n)/Math.LN10));return n>=10*r?10*r:n>=5*r?5*r:n>=2*r?2*r:r;},
+  _update:function(){
+    var maxW=this.options.maxWidth,map=this._map;
+    var y=map.getSize().y/2;
+    var maxM=map.containerPointToLatLng([0,y]).distanceTo(map.containerPointToLatLng([maxW,y]));
+    var nice=this._nice(maxM);
+    var pxW=Math.round(maxW*nice/maxM);
+    var label=nice>=1000?(nice/1000)+' km':nice+' m';
+    var ticks='';
+    for(var i=1;i<10;i++){
+      var h=i===5?8:3;
+      ticks+='<i style="position:absolute;bottom:0;left:'+(i*10)+'%;width:1px;height:'+h+'px;background:var(--ink3);transform:translateX(-50%);display:block;"></i>';
+    }
+    this._div.innerHTML=
+      '<div style="position:relative;width:'+pxW+'px;height:10px;border-bottom:2px solid var(--ink2);border-left:2px solid var(--ink2);border-right:2px solid var(--ink2);box-sizing:border-box;">'+ticks+'</div>'
+      +'<div style="display:flex;justify-content:space-between;width:'+pxW+'px;font-family:var(--mono);font-size:10px;color:var(--ink2);margin-top:2px;"><span>0</span><span>'+label+'</span></div>';
+  }
+});
+new L.Control.Ruler().addTo(map);
 
 var _baseLayers={
   topo:L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{
@@ -338,11 +367,22 @@ function flashMarkersByDistrict(districtId){
 function updateLegend(){
   var el=document.getElementById('legend-content'); if(!el) return;
   if(colorMode==='district'){
+    var cnt={};
+    allMarkers.forEach(function(m){
+      var id=DISTRICT_COLORS[m.dis.districtId]?m.dis.districtId:'__other__';
+      cnt[id]=(cnt[id]||0)+1;
+    });
     el.innerHTML=Object.keys(DISTRICT_COLORS).map(function(id){
-      return '<div class="legend-item clickable" onclick="flashMarkersByDistrict(\''+id+'\')">'
-        +'<div class="legend-dot" style="background:'+DISTRICT_COLORS[id]+'"></div>'+DISTRICT_LABELS[id]+'</div>';
-    }).join('')+'<div class="legend-item clickable" onclick="flashMarkersByDistrict(\'other\')">'
-      +'<div class="legend-dot" style="background:#ffffff;border-color:var(--cream3);"></div>その他</div>';
+      return '<div class="legend-item clickable" onclick="flashMarkersByDistrict(\''+id+'\')" style="min-width:160px;">'
+        +'<div class="legend-dot" style="background:'+DISTRICT_COLORS[id]+'"></div>'
+        +'<span style="flex:1;">'+DISTRICT_LABELS[id]+'</span>'
+        +'<span style="font-family:var(--mono);font-size:10px;color:var(--ink3);margin-left:6px;">'+(cnt[id]||0)+'</span>'
+        +'</div>';
+    }).join('')+'<div class="legend-item clickable" onclick="flashMarkersByDistrict(\'other\')" style="min-width:160px;">'
+      +'<div class="legend-dot" style="background:#ffffff;border-color:var(--cream3);"></div>'
+      +'<span style="flex:1;">その他</span>'
+      +'<span style="font-family:var(--mono);font-size:10px;color:var(--ink3);margin-left:6px;">'+(cnt['__other__']||0)+'</span>'
+      +'</div>';
   } else {
     var stops=elevSettings.stops;
     var firstStop=stops&&stops.length?stops[0]:null;
@@ -434,6 +474,8 @@ function buildDistrictFilter(dists){
     var o=document.createElement('option');
     o.value=id; o.textContent=dists[id]; sel.appendChild(o);
   });
+  var other=document.createElement('option');
+  other.value='__other__'; other.textContent='その他（地区不明）'; sel.appendChild(other);
 }
 
 function applyFilters(){
@@ -444,7 +486,7 @@ function applyFilters(){
   var visible=0;
   allMarkers.forEach(function(m){
     var nom=parseInt(m.dis.nom||m.dis.id||0);
-    var show=!distFilter||m.dis.districtId===distFilter;
+    var show=!distFilter||(distFilter==='__other__'?!DISTRICT_COLORS[m.dis.districtId]:m.dis.districtId===distFilter);
     if(salesFilter==='1') show=show&&m.dis.introduced===1;
     if(salesFilter==='2') show=show&&m.dis.salesCategory===0;
     show=show&&nom>=nomFrom&&nom<=nomTo;
@@ -490,8 +532,8 @@ document.getElementById('nom-search').addEventListener('change',function(){
   var nomVal=m[1];
   var found=allMarkers.find(function(mk){ return String(mk.dis.nom||mk.dis.id)===nomVal; });
   if(found){
-    map.flyTo(found.marker.getLatLng(),14,{duration:0.8});
-    setTimeout(function(){ found.marker.openPopup(); },900);
+    map.panTo(found.marker.getLatLng());
+    found.marker.openPopup();
   }
   this.value='';
 });
@@ -542,7 +584,6 @@ function loadData(){
         var distName=dist?dist.districtName:'';
         var marker=L.marker([lat,lng],{icon:makeIcon(getMarkerColor(dis))});
 
-        var sharedNote=n>1?'<div class="p-shared">📌 同所在地に '+n+' 件</div>':'';
         var coordStr=(dis.latitude&&dis.longitude)?dis.latitude.toFixed(5)+', '+dis.longitude.toFixed(5):'';
         var elevStr=dis.elevation!=null?dis.elevation+'m':'—';
         var ammUrl=dis.ammUrl||'';
@@ -550,21 +591,33 @@ function loadData(){
           var zoom=map.getZoom();
           var mapUrl=dis.mapUrl||(dis.latitude&&dis.longitude?'https://maps.google.com/@'+dis.latitude+','+dis.longitude+','+zoom+'z':'');
           var nomId=dis.nom||dis.id;
+          var sharedList=n>1
+            ?'<div style="margin-top:5px;border-top:1px solid var(--cream3);padding-top:4px;">'
+              +'<div class="p-shared" style="margin-bottom:3px;">📌 同所在地 '+n+'件</div>'
+              +'<div style="max-height:120px;overflow-y:auto;">'
+              +group.items.map(function(g){
+                var gid=g.nom||g.id;
+                var active=gid===nomId;
+                return '<a href="distillery.html?nom='+encodeURIComponent(gid)+'" style="display:block;font-size:11px;padding:1px 0;text-decoration:none;color:'+(active?'var(--gold-d)':'var(--teal)')+';'+(active?'font-weight:500;':'')+'">'
+                  +'NOM '+gid+' '+(g.nomJa||g.nomEs||'')+'</a>';
+              }).join('')
+              +'</div></div>'
+            :'';
           return '<div class="dis-pop">'
             +'<div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin-bottom:2px;">'
             +'<div class="p-nom" style="margin-bottom:0;">NOM '+nomId+'</div>'
-            +(mapUrl?'<a href="'+mapUrl+'" target="_blank" style="font-size:10px;color:var(--teal);text-decoration:none;white-space:nowrap;flex-shrink:0;">🗺 MAP</a>':'')
-            +(ammUrl?'<a href="'+ammUrl+'" target="_blank" style="font-size:10px;color:var(--gold-d);text-decoration:none;white-space:nowrap;flex-shrink:0;">📋 AMM</a>':'')
+            +(mapUrl?'<a href="'+mapUrl+'" target="_blank" rel="noopener noreferrer" style="font-size:10px;color:var(--teal);text-decoration:none;white-space:nowrap;flex-shrink:0;">🗺 MAP</a>':'')
+            +(ammUrl?'<a href="'+ammUrl+'" target="_blank" rel="noopener noreferrer" style="font-size:10px;color:var(--gold-d);text-decoration:none;white-space:nowrap;flex-shrink:0;">📋 AMM</a>':'')
             +(isAdmin?'<a href="admin_distillery.html?nom='+encodeURIComponent(nomId)+'" style="font-size:10px;color:var(--red);text-decoration:none;white-space:nowrap;flex-shrink:0;margin-left:auto;">✏️ 編集</a>':'')
             +'</div>'
             +'<div class="p-ja">'+(dis.nomJa||'—')+'</div>'
             +'<div class="p-es">'+(dis.nomEs||'—')+'</div>'
             +((locName||distName)?'<div class="p-loc">📍 '+[locName,distName].filter(Boolean).join(' / ')+'</div>':'')
             +(coordStr?'<div class="p-loc" style="font-family:var(--mono);font-size:10px;">'+coordStr+(dis.elevation!=null?' / ▲'+elevStr:'')+'</div>':'')
-            +sharedNote
+            +sharedList
             +'<a class="p-btn" href="distillery.html?nom='+encodeURIComponent(nomId)+'">詳細を見る →</a>'
             +'</div>';
-        },{maxWidth:260,minWidth:200});
+        },{maxWidth:280,minWidth:200});
         if(dis.nomEs) marker.bindTooltip(dis.nomEs,{permanent:true,direction:'right',offset:[6,0],className:'dis-label'});
 
         allMarkers.push({marker:marker,dis:dis});
@@ -579,10 +632,10 @@ function loadData(){
       ['nom-from','nom-to'].forEach(function(id){
         var el=document.getElementById(id);
         el.min=_nomMin; el.max=_nomMax;
-        el.value=id==='nom-from'?_nomMin:_nomMax;
+        el.value=id==='nom-from'?Math.max(_nomMin,1000):Math.min(_nomMax,2000);
       });
-      document.getElementById('nom-from-val').textContent=_nomMin;
-      document.getElementById('nom-to-val').textContent=_nomMax;
+      document.getElementById('nom-from-val').textContent=Math.max(_nomMin,1000);
+      document.getElementById('nom-to-val').textContent=Math.min(_nomMax,2000);
       _updateNomFill();
     }
 
