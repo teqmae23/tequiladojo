@@ -1720,6 +1720,20 @@ g("btn-fetch-elevation-all").addEventListener("click", async function(){
 var geoToRegister = []; // プレビュー後に登録する対象
 var geoResults = [];   // 全結果（エラー行の手動登録用）
 
+// メキシコの法人格サフィックス（S.A. DE C.V. 等）を除去してNominatim用クエリを作成
+function cleanCrtName(name) {
+  if (!name) return name;
+  var s = name
+    // カンマ以降に法人格サフィックスが続くパターン
+    .replace(/,\s*(S\.?\s*A\.?\s*P\.?\s*I\.?|S\.?\s*A\.?|S\.?\s*DE\s+R\.?\s*L\.?|S\.?\s*P\.?\s*R\.?)\b.*/i, '')
+    // スペース区切りで法人格サフィックスが続くパターン
+    .replace(/\s+(S\.?\s*A\.?\s*P\.?\s*I\.?|S\.?\s*A\.?)\s+DE\s+C\.?\s*V\.?.*/i, '')
+    .replace(/\s+S\.?\s*DE\s+R\.?\s*L\.?\s+DE\s+C\.?\s*V\.?.*/i, '')
+    .replace(/\s+S\.?\s*P\.?\s*R\.?\s+DE\s+R\.?\s*L\.?.*/i, '')
+    .trim();
+  return s || name; // 全部消えたら元に戻す
+}
+
 async function nominatimSearch(query) {
   var res = await fetch(
     "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=mx&q=" +
@@ -1759,19 +1773,20 @@ g("btn-geo-preview").addEventListener("click", async function(){
       g("geo-prog-txt").textContent = (i+1) + " / " + total + " — " + (dis.nomEs || dis.nom || dis.id);
       g("geo-prog-bar").style.width = Math.round((i+1)/total*100) + "%";
 
-      // Nominatim でジオコーディング（CRT名 → CRT住所の順でフォールバック）
+      // Nominatim でジオコーディング（法人格除去CRT名 → CRT住所の順でフォールバック）
       var lat = null, lng = null, geoMethod = null;
+      var baseName = dis.crtEmpresa || dis.nomEs || dis.fullName || "";
+      var cleanName = cleanCrtName(baseName);
       try {
-        // 1st: CRT名
-        g("geo-prog-txt").textContent = (i+1) + " / " + total + " — " + (dis.crtEmpresa || dis.nomEs || dis.nom) + " [CRT名]";
-        var q1 = (dis.crtEmpresa || dis.nomEs || dis.fullName || "") + ", Mexico";
-        var r1 = await nominatimSearch(q1);
+        // 1st: 法人格サフィックスを除去したCRT名
+        g("geo-prog-txt").textContent = (i+1) + " / " + total + " — " + cleanName + " [CRT名]";
+        var r1 = await nominatimSearch(cleanName + ", Mexico");
         if (r1) { lat = r1.lat; lng = r1.lng; geoMethod = "CRT名"; }
 
         // 2nd: CRT住所（CRT名で見つからなかった場合）
         if (lat === null && dis.crtDireccion) {
           await new Promise(function(res){ setTimeout(res, 1100); });
-          g("geo-prog-txt").textContent = (i+1) + " / " + total + " — " + (dis.crtEmpresa || dis.nom) + " [CRT住所で再試行]";
+          g("geo-prog-txt").textContent = (i+1) + " / " + total + " — " + cleanName + " [CRT住所で再試行]";
           var r2 = await nominatimSearch(dis.crtDireccion);
           if (r2) { lat = r2.lat; lng = r2.lng; geoMethod = "CRT住所"; }
         }
