@@ -1718,6 +1718,7 @@ g("btn-fetch-elevation-all").addEventListener("click", async function(){
 
 // ── Google Maps リンク・座標 一括設定 ────────────────────────
 var geoToRegister = []; // プレビュー後に登録する対象
+var geoResults = [];   // 全結果（エラー行の手動登録用）
 
 g("btn-geo-preview").addEventListener("click", async function(){
   var btn = this;
@@ -1788,6 +1789,7 @@ g("btn-geo-preview").addEventListener("click", async function(){
     }
 
     // 登録対象
+    geoResults = results;
     geoToRegister = results.filter(function(r){ return !r.error; });
 
     // ── プレビュー描画 ─────────────────────────────────────────
@@ -1807,19 +1809,32 @@ g("btn-geo-preview").addEventListener("click", async function(){
       html += '<div style="font-weight:600;font-size:11px;color:var(--ink2);margin-bottom:6px;">登録予定（' + results.length + '件）</div>';
       html += '<div style="overflow-x:auto;margin-bottom:14px;"><table class="data-table">'
         + '<thead><tr><th>NOM</th><th>蒸留所名(A)</th><th>緯度</th><th>経度</th><th>標高(m)</th><th>状態</th></tr></thead><tbody>';
-      results.forEach(function(r){
+      results.forEach(function(r, idx){
         var dis = r.dis;
         if (r.error) {
-          html += '<tr style="opacity:.5;">'
+          var nameQ = encodeURIComponent((dis.crtEmpresa||dis.nomEs||'') + ', Mexico');
+          var addrQ = dis.crtDireccion ? encodeURIComponent(dis.crtDireccion) : '';
+          html += '<tr id="geo-row-' + idx + '">'
             + '<td class="mono">' + esc(dis.nom||dis.id) + '</td>'
-            + '<td>' + esc(dis.nomEs||"—") + '</td>'
-            + '<td colspan="3" style="color:var(--red);font-size:11px;">ジオコーディング失敗</td>'
-            + '<td><span style="color:var(--red);font-size:11px;">エラー</span></td>'
+            + '<td style="font-size:11px;">' + esc(dis.crtEmpresa||dis.nomEs||"—") + '</td>'
+            + '<td colspan="3" style="font-size:11px;padding:6px 8px;">'
+            +   '<div style="color:var(--red);margin-bottom:4px;">ジオコーディング失敗</div>'
+            +   (dis.crtDireccion ? '<div style="color:var(--ink3);margin-bottom:4px;word-break:break-all;">' + esc(dis.crtDireccion) + '</div>' : '')
+            +   '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">'
+            +     '<a href="https://maps.google.com/?q=' + nameQ + '" target="_blank" class="btn bs" style="font-size:10px;padding:2px 7px;text-decoration:none;">CRT名で検索</a>'
+            +     (addrQ ? '<a href="https://maps.google.com/?q=' + addrQ + '" target="_blank" class="btn bs" style="font-size:10px;padding:2px 7px;text-decoration:none;">CRT住所で検索</a>' : '')
+            +   '</div>'
+            +   '<div style="display:flex;gap:4px;align-items:center;">'
+            +     '<input id="geo-manual-url-' + idx + '" type="text" placeholder="正しいmapUrlを貼り付け" style="flex:1;font-size:11px;padding:3px 6px;border:1px solid var(--border2);border-radius:4px;font-family:var(--mono);">'
+            +     '<button onclick="geoManualRegister(' + idx + ')" class="btn bp" style="font-size:11px;white-space:nowrap;padding:3px 8px;">登録</button>'
+            +   '</div>'
+            + '</td>'
+            + '<td><span id="geo-row-status-' + idx + '" style="color:var(--red);font-size:11px;">エラー</span></td>'
             + '</tr>';
         } else {
           html += '<tr>'
             + '<td class="mono">' + esc(dis.nom||dis.id) + '</td>'
-            + '<td>' + esc(dis.nomEs||"—") + '</td>'
+            + '<td>' + esc(dis.crtEmpresa||dis.nomEs||"—") + '</td>'
             + '<td class="mono">' + r.lat.toFixed(5) + '</td>'
             + '<td class="mono">' + r.lng.toFixed(5) + '</td>'
             + '<td class="mono">' + (r.elev !== null ? r.elev : "—") + '</td>'
@@ -1893,6 +1908,53 @@ g("btn-geo-exec").addEventListener("click", async function(){
   btn.disabled = false;
   g("btn-geo-preview").disabled = false;
 });
+
+async function geoManualRegister(idx) {
+  var r = geoResults[idx];
+  if (!r) return;
+  var input = document.getElementById("geo-manual-url-" + idx);
+  var url = (input ? input.value : "").trim();
+  if (!url) { alert("mapUrlを入力してください"); return; }
+
+  var statusEl = document.getElementById("geo-row-status-" + idx);
+  if (statusEl) { statusEl.textContent = "登録中…"; statusEl.style.color = "var(--ink3)"; }
+
+  // lat/lng を URL から抽出（@lat,lng 形式 or ?q=lat,lng 形式）
+  var lat = null, lng = null;
+  var m = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+  if (m) { lat = parseFloat(m[1]); lng = parseFloat(m[2]); }
+  else {
+    m = url.match(/[?&]q=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+    if (m) { lat = parseFloat(m[1]); lng = parseFloat(m[2]); }
+  }
+
+  // 標高取得
+  var elev = null;
+  if (lat !== null && lng !== null) {
+    try {
+      var eRes = await fetch("https://api.open-meteo.com/v1/elevation?latitude=" + lat + "&longitude=" + lng);
+      var eJson = await eRes.json();
+      if (eJson.elevation && eJson.elevation.length) elev = Math.round(eJson.elevation[0]);
+    } catch(e) {}
+  }
+
+  try {
+    var ref = db.collection("distilleries").doc(r.dis.nom || r.dis.id);
+    var update = { mapUrl: url };
+    if (lat !== null) { update.latitude = lat; update.longitude = lng; }
+    if (elev !== null) update.elevation = elev;
+    await ref.update(update);
+
+    if (statusEl) { statusEl.textContent = "✓ 登録済み"; statusEl.style.color = "var(--teal)"; }
+    var row = document.getElementById("geo-row-" + idx);
+    if (row) row.style.opacity = "0.5";
+    if (input) { input.disabled = true; }
+    toast("登録完了: " + (r.dis.crtEmpresa || r.dis.nomEs || r.dis.nom));
+  } catch(e) {
+    if (statusEl) { statusEl.textContent = "エラー: " + e.message; statusEl.style.color = "var(--red)"; }
+    alert("登録エラー: " + e.message);
+  }
+}
 
 async function seedOverlaysIfEmpty(){
   try{
