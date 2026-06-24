@@ -90,6 +90,9 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 /* ── Elevation legend ── */
 .legend-grade{height:10px;width:100px;border-radius:3px;margin-bottom:4px;border:1px solid var(--cream3);}
 .legend-scale{display:flex;justify-content:space-between;font-size:11px;width:100px;color:var(--ink2);}
+.legend-item.clickable{cursor:pointer;border-radius:3px;padding:1px 3px;margin:-1px -3px;}
+.legend-item.clickable:hover{background:rgba(180,140,50,.15);}
+@keyframes markerFlash{0%,100%{box-shadow:0 1px 4px rgba(0,0,0,.45)}40%{box-shadow:0 0 0 5px rgba(200,146,30,.5),0 2px 8px rgba(0,0,0,.5)}}
 
 /* ── DOT境界ステータスパネル ── */
 .dot-sp{position:absolute;top:10px;left:10px;z-index:998;background:rgba(241,239,232,.97);border:1px solid var(--cream3);border-radius:6px;width:268px;max-height:calc(100vh - 130px);overflow-y:auto;font-size:11px;color:var(--ink2);display:none;box-shadow:0 3px 14px rgba(0,0,0,.18);}
@@ -286,12 +289,31 @@ function getMarkerColor(dis){
   if(colorMode==='elevation') return elevationColor(dis.elevation!=null?Number(dis.elevation):null);
   return DISTRICT_COLORS[dis.districtId]||'#c8921e';
 }
+function flashMarkersByDistrict(districtId){
+  var isOther=districtId==='other';
+  var targets=allMarkers.filter(function(m){
+    return isOther?!DISTRICT_COLORS[m.dis.districtId]:(m.dis.districtId===districtId);
+  });
+  if(!targets.length) return;
+  targets.forEach(function(m){
+    var c=getMarkerColor(m.dis);
+    m.marker.setIcon(L.divIcon({
+      html:'<div style="width:13px;height:13px;border-radius:50%;background:'+c+';border:2.5px solid #fff;animation:markerFlash .55s ease 3;box-shadow:0 1px 4px rgba(0,0,0,.45)"></div>',
+      iconSize:[18,18],iconAnchor:[9,9],className:''
+    }));
+  });
+  setTimeout(function(){
+    targets.forEach(function(m){ m.marker.setIcon(makeIcon(getMarkerColor(m.dis))); });
+  },1800);
+}
 function updateLegend(){
   var el=document.getElementById('legend-content'); if(!el) return;
   if(colorMode==='district'){
     el.innerHTML=Object.keys(DISTRICT_COLORS).map(function(id){
-      return '<div class="legend-item"><div class="legend-dot" style="background:'+DISTRICT_COLORS[id]+'"></div>'+DISTRICT_LABELS[id]+'</div>';
-    }).join('')+'<div class="legend-item"><div class="legend-dot" style="background:#c8921e"></div>その他</div>';
+      return '<div class="legend-item clickable" onclick="flashMarkersByDistrict(\''+id+'\')">'
+        +'<div class="legend-dot" style="background:'+DISTRICT_COLORS[id]+'"></div>'+DISTRICT_LABELS[id]+'</div>';
+    }).join('')+'<div class="legend-item clickable" onclick="flashMarkersByDistrict(\'other\')">'
+      +'<div class="legend-dot" style="background:#c8921e"></div>その他</div>';
   } else {
     var stops=elevSettings.stops;
     var firstStop=stops&&stops.length?stops[0]:null;
