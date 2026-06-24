@@ -1720,6 +1720,17 @@ g("btn-fetch-elevation-all").addEventListener("click", async function(){
 var geoToRegister = []; // プレビュー後に登録する対象
 var geoResults = [];   // 全結果（エラー行の手動登録用）
 
+async function nominatimSearch(query) {
+  var res = await fetch(
+    "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=mx&q=" +
+    encodeURIComponent(query),
+    {headers: {"Accept-Language": "es,en", "User-Agent": "TequilaDojoAdmin/1.0"}}
+  );
+  var json = await res.json();
+  if (json && json.length > 0) return {lat: parseFloat(json[0].lat), lng: parseFloat(json[0].lon)};
+  return null;
+}
+
 g("btn-geo-preview").addEventListener("click", async function(){
   var btn = this;
   btn.disabled = true;
@@ -1748,19 +1759,21 @@ g("btn-geo-preview").addEventListener("click", async function(){
       g("geo-prog-txt").textContent = (i+1) + " / " + total + " — " + (dis.nomEs || dis.nom || dis.id);
       g("geo-prog-bar").style.width = Math.round((i+1)/total*100) + "%";
 
-      // Nominatim でジオコーディング
-      var query = (dis.crtEmpresa || dis.nomEs || dis.fullName || "") + ", Mexico";
-      var lat = null, lng = null;
+      // Nominatim でジオコーディング（CRT名 → CRT住所の順でフォールバック）
+      var lat = null, lng = null, geoMethod = null;
       try {
-        var geoRes = await fetch(
-          "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=mx&q=" +
-          encodeURIComponent(query),
-          {headers: {"Accept-Language": "es,en", "User-Agent": "TequilaDojoAdmin/1.0"}}
-        );
-        var geoJson = await geoRes.json();
-        if (geoJson && geoJson.length > 0) {
-          lat = parseFloat(geoJson[0].lat);
-          lng = parseFloat(geoJson[0].lon);
+        // 1st: CRT名
+        g("geo-prog-txt").textContent = (i+1) + " / " + total + " — " + (dis.crtEmpresa || dis.nomEs || dis.nom) + " [CRT名]";
+        var q1 = (dis.crtEmpresa || dis.nomEs || dis.fullName || "") + ", Mexico";
+        var r1 = await nominatimSearch(q1);
+        if (r1) { lat = r1.lat; lng = r1.lng; geoMethod = "CRT名"; }
+
+        // 2nd: CRT住所（CRT名で見つからなかった場合）
+        if (lat === null && dis.crtDireccion) {
+          await new Promise(function(res){ setTimeout(res, 1100); });
+          g("geo-prog-txt").textContent = (i+1) + " / " + total + " — " + (dis.crtEmpresa || dis.nom) + " [CRT住所で再試行]";
+          var r2 = await nominatimSearch(dis.crtDireccion);
+          if (r2) { lat = r2.lat; lng = r2.lng; geoMethod = "CRT住所"; }
         }
       } catch(e) { /* geocoding失敗 */ }
 
@@ -1777,6 +1790,7 @@ g("btn-geo-preview").addEventListener("click", async function(){
       results.push({
         dis: dis,
         lat: lat, lng: lng, elev: elev,
+        geoMethod: geoMethod,
         mapUrl: (lat !== null && lng !== null)
           ? "https://maps.google.com/?q=" + lat.toFixed(6) + "," + lng.toFixed(6)
           : null,
@@ -1838,7 +1852,9 @@ g("btn-geo-preview").addEventListener("click", async function(){
             + '<td class="mono">' + r.lat.toFixed(5) + '</td>'
             + '<td class="mono">' + r.lng.toFixed(5) + '</td>'
             + '<td class="mono">' + (r.elev !== null ? r.elev : "—") + '</td>'
-            + '<td><span style="color:var(--teal);font-size:11px;font-weight:600;">登録予定</span></td>'
+            + '<td><span style="color:var(--teal);font-size:11px;font-weight:600;">登録予定</span>'
+            + (r.geoMethod === 'CRT住所' ? '<br><span style="color:var(--ink3);font-size:10px;">住所ヒット</span>' : '')
+            + '</td>'
             + '</tr>';
         }
       });
