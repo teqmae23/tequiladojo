@@ -225,7 +225,7 @@ function makeIcon(color){
 
 var DISTRICT_COLORS={
   '11':'#2e7d32','12':'#c62828','13':'#e91e8c','14':'#795548',
-  '21':'#7b1fa2','31':'#e65100','41':'#8b6200','51':'#1565c0'
+  '21':'#7b1fa2','31':'#e65100','41':'#e69900','51':'#1565c0'
 };
 var DISTRICT_LABELS={
   '11':'Jalisco (Valles)','12':'Jalisco (Los Altos)','13':'Jalisco (Central)',
@@ -565,7 +565,7 @@ var DOT_STATES=[
   {state:'Jalisco',   iso:'MX-JAL',stateLevel:true,   color:'#2e7d32'},
   {state:'Guanajuato',iso:'MX-GUA',color:'#7b1fa2',municipios:['Abasolo','Ciudad Manuel Doblado','Cuerámaro','Huanímaro','Pénjamo','Purísima del Rincón','Romita']},
   {state:'Michoacán', iso:'MX-MIC',color:'#e65100',municipios:['Briseñas de Matamoros','Chavinda','Chilchota','Churintzio','Cotija','Ecuandureo','Jacona','Jiquilpan','Maravatío','Marcos Castellanos','Nuevo Parangaricutiro','Numarán','Pajacuarán','Peribán','La Piedad','Régules','Los Reyes','Sahuayo','Tancítaro','Tangamandapio','Tangancícuaro','Tanhuato','Tingüindín','Tocumbo','Venustiano Carranza','Villa Mar','Vista Hermosa','Yurécuaro','Zamora','Zináparo']},
-  {state:'Nayarit',   iso:'MX-NAY',color:'#8b6200',municipios:['Ahuacatlán','Amatlán de Cañas','Ixtlán del Río','Jala','Xalisco','San Pedro Lagunillas','Santa María del Oro','Tepic']},
+  {state:'Nayarit',   iso:'MX-NAY',color:'#e69900',muniColor:'#3d2800',municipios:['Ahuacatlán','Amatlán de Cañas','Ixtlán del Río','Jala','Xalisco','San Pedro Lagunillas','Santa María del Oro','Tepic']},
   {state:'Tamaulipas',iso:'MX-TAM',color:'#1565c0',municipios:['Aldama','Altamira','Antiguo Morelos','Gómez Farías','González','Llera','El Mante','Nuevo Morelos','Ocampo','Tula','Xicotencatl']}
 ];
 
@@ -752,8 +752,11 @@ async function fetchSingleMunicipio(iso,color,name){
 }
 
 // ── DOTレイヤースタイル ──────────────────────────────────────────
-var _dotColorByIso={};
-DOT_STATES.forEach(function(s){_dotColorByIso[s.iso]=s.color;});
+var _dotColorByIso={}, _muniColorByIso={};
+DOT_STATES.forEach(function(s){
+  _dotColorByIso[s.iso]=s.color;
+  if(s.muniColor) _muniColorByIso[s.iso]=s.muniColor;
+});
 function dotLayerStyle(f){
   var iso=f.properties&&f.properties._iso;
   var c=(iso&&_dotColorByIso[iso])||(f.properties&&f.properties._dotColor)||'#2e7d32';
@@ -764,7 +767,8 @@ function dotLayerStyle(f){
   if(f.properties&&f.properties._isDotState){
     return {color:c,weight:3,fillColor:c,fillOpacity:fo,opacity:0.9};
   }
-  return {color:c,weight:0.6,fillColor:c,fillOpacity:fo,opacity:0.7};
+  var mc=(iso&&_muniColorByIso[iso])||c;
+  return {color:mc,weight:0.6,fillColor:mc,fillOpacity:fo,opacity:0.85};
 }
 
 async function onDotSelChange(mode){
@@ -855,6 +859,7 @@ function _rebuildDotLayer(mode){
       }
     }
   }).addTo(map);
+  _bringJaliscoToFront();
   var oc=document.getElementById('dot-opacity-ctrl'); if(oc) oc.style.display='flex';
   buildStatusPanel(); updateLegend();
 }
@@ -957,12 +962,19 @@ function buildStatusPanel(){
 }
 
 // ── DOT 相互ハイライト ────────────────────────────────────────────
+function _bringJaliscoToFront(){
+  if(!dotLayer) return;
+  dotLayer.eachLayer(function(l){
+    var p=l.feature&&l.feature.properties;
+    if(p&&p._iso==='MX-JAL'&&(p._isStateOutline||p._isDotState)) l.bringToFront();
+  });
+}
 function dotHighlightMapLayer(nm){
   var layer=dotLayerMap[nm];
   if(!layer||!dotLayer) return;
   layer.bringToFront();
   layer.setStyle({weight:4,fillOpacity:0.35,opacity:1});
-  setTimeout(function(){ if(dotLayer) dotLayer.resetStyle(layer); },2000);
+  setTimeout(function(){ if(dotLayer) dotLayer.resetStyle(layer); _bringJaliscoToFront(); },2000);
 }
 function dotHighlightState(iso){
   if(!dotLayer) return;
@@ -976,7 +988,10 @@ function dotHighlightState(iso){
   // 専用の州境界レイヤーがある場合はそれのみ、なければその州の全自治区レイヤーを強調
   var toHighlight=stateLayers.length?stateLayers:allIsoLayers;
   toHighlight.forEach(function(l){ l.bringToFront(); l.setStyle({weight:5,fillOpacity:0.4,opacity:1}); });
-  setTimeout(function(){ toHighlight.forEach(function(l){ if(dotLayer) dotLayer.resetStyle(l); }); },2000);
+  setTimeout(function(){
+    toHighlight.forEach(function(l){ if(dotLayer) dotLayer.resetStyle(l); });
+    if(iso!=='MX-JAL') _bringJaliscoToFront();
+  },2000);
 }
 function dotHighlightPanelEntry(nm){
   var el=document.querySelector('.dot-sp-name[data-dot-name="'+nm.replace(/"/g,'\\"')+'"]');
@@ -992,7 +1007,10 @@ function dotHighlightAllMunicipios(iso){
     if(p&&p._iso===iso&&!p._isStateOutline) layers.push(l);
   });
   layers.forEach(function(l){ l.bringToFront(); l.setStyle({weight:3,fillOpacity:0.4,opacity:1}); });
-  setTimeout(function(){ layers.forEach(function(l){ if(dotLayer) dotLayer.resetStyle(l); }); },2000);
+  setTimeout(function(){
+    layers.forEach(function(l){ if(dotLayer) dotLayer.resetStyle(l); });
+    if(iso!=='MX-JAL') _bringJaliscoToFront();
+  },2000);
 }
 
 // ── 自治区 個別再取得（管理者用・Firestoreに保存）─────────────────
