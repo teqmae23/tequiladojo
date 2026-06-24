@@ -87,8 +87,8 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 .dis-label.leaflet-tooltip-right::before{border-right-color:var(--cream3);}
 #map.labels-off .dis-label{display:none!important;}
 
-/* ── Scale control ── */
-.leaflet-control-scale-line{font-size:12px;font-family:var(--mono);padding:2px 6px;border:2px solid var(--ink3);border-top:none;background:rgba(241,239,232,.85);color:var(--ink2);min-width:80px;text-align:center;}
+/* ── Ruler control ── */
+.ruler-ctrl{background:rgba(241,239,232,.9);padding:5px 8px 4px;border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.2);}
 
 /* ── Elevation legend ── */
 .legend-grade{height:10px;width:100px;border-radius:3px;margin-bottom:4px;border:1px solid var(--cream3);}
@@ -193,7 +193,36 @@ var auth=firebase.auth();
 var db=firebase.firestore();
 
 var map=L.map('map',{zoomControl:true}).setView([20.5,-103.5],8);
-L.control.scale({imperial:false,maxWidth:200,position:'bottomleft'}).addTo(map);
+
+L.Control.Ruler=L.Control.extend({
+  options:{position:'bottomleft',maxWidth:200},
+  onAdd:function(map){
+    this._div=L.DomUtil.create('div','ruler-ctrl');
+    L.DomEvent.disableClickPropagation(this._div);
+    this._update();
+    map.on('zoomend moveend',this._update,this);
+    return this._div;
+  },
+  onRemove:function(map){map.off('zoomend moveend',this._update,this);},
+  _nice:function(n){var r=Math.pow(10,Math.floor(Math.log(n)/Math.LN10));return n>=10*r?10*r:n>=5*r?5*r:n>=2*r?2*r:r;},
+  _update:function(){
+    var maxW=this.options.maxWidth,map=this._map;
+    var y=map.getSize().y/2;
+    var maxM=map.containerPointToLatLng([0,y]).distanceTo(map.containerPointToLatLng([maxW,y]));
+    var nice=this._nice(maxM);
+    var pxW=Math.round(maxW*nice/maxM);
+    var label=nice>=1000?(nice/1000)+' km':nice+' m';
+    var ticks='';
+    for(var i=1;i<10;i++){
+      var h=i===5?8:3;
+      ticks+='<i style="position:absolute;bottom:0;left:'+(i*10)+'%;width:1px;height:'+h+'px;background:var(--ink3);transform:translateX(-50%);display:block;"></i>';
+    }
+    this._div.innerHTML=
+      '<div style="position:relative;width:'+pxW+'px;height:10px;border-bottom:2px solid var(--ink2);border-left:2px solid var(--ink2);border-right:2px solid var(--ink2);box-sizing:border-box;">'+ticks+'</div>'
+      +'<div style="display:flex;justify-content:space-between;width:'+pxW+'px;font-family:var(--mono);font-size:10px;color:var(--ink2);margin-top:2px;"><span>0</span><span>'+label+'</span></div>';
+  }
+});
+new L.Control.Ruler().addTo(map);
 
 var _baseLayers={
   topo:L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{
@@ -412,6 +441,8 @@ function buildDistrictFilter(dists){
     var o=document.createElement('option');
     o.value=id; o.textContent=dists[id]; sel.appendChild(o);
   });
+  var other=document.createElement('option');
+  other.value='__other__'; other.textContent='その他（地区不明）'; sel.appendChild(other);
 }
 
 function applyFilters(){
@@ -419,7 +450,7 @@ function applyFilters(){
   var salesFilter=document.getElementById('filter-sales').value;
   var visible=0;
   allMarkers.forEach(function(m){
-    var show=!distFilter||m.dis.districtId===distFilter;
+    var show=!distFilter||(distFilter==='__other__'?!DISTRICT_COLORS[m.dis.districtId]:m.dis.districtId===distFilter);
     if(salesFilter==='1') show=show&&m.dis.introduced===1;
     if(salesFilter==='2') show=show&&m.dis.salesCategory===0;
     if(show){ m.marker.addTo(map); visible++; }
