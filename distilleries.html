@@ -90,6 +90,9 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 /* ── Elevation legend ── */
 .legend-grade{height:10px;width:100px;border-radius:3px;margin-bottom:4px;border:1px solid var(--cream3);}
 .legend-scale{display:flex;justify-content:space-between;font-size:11px;width:100px;color:var(--ink2);}
+.legend-item.clickable{cursor:pointer;border-radius:3px;padding:1px 3px;margin:-1px -3px;}
+.legend-item.clickable:hover{background:rgba(180,140,50,.15);}
+@keyframes markerFlash{0%,100%{box-shadow:0 1px 4px rgba(0,0,0,.45)}40%{box-shadow:0 0 0 5px rgba(200,146,30,.5),0 2px 8px rgba(0,0,0,.5)}}
 
 /* ── DOT境界ステータスパネル ── */
 .dot-sp{position:absolute;top:10px;left:10px;z-index:998;background:rgba(241,239,232,.97);border:1px solid var(--cream3);border-radius:6px;width:268px;max-height:calc(100vh - 130px);overflow-y:auto;font-size:11px;color:var(--ink2);display:none;box-shadow:0 3px 14px rgba(0,0,0,.18);}
@@ -218,7 +221,7 @@ function makeIcon(color){
 
 var DISTRICT_COLORS={
   '11':'#2e7d32','12':'#c62828','13':'#e91e8c','14':'#795548',
-  '21':'#7b1fa2','31':'#e65100','41':'#f9a825','51':'#1565c0'
+  '21':'#7b1fa2','31':'#e65100','41':'#e69900','51':'#1565c0'
 };
 var DISTRICT_LABELS={
   '11':'Jalisco (Valles)','12':'Jalisco (Los Altos)','13':'Jalisco (Central)',
@@ -286,12 +289,31 @@ function getMarkerColor(dis){
   if(colorMode==='elevation') return elevationColor(dis.elevation!=null?Number(dis.elevation):null);
   return DISTRICT_COLORS[dis.districtId]||'#c8921e';
 }
+function flashMarkersByDistrict(districtId){
+  var isOther=districtId==='other';
+  var targets=allMarkers.filter(function(m){
+    return isOther?!DISTRICT_COLORS[m.dis.districtId]:(m.dis.districtId===districtId);
+  });
+  if(!targets.length) return;
+  targets.forEach(function(m){
+    var c=getMarkerColor(m.dis);
+    m.marker.setIcon(L.divIcon({
+      html:'<div style="width:13px;height:13px;border-radius:50%;background:'+c+';border:2.5px solid #fff;animation:markerFlash .55s ease 3;box-shadow:0 1px 4px rgba(0,0,0,.45)"></div>',
+      iconSize:[18,18],iconAnchor:[9,9],className:''
+    }));
+  });
+  setTimeout(function(){
+    targets.forEach(function(m){ m.marker.setIcon(makeIcon(getMarkerColor(m.dis))); });
+  },1800);
+}
 function updateLegend(){
   var el=document.getElementById('legend-content'); if(!el) return;
   if(colorMode==='district'){
     el.innerHTML=Object.keys(DISTRICT_COLORS).map(function(id){
-      return '<div class="legend-item"><div class="legend-dot" style="background:'+DISTRICT_COLORS[id]+'"></div>'+DISTRICT_LABELS[id]+'</div>';
-    }).join('')+'<div class="legend-item"><div class="legend-dot" style="background:#c8921e"></div>その他</div>';
+      return '<div class="legend-item clickable" onclick="flashMarkersByDistrict(\''+id+'\')">'
+        +'<div class="legend-dot" style="background:'+DISTRICT_COLORS[id]+'"></div>'+DISTRICT_LABELS[id]+'</div>';
+    }).join('')+'<div class="legend-item clickable" onclick="flashMarkersByDistrict(\'other\')">'
+      +'<div class="legend-dot" style="background:#c8921e"></div>その他</div>';
   } else {
     var stops=elevSettings.stops;
     var firstStop=stops&&stops.length?stops[0]:null;
@@ -539,7 +561,7 @@ var DOT_STATES=[
   {state:'Jalisco',   iso:'MX-JAL',stateLevel:true,   color:'#2e7d32'},
   {state:'Guanajuato',iso:'MX-GUA',color:'#7b1fa2',municipios:['Abasolo','Ciudad Manuel Doblado','Cuerámaro','Huanímaro','Pénjamo','Purísima del Rincón','Romita']},
   {state:'Michoacán', iso:'MX-MIC',color:'#e65100',municipios:['Briseñas de Matamoros','Chavinda','Chilchota','Churintzio','Cotija','Ecuandureo','Jacona','Jiquilpan','Maravatío','Marcos Castellanos','Nuevo Parangaricutiro','Numarán','Pajacuarán','Peribán','La Piedad','Régules','Los Reyes','Sahuayo','Tancítaro','Tangamandapio','Tangancícuaro','Tanhuato','Tingüindín','Tocumbo','Venustiano Carranza','Villa Mar','Vista Hermosa','Yurécuaro','Zamora','Zináparo']},
-  {state:'Nayarit',   iso:'MX-NAY',color:'#f9a825',municipios:['Ahuacatlán','Amatlán de Cañas','Ixtlán del Río','Jala','Xalisco','San Pedro Lagunillas','Santa María del Oro','Tepic']},
+  {state:'Nayarit',   iso:'MX-NAY',color:'#e69900',municipios:['Ahuacatlán','Amatlán de Cañas','Ixtlán del Río','Jala','Xalisco','San Pedro Lagunillas','Santa María del Oro','Tepic']},
   {state:'Tamaulipas',iso:'MX-TAM',color:'#1565c0',municipios:['Aldama','Altamira','Antiguo Morelos','Gómez Farías','González','Llera','El Mante','Nuevo Morelos','Ocampo','Tula','Xicotencatl']}
 ];
 
@@ -855,11 +877,10 @@ function buildStatusPanel(){
   status.forEach(function(st,si){
     var cnt=st.municipioResults?st.municipioResults.length:(st.stateLevel?125:0);
     html+='<div class="dot-sp-state" data-dot-iso="'+st.iso+'">'
-      +'<div style="width:12px;height:9px;border:1.5px solid '+st.color+';border-radius:1px;background:transparent;flex-shrink:0;box-sizing:border-box;" title="DOT原産地呼称"></div>'
       +'<span style="width:8px;height:8px;border-radius:50%;background:'+st.color+';display:inline-block;flex-shrink:0"></span>'
       +'<strong>'+st.state+'</strong>'
       +(cnt?' <span class="dot-sp-allhighlight" data-highlight-iso="'+st.iso+'" style="color:var(--ink3);font-size:10px;font-weight:normal;cursor:pointer;text-decoration:underline dotted var(--ink3);" title="クリックで全自治区を強調">（'+cnt+'自治区）</span>':'')
-      +'<div style="width:16px;height:0;border-top:3px solid '+st.color+';margin-top:5px;flex-shrink:0;margin-right:1px;" title="州境界"></div>'
+      +'<div style="width:16px;height:0;border-top:3px solid '+st.color+';margin-top:5px;flex-shrink:0;margin-left:auto;margin-right:1px;" title="州境界"></div>'
       +'<button class="dot-sp-toggle" data-toggle-iso="'+st.iso+'">▶</button>'
       +'</div>';
     html+='<div class="dot-sp-rows" data-rows-iso="'+st.iso+'" style="display:none;">';
@@ -872,6 +893,7 @@ function buildStatusPanel(){
       } else {
         st.municipioResults.forEach(function(m){
           html+='<div class="dot-sp-row">'
+            +'<div style="width:10px;height:7px;border:1.5px solid '+st.color+';border-radius:1px;background:transparent;flex-shrink:0;box-sizing:border-box;"></div>'
             +'<span class="dot-sp-name" data-dot-name="'+m.name+'">'+m.name+'</span>'
             +'</div>';
         });
@@ -880,6 +902,7 @@ function buildStatusPanel(){
       if(st.municipioResults){
         st.municipioResults.forEach(function(m,mi){
           html+='<div class="dot-sp-row">'
+            +'<div style="width:10px;height:7px;border:1.5px solid '+st.color+';border-radius:1px;background:transparent;flex-shrink:0;box-sizing:border-box;"></div>'
             +'<span class="dot-sp-name" data-dot-name="'+m.name+'">'+m.name+'</span>';
           if(!m.ok&&isAdmin) html+='<button class="dot-sp-retry" data-retry-muni data-si="'+si+'" data-mi="'+mi+'">再取得</button>';
           html+='</div>';
