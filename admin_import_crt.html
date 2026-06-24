@@ -297,6 +297,27 @@ details[open] summary{color:var(--ink2);}
       </button>
     </div>
 
+    <div class="import-card" style="grid-column:1/-1;">
+      <div class="import-card-title">🔄 CRT → ブランドマスタ 自動登録</div>
+      <div class="import-card-col">crtBrands → brands &nbsp;|&nbsp; 新規のみ追加・上書き絶対なし &nbsp;|&nbsp; brandStatus: 3（自動登録）・brandJa: 空・salesCategory: 1</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn-import" id="btn-sync-preview" onclick="syncPreview()" style="flex:1;min-width:160px;" disabled>
+          照合・プレビュー
+        </button>
+        <button class="btn-import" id="btn-sync-exec" onclick="syncExec()" style="flex:1;min-width:160px;background:var(--teal);" disabled>
+          自動登録 実行
+        </button>
+      </div>
+      <div class="prog-wrap" id="prog-sync">
+        <div class="prog-bg"><div class="prog-bar" id="pb-sync"></div></div>
+        <div class="prog-txt" id="pt-sync"></div>
+      </div>
+      <div id="sync-preview-box" style="display:none;margin-top:12px;max-height:320px;overflow-y:auto;border:1px solid var(--cream3);border-radius:var(--r);padding:10px;"></div>
+      <button class="btn-del" id="btn-sync-rollback" onclick="syncRollback()" disabled>
+        ↩ ロールバック（直前の自動登録を取り消し）
+      </button>
+    </div>
+
   </div>
 
   <div class="divider"></div>
@@ -336,6 +357,7 @@ auth.onAuthStateChanged(function(user){
     auth.signInAnonymously();
   }
   refreshButtons();
+  refreshSyncButtons();
 });
 
 function refreshButtons(){
@@ -668,6 +690,186 @@ async function deleteByDate(colName, btnId){
     log('✓ 削除完了: '+deleted+'件 ('+colName+')','ok');
   }catch(e){log('削除エラー: '+e.message,'err');}
   document.getElementById(btnId).disabled=false;
+}
+
+// ── CRT → ブランドマスタ 自動登録 ────────────────────────────
+var syncToAdd=[];
+
+function refreshSyncButtons(){
+  var ok=isAdmin;
+  document.getElementById('btn-sync-preview').disabled=!ok;
+  document.getElementById('btn-sync-rollback').disabled=!ok;
+  // exec は preview 後のみ有効
+}
+
+async function syncPreview(){
+  if(!isAdmin) return;
+  var btnP=document.getElementById('btn-sync-preview');
+  var btnE=document.getElementById('btn-sync-exec');
+  btnP.disabled=true; btnE.disabled=true;
+  syncToAdd=[];
+
+  log('━━ CRT→ブランドマスタ 照合開始 ━━','info');
+
+  // crtBrands 全件 → ユニークな nom+marca を収集
+  var crtSnap=await db.collection('crtBrands').get();
+  var crtPairs=new Map();
+  crtSnap.forEach(function(d){
+    var dd=d.data();
+    var key=dd.nom+'|'+dd.marca;
+    if(!crtPairs.has(key)) crtPairs.set(key,{nom:dd.nom,marca:dd.marca});
+  });
+  log('crtBrands ユニーク: '+crtPairs.size+'件','info');
+
+  // brands 全件 → 既存キー & NOM別使用済みseqを収集
+  var brandsSnap=await db.collection('brands').get();
+  var existingKeys=new Set(); // "nom|brandEs"
+  var seqByNom={};            // nom -> Set<int>
+  brandsSnap.forEach(function(d){
+    var dd=d.data();
+    var nom=dd.distilleryId||d.id.slice(0,4);
+    var es=(dd.brandEs||'').trim();
+    if(es) existingKeys.add(nom+'|'+es);
+    if(!seqByNom[nom]) seqByNom[nom]=new Set();
+    var s=parseInt(d.id.slice(4,7));
+    if(!isNaN(s)&&s>0) seqByNom[nom].add(s);
+  });
+  log('既存ブランドマスタ: '+brandsSnap.size+'件','info');
+
+  // 差分抽出 — 使用済みseqのコピーを使い追加分も加算
+  var workSeq={};
+  Object.keys(seqByNom).forEach(function(n){workSeq[n]=new Set(seqByNom[n]);});
+
+  function nextSeq(nom){
+    if(!workSeq[nom]) workSeq[nom]=new Set();
+    var s=1; while(workSeq[nom].has(s)) s++;
+    workSeq[nom].add(s); return s;
+  }
+
+  crtPairs.forEach(function(val){
+    if(!existingKeys.has(val.nom+'|'+val.marca)){
+      var seq=nextSeq(val.nom);
+      var seqStr=String(seq).padStart(3,'0');
+      syncToAdd.push({nom:val.nom,marca:val.marca,brandId:val.nom+seqStr,seqStr:seqStr});
+    }
+  });
+
+  log('追加候補: '+syncToAdd.length+'件',syncToAdd.length?'warn':'ok');
+
+  var box=document.getElementById('sync-preview-box');
+  box.style.display='';
+  if(syncToAdd.length===0){
+    box.innerHTML='<div style="color:var(--teal);font-size:13px;padding:6px 0;">✓ 追加対象なし — 全CRTブランドが既にブランドマスタに登録済みです</div>';
+  } else {
+    var rows=syncToAdd.slice(0,200).map(function(b){
+      return '<tr><td class="mono">'+esc(b.brandId)+'</td><td class="mono">'+esc(b.nom)+'</td><td>'+esc(b.marca)+'</td></tr>';
+    }).join('');
+    var more=syncToAdd.length>200?'<tr><td colspan="3" style="color:var(--ink3);font-size:11px;text-align:center;">… 他 '+(syncToAdd.length-200)+'件</td></tr>':'';
+    box.innerHTML='<div style="font-size:12px;color:var(--warn);margin-bottom:8px;font-weight:600;">⚠ 追加予定 '+syncToAdd.length+'件（brandStatus=3・brandJa=空・salesCategory=1・既存は絶対上書きなし）</div>'
+      +'<div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>brandId</th><th>NOM</th><th>ブランド名(ES)</th></tr></thead><tbody>'+rows+more+'</tbody></table></div>';
+    btnE.disabled=false;
+  }
+
+  btnP.disabled=false;
+  log('━━ 照合完了 ━━','info');
+}
+
+async function syncExec(){
+  if(!isAdmin||!syncToAdd.length) return;
+  if(!confirm('ブランドマスタに '+syncToAdd.length+' 件を新規追加します。\n\n・brandStatus = 3（自動登録）\n・brandJa = 空\n・salesCategory = 1（海外）\n・既存ドキュメントは上書きしません\n・ロールバック可能\n\n実行しますか？')) return;
+
+  var btnP=document.getElementById('btn-sync-preview');
+  var btnE=document.getElementById('btn-sync-exec');
+  btnP.disabled=true; btnE.disabled=true;
+  document.getElementById('prog-sync').style.display='block';
+  log('━━ 自動登録 実行開始: '+syncToAdd.length+'件 ━━','info');
+
+  var ts=firebase.firestore.FieldValue.serverTimestamp();
+  var addedIds=[];
+
+  try{
+    var total=syncToAdd.length, done=0;
+    for(var i=0;i<syncToAdd.length;i+=499){
+      var chunk=syncToAdd.slice(i,i+499);
+      var batch=db.batch();
+      chunk.forEach(function(b){
+        // 既に存在する場合は set が上書きしてしまうため、
+        // ここでは preview で確認済みの新規IDのみが対象
+        batch.set(db.collection('brands').doc(b.brandId),{
+          brandId:b.brandId, distilleryId:b.nom, seq:b.seqStr,
+          brandType:'0', brandStatus:'3', salesCategory:1,
+          brandEs:b.marca, brandJa:'',
+          foundedYear:null, infoUrl:null, ammUrl:null, annUrl:null,
+          autoRegisteredAt:ts
+        },{merge:false});
+        addedIds.push(b.brandId);
+      });
+      await batch.commit();
+      done+=chunk.length;
+      var pct=Math.round(done/total*100);
+      document.getElementById('pb-sync').style.width=pct+'%';
+      document.getElementById('pt-sync').textContent=done+'/'+total+' 件 ('+pct+'%)';
+    }
+
+    // ロールバック用ログを adminOps に保存
+    await db.collection('adminOps').add({
+      opType:'crt_auto_register',
+      addedBrandIds:addedIds,
+      count:addedIds.length,
+      executedAt:ts,
+      executedBy:auth.currentUser?auth.currentUser.email:'unknown'
+    });
+
+    log('✓ 自動登録完了: '+addedIds.length+'件 （ロールバックログ保存済み）','ok');
+    syncToAdd=[];
+    btnE.disabled=true;
+    document.getElementById('sync-preview-box').style.display='none';
+  }catch(e){
+    log('書き込みエラー: '+e.message,'err');
+    btnE.disabled=false;
+  }
+  btnP.disabled=false;
+}
+
+async function syncRollback(){
+  if(!isAdmin) return;
+  log('ロールバック対象を検索中...','info');
+  try{
+    var snap=await db.collection('adminOps')
+      .where('opType','==','crt_auto_register')
+      .get();
+    if(snap.empty){log('ロールバック対象の操作ログが見つかりません','warn');return;}
+
+    // 最新の操作を特定
+    var latest=null;
+    snap.forEach(function(d){
+      var dd=d.data();
+      var t=dd.executedAt?dd.executedAt.seconds:0;
+      if(!latest||t>latest.t) latest={ref:d.ref,data:dd,t:t};
+    });
+    if(!latest){log('ロールバック対象なし','warn');return;}
+
+    var ids=latest.data.addedBrandIds||[];
+    var dt=latest.data.executedAt
+      ?new Date(latest.data.executedAt.seconds*1000).toLocaleString('ja-JP'):'不明';
+
+    if(!ids.length){log('ロールバック対象ブランドなし（ログ削除）','warn');await latest.ref.delete();return;}
+    if(!confirm('自動登録をロールバックします\n\n実行日時: '+dt+'\n実行者: '+(latest.data.executedBy||'不明')+'\n削除件数: '+ids.length+' 件\n\n※ ボトルマスタ等に紐付いたブランドを削除するとデータ不整合になります。\n\n実行しますか？')) return;
+
+    log('ロールバック開始: '+ids.length+'件 削除...','warn');
+    var deleted=0;
+    for(var i=0;i<ids.length;i+=499){
+      var chunk=ids.slice(i,i+499);
+      var batch=db.batch();
+      chunk.forEach(function(id){batch.delete(db.collection('brands').doc(id));});
+      await batch.commit();
+      deleted+=chunk.length;
+    }
+    await latest.ref.delete();
+    log('✓ ロールバック完了: '+deleted+'件 を削除しました','ok');
+  }catch(e){
+    log('ロールバックエラー: '+e.message,'err');
+  }
 }
 
 // ── Log ──────────────────────────────────────────────────────
