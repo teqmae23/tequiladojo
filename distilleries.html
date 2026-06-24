@@ -112,6 +112,11 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 @keyframes dot-name-flash{0%,100%{background:transparent}20%{background:rgba(255,200,0,.5)}}
 .dot-sp-name.flash{animation:dot-name-flash 1.4s ease;}
 .dot-desc{width:100%;background:rgba(241,239,232,.97);border-bottom:1px solid var(--cream3);padding:7px 16px;font-size:11px;color:var(--ink2);line-height:1.6;flex-shrink:0;}
+#dot-opacity-range{-webkit-appearance:none;appearance:none;height:4px;background:var(--cream3);border-radius:2px;border:none;padding:0;outline:none;vertical-align:middle;}
+#dot-opacity-range::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--ink2);cursor:pointer;margin-top:-5px;}
+#dot-opacity-range::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--cream3);}
+#dot-opacity-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--ink2);cursor:pointer;border:none;}
+#dot-opacity-range::-moz-range-track{height:4px;border-radius:2px;background:var(--cream3);}
 </style>
 </head>
 <body>
@@ -148,7 +153,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
     <option value="none">なし</option>
     <option value="state">州境界</option>
     <option value="municipio">自治区境界</option>
-    <option value="all">全境界</option>
+    <option value="all" selected>全境界</option>
   </select>
   <span id="dot-opacity-ctrl" style="display:none;align-items:center;gap:3px;font-size:10px;color:var(--ink3);">
     <label>透過</label>
@@ -315,20 +320,34 @@ function updateLegend(){
       +'</div>';
   }
   // オーバーレイ凡例（ラベルのある図形のみ）
-  var overlayItems=overlayData.filter(function(o){return o.label;});
+  var overlayItems=overlayData.map(function(o,i){return {o:o,i:i};}).filter(function(x){return x.o.label;});
   if(overlayItems.length){
     el.innerHTML+='<div style="margin-top:7px;padding-top:6px;border-top:1px solid var(--cream3);font-size:10px;color:var(--ink3);margin-bottom:4px;">図形</div>'
-      +overlayItems.map(function(o){
+      +overlayItems.map(function(x){
+        var o=x.o, idx=x.i;
         var isLine=o.type==='polyline';
         var color=o.color||'#1565c0';
         var fill=o.fillColor||color;
         var fr=hexToRgb(fill);
+        var vis=overlayVisible[idx]!==false;
         var icon=isLine
-          ?'<div style="width:16px;height:3px;background:'+color+';border-radius:1px;flex-shrink:0;margin:3px 0;"></div>'
-          :'<div style="width:14px;height:10px;background:rgba('+fr.r+','+fr.g+','+fr.b+',0.45);border:2px solid '+color+';border-radius:2px;flex-shrink:0;box-sizing:border-box;"></div>';
-        return '<div class="legend-item">'+icon+'<span style="opacity:1;">'+o.label+'</span></div>';
+          ?'<div style="width:16px;height:3px;background:'+color+';border-radius:1px;flex-shrink:0;margin:3px 0;opacity:'+(vis?1:0.35)+';"></div>'
+          :'<div style="width:14px;height:10px;background:rgba('+fr.r+','+fr.g+','+fr.b+',0.45);border:2px solid '+color+';border-radius:2px;flex-shrink:0;box-sizing:border-box;opacity:'+(vis?1:0.35)+';"></div>';
+        return '<div class="legend-item">'
+          +icon
+          +'<span style="opacity:'+(vis?1:0.45)+';flex:1;">'+o.label+'</span>'
+          +'<button onclick="toggleOverlay('+idx+')" style="background:none;border:1px solid var(--cream3);border-radius:3px;font-size:9px;padding:1px 5px;cursor:pointer;color:var(--ink3);flex-shrink:0;font-family:var(--sans);">'+(vis?'非表示':'表示')+'</button>'
+          +'</div>';
       }).join('');
   }
+}
+function toggleOverlay(idx){
+  var layer=overlayLayers[idx];
+  if(!layer) return;
+  var vis=overlayVisible[idx]!==false;
+  if(vis){ map.removeLayer(layer); overlayVisible[idx]=false; }
+  else { layer.addTo(map); overlayVisible[idx]=true; }
+  updateLegend();
 }
 function recolorMarkers(){
   allMarkers.forEach(function(m){ m.marker.setIcon(makeIcon(getMarkerColor(m.dis))); });
@@ -464,12 +483,12 @@ auth.onAuthStateChanged(async function(user){
   isAdmin=await checkAdmin(user);
   await loadElevSettings();
   loadDotStatusFromFirestore(); // Firestore から境界取得状況を読み込んでパネル描画
-  if(user){loadData();loadOverlays();return;}
-  auth.signInAnonymously().then(function(){ loadData(); loadOverlays(); }).catch(function(){ loadData(); loadOverlays(); });
+  if(user){loadData();loadOverlays();onDotSelChange('all');return;}
+  auth.signInAnonymously().then(function(){ loadData(); loadOverlays(); onDotSelChange('all'); }).catch(function(){ loadData(); loadOverlays(); onDotSelChange('all'); });
 });
 
 // ── マップオーバーレイ ──────────────────────────────────
-var overlayLayers=[], overlayData=[];
+var overlayLayers=[], overlayData=[], overlayVisible=[];
 
 function smoothChaikin(pts, iter){
   if(!iter||iter<1) return pts;
@@ -520,10 +539,11 @@ function drawOverlay(o){
   if(o.label) layer.bindTooltip(o.label,{sticky:true,className:'dis-label'});
   layer.addTo(map);
   overlayLayers.push(layer);
+  overlayVisible.push(true);
 }
 function loadOverlays(){
   db.collection('mapOverlays').where('active','==',true).get().then(function(snap){
-    overlayLayers.forEach(function(l){map.removeLayer(l);}); overlayLayers=[];
+    overlayLayers.forEach(function(l){map.removeLayer(l);}); overlayLayers=[]; overlayVisible=[];
     overlayData=snap.docs.map(function(d){return d.data();});
     overlayData.forEach(function(o){ drawOverlay(o); });
     updateLegend();
@@ -916,18 +936,23 @@ function buildStatusPanel(){
 function dotHighlightMapLayer(nm){
   var layer=dotLayerMap[nm];
   if(!layer||!dotLayer) return;
+  layer.bringToFront();
   layer.setStyle({weight:4,fillOpacity:0.35,opacity:1});
   setTimeout(function(){ if(dotLayer) dotLayer.resetStyle(layer); },2000);
 }
 function dotHighlightState(iso){
   if(!dotLayer) return;
-  var layers=[];
+  var stateLayers=[], allIsoLayers=[];
   dotLayer.eachLayer(function(l){
     var p=l.feature&&l.feature.properties;
-    if(p&&p._iso===iso&&(p._isStateOutline||p._isDotState)) layers.push(l);
+    if(!p||p._iso!==iso) return;
+    allIsoLayers.push(l);
+    if(p._isStateOutline||p._isDotState) stateLayers.push(l);
   });
-  layers.forEach(function(l){ l.setStyle({weight:5,fillOpacity:0.4,opacity:1}); });
-  setTimeout(function(){ layers.forEach(function(l){ if(dotLayer) dotLayer.resetStyle(l); }); },2000);
+  // 専用の州境界レイヤーがある場合はそれのみ、なければその州の全自治区レイヤーを強調
+  var toHighlight=stateLayers.length?stateLayers:allIsoLayers;
+  toHighlight.forEach(function(l){ l.bringToFront(); l.setStyle({weight:5,fillOpacity:0.4,opacity:1}); });
+  setTimeout(function(){ toHighlight.forEach(function(l){ if(dotLayer) dotLayer.resetStyle(l); }); },2000);
 }
 function dotHighlightPanelEntry(nm){
   var el=document.querySelector('.dot-sp-name[data-dot-name="'+nm.replace(/"/g,'\\"')+'"]');
