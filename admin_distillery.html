@@ -1734,6 +1734,38 @@ function cleanCrtName(name) {
   return s || name; // 全部消えたら元に戻す
 }
 
+// CRT住所から自治区名（市区町村）を抽出してNominatimクエリを生成
+var GEO_STATE_MAP = {
+  'JAL':'Jalisco','GTO':'Guanajuato','TAM':'Tamaulipas',
+  'MIC':'Michoacan','NAY':'Nayarit','SON':'Sonora','SIN':'Sinaloa',
+  'AGS':'Aguascalientes','COL':'Colima','ZAC':'Zacatecas','DGO':'Durango'
+};
+var GEO_STATE_RE = /\b(JAL|GTO|TAM|MIC|NAY|SON|SIN|AGS|COL|ZAC|DGO)\b\.?/i;
+
+function parseCrtAddressToCity(addr) {
+  if (!addr) return null;
+  var sm = addr.match(GEO_STATE_RE);
+  var stateName = sm ? GEO_STATE_MAP[sm[1].toUpperCase()] : null;
+  // カンマ区切りで分割
+  var parts = addr.split(',').map(function(p){ return p.trim(); }).filter(Boolean);
+  if (parts.length < 2) return null;
+  // 末尾から「市区町村」らしいパーツを探す（後ろから2番目が多い）
+  for (var i = parts.length - 1; i >= 0; i--) {
+    var p = parts[i]
+      .replace(GEO_STATE_RE, '')       // 州コードを除去
+      .replace(/\b\d{5}\b/, '')        // 郵便番号を除去
+      .replace(/\bMUNICIPIO\s+DE\s+/i,'') // "MUNICIPIO DE " を除去
+      .trim();
+    if (!p || p.length < 3) continue;
+    if (/^\d+$/.test(p)) continue;                      // 数字のみはスキップ
+    if (/\b(NO|NUM|KM|S\/N|CARR|AV|CALLE|BLVD|CALZ)\b/i.test(p)) continue; // 路地名はスキップ
+    if (/\b(COL|COLONIA|FRACC|FRACCIONAMIENTO|SECC|BO)\b\.?/i.test(p)) continue; // コロニア名はスキップ
+    if (/\s\d+$/.test(p)) continue;   // 末尾が番地番号ならスキップ
+    return p + (stateName ? ', ' + stateName : '') + ', Mexico';
+  }
+  return null;
+}
+
 async function nominatimSearch(query) {
   var res = await fetch(
     "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=mx&q=" +
@@ -1783,12 +1815,22 @@ g("btn-geo-preview").addEventListener("click", async function(){
         var r1 = await nominatimSearch(cleanName + ", Mexico");
         if (r1) { lat = r1.lat; lng = r1.lng; geoMethod = "CRT名"; }
 
-        // 2nd: CRT住所（CRT名で見つからなかった場合）
+        // 2nd: CRT住所フルテキスト
         if (lat === null && dis.crtDireccion) {
           await new Promise(function(res){ setTimeout(res, 1100); });
           g("geo-prog-txt").textContent = (i+1) + " / " + total + " — " + cleanName + " [CRT住所で再試行]";
           var r2 = await nominatimSearch(dis.crtDireccion);
           if (r2) { lat = r2.lat; lng = r2.lng; geoMethod = "CRT住所"; }
+        }
+        // 3rd: CRT住所から自治区名を抽出して市区町村レベルで検索
+        if (lat === null && dis.crtDireccion) {
+          var cityQuery = parseCrtAddressToCity(dis.crtDireccion);
+          if (cityQuery) {
+            await new Promise(function(res){ setTimeout(res, 1100); });
+            g("geo-prog-txt").textContent = (i+1) + " / " + total + " — " + cleanName + " [市区町村で再試行: " + cityQuery + "]";
+            var r3 = await nominatimSearch(cityQuery);
+            if (r3) { lat = r3.lat; lng = r3.lng; geoMethod = "市区町村（概算）"; }
+          }
         }
       } catch(e) { /* geocoding失敗 */ }
 
@@ -1869,6 +1911,7 @@ g("btn-geo-preview").addEventListener("click", async function(){
             + '<td class="mono">' + (r.elev !== null ? r.elev : "—") + '</td>'
             + '<td><span style="color:var(--teal);font-size:11px;font-weight:600;">登録予定</span>'
             + (r.geoMethod === 'CRT住所' ? '<br><span style="color:var(--ink3);font-size:10px;">住所ヒット</span>' : '')
+            + (r.geoMethod === '市区町村（概算）' ? '<br><span style="color:var(--gold-d);font-size:10px;">市区町村レベル（概算）</span>' : '')
             + '</td>'
             + '</tr>';
         }
