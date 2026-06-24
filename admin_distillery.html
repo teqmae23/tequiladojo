@@ -280,6 +280,24 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <div id="elev-prog-txt" style="font-size:11px;color:var(--ink3);margin-top:4px;"></div>
         </div>
       </div>
+
+      <!-- Google Maps リンク・座標 一括設定 -->
+      <div class="card" style="padding:18px 20px;margin-top:16px;border-left:3px solid var(--teal);">
+        <div style="font-weight:600;margin-bottom:4px;">Google Maps リンク・座標 一括設定</div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:12px;">mapUrlが未設定の蒸留所をNominatimでジオコーディング → 緯度・経度・標高・mapUrlを取得してプレビュー後に一括登録します。</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+          <button class="btn bp" id="btn-geo-preview">照合・ジオコーディング</button>
+          <button class="btn" id="btn-geo-exec" disabled style="background:var(--teal);color:#fff;border-color:var(--teal);">登録実行</button>
+          <span id="geo-status" style="font-size:12px;color:var(--ink3);"></span>
+        </div>
+        <div id="geo-prog-wrap" style="display:none;margin-bottom:10px;">
+          <div style="background:var(--cream3);border-radius:10px;height:6px;overflow:hidden;">
+            <div id="geo-prog-bar" style="background:var(--teal);height:6px;border-radius:10px;transition:width .3s;width:0;"></div>
+          </div>
+          <div id="geo-prog-txt" style="font-size:11px;color:var(--ink3);margin-top:4px;"></div>
+        </div>
+        <div id="geo-preview-box" style="display:none;max-height:480px;overflow-y:auto;font-size:12px;"></div>
+      </div>
     </div>
 
     <!-- マップ図形 -->
@@ -1696,6 +1714,184 @@ g("btn-fetch-elevation-all").addEventListener("click", async function(){
     toast("エラー: "+e.message,"err");
   }
   btn.disabled=false;
+});
+
+// ── Google Maps リンク・座標 一括設定 ────────────────────────
+var geoToRegister = []; // プレビュー後に登録する対象
+
+g("btn-geo-preview").addEventListener("click", async function(){
+  var btn = this;
+  btn.disabled = true;
+  g("btn-geo-exec").disabled = true;
+  geoToRegister = [];
+  var statusEl = g("geo-status");
+  var box = g("geo-preview-box");
+  box.style.display = "none";
+  g("geo-prog-wrap").style.display = "block";
+  g("geo-prog-bar").style.width = "0%";
+  statusEl.textContent = "蒸留所を読み込み中…"; statusEl.style.color = "var(--ink3)";
+
+  try {
+    var snap = await db.collection("distilleries").get();
+    var all = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    var hasMap = all.filter(function(r){ return !!r.mapUrl; });
+    var noMap  = all.filter(function(r){ return !r.mapUrl; });
+    statusEl.textContent = "mapUrlなし: " + noMap.length + "件 / 設定済み: " + hasMap.length + "件";
+
+    // ── ジオコーディング（Nominatim、1件/秒）───────────────────
+    var total = noMap.length, done = 0;
+    var results = []; // {dis, lat, lng, elev, mapUrl, error}
+
+    for (var i = 0; i < noMap.length; i++) {
+      var dis = noMap[i];
+      g("geo-prog-txt").textContent = (i+1) + " / " + total + " — " + (dis.nomEs || dis.nom || dis.id);
+      g("geo-prog-bar").style.width = Math.round((i+1)/total*100) + "%";
+
+      // Nominatim でジオコーディング
+      var query = (dis.crtEmpresa || dis.nomEs || dis.fullName || "") + ", Mexico";
+      var lat = null, lng = null;
+      try {
+        var geoRes = await fetch(
+          "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=mx&q=" +
+          encodeURIComponent(query),
+          {headers: {"Accept-Language": "es,en", "User-Agent": "TequilaDojoAdmin/1.0"}}
+        );
+        var geoJson = await geoRes.json();
+        if (geoJson && geoJson.length > 0) {
+          lat = parseFloat(geoJson[0].lat);
+          lng = parseFloat(geoJson[0].lon);
+        }
+      } catch(e) { /* geocoding失敗 */ }
+
+      // 標高（Open-Meteo）
+      var elev = null;
+      if (lat !== null && lng !== null) {
+        try {
+          var eRes = await fetch("https://api.open-meteo.com/v1/elevation?latitude=" + lat + "&longitude=" + lng);
+          var eJson = await eRes.json();
+          if (eJson.elevation && eJson.elevation.length) elev = Math.round(eJson.elevation[0]);
+        } catch(e) { /* elevation失敗 */ }
+      }
+
+      results.push({
+        dis: dis,
+        lat: lat, lng: lng, elev: elev,
+        mapUrl: (lat !== null && lng !== null)
+          ? "https://maps.google.com/?q=" + lat.toFixed(6) + "," + lng.toFixed(6)
+          : null,
+        error: (lat === null)
+      });
+
+      done++;
+      // Nominatim レート制限: 1件/秒
+      if (i < noMap.length - 1) await new Promise(function(r){ setTimeout(r, 1100); });
+    }
+
+    // 登録対象
+    geoToRegister = results.filter(function(r){ return !r.error; });
+
+    // ── プレビュー描画 ─────────────────────────────────────────
+    var html = "";
+
+    // サマリー
+    var ok = results.filter(function(r){ return !r.error; }).length;
+    var ng = results.filter(function(r){ return r.error; }).length;
+    html += '<div style="font-size:12px;margin-bottom:10px;display:flex;gap:14px;flex-wrap:wrap;">'
+      + (ok ? '<span style="color:var(--teal);font-weight:600;">取得成功 ' + ok + '件</span>' : '')
+      + (ng ? '<span style="color:var(--red);">取得失敗 ' + ng + '件</span>' : '')
+      + '<span style="color:var(--ink3);">キャンセル(設定済み) ' + hasMap.length + '件</span>'
+      + '</div>';
+
+    // 登録予定テーブル
+    if (results.length) {
+      html += '<div style="font-weight:600;font-size:11px;color:var(--ink2);margin-bottom:6px;">登録予定（' + results.length + '件）</div>';
+      html += '<div style="overflow-x:auto;margin-bottom:14px;"><table class="data-table">'
+        + '<thead><tr><th>NOM</th><th>蒸留所名(A)</th><th>緯度</th><th>経度</th><th>標高(m)</th><th>状態</th></tr></thead><tbody>';
+      results.forEach(function(r){
+        var dis = r.dis;
+        if (r.error) {
+          html += '<tr style="opacity:.5;">'
+            + '<td class="mono">' + esc(dis.nom||dis.id) + '</td>'
+            + '<td>' + esc(dis.nomEs||"—") + '</td>'
+            + '<td colspan="3" style="color:var(--red);font-size:11px;">ジオコーディング失敗</td>'
+            + '<td><span style="color:var(--red);font-size:11px;">エラー</span></td>'
+            + '</tr>';
+        } else {
+          html += '<tr>'
+            + '<td class="mono">' + esc(dis.nom||dis.id) + '</td>'
+            + '<td>' + esc(dis.nomEs||"—") + '</td>'
+            + '<td class="mono">' + r.lat.toFixed(5) + '</td>'
+            + '<td class="mono">' + r.lng.toFixed(5) + '</td>'
+            + '<td class="mono">' + (r.elev !== null ? r.elev : "—") + '</td>'
+            + '<td><span style="color:var(--teal);font-size:11px;font-weight:600;">登録予定</span></td>'
+            + '</tr>';
+        }
+      });
+      html += '</tbody></table></div>';
+    }
+
+    // キャンセルリスト
+    if (hasMap.length) {
+      html += '<div style="font-weight:600;font-size:11px;color:var(--ink3);margin-bottom:6px;">キャンセル — 既にmapUrl設定済み（' + hasMap.length + '件）</div>';
+      html += '<div style="overflow-x:auto;"><table class="data-table">'
+        + '<thead><tr><th>NOM</th><th>蒸留所名(A)</th><th>緯度</th><th>経度</th><th>標高(m)</th><th>状態</th></tr></thead><tbody>';
+      hasMap.forEach(function(r){
+        html += '<tr style="opacity:.45;">'
+          + '<td class="mono">' + esc(r.nom||r.id) + '</td>'
+          + '<td>' + esc(r.nomEs||"—") + '</td>'
+          + '<td class="mono dim">' + (r.latitude  !== null && r.latitude  !== undefined ? r.latitude  : "—") + '</td>'
+          + '<td class="mono dim">' + (r.longitude !== null && r.longitude !== undefined ? r.longitude : "—") + '</td>'
+          + '<td class="mono dim">' + (r.elevation !== null && r.elevation !== undefined ? r.elevation : "—") + '</td>'
+          + '<td><span style="color:var(--ink3);font-size:11px;">キャンセル</span></td>'
+          + '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+
+    box.innerHTML = html;
+    box.style.display = "";
+    statusEl.textContent = "照合完了 — 登録予定: " + geoToRegister.length + "件";
+    statusEl.style.color = geoToRegister.length ? "var(--warn)" : "var(--teal)";
+    g("btn-geo-exec").disabled = geoToRegister.length === 0;
+
+  } catch(e) {
+    statusEl.textContent = "エラー: " + e.message; statusEl.style.color = "var(--red)";
+  }
+
+  g("geo-prog-wrap").style.display = "none";
+  btn.disabled = false;
+});
+
+g("btn-geo-exec").addEventListener("click", async function(){
+  if (!geoToRegister.length) return;
+  if (!confirm(geoToRegister.length + "件の蒸留所に緯度・経度・標高・mapUrlを登録します。よろしいですか？")) return;
+  var btn = this; btn.disabled = true;
+  g("btn-geo-preview").disabled = true;
+  var statusEl = g("geo-status");
+  statusEl.textContent = "書き込み中…"; statusEl.style.color = "var(--ink3)";
+
+  try {
+    for (var i = 0; i < geoToRegister.length; i += 499) {
+      var chunk = geoToRegister.slice(i, i + 499);
+      var batch = db.batch();
+      chunk.forEach(function(r){
+        var ref = db.collection("distilleries").doc(r.dis.nom || r.dis.id);
+        var data = {latitude: r.lat, longitude: r.lng, mapUrl: r.mapUrl};
+        if (r.elev !== null) data.elevation = r.elev;
+        batch.update(ref, data);
+      });
+      await batch.commit();
+    }
+    var cnt = geoToRegister.length;
+    geoToRegister = [];
+    statusEl.textContent = "✓ 登録完了: " + cnt + "件"; statusEl.style.color = "var(--teal)";
+    loadCol("distilleries");
+    toast("座標・mapUrl登録完了: " + cnt + "件");
+  } catch(e) {
+    statusEl.textContent = "エラー: " + e.message; statusEl.style.color = "var(--red)";
+  }
+  btn.disabled = false;
+  g("btn-geo-preview").disabled = false;
 });
 
 async function seedOverlaysIfEmpty(){
