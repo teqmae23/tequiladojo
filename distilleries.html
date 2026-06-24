@@ -302,23 +302,7 @@ function updateLegend(){
       +'<div class="legend-scale"><span>'+(firstStop?firstStop.elev+'m':'')+'</span><span>'+(lastStop?lastStop.elev+'m':'')+'</span></div>'
       +'<div class="legend-item" style="margin-top:4px;"><div class="legend-dot" style="background:#fff;border:1px solid var(--cream3);"></div>未設定</div>';
   }
-  // DOT原産地呼称境界（州ごとの色）
-  if(dotLayer){
-    el.innerHTML+='<div style="margin-top:7px;padding-top:6px;border-top:1px solid var(--cream3);">'
-      +'<div style="font-size:11px;color:var(--ink2);font-weight:600;margin-bottom:5px;">DOT原産地呼称</div>'
-      +DOT_STATES.map(function(s){
-        return '<div class="legend-item">'
-          +'<div style="width:14px;height:10px;border:1px solid '+s.color+';border-radius:2px;background:transparent;flex-shrink:0;box-sizing:border-box;"></div>'
-          +s.state+'</div>';
-      }).join('')
-      +'<div style="font-size:11px;color:var(--ink2);font-weight:600;margin:6px 0 4px;">州境界</div>'
-      +DOT_STATES.map(function(s){
-        return '<div class="legend-item">'
-          +'<div style="width:14px;height:0;border-top:3px solid '+s.color+';margin-top:5px;flex-shrink:0;"></div>'
-          +s.state+'</div>';
-      }).join('')
-      +'</div>';
-  }
+  // DOT原産地呼称境界は自治区リストの各行に埋め込み済みのため凡例には表示しない
   // オーバーレイ凡例（ラベルのある図形のみ）
   var overlayItems=overlayData.map(function(o,i){return {o:o,i:i};}).filter(function(x){return x.o.label;});
   if(overlayItems.length){
@@ -871,9 +855,11 @@ function buildStatusPanel(){
   status.forEach(function(st,si){
     var cnt=st.municipioResults?st.municipioResults.length:(st.stateLevel?125:0);
     html+='<div class="dot-sp-state" data-dot-iso="'+st.iso+'">'
-      +'<span style="width:9px;height:9px;border-radius:50%;background:'+st.color+';display:inline-block;flex-shrink:0"></span>'
+      +'<div style="width:12px;height:9px;border:1.5px solid '+st.color+';border-radius:1px;background:transparent;flex-shrink:0;box-sizing:border-box;" title="DOT原産地呼称"></div>'
+      +'<span style="width:8px;height:8px;border-radius:50%;background:'+st.color+';display:inline-block;flex-shrink:0"></span>'
       +'<strong>'+st.state+'</strong>'
-      +(cnt?' <span style="color:var(--ink3);font-size:10px;font-weight:normal;">（'+cnt+'自治区）</span>':'')
+      +(cnt?' <span class="dot-sp-allhighlight" data-highlight-iso="'+st.iso+'" style="color:var(--ink3);font-size:10px;font-weight:normal;cursor:pointer;text-decoration:underline dotted var(--ink3);" title="クリックで全自治区を強調">（'+cnt+'自治区）</span>':'')
+      +'<div style="width:16px;height:0;border-top:3px solid '+st.color+';margin-top:5px;flex-shrink:0;margin-right:1px;" title="州境界"></div>'
       +'<button class="dot-sp-toggle" data-toggle-iso="'+st.iso+'">▶</button>'
       +'</div>';
     html+='<div class="dot-sp-rows" data-rows-iso="'+st.iso+'" style="display:none;">';
@@ -919,6 +905,12 @@ function buildStatusPanel(){
   body.querySelectorAll('.dot-sp-state[data-dot-iso]').forEach(function(div){
     div.addEventListener('click',function(){ dotHighlightState(this.dataset.dotIso); });
   });
+  body.querySelectorAll('.dot-sp-allhighlight').forEach(function(span){
+    span.addEventListener('click',function(e){
+      e.stopPropagation();
+      dotHighlightAllMunicipios(this.dataset.highlightIso);
+    });
+  });
   body.querySelectorAll('.dot-sp-toggle').forEach(function(btn){
     btn.addEventListener('click',function(e){
       e.stopPropagation();
@@ -959,6 +951,16 @@ function dotHighlightPanelEntry(nm){
   if(!el) return;
   el.scrollIntoView({behavior:'smooth',block:'nearest'});
   el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+}
+function dotHighlightAllMunicipios(iso){
+  if(!dotLayer) return;
+  var layers=[];
+  dotLayer.eachLayer(function(l){
+    var p=l.feature&&l.feature.properties;
+    if(p&&p._iso===iso&&!p._isStateOutline) layers.push(l);
+  });
+  layers.forEach(function(l){ l.bringToFront(); l.setStyle({weight:3,fillOpacity:0.4,opacity:1}); });
+  setTimeout(function(){ layers.forEach(function(l){ if(dotLayer) dotLayer.resetStyle(l); }); },2000);
 }
 
 // ── 自治区 個別再取得（管理者用・Firestoreに保存）─────────────────
