@@ -721,20 +721,25 @@ async function syncPreview(){
   });
   log('crtBrands ユニーク: '+crtPairs.size+'件','info');
 
-  // brands 全件 → 既存キー & NOM別使用済みseqを収集
+  // brands 全件 → 大文字正規化キー & NOM別使用済みseqを収集
   var brandsSnap=await db.collection('brands').get();
-  var existingKeys=new Set(); // "nom|brandEs"
-  var seqByNom={};            // nom -> Set<int>
+  var existingKeysUpper=new Set(); // "nom|brandEs.toUpperCase()"
+  var existingBrandMap=new Map();  // "nom|brandEs.toUpperCase()" -> 元のbrandEs
+  var seqByNom={};                 // nom -> Set<int>
   brandsSnap.forEach(function(d){
     var dd=d.data();
     var nom=dd.distilleryId||d.id.slice(0,4);
     var es=(dd.brandEs||'').trim();
-    if(es) existingKeys.add(nom+'|'+es);
+    if(es){
+      var upperKey=nom+'|'+es.toUpperCase();
+      existingKeysUpper.add(upperKey);
+      if(!existingBrandMap.has(upperKey)) existingBrandMap.set(upperKey,es);
+    }
     if(!seqByNom[nom]) seqByNom[nom]=new Set();
     var s=parseInt(d.id.slice(4,7));
     if(!isNaN(s)&&s>0) seqByNom[nom].add(s);
   });
-  log('既存ブランドマスタ: '+brandsSnap.size+'件','info');
+  log('既存ブランドマスタ: '+brandsSnap.size+'件（大文字正規化で照合）','info');
 
   // 差分抽出 — 使用済みseqのコピーを使い追加分も加算
   var workSeq={};
@@ -746,28 +751,62 @@ async function syncPreview(){
     workSeq[nom].add(s); return s;
   }
 
+  var syncCancelled=[]; // 大文字照合で一致したもの（追加しない）
+
   crtPairs.forEach(function(val){
-    if(!existingKeys.has(val.nom+'|'+val.marca)){
+    var upperKey=val.nom+'|'+val.marca.toUpperCase();
+    if(existingKeysUpper.has(upperKey)){
+      // 一致（完全一致 or 大文字小文字違いのみ）→ キャンセル
+      syncCancelled.push({nom:val.nom,marca:val.marca,existingName:existingBrandMap.get(upperKey)||''});
+    } else {
+      // 未登録 → 追加予定
       var seq=nextSeq(val.nom);
       var seqStr=String(seq).padStart(3,'0');
       syncToAdd.push({nom:val.nom,marca:val.marca,brandId:val.nom+seqStr,seqStr:seqStr});
     }
   });
 
-  log('追加候補: '+syncToAdd.length+'件',syncToAdd.length?'warn':'ok');
+  log('追加予定: '+syncToAdd.length+'件 / キャンセル: '+syncCancelled.length+'件',
+      syncToAdd.length?'warn':'ok');
 
   var box=document.getElementById('sync-preview-box');
   box.style.display='';
-  if(syncToAdd.length===0){
+
+  var addRows=syncToAdd.slice(0,200).map(function(b){
+    return '<tr>'
+      +'<td class="mono">'+esc(b.brandId)+'</td>'
+      +'<td class="mono">'+esc(b.nom)+'</td>'
+      +'<td>'+esc(b.marca)+'</td>'
+      +'<td><span style="color:var(--teal);font-size:11px;font-weight:600;">追加予定</span></td>'
+      +'</tr>';
+  }).join('');
+  var addMore=syncToAdd.length>200?'<tr><td colspan="4" style="color:var(--ink3);font-size:11px;text-align:center;">… 追加予定 他 '+(syncToAdd.length-200)+'件</td></tr>':'';
+
+  var cancelRows=syncCancelled.slice(0,200).map(function(b){
+    var diff=b.existingName&&b.existingName!==b.marca
+      ?' <span style="color:var(--ink3);font-size:10px;">（マスタ: '+esc(b.existingName)+'）</span>':'';
+    return '<tr style="opacity:.55;">'
+      +'<td class="mono" style="color:var(--ink3);">—</td>'
+      +'<td class="mono">'+esc(b.nom)+'</td>'
+      +'<td>'+esc(b.marca)+diff+'</td>'
+      +'<td><span style="color:var(--ink3);font-size:11px;">キャンセル</span></td>'
+      +'</tr>';
+  }).join('');
+  var cancelMore=syncCancelled.length>200?'<tr><td colspan="4" style="color:var(--ink3);font-size:11px;text-align:center;">… キャンセル 他 '+(syncCancelled.length-200)+'件</td></tr>':'';
+
+  if(syncToAdd.length===0&&syncCancelled.length===0){
     box.innerHTML='<div style="color:var(--teal);font-size:13px;padding:6px 0;">✓ 追加対象なし — 全CRTブランドが既にブランドマスタに登録済みです</div>';
   } else {
-    var rows=syncToAdd.slice(0,200).map(function(b){
-      return '<tr><td class="mono">'+esc(b.brandId)+'</td><td class="mono">'+esc(b.nom)+'</td><td>'+esc(b.marca)+'</td></tr>';
-    }).join('');
-    var more=syncToAdd.length>200?'<tr><td colspan="3" style="color:var(--ink3);font-size:11px;text-align:center;">… 他 '+(syncToAdd.length-200)+'件</td></tr>':'';
-    box.innerHTML='<div style="font-size:12px;color:var(--warn);margin-bottom:8px;font-weight:600;">⚠ 追加予定 '+syncToAdd.length+'件（brandStatus=3・brandJa=空・salesCategory=1・既存は絶対上書きなし）</div>'
-      +'<div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>brandId</th><th>NOM</th><th>ブランド名(ES)</th></tr></thead><tbody>'+rows+more+'</tbody></table></div>';
-    btnE.disabled=false;
+    var summary='';
+    if(syncToAdd.length) summary+='<span style="color:var(--warn);font-weight:600;">追加予定 '+syncToAdd.length+'件</span>';
+    if(syncToAdd.length&&syncCancelled.length) summary+=' &nbsp;/&nbsp; ';
+    if(syncCancelled.length) summary+='<span style="color:var(--ink3);">キャンセル '+syncCancelled.length+'件</span>';
+    box.innerHTML='<div style="font-size:12px;margin-bottom:8px;">'+summary+'</div>'
+      +'<div style="overflow-x:auto;"><table class="data-table">'
+      +'<thead><tr><th>brandId</th><th>NOM</th><th>ブランド名(ES)</th><th>状態</th></tr></thead>'
+      +'<tbody>'+addRows+addMore+cancelRows+cancelMore+'</tbody>'
+      +'</table></div>';
+    btnE.disabled=syncToAdd.length===0;
   }
 
   btnP.disabled=false;
