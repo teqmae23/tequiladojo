@@ -25,9 +25,19 @@ jobs:
       - name: Deploy Firestore rules
         if: always()
         run: |
-          npm install -g firebase-tools
-          echo '{"firestore":{"rules":"firestore.rules"}}' > /tmp/firebase-rules.json
-          firebase deploy --only firestore:rules --config /tmp/firebase-rules.json --project tequiladojo --non-interactive
-          rm -f /tmp/firebase-rules.json
+          RULES=$(python3 -c "import sys,json; print(json.dumps(open('firestore.rules').read()))")
+          RULESET=$(curl -sf -X POST \
+            -H "Authorization: Bearer ${GOOGLE_OAUTH_ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"source\":{\"files\":[{\"name\":\"firestore.rules\",\"content\":${RULES}}]}}" \
+            "https://firebaserules.googleapis.com/v1/projects/tequiladojo/rulesets")
+          RULESET_NAME=$(echo "$RULESET" | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])")
+          echo "Created ruleset: $RULESET_NAME"
+          curl -sf -X PATCH \
+            -H "Authorization: Bearer ${GOOGLE_OAUTH_ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"projects/tequiladojo/releases/cloud.firestore\",\"rulesetName\":\"${RULESET_NAME}\"}" \
+            "https://firebaserules.googleapis.com/v1/projects/tequiladojo/releases/cloud.firestore"
+          echo "Firestore rules deployed"
         env:
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
