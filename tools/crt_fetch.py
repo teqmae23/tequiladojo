@@ -151,6 +151,27 @@ def has_column_error(data):
             "invalid Column" in raw or
             "Cannot find field" in raw)
 
+import re as _re
+
+def _clean_value(val):
+    """DSRリテラル値をPythonネイティブ型に変換"""
+    if not isinstance(val, str):
+        return val
+    # datetime'2012-01-01T00:00:00' → '2012-01-01'
+    m = _re.match(r"datetime'(\d{4}-\d{2}-\d{2})T", val)
+    if m:
+        return m.group(1)
+    # 73.5D / 12345L → 数値
+    if val.endswith("D") or val.endswith("L"):
+        try:
+            return float(val[:-1])
+        except ValueError:
+            pass
+    # 'ALEMANIA' → ALEMANIA（クォート除去）
+    if val.startswith("'") and val.endswith("'"):
+        return val[1:-1]
+    return val
+
 def parse_results(data):
     """Power BI DSR レスポンスをレコードリストに変換"""
     try:
@@ -177,6 +198,13 @@ def parse_results(data):
         dm0 = ds.get("PH", [{}])[0].get("DM0", [])
         prev = [None] * n_cols
 
+        # RT（参照行）がある場合は初期値として設定
+        rt = ds.get("RT", [])
+        if rt and len(rt) > 0:
+            for i, v in enumerate(rt[0]):
+                if i < n_cols:
+                    prev[i] = _clean_value(v)
+
         for vd in dm0:
             c_arr = vd.get("C", [])
             r_bits = vd.get("R", 0)
@@ -192,11 +220,23 @@ def parse_results(data):
                     if isinstance(val, int):
                         d = value_dicts.get(f"D{i}", [])
                         val = d[val] if val < len(d) else val
-                    row_vals[i] = val
+                    row_vals[i] = _clean_value(val)
                     c_idx += 1
 
             prev = row_vals
             rows.append(dict(zip(col_names, row_vals)))
+
+        # Fecha列から Año・Mes列を追加
+        if "Fecha" in col_names:
+            for row in rows:
+                fecha = row.get("Fecha") or ""
+                if len(fecha) >= 7:
+                    row["Año"] = fecha[:4]
+                    row["Mes"] = fecha[5:7]
+                else:
+                    row["Año"] = None
+                    row["Mes"] = None
+            col_names = col_names + ["Año", "Mes"]
 
         return col_names, rows
     except (KeyError, IndexError):
