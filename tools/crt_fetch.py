@@ -192,12 +192,16 @@ def discover_columns():
         "Grupo", "Destino", "Pais", "Paises", "País", "Países",
         "DestinoExportacion", "PaisDestino", "NombrePais",
         "Anio", "Año", "Ano", "Year", "Anyo",
-        "Mes", "Month", "NumMes", "NombreMes",
+        "Mes", "Month", "NumMes", "NombreMes", "NumeroMes",
         "Clase", "Categoria", "Categoría", "TipoProducto", "Tipo",
         "Litros", "LitrosTotal", "LitrosEnvasados", "LitrosGranel",
+        "Litros_40", "Litros40", "LitrosA40",
         "Cajas", "CajasTotal", "CajasEnvasadas",
         "ValorDolares", "Valor", "ValorUSD",
         "Certificado", "NOM", "Empresa", "Marca", "Periodo",
+        "Anio_Exportacion", "Año_Exportacion", "AñoExportacion",
+        "MesExportacion", "Mes_Exportacion",
+        "FechaExportacion", "Fecha", "Periodo_Anio", "Periodo_Mes",
     ]
 
     print(f"エンティティ '{ENTITY}' のカラム探索中 ({len(candidates)} 候補)...")
