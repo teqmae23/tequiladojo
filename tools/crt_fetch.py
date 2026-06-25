@@ -411,14 +411,35 @@ def fetch_data(country=None, output="stdout", columns=None):
     print(f"カラム: {col_names}")
     print()
 
-    if output == "csv":
+    if output in ("csv", "sqlite"):
         fname = f"crt_export_{country or 'all'}.csv"
         with open(fname, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.DictWriter(f, fieldnames=col_names)
             writer.writeheader()
             writer.writerows(rows)
         print(f"CSVを保存: {fname}")
-    else:
+
+    if output == "sqlite":
+        import sqlite3, os
+        db_path = os.path.join("data", "crt_exports.db")
+        os.makedirs("data", exist_ok=True)
+        con = sqlite3.connect(db_path)
+        cur = con.cursor()
+        cur.execute("DROP TABLE IF EXISTS exports")
+        col_defs = ", ".join(
+            f'"{c}" REAL' if c in ("Litros_40",) else f'"{c}" TEXT'
+            for c in col_names
+        )
+        cur.execute(f"CREATE TABLE exports ({col_defs})")
+        cur.executemany(
+            f"INSERT INTO exports VALUES ({','.join(['?']*len(col_names))})",
+            [tuple(row.get(c) for c in col_names) for row in rows]
+        )
+        con.commit()
+        con.close()
+        size_kb = os.path.getsize(db_path) // 1024
+        print(f"SQLiteを保存: {db_path} ({size_kb} KB, {len(rows)} 行)")
+    elif output == "stdout":
         for row in rows[:5]:
             print(row)
         if len(rows) > 5:
@@ -429,7 +450,7 @@ if __name__ == "__main__":
     parser.add_argument("--discover", action="store_true", help="カラム一覧を調査")
     parser.add_argument("--dump",     action="store_true", help="生レスポンスをダンプ（構造確認用）")
     parser.add_argument("--country",  help="国名フィルタ（Paisカラム）（例: Japón）")
-    parser.add_argument("--output",   default="stdout", choices=["stdout", "csv"])
+    parser.add_argument("--output",   default="stdout", choices=["stdout", "csv", "sqlite"])
     parser.add_argument("--columns",  nargs="+", default=None,
                         help=f"取得するカラム（デフォルト: {' '.join(CONFIRMED_COLUMNS)}）")
     args = parser.parse_args()
