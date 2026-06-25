@@ -144,6 +144,40 @@ def query_api(payload):
     resp.raise_for_status()
     return resp.json()
 
+def query_api_all_pages(payload):
+    """全ページを取得してDM0行を結合して返す"""
+    all_rows_data = None
+    page = 1
+
+    while True:
+        print(f"  ページ {page} 取得中...")
+        data = query_api(payload)
+
+        if all_rows_data is None:
+            all_rows_data = data
+            ds = data["results"][0]["result"]["data"]["dsr"]["DS"][0]
+        else:
+            # 追加ページのDM0を結合
+            ds_new = data["results"][0]["result"]["data"]["dsr"]["DS"][0]
+            dm0_new = ds_new.get("PH", [{}])[0].get("DM0", [])
+            if not dm0_new:
+                break
+            ds["PH"][0]["DM0"].extend(dm0_new)
+            # ValueDictsはマージ不要（同じ辞書が返る）
+
+        # Restartトークンがあれば次ページへ
+        restart = ds.get("Restart")
+        if not restart:
+            break
+
+        # RestartトークンをBindingに埋め込んで次リクエスト
+        cmd = payload["queries"][0]["Query"]["Commands"][0]["SemanticQueryDataShapeCommand"]
+        cmd["Binding"]["Primary"]["Groupings"][0]["Restart"] = restart
+        page += 1
+
+    print(f"  合計 {page} ページ取得完了")
+    return all_rows_data
+
 def has_column_error(data):
     """カラム不存在エラーかどうかチェック"""
     raw = json.dumps(data, ensure_ascii=False)
@@ -314,7 +348,7 @@ def fetch_data(country=None, output="stdout", columns=None):
 
     print(f"クエリ: columns={cols} country={country}")
     payload = build_query(cols, filters if filters else None)
-    data = query_api(payload)
+    data = query_api_all_pages(payload)
 
     if has_column_error(data):
         print("ERROR: カラム名が正しくありません")
