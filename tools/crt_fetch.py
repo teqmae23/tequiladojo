@@ -138,26 +138,50 @@ def has_column_error(data):
 def parse_results(data):
     """Power BI DSR レスポンスをレコードリストに変換"""
     try:
-        ds = data["results"][0]["result"]["data"]["dsr"]["DS"][0]
-        if "S" not in ds:
-            return [], []
-        col_names = [c["N"] for c in ds["S"]]
+        result_data = data["results"][0]["result"]["data"]
+
+        # 列名は descriptor.Select から取得
+        col_names = []
+        for sel in result_data.get("descriptor", {}).get("Select", []):
+            gk = sel.get("GroupKeys", [])
+            col_names.append(gk[0]["Source"]["Property"] if gk else sel.get("Name", f"col{len(col_names)}"))
+
+        if "dsr" not in result_data:
+            return col_names, []
+
+        ds = result_data["dsr"]["DS"][0]
+
+        # S キーがある場合は列名を上書き
+        if "S" in ds:
+            col_names = [c["N"] for c in ds["S"]]
+
+        n_cols = len(col_names)
+        value_dicts = ds.get("ValueDicts", {})
         rows = []
-        value_dicts = ds.get("PH", [{}])[0].get("DM0", [])
-        prev = {}
-        for vd in value_dicts:
-            if "R" in vd:
-                repeat_bits = vd["R"]
-                row = {}
-                for i, col in enumerate(col_names):
-                    if repeat_bits & (1 << i):
-                        row[col] = prev.get(col)
-                    else:
-                        row[col] = vd.get(f"C{i}")
-            else:
-                row = {col: vd.get(f"C{i}") for i, col in enumerate(col_names)}
-            prev = {**prev, **{k: v for k, v in row.items() if v is not None}}
-            rows.append(row)
+        dm0 = ds.get("PH", [{}])[0].get("DM0", [])
+        prev = [None] * n_cols
+
+        for vd in dm0:
+            c_arr = vd.get("C", [])
+            r_bits = vd.get("R", 0)
+
+            row_vals = list(prev)
+            c_idx = 0
+            for i in range(n_cols):
+                if r_bits & (1 << i):
+                    pass  # 前行から繰り越し
+                else:
+                    val = c_arr[c_idx] if c_idx < len(c_arr) else None
+                    # 整数はValueDictのインデックス
+                    if isinstance(val, int):
+                        d = value_dicts.get(f"D{i}", [])
+                        val = d[val] if val < len(d) else val
+                    row_vals[i] = val
+                    c_idx += 1
+
+            prev = row_vals
+            rows.append(dict(zip(col_names, row_vals)))
+
         return col_names, rows
     except (KeyError, IndexError):
         return [], []
