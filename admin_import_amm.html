@@ -700,11 +700,13 @@ function renderBasicPreview(){
 
 // ── Step1: Basic Import ───────────────────────────────────────
 async function doImport(){
-  if(!isAdmin) return;
-  if(!confirm('ammDistilleries に152件を書き込みます（上書き）。続行しますか？')) return;
+  console.log('[doImport] called. isAdmin='+isAdmin+' uid='+(auth.currentUser&&auth.currentUser.uid)+' anon='+(auth.currentUser&&auth.currentUser.isAnonymous));
+  if(!isAdmin){ console.warn('[doImport] abort: not admin'); return; }
+  if(!confirm('ammDistilleries に152件を書き込みます（上書き）。続行しますか？')){ console.log('[doImport] confirm cancelled'); return; }
   document.getElementById('btn-import').disabled=true;
   document.getElementById('prog-basic').style.display='block';
   log('基本データ インポート開始...','info');
+  console.log('[doImport] start. RAW.length='+RAW.length+' projectId='+FIREBASE_CONFIG.projectId);
   try{
     var writes=RAW.map(function(r){
       var nom=r[2];
@@ -715,20 +717,25 @@ async function doImport(){
       if(URL_MAP[nom]) data.ammUrl=URL_MAP[nom];
       return {nom:nom,data:data};
     });
+    console.log('[doImport] writes prepared: '+writes.length+' docs');
     var done=0;
     for(var i=0;i<writes.length;i+=499){
       var batch=db.batch();
       writes.slice(i,i+499).forEach(function(w){
         batch.set(db.collection('ammDistilleries').doc(w.nom),w.data);
       });
+      console.log('[doImport] batch commit start (offset='+i+')');
       await batch.commit();
       done+=Math.min(499,writes.length-i);
+      console.log('[doImport] batch commit OK. done='+done);
       var pct=Math.round(done/writes.length*100);
       document.getElementById('pb-basic').style.width=pct+'%';
       document.getElementById('pt-basic').textContent=done+'/'+writes.length+' 件 ('+pct+'%)';
     }
     // 書き込み確認
+    console.log('[doImport] verifying write...');
     var verSnap=await db.collection('ammDistilleries').limit(1).get();
+    console.log('[doImport] verSnap.empty='+verSnap.empty+' fromCache='+verSnap.metadata.fromCache);
     if(verSnap.empty){
       var errMsg='書き込み確認失敗: Firestoreにデータがありません。\nセキュリティルールで ammDistilleries への書き込みが拒否されている可能性があります。';
       alert('⚠ ' + errMsg);
@@ -739,7 +746,7 @@ async function doImport(){
       log('✓ 基本データ インポート完了: '+writes.length+'件','ok');
     }
   }catch(e){
-    console.error('[doImport] error:', e);
+    console.error('[doImport] CATCH:', e.code, e.message, e);
     var msg=(e.code?'['+e.code+'] ':'')+( e.message||JSON.stringify(e)||'不明なエラー');
     alert('インポートエラー:\n' + msg);
     st('st-basic','エラー: '+msg,'err');
