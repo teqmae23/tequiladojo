@@ -153,8 +153,13 @@ def has_column_error(data):
 
 import re as _re
 
-def _clean_value(val):
+def _clean_value(val, col_name=None):
     """DSRリテラル値をPythonネイティブ型に変換"""
+    # Unixタイムスタンプ（ms）→ 日付文字列 (Fecha列 or 大きな整数)
+    # 年2000〜2100の範囲: 946684800000 〜 4102444800000
+    if isinstance(val, (int, float)) and 9.4e11 < val < 4.2e12:
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(val / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
     if not isinstance(val, str):
         return val
     # datetime'2012-01-01T00:00:00' → '2012-01-01'
@@ -226,16 +231,20 @@ def parse_results(data):
             prev = row_vals
             rows.append(dict(zip(col_names, row_vals)))
 
-        # Fecha列から Año・Mes列を追加
+        # Fecha列から Año・Mes列を追加、Litros_40の浮動小数点丸め
         if "Fecha" in col_names:
             for row in rows:
                 fecha = str(row.get("Fecha") or "")
-                if len(fecha) >= 7:
-                    row["Año"] = fecha[:4]
-                    row["Mes"] = fecha[5:7]
+                # YYYY-MM-DD 形式を期待
+                if len(fecha) >= 7 and fecha[4] == "-":
+                    row["Año"] = int(fecha[:4])
+                    row["Mes"] = int(fecha[5:7])
                 else:
                     row["Año"] = None
                     row["Mes"] = None
+                # 浮動小数点誤差を丸める
+                if "Litros_40" in row and isinstance(row["Litros_40"], float):
+                    row["Litros_40"] = round(row["Litros_40"], 4)
             col_names = col_names + ["Año", "Mes"]
 
         return col_names, rows
