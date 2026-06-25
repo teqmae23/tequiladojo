@@ -13,29 +13,9 @@ jobs:
         with:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           token_format: 'access_token'
-      - name: Deploy Firebase Hosting
+      - name: Deploy Firebase Hosting and Firestore rules
         run: |
           npm install -g firebase-tools
-          firebase deploy --only hosting --project tequiladojo --non-interactive
-        env:
-          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
-      - name: Deploy Firestore rules
-        if: always()
-        run: |
-          RULES=$(python3 -c "import sys,json; print(json.dumps(open('firestore.rules').read()))")
-          RULESET=$(curl -sf -X POST \
-            -H "Authorization: Bearer ${GOOGLE_OAUTH_ACCESS_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"source\":{\"files\":[{\"name\":\"firestore.rules\",\"content\":${RULES}}]}}" \
-            "https://firebaserules.googleapis.com/v1/projects/tequiladojo/rulesets")
-          RULESET_NAME=$(echo "$RULESET" | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])")
-          echo "Created ruleset: $RULESET_NAME"
-          PATCH_RESP=$(curl -s -X PATCH \
-            -H "Authorization: Bearer ${GOOGLE_OAUTH_ACCESS_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"name\":\"projects/tequiladojo/releases/cloud.firestore\",\"rulesetName\":\"${RULESET_NAME}\"}" \
-            "https://firebaserules.googleapis.com/v1/projects/tequiladojo/releases/cloud.firestore?updateMask=rulesetName")
-          echo "Release update response: $PATCH_RESP"
-          echo "$PATCH_RESP" | python3 -c "import sys,json; r=json.load(sys.stdin); assert 'rulesetName' in r, 'PATCH failed: ' + str(r); print('Firestore rules deployed:', r['rulesetName'])"
+          firebase deploy --only hosting,firestore:rules --project tequiladojo --non-interactive
         env:
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
