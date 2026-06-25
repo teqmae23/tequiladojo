@@ -44,6 +44,11 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);min-height
 #auth-bar.ok{background:rgba(26,110,88,.1);color:var(--teal);}
 #auth-bar.ng{background:var(--red-l);color:var(--red);}
 
+#access-bar{padding:6px 14px;font-size:11px;border-radius:var(--r);margin-bottom:12px;display:none;line-height:1.6;}
+#access-bar.ok{background:rgba(26,110,88,.08);color:var(--teal);}
+#access-bar.err{background:var(--red-l);color:var(--red);}
+#access-bar.testing{background:rgba(200,146,30,.1);color:var(--gold-d);}
+
 .sec-head{font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:8px;}
 .sec-head::after{content:'';flex:1;height:1px;background:var(--cream3);}
 .sec-num{width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--cream);font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;}
@@ -140,6 +145,7 @@ details summary{font-size:12px;color:var(--ink3);cursor:pointer;padding:5px 0;}
 <div class="page">
 
   <div id="auth-bar" class="ng">ログイン確認中...</div>
+  <div id="access-bar"></div>
 
   <!-- ① 基本データ -->
   <div class="sec-head"><span class="sec-num">1</span>基本データインポート</div>
@@ -628,6 +634,7 @@ auth.onAuthStateChanged(function(user){
     bar.className='ok';
     bar.textContent='✓ 管理者ログイン中: '+user.email;
     isAdmin=true;
+    checkAmmAccess();
   } else if(user&&user.isAnonymous){
     bar.className='ng';
     bar.textContent='⚠ 匿名ログイン中 — admin.html から管理者アカウントでログインしてください';
@@ -641,6 +648,29 @@ auth.onAuthStateChanged(function(user){
   initUrlForm();
   loadSavedUrlsFromFirestore();
 });
+
+async function checkAmmAccess(){
+  var bar=document.getElementById('access-bar');
+  bar.style.display='block';
+  bar.className='testing';
+  bar.textContent='ammDistilleries アクセス確認中...';
+  try{
+    var testRef=db.collection('ammDistilleries').doc('__conn_test__');
+    await testRef.set({_test:true,ts:firebase.firestore.FieldValue.serverTimestamp()});
+    var snap=await testRef.get();
+    await testRef.delete();
+    if(!snap.exists) throw new Error('書き込み後の読み取りに失敗しました');
+    bar.className='ok';
+    bar.textContent='✓ ammDistilleries 読み書きOK — インポートを実行できます';
+  }catch(e){
+    var msg=(e.code?'['+e.code+'] ':'')+( e.message||String(e));
+    bar.className='err';
+    bar.innerHTML='✗ ammDistilleries アクセス不可: <strong>'+esc(msg)+'</strong>'
+      +(e.code==='permission-denied'
+        ? '<br>→ Firestoreセキュリティルールで <code>ammDistilleries</code> への書き込みが拒否されています。Firebase ConsoleでルールをデプロイするかCIを実行してください。'
+        : '');
+  }
+}
 
 function refreshButtons(){
   document.getElementById('btn-import').disabled=!isAdmin;
