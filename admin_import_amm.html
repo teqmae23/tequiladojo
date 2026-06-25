@@ -654,15 +654,20 @@ async function checkAmmAccess(){
   bar.style.display='block';
   bar.className='testing';
   bar.textContent='ammDistilleries アクセス確認中...';
+  console.log('[checkAmmAccess] start. uid='+(auth.currentUser&&auth.currentUser.uid)+' anon='+(auth.currentUser&&auth.currentUser.isAnonymous));
   try{
     var testRef=db.collection('ammDistilleries').doc('__conn_test__');
     await testRef.set({_test:true,ts:firebase.firestore.FieldValue.serverTimestamp()});
-    var snap=await testRef.get();
+    console.log('[checkAmmAccess] set OK. reading back from server...');
+    var snap=await testRef.get({source:'server'});
+    console.log('[checkAmmAccess] server read: exists='+snap.exists);
     await testRef.delete();
-    if(!snap.exists) throw new Error('書き込み後の読み取りに失敗しました');
+    if(!snap.exists) throw new Error('サーバー書き込み確認失敗: set()後にサーバーからドキュメントが取得できません');
     bar.className='ok';
-    bar.textContent='✓ ammDistilleries 読み書きOK — インポートを実行できます';
+    bar.textContent='✓ ammDistilleries 読み書きOK (サーバー確認済み) — インポートを実行できます';
+    console.log('[checkAmmAccess] OK');
   }catch(e){
+    console.error('[checkAmmAccess] CATCH:', e.code, e.message);
     var msg=(e.code?'['+e.code+'] ':'')+( e.message||String(e));
     bar.className='err';
     bar.innerHTML='✗ ammDistilleries アクセス不可: <strong>'+esc(msg)+'</strong>'
@@ -700,11 +705,13 @@ function renderBasicPreview(){
 
 // ── Step1: Basic Import ───────────────────────────────────────
 async function doImport(){
-  if(!isAdmin) return;
+  console.log('[doImport] called. isAdmin='+isAdmin+' uid='+(auth.currentUser&&auth.currentUser.uid)+' anon='+(auth.currentUser&&auth.currentUser.isAnonymous));
+  if(!isAdmin){ console.warn('[doImport] abort: not admin'); return; }
   if(!confirm('ammDistilleries に152件を書き込みます（上書き）。続行しますか？')) return;
   document.getElementById('btn-import').disabled=true;
   document.getElementById('prog-basic').style.display='block';
   log('基本データ インポート開始...','info');
+  console.log('[doImport] start. RAW.length='+RAW.length+' projectId='+FIREBASE_CONFIG.projectId);
   try{
     var writes=RAW.map(function(r){
       var nom=r[2];
@@ -715,31 +722,36 @@ async function doImport(){
       if(URL_MAP[nom]) data.ammUrl=URL_MAP[nom];
       return {nom:nom,data:data};
     });
+    console.log('[doImport] writes prepared: '+writes.length+' docs (with ammUrl: '+writes.filter(function(w){return w.data.ammUrl;}).length+')');
     var done=0;
     for(var i=0;i<writes.length;i+=499){
       var batch=db.batch();
       writes.slice(i,i+499).forEach(function(w){
         batch.set(db.collection('ammDistilleries').doc(w.nom),w.data);
       });
+      console.log('[doImport] batch commit start (offset='+i+', count='+Math.min(499,writes.length-i)+')');
       await batch.commit();
       done+=Math.min(499,writes.length-i);
+      console.log('[doImport] batch commit done. total done='+done);
       var pct=Math.round(done/writes.length*100);
       document.getElementById('pb-basic').style.width=pct+'%';
       document.getElementById('pt-basic').textContent=done+'/'+writes.length+' 件 ('+pct+'%)';
     }
-    // 書き込み確認
-    var verSnap=await db.collection('ammDistilleries').limit(1).get();
+    // サーバーから読み返して書き込みを確認（キャッシュ読み取りを回避）
+    console.log('[doImport] verifying from server...');
+    var verSnap=await db.collection('ammDistilleries').limit(1).get({source:'server'});
+    console.log('[doImport] server verify: empty='+verSnap.empty+' fromCache='+verSnap.metadata.fromCache);
     if(verSnap.empty){
-      var errMsg='書き込み確認失敗: Firestoreにデータがありません。\nセキュリティルールで ammDistilleries への書き込みが拒否されている可能性があります。';
+      var errMsg='書き込み確認失敗: Firestoreサーバーにデータがありません。\nセキュリティルールで ammDistilleries への書き込みが拒否されている可能性があります。';
       alert('⚠ ' + errMsg);
       st('st-basic','⚠ '+errMsg,'err');
       log('⚠ '+errMsg,'err');
     } else {
-      st('st-basic','✓ インポート完了: '+writes.length+'件','ok');
+      st('st-basic','✓ インポート完了: '+writes.length+'件 (サーバー確認済み)','ok');
       log('✓ 基本データ インポート完了: '+writes.length+'件','ok');
     }
   }catch(e){
-    console.error('[doImport] error:', e);
+    console.error('[doImport] CATCH:', e.code, e.message, e);
     var msg=(e.code?'['+e.code+'] ':'')+( e.message||JSON.stringify(e)||'不明なエラー');
     alert('インポートエラー:\n' + msg);
     st('st-basic','エラー: '+msg,'err');
