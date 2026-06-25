@@ -164,6 +164,13 @@ details summary{font-size:12px;color:var(--ink3);cursor:pointer;padding:5px 0;}
       <div class="prog-txt" id="pt-basic"></div>
     </div>
     <div class="status-line" id="st-basic"></div>
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--cream3);">
+      <div class="card-sub" style="margin-bottom:8px;">distilleries マスタへの AMM URL 同期 — NOMが一致するドキュメントの <code>ammUrl</code> フィールドを更新します。</div>
+      <div class="btn-row">
+        <button class="btn btn-primary btn-sm" id="btn-sync-url" onclick="doSyncAmmUrl()" disabled>distilleries に AMM URL を同期</button>
+      </div>
+      <div class="status-line" id="st-sync"></div>
+    </div>
     <details style="margin-top:14px;">
       <summary>プレビュー（先頭10件）</summary>
       <div class="tbl-wrap">
@@ -676,6 +683,7 @@ function refreshButtons(){
   document.getElementById('btn-import').disabled=!isAdmin;
   document.getElementById('btn-clear').disabled=!isAdmin;
   document.getElementById('btn-url-import').disabled=!isAdmin;
+  document.getElementById('btn-sync-url').disabled=!isAdmin;
   document.getElementById('btn-detail-import').disabled=!(isAdmin&&parsedDetail.length>0);
   document.getElementById('btn-detail-clear').disabled=!isAdmin;
 }
@@ -753,6 +761,46 @@ async function doImport(){
     log('インポートエラー: '+msg,'err');
   }
   document.getElementById('btn-import').disabled=false;
+}
+
+async function doSyncAmmUrl(){
+  if(!isAdmin) return;
+  var nomCount=Object.keys(URL_MAP).length;
+  if(!confirm('distilleries コレクション内のNOMが一致するドキュメントに ammUrl を書き込みます（'+nomCount+'件対象）。続行しますか？')) return;
+  document.getElementById('btn-sync-url').disabled=true;
+  st('st-sync','distilleries を検索中...','');
+  log('distilleries AMM URL 同期開始...','info');
+  try{
+    var snap=await db.collection('distilleries').get({source:'server'});
+    console.log('[doSyncAmmUrl] distilleries docs fetched:', snap.size);
+    var batch=db.batch();
+    var matched=0;
+    snap.forEach(function(doc){
+      var nom=doc.id;
+      if(URL_MAP[nom]){
+        batch.update(doc.ref,{ammUrl:URL_MAP[nom]});
+        matched++;
+      }
+    });
+    console.log('[doSyncAmmUrl] matched NOMs:', matched);
+    if(matched===0){
+      st('st-sync','⚠ URL_MAP に一致する distilleries ドキュメントが0件でした','err');
+      log('⚠ AMM URL 同期: 一致するドキュメントなし','warn');
+    } else {
+      await batch.commit();
+      var verify=await db.collection('distilleries').where('ammUrl','>','').limit(1).get({source:'server'});
+      console.log('[doSyncAmmUrl] verify ammUrl exists:', !verify.empty, 'fromCache:', verify.metadata.fromCache);
+      st('st-sync','✓ AMM URL 同期完了: '+matched+'件更新 (サーバー確認済み)','ok');
+      log('✓ distilleries AMM URL 同期完了: '+matched+'件','ok');
+    }
+  }catch(e){
+    console.error('[doSyncAmmUrl] CATCH:', e.code, e.message, e);
+    var msg=(e.code?'['+e.code+'] ':'')+( e.message||JSON.stringify(e)||'不明なエラー');
+    alert('同期エラー:\n'+msg);
+    st('st-sync','エラー: '+msg,'err');
+    log('同期エラー: '+msg,'err');
+  }
+  document.getElementById('btn-sync-url').disabled=false;
 }
 
 async function doClear(){
