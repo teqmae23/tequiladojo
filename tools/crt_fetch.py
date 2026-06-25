@@ -381,7 +381,7 @@ def fetch_data(country=None, output="stdout", columns=None):
     col_names = group_keys + ["Litros_40"]
 
     print(f"取得件数（集計後）: {len(rows)} 件")
-    rows = all_rows
+
     print(f"カラム: {col_names}")
     print()
 
