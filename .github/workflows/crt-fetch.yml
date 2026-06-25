@@ -32,7 +32,7 @@ jobs:
           python-version: '3.11'
 
       - name: 依存ライブラリインストール
-        run: pip install requests
+        run: pip install requests python-dateutil
 
       - name: カラム探索（discoverモード）
         if: github.event.inputs.mode == 'discover'
@@ -42,8 +42,8 @@ jobs:
         if: github.event.inputs.mode == 'dump'
         run: python3 tools/crt_fetch.py --dump
 
-      - name: データ取得（fetchモード・スケジュール）
-        if: github.event.inputs.mode == 'fetch' || github.event_name == 'schedule'
+      - name: 全期間初回構築（fetchモード・手動）
+        if: github.event.inputs.mode == 'fetch'
         run: |
           ARGS="--output sqlite"
           if [ -n "${{ github.event.inputs.country }}" ]; then
@@ -51,6 +51,35 @@ jobs:
           fi
           eval python3 tools/crt_fetch.py $ARGS
           ls -la data/ 2>/dev/null || echo "dataディレクトリなし"
+
+      - name: 月次更新（スケジュール）
+        if: github.event_name == 'schedule'
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess, sys
+          from datetime import datetime, timezone
+          from dateutil.relativedelta import relativedelta
+
+          now = datetime.now(timezone.utc)
+          # 2ヶ月前 = 新規追加ターゲット
+          t_new  = now - relativedelta(months=2)
+          # 3ヶ月前 = 比較・更新ターゲット
+          t_prev = now - relativedelta(months=3)
+
+          def run(year, month, extra=""):
+              cmd = f"python3 tools/crt_fetch.py --output sqlite --year {year} --month {month} {extra}"
+              print(f">> {cmd}")
+              r = subprocess.run(cmd, shell=True)
+              if r.returncode != 0:
+                  sys.exit(r.returncode)
+
+          print(f"=== {t_prev.year}/{t_prev.month:02d} 比較・更新 ===")
+          run(t_prev.year, t_prev.month)
+
+          print(f"=== {t_new.year}/{t_new.month:02d} 新規追加 ===")
+          run(t_new.year, t_new.month)
+          PYEOF
+
 
       - name: SQLite をリポジトリにコミット
         if: github.event.inputs.mode == 'fetch' || github.event_name == 'schedule'

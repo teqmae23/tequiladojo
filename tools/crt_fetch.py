@@ -358,41 +358,172 @@ def dump_response(columns=None):
     data = query_api(payload)
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
-def fetch_data(country=None, output="stdout", columns=None):
-    """データ取得（年単位で分割リクエスト、全期間を結合）"""
+DB_PATH = "data/crt_exports.db"
+DB_KEYS = ["Pais", "Clase", "Categoria", "Grupo", "Fecha"]
+
+def _fetch_month(year, month, country=None, columns=None):
+    """指定年月のデータを取得して集計済み行リストを返す"""
     cols = columns or CONFIRMED_COLUMNS
     filters = {COUNTRY_COLUMN: country} if country else None
 
-    # CRTデータの開始年〜現在年
-    current_year = datetime.utcnow().year
-    years = list(range(2003, current_year + 1))
+    # 月の初日〜末日でFechaをフィルタ
+    import calendar
+    last_day = calendar.monthrange(year, month)[1]
+    y_from = f"{year}-{month:02d}-01"
+    y_to   = f"{year}-{month:02d}-{last_day:02d}"
 
+    payload = build_query(cols, filters, year_range=None)
+    # Fechaフィルタ（Between）を直接追加
+    cmd = payload["queries"][0]["Query"]["Commands"][0]["SemanticQueryDataShapeCommand"]
+    cmd["Query"].setdefault("Where", []).append({
+        "Condition": {
+            "Between": {
+                "Expression": {"Column": {"Expression": {"SourceRef": {"Source": "v"}}, "Property": "Fecha"}},
+                "LowerBound": {"Literal": {"Value": f"datetime'{y_from}T00:00:00'"}},
+                "UpperBound": {"Literal": {"Value": f"datetime'{y_to}T23:59:59'"}}
+            }
+        }
+    })
+
+    data = query_api(payload)
+    if has_column_error(data):
+        return None, None
+    col_names, raw_rows = parse_results(data)
+    if not raw_rows:
+        return col_names, []
+
+    # Litros_40をキー列でグループ集計
+    group_keys = [c for c in col_names if c != "Litros_40"]
+    agg = {}
+    for row in raw_rows:
+        key = tuple(row.get(k) for k in group_keys)
+        litros = row.get("Litros_40")
+        try:
+            litros = float(litros) if litros is not None else 0.0
+        except (ValueError, TypeError):
+            litros = 0.0
+        agg[key] = agg.get(key, 0.0) + litros
+    rows = [{**dict(zip(group_keys, k)), "Litros_40": round(v, 4)} for k, v in agg.items()]
+    return col_names, rows
+
+def _init_db(con, col_names):
+    """テーブルが存在しない場合のみ作成（主キー付き）"""
+    col_defs = []
+    for c in col_names:
+        if c in ("Litros_40",):
+            col_defs.append(f'"{c}" REAL')
+        elif c in ("Año", "Mes"):
+            col_defs.append(f'"{c}" INTEGER')
+        else:
+            col_defs.append(f'"{c}" TEXT')
+    pk = ", ".join(f'"{k}"' for k in DB_KEYS)
+    con.execute(f"""
+        CREATE TABLE IF NOT EXISTS exports (
+            {', '.join(col_defs)},
+            PRIMARY KEY ({pk})
+        )
+    """)
+    con.commit()
+
+def upsert_month(year, month, rows, col_names, compare_only=False):
+    """指定年月のデータをDBにUPSERT。compare_only=Trueなら差分表示のみ"""
+    import sqlite3, os
+    os.makedirs("data", exist_ok=True)
+    con = sqlite3.connect(DB_PATH)
+    _init_db(con, col_names)
+
+    month_prefix = f"{year}-{month:02d}-"
+    existing = {
+        tuple(r[:len(DB_KEYS)]): r[len(DB_KEYS)]  # キー → Litros_40
+        for r in con.execute(
+            f"SELECT {', '.join(f'\"{ k}\"' for k in DB_KEYS)}, \"Litros_40\" FROM exports WHERE Fecha LIKE ?",
+            (month_prefix + "%",)
+        )
+    }
+
+    new_map = {
+        tuple(row.get(k) for k in DB_KEYS): row.get("Litros_40", 0.0)
+        for row in rows
+    }
+
+    added = {k: v for k, v in new_map.items() if k not in existing}
+    changed = {k: (existing[k], new_map[k]) for k in new_map if k in existing and existing[k] != new_map[k]}
+    removed = {k: v for k, v in existing.items() if k not in new_map}
+
+    print(f"\n{year}/{month:02d} 差分:")
+    print(f"  新規: {len(added)} 件")
+    print(f"  変更: {len(changed)} 件")
+    print(f"  削除: {len(removed)} 件")
+
+    for k, (old, new) in list(changed.items())[:10]:
+        print(f"  変更例: {dict(zip(DB_KEYS, k))} {old} → {new}")
+
+    if compare_only:
+        con.close()
+        return len(changed)
+
+    # UPSERT（INSERT OR REPLACE）
+    placeholders = ",".join(["?"] * len(col_names))
+    con.executemany(
+        f"INSERT OR REPLACE INTO exports ({', '.join(f'\"{ c}\"' for c in col_names)}) VALUES ({placeholders})",
+        [tuple(row.get(c) for c in col_names) for row in rows]
+    )
+    con.commit()
+    size_kb = os.path.getsize(DB_PATH) // 1024
+    print(f"DB更新完了: {DB_PATH} ({size_kb} KB)")
+    con.close()
+    return len(changed)
+
+def fetch_data(country=None, output="stdout", columns=None, year=None, month=None):
+    """データ取得。year/month指定時は単月、未指定時は全期間（初回構築用）"""
+    import sqlite3, os
+
+    if year and month:
+        # 単月取得
+        print(f"{year}/{month:02d} 取得中...")
+        col_names, rows = _fetch_month(year, month, country, columns)
+        if not rows:
+            print("データなし")
+            return
+        print(f"  集計後 {len(rows)} 件")
+        if output == "sqlite":
+            upsert_month(year, month, rows, col_names)
+        elif output == "csv":
+            fname = f"crt_export_{year}{month:02d}.csv"
+            with open(fname, "w", newline="", encoding="utf-8-sig") as f:
+                csv.DictWriter(f, fieldnames=col_names).writeheader()
+                csv.DictWriter(f, fieldnames=col_names).writerows(rows)
+            print(f"CSV保存: {fname}")
+        else:
+            for row in rows[:5]:
+                print(row)
+        return
+
+    # 全期間（初回構築）: 年単位でループ
+    cols = columns or CONFIRMED_COLUMNS
+    filters = {COUNTRY_COLUMN: country} if country else None
+    current_year = datetime.utcnow().year
     all_rows = []
     col_names = None
 
-    for year in years:
-        print(f"  {year} 年取得中...")
-        payload = build_query(cols, filters, year_range=(year, year))
+    for y in range(2003, current_year + 1):
+        print(f"  {y} 年取得中...")
+        payload = build_query(cols, filters, year_range=(y, y))
         data = query_api(payload)
         if has_column_error(data):
-            print(f"    スキップ（カラムエラー）")
             continue
         names, rows = parse_results(data)
         if rows:
-            print(f"    {len(rows)} 件")
+            print(f"    {len(rows)} 件（集計前）")
             if col_names is None:
                 col_names = names
             all_rows.extend(rows)
-        else:
-            print(f"    0 件")
 
     if not all_rows:
         print("データが取得できませんでした")
         return
 
     print(f"\n取得件数（集計前）: {len(all_rows)} 件")
-
-    # Litros_40をキー列でグループ集計
     group_keys = [c for c in col_names if c != "Litros_40"]
     agg = {}
     for row in all_rows:
@@ -405,11 +536,7 @@ def fetch_data(country=None, output="stdout", columns=None):
         agg[key] = agg.get(key, 0.0) + litros
     rows = [{**dict(zip(group_keys, k)), "Litros_40": round(v, 4)} for k, v in agg.items()]
     col_names = group_keys + ["Litros_40"]
-
     print(f"取得件数（集計後）: {len(rows)} 件")
-
-    print(f"カラム: {col_names}")
-    print()
 
     if output in ("csv", "sqlite"):
         fname = f"crt_export_{country or 'all'}.csv"
@@ -417,28 +544,21 @@ def fetch_data(country=None, output="stdout", columns=None):
             writer = csv.DictWriter(f, fieldnames=col_names)
             writer.writeheader()
             writer.writerows(rows)
-        print(f"CSVを保存: {fname}")
+        print(f"CSV保存: {fname}")
 
     if output == "sqlite":
-        import sqlite3, os
-        db_path = os.path.join("data", "crt_exports.db")
         os.makedirs("data", exist_ok=True)
-        con = sqlite3.connect(db_path)
-        cur = con.cursor()
-        cur.execute("DROP TABLE IF EXISTS exports")
-        col_defs = ", ".join(
-            f'"{c}" REAL' if c in ("Litros_40",) else f'"{c}" TEXT'
-            for c in col_names
-        )
-        cur.execute(f"CREATE TABLE exports ({col_defs})")
-        cur.executemany(
-            f"INSERT INTO exports VALUES ({','.join(['?']*len(col_names))})",
+        con = sqlite3.connect(DB_PATH)
+        _init_db(con, col_names)
+        placeholders = ",".join(["?"] * len(col_names))
+        con.executemany(
+            f"INSERT OR REPLACE INTO exports ({', '.join(f'\"{ c}\"' for c in col_names)}) VALUES ({placeholders})",
             [tuple(row.get(c) for c in col_names) for row in rows]
         )
         con.commit()
+        size_kb = os.path.getsize(DB_PATH) // 1024
+        print(f"SQLite保存: {DB_PATH} ({size_kb} KB)")
         con.close()
-        size_kb = os.path.getsize(db_path) // 1024
-        print(f"SQLiteを保存: {db_path} ({size_kb} KB, {len(rows)} 行)")
     elif output == "stdout":
         for row in rows[:5]:
             print(row)
@@ -447,12 +567,15 @@ def fetch_data(country=None, output="stdout", columns=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--discover", action="store_true", help="カラム一覧を調査")
-    parser.add_argument("--dump",     action="store_true", help="生レスポンスをダンプ（構造確認用）")
-    parser.add_argument("--country",  help="国名フィルタ（Paisカラム）（例: Japón）")
-    parser.add_argument("--output",   default="stdout", choices=["stdout", "csv", "sqlite"])
-    parser.add_argument("--columns",  nargs="+", default=None,
-                        help=f"取得するカラム（デフォルト: {' '.join(CONFIRMED_COLUMNS)}）")
+    parser.add_argument("--discover",     action="store_true")
+    parser.add_argument("--dump",         action="store_true")
+    parser.add_argument("--country",      help="国名フィルタ（例: JAPON）")
+    parser.add_argument("--output",       default="stdout", choices=["stdout", "csv", "sqlite"])
+    parser.add_argument("--columns",      nargs="+", default=None)
+    parser.add_argument("--year",         type=int, help="取得年（--monthと併用）")
+    parser.add_argument("--month",        type=int, help="取得月（--yearと併用）")
+    parser.add_argument("--compare-month", type=int, help="比較・更新する月（N ヶ月前）",
+                        dest="compare_month")
     args = parser.parse_args()
 
     if args.discover:
@@ -464,4 +587,6 @@ if __name__ == "__main__":
             country=args.country,
             output=args.output,
             columns=args.columns,
+            year=args.year,
+            month=args.month,
         )
