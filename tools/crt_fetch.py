@@ -116,7 +116,7 @@ def build_query(columns, filters=None, measures=None):
                         "Query": query,
                         "Binding": {
                             "Primary": {"Groupings": [{"Projections": list(range(n_total))}]},
-                            "DataReduction": {"DataVolume": 4, "Primary": {"Window": {"Count": 5000}}},
+                            "DataReduction": {"DataVolume": 4, "Primary": {"Window": {"Count": 500000}}},
                             "Version": 1
                         },
                         "ExecutionMetricsKind": 1
@@ -343,55 +343,33 @@ def dump_response(columns=None):
     data = query_api(payload)
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
-def _fetch_one(cols, filters):
-    """1リクエスト分取得してパース済み行を返す"""
-    payload = build_query(cols, filters if filters else None)
-    data = query_api(payload)
-    if has_column_error(data):
-        return None, None, data
-    col_names, rows = parse_results(data)
-    return col_names, rows, data
-
 def fetch_data(country=None, output="stdout", columns=None):
-    """データ取得（国ごとに分割リクエストして全データを結合）"""
+    """データ取得（大きなWindowで1リクエスト全取得）"""
     cols = columns or CONFIRMED_COLUMNS
 
-    if country:
-        # 指定国のみ
-        countries = [country]
-    else:
-        # Pais一覧を先取得
-        print("国一覧を取得中...")
-        pais_payload = build_query([COUNTRY_COLUMN])
-        pais_data = query_api(pais_payload)
-        _, pais_rows = parse_results(pais_data)
-        countries = sorted({r[COUNTRY_COLUMN] for r in pais_rows if r.get(COUNTRY_COLUMN)})
-        print(f"  {len(countries)} カ国検出")
+    filters = {COUNTRY_COLUMN: country} if country else None
+    print(f"クエリ: columns={cols} country={country}")
+    payload = build_query(cols, filters)
+    data = query_api(payload)
 
-    all_rows = []
-    col_names = None
+    if has_column_error(data):
+        print("ERROR: カラム名が正しくありません")
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:2000])
+        sys.exit(1)
 
-    for i, c in enumerate(countries, 1):
-        print(f"  [{i}/{len(countries)}] {c} ...")
-        filters = {COUNTRY_COLUMN: c}
-        names, rows, data = _fetch_one(cols, filters)
-        if names is None:
-            print(f"    ERROR: スキップ")
-            continue
-        if col_names is None:
-            col_names = names
-        all_rows.extend(rows or [])
+    col_names, rows = parse_results(data)
 
-    if not all_rows:
+    if not rows:
         print("データが取得できませんでした")
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:3000])
         return
 
-    print(f"\n取得件数（集計前）: {len(all_rows)} 件")
+    print(f"\n取得件数（集計前）: {len(rows)} 件")
 
     # Litros_40をキー列でグループ集計（個別出荷レコードを月次合計に）
     group_keys = [c for c in col_names if c != "Litros_40"]
     agg = {}
-    for row in all_rows:
+    for row in rows:
         key = tuple(row.get(k) for k in group_keys)
         litros = row.get("Litros_40")
         try:
@@ -399,10 +377,10 @@ def fetch_data(country=None, output="stdout", columns=None):
         except (ValueError, TypeError):
             litros = 0.0
         agg[key] = agg.get(key, 0.0) + litros
-    all_rows = [{**dict(zip(group_keys, k)), "Litros_40": round(v, 4)} for k, v in agg.items()]
+    rows = [{**dict(zip(group_keys, k)), "Litros_40": round(v, 4)} for k, v in agg.items()]
     col_names = group_keys + ["Litros_40"]
 
-    print(f"取得件数（集計後）: {len(all_rows)} 件")
+    print(f"取得件数（集計後）: {len(rows)} 件")
     rows = all_rows
     print(f"カラム: {col_names}")
     print()
