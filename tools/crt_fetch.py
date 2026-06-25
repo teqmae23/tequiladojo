@@ -46,7 +46,7 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
 
-def build_query(columns, filters=None, measures=None):
+def build_query(columns, filters=None, measures=None, year_range=None):
     """Power BI DAX クエリを構築
 
     columns : list[str]  — カラム名（ディメンション）
@@ -83,8 +83,9 @@ def build_query(columns, filters=None, measures=None):
         "Select": select_clause,
     }
 
+    where_clauses = []
+
     if filters:
-        where_clauses = []
         for col, val in filters.items():
             if isinstance(val, str):
                 cond = {
@@ -105,6 +106,20 @@ def build_query(columns, filters=None, measures=None):
                     }
                 }
             where_clauses.append(cond)
+
+    if year_range:
+        y_from, y_to = year_range
+        where_clauses.append({
+            "Condition": {
+                "Between": {
+                    "Expression": {"Column": {"Expression": {"SourceRef": {"Source": "v"}}, "Property": "Fecha"}},
+                    "LowerBound": {"Literal": {"Value": f"datetime'{y_from}-01-01T00:00:00'"}},
+                    "UpperBound": {"Literal": {"Value": f"datetime'{y_to}-12-31T23:59:59'"}}
+                }
+            }
+        })
+
+    if where_clauses:
         query["Where"] = where_clauses
 
     payload = {
@@ -344,32 +359,43 @@ def dump_response(columns=None):
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
 def fetch_data(country=None, output="stdout", columns=None):
-    """データ取得（大きなWindowで1リクエスト全取得）"""
+    """データ取得（年単位で分割リクエスト、全期間を結合）"""
     cols = columns or CONFIRMED_COLUMNS
-
     filters = {COUNTRY_COLUMN: country} if country else None
-    print(f"クエリ: columns={cols} country={country}")
-    payload = build_query(cols, filters)
-    data = query_api(payload)
 
-    if has_column_error(data):
-        print("ERROR: カラム名が正しくありません")
-        print(json.dumps(data, ensure_ascii=False, indent=2)[:2000])
-        sys.exit(1)
+    # CRTデータの開始年〜現在年
+    current_year = datetime.utcnow().year
+    years = list(range(2003, current_year + 1))
 
-    col_names, rows = parse_results(data)
+    all_rows = []
+    col_names = None
 
-    if not rows:
+    for year in years:
+        print(f"  {year} 年取得中...")
+        payload = build_query(cols, filters, year_range=(year, year))
+        data = query_api(payload)
+        if has_column_error(data):
+            print(f"    スキップ（カラムエラー）")
+            continue
+        names, rows = parse_results(data)
+        if rows:
+            print(f"    {len(rows)} 件")
+            if col_names is None:
+                col_names = names
+            all_rows.extend(rows)
+        else:
+            print(f"    0 件")
+
+    if not all_rows:
         print("データが取得できませんでした")
-        print(json.dumps(data, ensure_ascii=False, indent=2)[:3000])
         return
 
-    print(f"\n取得件数（集計前）: {len(rows)} 件")
+    print(f"\n取得件数（集計前）: {len(all_rows)} 件")
 
-    # Litros_40をキー列でグループ集計（個別出荷レコードを月次合計に）
+    # Litros_40をキー列でグループ集計
     group_keys = [c for c in col_names if c != "Litros_40"]
     agg = {}
-    for row in rows:
+    for row in all_rows:
         key = tuple(row.get(k) for k in group_keys)
         litros = row.get("Litros_40")
         try:
