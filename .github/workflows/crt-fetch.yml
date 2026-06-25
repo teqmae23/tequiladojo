@@ -14,10 +14,14 @@ on:
       month:
         description: '月（1-12、空白=全月）'
         required: false
-        default: ''
+        default: '5'
+      discover:
+        description: 'カラム名確認モード（trueにするとカラム一覧を表示）'
+        required: false
+        default: 'false'
   schedule:
-    # 毎月1日 9:00 JST (0:00 UTC) に自動実行
-    - cron: '0 0 1 * *'
+    # 毎月2日 0:00 UTC（9:00 JST）に前月分を自動取得
+    - cron: '0 0 2 * *'
 
 jobs:
   fetch:
@@ -25,40 +29,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Python セットアップ
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: 依存ライブラリインストール
         run: pip install requests
 
+      - name: カラム名確認（discoverモード）
+        if: github.event.inputs.discover == 'true'
+        run: python3 tools/crt_fetch.py --discover
+
       - name: データ取得
+        if: github.event.inputs.discover != 'true'
         run: |
-          ARGS=""
-          if [ -n "${{ github.event.inputs.country }}" ]; then
-            ARGS="$ARGS --country \"${{ github.event.inputs.country }}\""
-          fi
-          if [ -n "${{ github.event.inputs.year }}" ]; then
-            ARGS="$ARGS --year ${{ github.event.inputs.year }}"
-          fi
-          if [ -n "${{ github.event.inputs.month }}" ]; then
-            ARGS="$ARGS --month ${{ github.event.inputs.month }}"
-          fi
-          # スケジュール実行の場合は前月を自動取得
           if [ "${{ github.event_name }}" = "schedule" ]; then
+            # スケジュール実行：前月を自動取得
             YEAR=$(date -d "1 month ago" +%Y)
             MONTH=$(date -d "1 month ago" +%-m)
-            ARGS="--year $YEAR --month $MONTH"
             echo "スケジュール実行: ${YEAR}年${MONTH}月"
+            python3 tools/crt_fetch.py --year "$YEAR" --month "$MONTH" --output csv
+          else
+            # 手動実行：入力値を使用
+            ARGS=""
+            [ -n "${{ github.event.inputs.country }}" ] && ARGS="$ARGS --country \"${{ github.event.inputs.country }}\""
+            [ -n "${{ github.event.inputs.year }}"    ] && ARGS="$ARGS --year ${{ github.event.inputs.year }}"
+            [ -n "${{ github.event.inputs.month }}"   ] && ARGS="$ARGS --month ${{ github.event.inputs.month }}"
+            eval python3 tools/crt_fetch.py $ARGS --output csv
           fi
-          eval python3 tools/crt_fetch.py $ARGS --output csv
-          ls -la *.csv 2>/dev/null || echo "CSVファイルなし"
 
       - name: CSV をアーティファクトとして保存
         uses: actions/upload-artifact@v4
-        if: always()
+        if: github.event.inputs.discover != 'true'
         with:
-          name: crt-export-data
+          name: crt-export-${{ github.event.inputs.year || 'auto' }}-${{ github.event.inputs.month || 'auto' }}
           path: '*.csv'
-          retention-days: 90
+          retention-days: 365
