@@ -7,16 +7,21 @@ Power BI 公開レポートAPIを直接呼ぶ
   Pais     = 国名（UIラベル: Paises、例: Japón）
   Clase    = クラス（Blanco/Reposado 等）
   Categoria = カテゴリ
+  Año      = 年（スライサー確認済み）
+  Mes      = 月（スライサー確認済み）
+
+メジャー（集計値）:
+  Litros_40 = 輸出量（40%アルコール換算リットル）
 
 使い方:
   # カラム一覧確認
   python3 crt_fetch.py --discover
 
-  # 全データ取得
+  # 全データ取得（年・月・輸出量含む）
   python3 crt_fetch.py
 
   # 日本のデータ取得
-  python3 crt_fetch.py --country "Japón"
+  python3 crt_fetch.py --country "JAPON"
 
   # 生レスポンスをダンプ（デバッグ用）
   python3 crt_fetch.py --dump
@@ -37,6 +42,13 @@ ENTITY       = "vEstPagWebExportacionesDestino"
 CONFIRMED_COLUMNS = ["Pais", "Clase", "Categoria", "Grupo"]
 COUNTRY_COLUMN    = "Pais"
 
+# UIスライサーで確認された年月カラム候補（discover結果で更新）
+YEAR_COLUMN  = "Año"
+MONTH_COLUMN = "Mes"
+
+# UIで確認されたメジャー名（集計値はColumn型ではなくMeasure型で取得）
+MEASURE_LITROS = "Litros_40"
+
 HEADERS = {
     "Content-Type": "application/json;charset=UTF-8",
     "X-PowerBI-ResourceKey": RESOURCE_KEY,
@@ -45,22 +57,37 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
 
-def build_query(columns, filters=None):
-    """Power BI DAX クエリを構築"""
-    from_clause = [{"Name": "v", "Entity": ENTITY, "Type": 0}]
+def build_query(columns, filters=None, measures=None):
+    """Power BI DAX クエリを構築
 
-    select_clause = [
-        {
+    columns : list[str]  — カラム名（ディメンション）
+    measures: list[str]  — メジャー名（集計値、例: Litros_40）
+    filters : dict       — {カラム名: 値} のフィルタ
+    """
+    from_clause = [{"Name": "v", "Entity": ENTITY, "Type": 0}]
+    measures = measures or []
+
+    select_clause = []
+    for col in columns:
+        select_clause.append({
             "Column": {
                 "Expression": {"SourceRef": {"Source": "v"}},
                 "Property": col
             },
             "Name": f"v.{col}",
             "NativeReferenceName": col
-        }
-        for col in columns
-    ]
+        })
+    for m in measures:
+        select_clause.append({
+            "Measure": {
+                "Expression": {"SourceRef": {"Source": "v"}},
+                "Property": m
+            },
+            "Name": f"v.{m}",
+            "NativeReferenceName": m
+        })
 
+    n_total = len(columns) + len(measures)
     query = {
         "Version": 2,
         "From": from_clause,
@@ -99,7 +126,7 @@ def build_query(columns, filters=None):
                     "SemanticQueryDataShapeCommand": {
                         "Query": query,
                         "Binding": {
-                            "Primary": {"Groupings": [{"Projections": list(range(len(columns)))}]},
+                            "Primary": {"Groupings": [{"Projections": list(range(n_total))}]},
                             "DataReduction": {"DataVolume": 4, "Primary": {"Window": {"Count": 5000}}},
                             "Version": 1
                         },
@@ -239,16 +266,25 @@ def dump_response(columns=None):
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
 def fetch_data(country=None, output="stdout", columns=None):
-    """データ取得"""
-    cols = columns or CONFIRMED_COLUMNS
+    """データ取得（年・月・輸出量メジャー含む）"""
+    dim_cols = columns or (CONFIRMED_COLUMNS + [YEAR_COLUMN, MONTH_COLUMN])
+    measure_cols = [MEASURE_LITROS]
 
     filters = {}
     if country:
         filters[COUNTRY_COLUMN] = country
 
-    print(f"クエリ: columns={cols} country={country}")
-    payload = build_query(cols, filters if filters else None)
+    print(f"クエリ: columns={dim_cols} measures={measure_cols} country={country}")
+    payload = build_query(dim_cols, filters if filters else None, measure_cols)
     data = query_api(payload)
+
+    if has_column_error(data):
+        # 年月カラムが存在しない場合、それなしで再試行
+        print(f"WARN: カラムエラー。年月({YEAR_COLUMN}/{MONTH_COLUMN})なしで再試行...")
+        dim_cols = [c for c in dim_cols if c not in (YEAR_COLUMN, MONTH_COLUMN)]
+        print(f"クエリ（再試行）: columns={dim_cols} measures={measure_cols}")
+        payload = build_query(dim_cols, filters if filters else None, measure_cols)
+        data = query_api(payload)
 
     if has_column_error(data):
         print("ERROR: カラム名が正しくありません")
