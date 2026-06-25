@@ -6,39 +6,16 @@ on:
       mode:
         description: '実行モード'
         required: true
-        default: 'discover'
+        default: 'dump'
         type: choice
         options:
+          - dump
           - discover
           - fetch
       country:
-        description: '国名（fetchモード、例: Japón、空白=全カ国）'
-        required: false
-        default: 'Japón'
-      year:
-        description: '年（fetchモード、例: 2026、空白=全年）'
-        required: false
-        default: '2026'
-      month:
-        description: '月（fetchモード、1-12、空白=全月）'
+        description: '国名フィルタ（fetchモード、例: Japón、空白=全カ国）'
         required: false
         default: ''
-      col_country:
-        description: '国カラム名（discoverで確認後に指定）'
-        required: false
-        default: 'Grupo'
-      col_year:
-        description: '年カラム名（discoverで確認後に指定）'
-        required: false
-        default: 'Anio'
-      col_month:
-        description: '月カラム名（discoverで確認後に指定）'
-        required: false
-        default: 'Mes'
-      col_class:
-        description: 'クラスカラム名（discoverで確認後に指定）'
-        required: false
-        default: 'Clase'
   schedule:
     # 毎月1日 9:00 JST (0:00 UTC) に自動実行
     - cron: '0 0 1 * *'
@@ -61,27 +38,18 @@ jobs:
         if: github.event.inputs.mode == 'discover'
         run: python3 tools/crt_fetch.py --discover
 
-      - name: データ取得（fetchモード）
+      - name: 生レスポンスダンプ（dumpモード）
+        if: github.event.inputs.mode == 'dump'
+        run: python3 tools/crt_fetch.py --dump
+
+      - name: データ取得（fetchモード・スケジュール）
         if: github.event.inputs.mode == 'fetch' || github.event_name == 'schedule'
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            YEAR=$(date -d "1 month ago" +%Y)
-            MONTH=$(date -d "1 month ago" +%-m)
-            echo "スケジュール実行: ${YEAR}年${MONTH}月"
-            python3 tools/crt_fetch.py \
-              --year "$YEAR" --month "$MONTH" \
-              --output csv
-          else
-            ARGS="--output csv"
-            [ -n "${{ github.event.inputs.country }}" ] && ARGS="$ARGS --country \"${{ github.event.inputs.country }}\""
-            [ -n "${{ github.event.inputs.year }}"    ] && ARGS="$ARGS --year ${{ github.event.inputs.year }}"
-            [ -n "${{ github.event.inputs.month }}"   ] && ARGS="$ARGS --month ${{ github.event.inputs.month }}"
-            [ -n "${{ github.event.inputs.col_country }}" ] && ARGS="$ARGS --col-country ${{ github.event.inputs.col_country }}"
-            [ -n "${{ github.event.inputs.col_year }}"    ] && ARGS="$ARGS --col-year ${{ github.event.inputs.col_year }}"
-            [ -n "${{ github.event.inputs.col_month }}"   ] && ARGS="$ARGS --col-month ${{ github.event.inputs.col_month }}"
-            [ -n "${{ github.event.inputs.col_class }}"   ] && ARGS="$ARGS --col-class ${{ github.event.inputs.col_class }}"
-            eval python3 tools/crt_fetch.py $ARGS
+          ARGS="--output csv"
+          if [ -n "${{ github.event.inputs.country }}" ]; then
+            ARGS="$ARGS --country \"${{ github.event.inputs.country }}\""
           fi
+          eval python3 tools/crt_fetch.py $ARGS
           ls -la *.csv 2>/dev/null || echo "CSVファイルなし"
 
       - name: CSV をアーティファクトとして保存

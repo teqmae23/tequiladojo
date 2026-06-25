@@ -2,18 +2,27 @@
 CRT (Consejo Regulador del Tequila) 輸出統計取得スクリプト
 Power BI 公開レポートAPIを直接呼ぶ
 
+確認済みカラム（discover実行結果）:
+  Grupo    = 地域（Norte/Sur 等、常に全選択）
+  Pais     = 国名（UIラベル: Paises、例: Japón）
+  Clase    = クラス（Blanco/Reposado 等）
+  Categoria = カテゴリ
+
 使い方:
-  # カラム一覧確認（実際に存在するカラム名を調べる）
+  # カラム一覧確認
   python3 crt_fetch.py --discover
 
-  # 日本 2026年5月 データ取得（カラム名確認後に使用）
-  python3 crt_fetch.py --country "Japón" --year 2026 --month 5
+  # 全データ取得
+  python3 crt_fetch.py
 
-  # 全カ国 2026年5月
-  python3 crt_fetch.py --year 2026 --month 5
+  # 日本のデータ取得
+  python3 crt_fetch.py --country "Japón"
+
+  # 生レスポンスをダンプ（デバッグ用）
+  python3 crt_fetch.py --dump
 """
 
-import requests, json, sys, argparse, csv, io
+import requests, json, sys, argparse, csv
 from datetime import datetime
 
 ENDPOINT = "https://wabi-paas-1-scus-api.analysis.windows.net/public/reports/querydata"
@@ -22,6 +31,11 @@ DATASET_ID   = "939ce5cb-cbfd-4d83-979d-c0f07089f729"
 REPORT_ID    = "c131a218-ef98-4513-a36b-afd7acb34575"
 MODEL_ID     = 5590467
 ENTITY       = "vEstPagWebExportacionesDestino"
+
+# discover で存在確認済みのカラム
+# Grupo=地域（常に全選択）、Pais=国名（UIは"Paises"）
+CONFIRMED_COLUMNS = ["Pais", "Clase", "Categoria", "Grupo"]
+COUNTRY_COLUMN    = "Pais"
 
 HEADERS = {
     "Content-Type": "application/json;charset=UTF-8",
@@ -114,145 +128,111 @@ def query_api(payload):
     resp.raise_for_status()
     return resp.json()
 
+def has_column_error(data):
+    """カラム不存在エラーかどうかチェック"""
+    raw = json.dumps(data, ensure_ascii=False)
+    return ("CouldNotResolveSemanticQueryDefinition" in raw or
+            "invalid Column" in raw or
+            "Cannot find field" in raw)
+
 def parse_results(data):
-    """Power BI レスポンスをレコードリストに変換"""
+    """Power BI DSR レスポンスをレコードリストに変換"""
     try:
         ds = data["results"][0]["result"]["data"]["dsr"]["DS"][0]
-        col_names = [c["N"] for c in ds["S"]]  # カラム名
+        if "S" not in ds:
+            return [], []
+        col_names = [c["N"] for c in ds["S"]]
         rows = []
-
         value_dicts = ds.get("PH", [{}])[0].get("DM0", [])
         prev = {}
         for vd in value_dicts:
             if "R" in vd:
-                # 繰り返し (前の行を継承するビット)
                 repeat_bits = vd["R"]
                 row = {}
                 for i, col in enumerate(col_names):
                     if repeat_bits & (1 << i):
                         row[col] = prev.get(col)
                     else:
-                        key = f"C{i}"
-                        row[col] = vd.get(key)
+                        row[col] = vd.get(f"C{i}")
             else:
                 row = {col: vd.get(f"C{i}") for i, col in enumerate(col_names)}
             prev = {**prev, **{k: v for k, v in row.items() if v is not None}}
             rows.append(row)
-
         return col_names, rows
-    except (KeyError, IndexError) as e:
-        print("パースエラー:", e)
-        print(json.dumps(data, ensure_ascii=False, indent=2)[:2000])
+    except (KeyError, IndexError):
         return [], []
-
-def get_api_error(data):
-    """APIエラーメッセージを抽出"""
-    try:
-        return data["results"][0]["result"]["data"]["dsr"]["DS"][0].get("error", {})
-    except Exception:
-        pass
-    try:
-        return data["results"][0].get("error", {})
-    except Exception:
-        return {}
 
 def discover_columns():
     """エンティティに実在するカラム名を総当たりで探索"""
-    # CRT UIのフォーム項目と一般的なPower BIスペイン語カラム名候補
     candidates = [
-        # 国・地域
         "Grupo", "Destino", "Pais", "Paises", "País", "Países",
         "DestinoExportacion", "PaisDestino", "NombrePais",
-        # 年
         "Anio", "Año", "Ano", "Year", "Anyo",
-        "AñoExportacion", "AnioExportacion",
-        # 月
         "Mes", "Month", "NumMes", "NombreMes",
-        # カテゴリ・クラス
         "Clase", "Categoria", "Categoría", "TipoProducto", "Tipo",
-        "ClaseProducto", "NombreClase",
-        # 数量
-        "Litros", "LitrosTotal", "TotalLitros", "LitrosExportados",
-        "LitrosEnvasados", "LitrosGranel",
-        "Cajas", "CajasTotal", "TotalCajas", "CajasEnvasadas",
-        # 金額
-        "ValorDolares", "Valor", "ValorUSD", "Dolares",
-        "ValorExportacion", "MontoUSD",
-        # その他
-        "Certificado", "NOM", "Empresa", "Marca",
-        "FechaExportacion", "Periodo",
+        "Litros", "LitrosTotal", "LitrosEnvasados", "LitrosGranel",
+        "Cajas", "CajasTotal", "CajasEnvasadas",
+        "ValorDolares", "Valor", "ValorUSD",
+        "Certificado", "NOM", "Empresa", "Marca", "Periodo",
     ]
 
     print(f"エンティティ '{ENTITY}' のカラム探索中 ({len(candidates)} 候補)...")
     print("=" * 60)
     found = []
-    failed = []
+    not_found = []
 
     for col in candidates:
         try:
             payload = build_query([col])
             data = query_api(payload)
-            cols, rows = parse_results(data)
-            if cols:
-                example = rows[0].get(col) if rows else "(データなし)"
-                print(f"  ✓ {col}: 例={example}")
-                found.append(col)
+            if has_column_error(data):
+                print(f"  ✗ {col}: カラム不存在")
+                not_found.append(col)
             else:
-                # エラー内容を確認
-                err = get_api_error(data)
-                raw = json.dumps(data, ensure_ascii=False)
-                if "invalid Column" in raw or "Cannot find" in raw or "QueryDefinition" in raw:
-                    print(f"  ✗ {col}: カラム不存在")
+                col_names, rows = parse_results(data)
+                if rows:
+                    print(f"  ✓ {col}: 例={rows[0].get(col)}")
                 else:
-                    print(f"  ? {col}: 不明 err={err}")
-                failed.append(col)
+                    print(f"  ✓ {col}: 存在（行なし or 別DSR構造）")
+                found.append(col)
         except Exception as e:
-            print(f"  ✗ {col}: 例外={e}")
-            failed.append(col)
+            print(f"  ? {col}: 例外={e}")
 
     print("=" * 60)
     print(f"\n✓ 存在するカラム ({len(found)}件): {found}")
-    print(f"✗ 存在しないカラム ({len(failed)}件): {failed}")
+    print(f"✗ 存在しないカラム ({len(not_found)}件): {not_found}")
 
-def fetch_data(country=None, year=None, month=None, output="stdout",
-               col_country="Grupo", col_year="Anio", col_month="Mes",
-               col_class="Clase", col_liters_bottle="LitrosEnvasados",
-               col_liters_bulk="LitrosGranel", col_cases="CajasEnvasadas"):
-    """
-    データ取得。--discover で確認したカラム名を --col-* オプションで指定できる。
-    デフォルト値は discover 結果が出るまでのプレースホルダ（要更新）。
-    """
-    columns = [col_country, col_year, col_month, col_class,
-               col_liters_bottle, col_liters_bulk, col_cases]
-    # 重複除去（Noneなど）
-    columns = list(dict.fromkeys(c for c in columns if c))
+def dump_response(columns=None):
+    """生レスポンスをフルダンプ（DSR構造確認用）"""
+    cols = columns or CONFIRMED_COLUMNS
+    print(f"カラム {cols} のAPIレスポンス:")
+    payload = build_query(cols)
+    data = query_api(payload)
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+
+def fetch_data(country=None, output="stdout", columns=None):
+    """データ取得"""
+    cols = columns or CONFIRMED_COLUMNS
 
     filters = {}
-    if country and col_country:
-        filters[col_country] = country
-    if year and col_year:
-        filters[col_year] = int(year)
-    if month and col_month:
-        filters[col_month] = int(month)
+    if country:
+        filters[COUNTRY_COLUMN] = country
 
-    print(f"クエリ: country={country} year={year} month={month}")
-    print(f"カラム: {columns}")
-    payload = build_query(columns, filters if filters else None)
-
+    print(f"クエリ: columns={cols} country={country}")
+    payload = build_query(cols, filters if filters else None)
     data = query_api(payload)
 
-    # エラーチェック
-    raw = json.dumps(data, ensure_ascii=False)
-    if "invalid Column" in raw or "Cannot find field" in raw:
-        print("ERROR: カラム名が正しくありません。--discover を実行して正しいカラム名を確認してください。")
-        print("レスポンス:", raw[:2000])
+    if has_column_error(data):
+        print("ERROR: カラム名が正しくありません")
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:2000])
         sys.exit(1)
 
     col_names, rows = parse_results(data)
 
     if not rows:
-        print("データが取得できませんでした")
-        print("レスポンス:", json.dumps(data, ensure_ascii=False, indent=2)[:3000])
+        print("データが取得できませんでした（DSR構造が異なる可能性あり）")
+        print("--dump オプションで生レスポンスを確認してください")
+        print(json.dumps(data, ensure_ascii=False, indent=2)[:3000])
         return
 
     print(f"\n取得件数: {len(rows)} 件")
@@ -260,7 +240,7 @@ def fetch_data(country=None, year=None, month=None, output="stdout",
     print()
 
     if output == "csv":
-        fname = f"crt_export_{country or 'all'}_{year or 'all'}_{month or 'all'}.csv"
+        fname = f"crt_export_{country or 'all'}.csv"
         with open(fname, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.DictWriter(f, fieldnames=col_names)
             writer.writeheader()
@@ -274,34 +254,21 @@ def fetch_data(country=None, year=None, month=None, output="stdout",
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--discover", action="store_true", help="カラム一覧を調査（最初に必ず実行）")
-    parser.add_argument("--country", help="国名フィルタ（例: Japón）")
-    parser.add_argument("--year",    type=int, help="年フィルタ（例: 2026）")
-    parser.add_argument("--month",   type=int, help="月フィルタ（例: 5）")
-    parser.add_argument("--output",  default="stdout", choices=["stdout","csv"])
-    # discover 結果を受けて正しいカラム名を指定するオプション
-    parser.add_argument("--col-country",       default="Grupo",          help="国カラム名")
-    parser.add_argument("--col-year",          default="Anio",           help="年カラム名")
-    parser.add_argument("--col-month",         default="Mes",            help="月カラム名")
-    parser.add_argument("--col-class",         default="Clase",          help="クラスカラム名")
-    parser.add_argument("--col-liters-bottle", default="LitrosEnvasados",help="瓶詰リットルカラム名")
-    parser.add_argument("--col-liters-bulk",   default="LitrosGranel",   help="バルクリットルカラム名")
-    parser.add_argument("--col-cases",         default="CajasEnvasadas", help="ケース数カラム名")
+    parser.add_argument("--discover", action="store_true", help="カラム一覧を調査")
+    parser.add_argument("--dump",     action="store_true", help="生レスポンスをダンプ（構造確認用）")
+    parser.add_argument("--country",  help="国名フィルタ（Paisカラム）（例: Japón）")
+    parser.add_argument("--output",   default="stdout", choices=["stdout", "csv"])
+    parser.add_argument("--columns",  nargs="+", default=None,
+                        help=f"取得するカラム（デフォルト: {' '.join(CONFIRMED_COLUMNS)}）")
     args = parser.parse_args()
 
     if args.discover:
         discover_columns()
+    elif args.dump:
+        dump_response(args.columns)
     else:
         fetch_data(
             country=args.country,
-            year=args.year,
-            month=args.month,
             output=args.output,
-            col_country=args.col_country,
-            col_year=args.col_year,
-            col_month=args.col_month,
-            col_class=args.col_class,
-            col_liters_bottle=args.col_liters_bottle,
-            col_liters_bulk=args.col_liters_bulk,
-            col_cases=args.col_cases,
+            columns=args.columns,
         )
