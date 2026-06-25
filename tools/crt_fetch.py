@@ -3,21 +3,18 @@ CRT (Consejo Regulador del Tequila) 輸出統計取得スクリプト
 Power BI 公開レポートAPIを直接呼ぶ
 
 確認済みカラム（discover実行結果）:
-  Grupo    = 地域（Norte/Sur 等、常に全選択）
-  Pais     = 国名（UIラベル: Paises、例: Japón）
-  Clase    = クラス（Blanco/Reposado 等）
-  Categoria = カテゴリ
-  Año      = 年（スライサー確認済み）
-  Mes      = 月（スライサー確認済み）
-
-メジャー（集計値）:
+  Grupo     = 地域（Norte/Sur 等）
+  Pais      = 国名（例: JAPON）
+  Clase     = クラス（BLANCO/REPOSADO 等）
+  Categoria = カテゴリ（TEQUILA / TEQUILA 100% DE AGAVE）
   Litros_40 = 輸出量（40%アルコール換算リットル）
+  Fecha     = 日付（年月情報を含む）
 
 使い方:
   # カラム一覧確認
   python3 crt_fetch.py --discover
 
-  # 全データ取得（年・月・輸出量含む）
+  # 全データ取得（全年月・全カテゴリ・輸出量含む）
   python3 crt_fetch.py
 
   # 日本のデータ取得
@@ -37,17 +34,9 @@ REPORT_ID    = "c131a218-ef98-4513-a36b-afd7acb34575"
 MODEL_ID     = 5590467
 ENTITY       = "vEstPagWebExportacionesDestino"
 
-# discover で存在確認済みのカラム
-# Grupo=地域（常に全選択）、Pais=国名（UIは"Paises"）
-CONFIRMED_COLUMNS = ["Pais", "Clase", "Categoria", "Grupo"]
+# discover で存在確認済みのカラム（全6列）
+CONFIRMED_COLUMNS = ["Pais", "Clase", "Categoria", "Grupo", "Fecha", "Litros_40"]
 COUNTRY_COLUMN    = "Pais"
-
-# UIスライサーで確認された年月カラム候補（discover結果で更新）
-YEAR_COLUMN  = "Año"
-MONTH_COLUMN = "Mes"
-
-# UIで確認されたメジャー名（集計値はColumn型ではなくMeasure型で取得）
-MEASURE_LITROS = "Litros_40"
 
 HEADERS = {
     "Content-Type": "application/json;charset=UTF-8",
@@ -266,25 +255,16 @@ def dump_response(columns=None):
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
 def fetch_data(country=None, output="stdout", columns=None):
-    """データ取得（年・月・輸出量メジャー含む）"""
-    dim_cols = columns or (CONFIRMED_COLUMNS + [YEAR_COLUMN, MONTH_COLUMN])
-    measure_cols = [MEASURE_LITROS]
+    """データ取得（Fecha・Litros_40含む全カラム）"""
+    cols = columns or CONFIRMED_COLUMNS
 
     filters = {}
     if country:
         filters[COUNTRY_COLUMN] = country
 
-    print(f"クエリ: columns={dim_cols} measures={measure_cols} country={country}")
-    payload = build_query(dim_cols, filters if filters else None, measure_cols)
+    print(f"クエリ: columns={cols} country={country}")
+    payload = build_query(cols, filters if filters else None)
     data = query_api(payload)
-
-    if has_column_error(data):
-        # 年月カラムが存在しない場合、それなしで再試行
-        print(f"WARN: カラムエラー。年月({YEAR_COLUMN}/{MONTH_COLUMN})なしで再試行...")
-        dim_cols = [c for c in dim_cols if c not in (YEAR_COLUMN, MONTH_COLUMN)]
-        print(f"クエリ（再試行）: columns={dim_cols} measures={measure_cols}")
-        payload = build_query(dim_cols, filters if filters else None, measure_cols)
-        data = query_api(payload)
 
     if has_column_error(data):
         print("ERROR: カラム名が正しくありません")
@@ -311,10 +291,10 @@ def fetch_data(country=None, output="stdout", columns=None):
             writer.writerows(rows)
         print(f"CSVを保存: {fname}")
     else:
-        for row in rows[:20]:
+        for row in rows[:5]:
             print(row)
-        if len(rows) > 20:
-            print(f"... 他 {len(rows)-20} 件")
+        if len(rows) > 5:
+            print(f"... 他 {len(rows)-5} 件")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
