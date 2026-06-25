@@ -146,7 +146,9 @@ def query_api(payload):
 
 def query_api_all_pages(payload):
     """全ページを取得してDM0行を結合して返す"""
+    import copy
     all_rows_data = None
+    ds = None
     page = 1
 
     while True:
@@ -157,20 +159,23 @@ def query_api_all_pages(payload):
             all_rows_data = data
             ds = data["results"][0]["result"]["data"]["dsr"]["DS"][0]
         else:
-            # 追加ページのDM0を結合
             ds_new = data["results"][0]["result"]["data"]["dsr"]["DS"][0]
             dm0_new = ds_new.get("PH", [{}])[0].get("DM0", [])
             if not dm0_new:
                 break
             ds["PH"][0]["DM0"].extend(dm0_new)
-            # ValueDictsはマージ不要（同じ辞書が返る）
 
-        # Restartトークンがあれば次ページへ
-        restart = ds.get("Restart")
+        # Restartトークンを探索（PH[0]またはDS直下）
+        restart = (ds.get("PH", [{}])[0].get("Restart")
+                   or ds.get("Restart"))
         if not restart:
+            # デバッグ: DSのトップレベルキーを表示
+            print(f"  DS keys: {list(ds.keys())}")
+            print(f"  PH[0] keys: {list(ds.get('PH', [{}])[0].keys())}")
             break
 
-        # RestartトークンをBindingに埋め込んで次リクエスト
+        print(f"  Restartトークン検出: 次ページへ")
+        payload = copy.deepcopy(payload)
         cmd = payload["queries"][0]["Query"]["Commands"][0]["SemanticQueryDataShapeCommand"]
         cmd["Binding"]["Primary"]["Groupings"][0]["Restart"] = restart
         page += 1
@@ -363,7 +368,18 @@ def fetch_data(country=None, output="stdout", columns=None):
         print(json.dumps(data, ensure_ascii=False, indent=2)[:3000])
         return
 
-    print(f"\n取得件数: {len(rows)} 件")
+    print(f"\n取得件数（集計前）: {len(rows)} 件")
+
+    # Litros_40をキー列でグループ集計（個別出荷レコードを月次合計に）
+    group_keys = [c for c in col_names if c != "Litros_40"]
+    agg = {}
+    for row in rows:
+        key = tuple(row.get(k) for k in group_keys)
+        agg[key] = agg.get(key, 0) + (row.get("Litros_40") or 0)
+    rows = [{**dict(zip(group_keys, k)), "Litros_40": round(v, 4)} for k, v in agg.items()]
+    col_names = group_keys + ["Litros_40"]
+
+    print(f"取得件数（集計後）: {len(rows)} 件")
     print(f"カラム: {col_names}")
     print()
 
