@@ -229,7 +229,7 @@ def parse_results(data):
         # Fecha列から Año・Mes列を追加
         if "Fecha" in col_names:
             for row in rows:
-                fecha = row.get("Fecha") or ""
+                fecha = str(row.get("Fecha") or "")
                 if len(fecha) >= 7:
                     row["Año"] = fecha[:4]
                     row["Mes"] = fecha[5:7]
