@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CRT 輸出統計 — テキーラ道場</title>
+<script src="https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/sql-wasm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#F1EFE8;--cream2:#E8E4D8;--cream3:#DDD8C8;
+  --teal:#1a6e58;--red:#b03020;--red-l:rgba(176,48,32,.1);
+  --warn:#7a5200;--warn-l:rgba(200,146,30,.12);
+  --sans:'Noto Sans JP',sans-serif;--serif:'Cormorant Garamond',serif;--mono:'DM Mono',monospace;
+  --r:6px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--cream);color:var(--ink);font-family:var(--sans);min-height:100vh;}
+
+.hdr{background:var(--ink);padding:0 20px;display:flex;align-items:center;gap:12px;height:52px;}
+.hdr-logo{font-family:var(--serif);font-size:17px;color:var(--gold-l);letter-spacing:.04em;}
+.hdr-sub{font-size:11px;color:var(--ink3);margin-top:1px;}
+.hdr-nav{margin-left:auto;display:flex;gap:14px;}
+.hdr-nav a{color:var(--gold-l);font-size:12px;text-decoration:none;opacity:.8;}
+.hdr-nav a:hover{opacity:1;}
+
+.page{max-width:1200px;margin:0 auto;padding:24px 16px 80px;}
+
+/* Status bar */
+#status-bar{padding:10px 16px;font-size:12px;border-radius:var(--r);margin-bottom:20px;display:flex;align-items:center;gap:10px;}
+#status-bar.loading{background:var(--warn-l);color:var(--warn);}
+#status-bar.ok{background:rgba(26,110,88,.1);color:var(--teal);}
+#status-bar.err{background:var(--red-l);color:var(--red);}
+.spin{display:inline-block;animation:spin .8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* Filter panel */
+.filter-panel{background:var(--cream2);border:1px solid var(--cream3);border-radius:10px;padding:16px 20px;margin-bottom:20px;}
+.filter-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;}
+.filter-group{display:flex;flex-direction:column;gap:4px;min-width:140px;}
+.filter-group.grow{flex:1;}
+.filter-label{font-size:10px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;}
+select,input[type=number]{padding:7px 10px;border:1px solid var(--cream3);border-radius:var(--r);font-family:var(--sans);font-size:12px;background:var(--cream);color:var(--ink);outline:none;}
+select:focus,input[type=number]:focus{border-color:var(--gold);}
+select[multiple]{height:96px;}
+.btn{padding:8px 18px;border-radius:var(--r);border:none;font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;transition:.15s;}
+.btn-primary{background:var(--ink);color:#fff;}
+.btn-primary:hover:not(:disabled){background:var(--gold-d);}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed;}
+.btn-ghost{background:none;border:1px solid var(--cream3);color:var(--ink2);}
+.btn-ghost:hover{background:var(--cream3);}
+.btn-teal{background:var(--teal);color:#fff;}
+.btn-teal:hover:not(:disabled){opacity:.85;}
+.btn-teal:disabled{opacity:.4;cursor:not-allowed;}
+
+/* Tab bar */
+.tab-bar{display:flex;gap:0;border-bottom:2px solid var(--cream3);margin-bottom:0;}
+.tab-btn{padding:10px 24px;font-size:13px;font-weight:500;border:none;
+  border-bottom:2px solid transparent;margin-bottom:-2px;
+  background:none;color:var(--ink3);cursor:pointer;font-family:var(--sans);transition:.12s;}
+.tab-btn.active{color:var(--gold-d);border-bottom-color:var(--gold);font-weight:600;}
+.tab-btn:hover:not(.active){color:var(--ink2);}
+
+/* Panel */
+.tab-panel{display:none;background:var(--cream);border:1px solid var(--cream3);border-top:none;border-radius:0 0 10px 10px;padding:20px;}
+.tab-panel.active{display:block;}
+
+/* Summary cards */
+.sum-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;}
+.sum-card{background:var(--cream2);border:1px solid var(--cream3);border-radius:var(--r);padding:12px 18px;min-width:160px;flex:1;}
+.sum-label{font-size:10px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;}
+.sum-val{font-size:22px;font-weight:500;font-family:var(--mono);color:var(--ink);}
+.sum-sub{font-size:10px;color:var(--ink3);margin-top:2px;}
+
+/* Table */
+.tbl-wrap{overflow-x:auto;max-height:60vh;overflow-y:auto;border-radius:var(--r);border:1px solid var(--cream3);}
+.data-table{width:100%;border-collapse:collapse;font-size:12px;}
+.data-table thead{position:sticky;top:0;z-index:2;}
+.data-table th{text-align:left;font-size:10px;font-weight:700;color:var(--ink3);
+  letter-spacing:.06em;text-transform:uppercase;padding:8px 10px;
+  border-bottom:2px solid var(--cream3);background:var(--cream2);white-space:nowrap;cursor:pointer;user-select:none;}
+.data-table th:hover{color:var(--ink);}
+.data-table th.r{text-align:right;}
+.data-table td{padding:6px 10px;border-bottom:1px solid var(--cream3);vertical-align:middle;}
+.data-table tr:last-child td{border-bottom:none;}
+.data-table tbody tr:hover td{background:rgba(200,146,30,.05);}
+.mono{font-family:var(--mono);}
+.r{text-align:right;}
+.sort-arrow{font-size:9px;margin-left:3px;opacity:.5;}
+
+/* Chart */
+.chart-wrap{position:relative;height:340px;margin-bottom:24px;}
+
+/* Export toolbar */
+.export-bar{display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;}
+
+/* Pagination */
+.pager{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;color:var(--ink3);}
+.pager button{padding:4px 12px;border:1px solid var(--cream3);border-radius:var(--r);background:none;font-size:12px;cursor:pointer;font-family:var(--sans);}
+.pager button:hover:not(:disabled){background:var(--cream3);}
+.pager button:disabled{opacity:.35;cursor:not-allowed;}
+.pager-info{font-family:var(--mono);}
+
+/* Placeholder */
+.placeholder{padding:48px;text-align:center;font-size:13px;color:var(--ink3);}
+
+/* Sec heading */
+.sec-head{font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:8px;}
+.sec-head::after{content:'';flex:1;height:1px;background:var(--cream3);}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div>
+    <div class="hdr-logo">テキーラ道場</div>
+    <div class="hdr-sub">CRT 輸出統計</div>
+  </div>
+  <nav class="hdr-nav">
+    <a href="admin.html">← 管理ハブ</a>
+    <a href="index.html">ホーム</a>
+  </nav>
+</div>
+
+<div class="page">
+
+  <div id="status-bar" class="loading"><span class="spin">⏳</span> データベース読み込み中...</div>
+
+  <!-- Filter panel -->
+  <div class="filter-panel">
+    <div class="filter-row">
+      <div class="filter-group">
+        <div class="filter-label">年 (From)</div>
+        <input type="number" id="f-year-from" min="2003" max="2030" placeholder="2003">
+      </div>
+      <div class="filter-group">
+        <div class="filter-label">年 (To)</div>
+        <input type="number" id="f-year-to" min="2003" max="2030" placeholder="2026">
+      </div>
+      <div class="filter-group">
+        <div class="filter-label">月 (From)</div>
+        <select id="f-month-from">
+          <option value="">—</option>
+          <option value="1">1月</option><option value="2">2月</option><option value="3">3月</option>
+          <option value="4">4月</option><option value="5">5月</option><option value="6">6月</option>
+          <option value="7">7月</option><option value="8">8月</option><option value="9">9月</option>
+          <option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <div class="filter-label">月 (To)</div>
+        <select id="f-month-to">
+          <option value="">—</option>
+          <option value="1">1月</option><option value="2">2月</option><option value="3">3月</option>
+          <option value="4">4月</option><option value="5">5月</option><option value="6">6月</option>
+          <option value="7">7月</option><option value="8">8月</option><option value="9">9月</option>
+          <option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
+        </select>
+      </div>
+      <div class="filter-group grow">
+        <div class="filter-label">国 (複数選択可)</div>
+        <select id="f-pais" multiple></select>
+      </div>
+      <div class="filter-group grow">
+        <div class="filter-label">Clase</div>
+        <select id="f-clase" multiple></select>
+      </div>
+      <div class="filter-group grow">
+        <div class="filter-label">Categoria</div>
+        <select id="f-categoria" multiple></select>
+      </div>
+      <div class="filter-group grow">
+        <div class="filter-label">Grupo</div>
+        <select id="f-grupo" multiple></select>
+      </div>
+    </div>
+    <div class="filter-row" style="margin-top:12px;">
+      <button class="btn btn-primary" id="btn-apply" onclick="applyFilter()" disabled>絞り込み</button>
+      <button class="btn btn-ghost" onclick="clearFilter()">クリア</button>
+    </div>
+  </div>
+
+  <!-- Summary -->
+  <div class="sum-row" id="sum-row" style="display:none;">
+    <div class="sum-card">
+      <div class="sum-label">総輸出量 (Litros 40°)</div>
+      <div class="sum-val" id="sum-total">—</div>
+      <div class="sum-sub">絞り込み結果の合計</div>
+    </div>
+    <div class="sum-card">
+      <div class="sum-label">レコード数</div>
+      <div class="sum-val" id="sum-rows">—</div>
+      <div class="sum-sub">集計行数</div>
+    </div>
+    <div class="sum-card">
+      <div class="sum-label">期間</div>
+      <div class="sum-val" id="sum-period" style="font-size:14px;margin-top:4px;">—</div>
+      <div class="sum-sub">対象年月範囲</div>
+    </div>
+    <div class="sum-card">
+      <div class="sum-label">国数</div>
+      <div class="sum-val" id="sum-countries">—</div>
+      <div class="sum-sub">対象国</div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('chart')">グラフ</button>
+    <button class="tab-btn" onclick="switchTab('table')">テーブル</button>
+    <button class="tab-btn" onclick="switchTab('rank')">国別ランキング</button>
+  </div>
+
+  <!-- Chart tab -->
+  <div class="tab-panel active" id="tab-chart">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+      <div class="filter-group">
+        <div class="filter-label">グループ軸</div>
+        <select id="chart-group" onchange="renderChart()">
+          <option value="ym">年月別</option>
+          <option value="year">年別</option>
+          <option value="pais">国別</option>
+          <option value="clase">Clase別</option>
+          <option value="categoria">Categoria別</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <div class="filter-label">グラフ種別</div>
+        <select id="chart-type" onchange="renderChart()">
+          <option value="bar">棒グラフ</option>
+          <option value="line">折れ線</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <div class="filter-label">分割（色分け）</div>
+        <select id="chart-split" onchange="renderChart()">
+          <option value="">なし</option>
+          <option value="pais">国</option>
+          <option value="clase">Clase</option>
+          <option value="categoria">Categoria</option>
+        </select>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="main-chart"></canvas>
+    </div>
+    <div id="chart-placeholder" class="placeholder">絞り込みを実行するとグラフが表示されます</div>
+  </div>
+
+  <!-- Table tab -->
+  <div class="tab-panel" id="tab-table">
+    <div class="export-bar">
+      <button class="btn btn-teal" id="btn-csv" onclick="exportCSV()" disabled>CSV ダウンロード</button>
+    </div>
+    <div id="table-placeholder" class="placeholder">絞り込みを実行するとデータが表示されます</div>
+    <div id="table-wrap" style="display:none;">
+      <div class="tbl-wrap">
+        <table class="data-table" id="data-table">
+          <thead>
+            <tr>
+              <th onclick="sortTable('Pais')">国 <span class="sort-arrow" id="sa-Pais"></span></th>
+              <th onclick="sortTable('Clase')">Clase <span class="sort-arrow" id="sa-Clase"></span></th>
+              <th onclick="sortTable('Categoria')">Categoria <span class="sort-arrow" id="sa-Categoria"></span></th>
+              <th onclick="sortTable('Grupo')">Grupo <span class="sort-arrow" id="sa-Grupo"></span></th>
+              <th onclick="sortTable('Ano')">年 <span class="sort-arrow" id="sa-Ano"></span></th>
+              <th onclick="sortTable('Mes')">月 <span class="sort-arrow" id="sa-Mes"></span></th>
+              <th class="r" onclick="sortTable('Litros_40')">Litros 40° <span class="sort-arrow" id="sa-Litros_40"></span></th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+      <div class="pager" id="pager">
+        <button id="btn-prev" onclick="changePage(-1)" disabled>← 前</button>
+        <span class="pager-info" id="pager-info"></span>
+        <button id="btn-next" onclick="changePage(1)" disabled>次 →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rank tab -->
+  <div class="tab-panel" id="tab-rank">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+      <div class="filter-group">
+        <div class="filter-label">ランキング軸</div>
+        <select id="rank-by" onchange="renderRank()">
+          <option value="pais">国別</option>
+          <option value="clase">Clase別</option>
+          <option value="categoria">Categoria別</option>
+          <option value="grupo">Grupo別</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <div class="filter-label">表示件数</div>
+        <select id="rank-limit" onchange="renderRank()">
+          <option value="10">Top 10</option>
+          <option value="20">Top 20</option>
+          <option value="50">Top 50</option>
+          <option value="0">全件</option>
+        </select>
+      </div>
+    </div>
+    <div id="rank-placeholder" class="placeholder">絞り込みを実行するとランキングが表示されます</div>
+    <div id="rank-wrap" style="display:none;">
+      <div class="tbl-wrap">
+        <table class="data-table" id="rank-table">
+          <thead><tr>
+            <th class="r" style="width:50px;">順位</th>
+            <th id="rank-head-key">国</th>
+            <th class="r">Litros 40°</th>
+            <th class="r">シェア</th>
+          </tr></thead>
+          <tbody id="rank-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────
+// DB_URL: raw GitHub URL for SQLite file
+// ─────────────────────────────────────────────────────────
+var DB_URL = 'https://raw.githubusercontent.com/teqmae23/tequiladojo/main/data/crt_exports.db';
+var PAGE_SIZE = 200;
+
+var SQL = null;
+var db = null;
+var allRows = [];     // current filtered rows (all, for CSV / chart / rank)
+var tableRows = [];   // sorted rows for table tab
+var sortCol = 'Ano';
+var sortAsc = false;
+var currentPage = 0;
+var chartInst = null;
+
+// ─────────────────────────────────────────────────────────
+// Init: load sql.js wasm, fetch DB
+// ─────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', function() {
+  setStatus('loading', '⏳ SQL.js 初期化中...');
+  initSqlJs({ locateFile: function(f) {
+    return 'https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/' + f;
+  }}).then(function(SqlJs) {
+    SQL = SqlJs;
+    setStatus('loading', '⏳ データベース取得中...');
+    return fetch(DB_URL);
+  }).then(function(resp) {
+    if (!resp.ok) throw new Error('DB fetch failed: ' + resp.status);
+    return resp.arrayBuffer();
+  }).then(function(buf) {
+    db = new SQL.Database(new Uint8Array(buf));
+    setStatus('ok', '✓ データベース読み込み完了');
+    populateFilters();
+    document.getElementById('btn-apply').disabled = false;
+    applyFilter();
+  }).catch(function(e) {
+    setStatus('err', '✗ ' + e.message);
+  });
+});
+
+function setStatus(cls, msg) {
+  var bar = document.getElementById('status-bar');
+  bar.className = cls;
+  bar.textContent = msg;
+}
+
+// ─────────────────────────────────────────────────────────
+// Populate filter dropdowns
+// ─────────────────────────────────────────────────────────
+function populateFilters() {
+  var cols = ['Pais','Clase','Categoria','Grupo'];
+  var ids  = ['f-pais','f-clase','f-categoria','f-grupo'];
+  cols.forEach(function(col, i) {
+    var res = db.exec('SELECT DISTINCT "' + col + '" FROM exports WHERE "' + col + '" IS NOT NULL ORDER BY "' + col + '"');
+    if (!res.length) return;
+    var sel = document.getElementById(ids[i]);
+    res[0].values.forEach(function(r) {
+      var opt = document.createElement('option');
+      opt.value = r[0]; opt.textContent = r[0];
+      sel.appendChild(opt);
+    });
+  });
+
+  // year defaults
+  var yr = db.exec('SELECT MIN(Ano), MAX(Ano) FROM exports');
+  if (yr.length && yr[0].values.length) {
+    var mn = yr[0].values[0][0], mx = yr[0].values[0][1];
+    document.getElementById('f-year-from').value = mn || '';
+    document.getElementById('f-year-to').value = mx || '';
+    document.getElementById('f-year-from').min = mn || 2003;
+    document.getElementById('f-year-to').max = mx || 2030;
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+// Build WHERE clause from filters
+// ─────────────────────────────────────────────────────────
+function buildWhere() {
+  var clauses = [];
+  var yf = document.getElementById('f-year-from').value.trim();
+  var yt = document.getElementById('f-year-to').value.trim();
+  var mf = document.getElementById('f-month-from').value;
+  var mt = document.getElementById('f-month-to').value;
+  if (yf) clauses.push('Ano >= ' + parseInt(yf));
+  if (yt) clauses.push('Ano <= ' + parseInt(yt));
+  if (mf) clauses.push('Mes >= ' + parseInt(mf));
+  if (mt) clauses.push('Mes <= ' + parseInt(mt));
+
+  ['Pais','Clase','Categoria','Grupo'].forEach(function(col) {
+    var sel = document.getElementById('f-' + col.toLowerCase());
+    var vals = Array.from(sel.selectedOptions).map(function(o) { return "'" + o.value.replace(/'/g,"''") + "'"; });
+    if (vals.length) clauses.push('"' + col + '" IN (' + vals.join(',') + ')');
+  });
+
+  return clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
+}
+
+// ─────────────────────────────────────────────────────────
+// Apply filter → fetch rows
+// ─────────────────────────────────────────────────────────
+function applyFilter() {
+  if (!db) return;
+  var where = buildWhere();
+  var sql = 'SELECT Pais, Clase, Categoria, Grupo, Ano, Mes, Litros_40 FROM exports ' + where + ' ORDER BY Ano, Mes, Pais';
+  var res = db.exec(sql);
+  allRows = [];
+  if (res.length) {
+    var cols = res[0].columns;
+    res[0].values.forEach(function(r) {
+      var obj = {};
+      cols.forEach(function(c, i) { obj[c] = r[i]; });
+      allRows.push(obj);
+    });
+  }
+
+  // summary
+  var total = allRows.reduce(function(s, r) { return s + (r.Litros_40 || 0); }, 0);
+  var countries = new Set(allRows.map(function(r) { return r.Pais; })).size;
+  var anos = allRows.map(function(r) { return r.Ano; });
+  var minA = Math.min.apply(null, anos.length ? anos : [0]);
+  var maxA = Math.max.apply(null, anos.length ? anos : [0]);
+  var meses = allRows.map(function(r) { return r.Mes; });
+  var minM = Math.min.apply(null, meses.length ? meses : [0]);
+  var maxM = Math.max.apply(null, meses.length ? meses : [0]);
+
+  document.getElementById('sum-total').textContent = fmt(total);
+  document.getElementById('sum-rows').textContent = fmt(allRows.length);
+  document.getElementById('sum-countries').textContent = countries;
+  document.getElementById('sum-period').textContent = allRows.length ? minA + '/' + pad(minM) + ' – ' + maxA + '/' + pad(maxM) : '—';
+  document.getElementById('sum-row').style.display = '';
+
+  // table
+  tableRows = allRows.slice();
+  sortCol = 'Ano'; sortAsc = false;
+  doSort();
+  currentPage = 0;
+  renderTable();
+
+  // chart / rank
+  renderChart();
+  renderRank();
+
+  // enable CSV
+  document.getElementById('btn-csv').disabled = allRows.length === 0;
+}
+
+function clearFilter() {
+  ['f-year-from','f-year-to'].forEach(function(id) { document.getElementById(id).value = ''; });
+  ['f-month-from','f-month-to','f-pais','f-clase','f-categoria','f-grupo'].forEach(function(id) {
+    var sel = document.getElementById(id);
+    Array.from(sel.options).forEach(function(o) { o.selected = false; });
+  });
+  populateFilters();
+  applyFilter();
+}
+
+// ─────────────────────────────────────────────────────────
+// Table rendering
+// ─────────────────────────────────────────────────────────
+function doSort() {
+  var col = sortCol, asc = sortAsc;
+  tableRows.sort(function(a, b) {
+    var av = a[col], bv = b[col];
+    if (av == null) av = ''; if (bv == null) bv = '';
+    if (typeof av === 'number' && typeof bv === 'number') return asc ? av - bv : bv - av;
+    return asc ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+  });
+}
+
+function sortTable(col) {
+  if (sortCol === col) sortAsc = !sortAsc; else { sortCol = col; sortAsc = false; }
+  doSort();
+  currentPage = 0;
+  renderTable();
+}
+
+function renderTable() {
+  var tbody = document.getElementById('table-body');
+  var start = currentPage * PAGE_SIZE;
+  var slice = tableRows.slice(start, start + PAGE_SIZE);
+  if (!tableRows.length) {
+    document.getElementById('table-wrap').style.display = 'none';
+    document.getElementById('table-placeholder').style.display = '';
+    return;
+  }
+  document.getElementById('table-wrap').style.display = '';
+  document.getElementById('table-placeholder').style.display = 'none';
+
+  tbody.innerHTML = slice.map(function(r) {
+    return '<tr>'
+      + '<td>' + esc(r.Pais) + '</td>'
+      + '<td>' + esc(r.Clase) + '</td>'
+      + '<td>' + esc(r.Categoria) + '</td>'
+      + '<td>' + esc(r.Grupo) + '</td>'
+      + '<td class="mono">' + esc(r.Ano) + '</td>'
+      + '<td class="mono">' + pad(r.Mes) + '</td>'
+      + '<td class="mono r">' + fmt(r.Litros_40) + '</td>'
+      + '</tr>';
+  }).join('');
+
+  // pager
+  var total = tableRows.length, pages = Math.ceil(total / PAGE_SIZE);
+  document.getElementById('pager-info').textContent = (start+1) + '–' + Math.min(start+PAGE_SIZE, total) + ' / ' + fmt(total) + ' 件';
+  document.getElementById('btn-prev').disabled = currentPage === 0;
+  document.getElementById('btn-next').disabled = currentPage >= pages - 1;
+
+  // sort arrows
+  ['Pais','Clase','Categoria','Grupo','Ano','Mes','Litros_40'].forEach(function(c) {
+    var el = document.getElementById('sa-' + c);
+    if (!el) return;
+    el.textContent = sortCol === c ? (sortAsc ? '▲' : '▼') : '';
+  });
+}
+
+function changePage(d) { currentPage += d; renderTable(); }
+
+// ─────────────────────────────────────────────────────────
+// Chart
+// ─────────────────────────────────────────────────────────
+var PALETTE = ['#c8921e','#1a6e58','#4a3820','#b03020','#2c5f8a','#6b4c9a','#d4882e','#3a8a6a','#8a5a30','#d44a30','#4a7ab0','#8a6aaa'];
+
+function renderChart() {
+  var placeholder = document.getElementById('chart-placeholder');
+  var canvas = document.getElementById('main-chart');
+  if (!allRows.length) { placeholder.style.display = ''; canvas.style.display = 'none'; if(chartInst){chartInst.destroy();chartInst=null;} return; }
+  placeholder.style.display = 'none';
+  canvas.style.display = '';
+
+  var groupBy = document.getElementById('chart-group').value;
+  var chartType = document.getElementById('chart-type').value;
+  var splitBy = document.getElementById('chart-split').value;
+
+  function keyOf(r, axis) {
+    if (axis === 'ym') return r.Ano + '/' + pad(r.Mes);
+    if (axis === 'year') return String(r.Ano);
+    if (axis === 'pais') return r.Pais;
+    if (axis === 'clase') return r.Clase;
+    if (axis === 'categoria') return r.Categoria;
+    return String(r.Ano);
+  }
+
+  if (!splitBy) {
+    // single dataset
+    var agg = {};
+    allRows.forEach(function(r) {
+      var k = keyOf(r, groupBy);
+      agg[k] = (agg[k] || 0) + (r.Litros_40 || 0);
+    });
+    var labels = Object.keys(agg).sort();
+    var data = labels.map(function(k) { return Math.round(agg[k]); });
+    drawChart(canvas, chartType, labels, [{label:'Litros 40°', data:data, backgroundColor:PALETTE[0], borderColor:PALETTE[0], fill:false}]);
+  } else {
+    // split into multiple datasets by splitBy dimension
+    var splitKeys = [], splitSeen = {};
+    var xKeys = [], xSeen = {};
+    allRows.forEach(function(r) {
+      var sk = keyOf(r, splitBy), xk = keyOf(r, groupBy);
+      if (!splitSeen[sk]) { splitSeen[sk] = true; splitKeys.push(sk); }
+      if (!xSeen[xk]) { xSeen[xk] = true; xKeys.push(xk); }
+    });
+    xKeys.sort(); splitKeys.sort();
+    // cap splits at 12 to keep chart readable
+    if (splitKeys.length > 12) splitKeys = splitKeys.slice(0, 12);
+    var agg2 = {};
+    allRows.forEach(function(r) {
+      var sk = keyOf(r, splitBy), xk = keyOf(r, groupBy);
+      if (!agg2[sk]) agg2[sk] = {};
+      agg2[sk][xk] = (agg2[sk][xk] || 0) + (r.Litros_40 || 0);
+    });
+    var datasets = splitKeys.map(function(sk, i) {
+      return {
+        label: sk,
+        data: xKeys.map(function(xk) { return Math.round(agg2[sk] && agg2[sk][xk] ? agg2[sk][xk] : 0); }),
+        backgroundColor: PALETTE[i % PALETTE.length],
+        borderColor: PALETTE[i % PALETTE.length],
+        fill: false
+      };
+    });
+    drawChart(canvas, chartType, xKeys, datasets);
+  }
+}
+
+function drawChart(canvas, type, labels, datasets) {
+  if (chartInst) { chartInst.destroy(); chartInst = null; }
+  chartInst = new Chart(canvas, {
+    type: type,
+    data: { labels: labels, datasets: datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { font: { family: "'DM Mono', monospace", size: 11 }, boxWidth: 14 } } },
+      scales: {
+        x: { ticks: { font: { family: "'DM Mono', monospace", size: 10 }, maxRotation: 45 } },
+        y: { ticks: { font: { family: "'DM Mono', monospace", size: 10 }, callback: function(v) { return fmtK(v); } } }
+      }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────
+// Rank tab
+// ─────────────────────────────────────────────────────────
+function renderRank() {
+  var placeholder = document.getElementById('rank-placeholder');
+  var wrap = document.getElementById('rank-wrap');
+  if (!allRows.length) { placeholder.style.display = ''; wrap.style.display = 'none'; return; }
+
+  var rankBy = document.getElementById('rank-by').value;
+  var limit = parseInt(document.getElementById('rank-limit').value);
+  var keyMap = {pais:'Pais',clase:'Clase',categoria:'Categoria',grupo:'Grupo'};
+  var col = keyMap[rankBy];
+
+  var agg = {};
+  allRows.forEach(function(r) {
+    var k = r[col] || '(不明)';
+    agg[k] = (agg[k] || 0) + (r.Litros_40 || 0);
+  });
+  var sorted = Object.keys(agg).sort(function(a,b) { return agg[b] - agg[a]; });
+  if (limit > 0) sorted = sorted.slice(0, limit);
+  var grandTotal = Object.values(agg).reduce(function(s,v){return s+v;},0);
+
+  placeholder.style.display = 'none';
+  wrap.style.display = '';
+  document.getElementById('rank-head-key').textContent = {pais:'国',clase:'Clase',categoria:'Categoria',grupo:'Grupo'}[rankBy];
+
+  document.getElementById('rank-body').innerHTML = sorted.map(function(k, i) {
+    var v = agg[k];
+    var share = grandTotal > 0 ? (v / grandTotal * 100).toFixed(1) : '0.0';
+    var barW = grandTotal > 0 ? Math.round(v / agg[sorted[0]] * 100) : 0;
+    return '<tr>'
+      + '<td class="mono r" style="color:var(--ink3);">' + (i+1) + '</td>'
+      + '<td>' + esc(k) + '<div style="margin-top:3px;height:3px;border-radius:2px;background:var(--cream3);"><div style="height:3px;border-radius:2px;background:var(--gold);width:' + barW + '%;"></div></div></td>'
+      + '<td class="mono r">' + fmt(v) + '</td>'
+      + '<td class="mono r" style="color:var(--ink3);">' + share + '%</td>'
+      + '</tr>';
+  }).join('');
+}
+
+// ─────────────────────────────────────────────────────────
+// CSV export
+// ─────────────────────────────────────────────────────────
+function exportCSV() {
+  var header = ['Pais','Clase','Categoria','Grupo','Ano','Mes','Litros_40'];
+  var lines = [header.join(',')];
+  tableRows.forEach(function(r) {
+    lines.push(header.map(function(c) {
+      var v = r[c] == null ? '' : String(r[c]);
+      if (v.includes(',') || v.includes('"') || v.includes('\n')) v = '"' + v.replace(/"/g,'""') + '"';
+      return v;
+    }).join(','));
+  });
+  var blob = new Blob(['﻿' + lines.join('\n')], {type:'text/csv;charset=utf-8'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'crt_exports_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click(); URL.revokeObjectURL(url);
+}
+
+// ─────────────────────────────────────────────────────────
+// Tab switching
+// ─────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(function(b, i) {
+    var names = ['chart','table','rank'];
+    b.classList.toggle('active', names[i] === name);
+  });
+  document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+  document.getElementById('tab-' + name).classList.add('active');
+}
+
+// ─────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────
+function fmt(n) { if (n == null) return '—'; return Number(n).toLocaleString('ja-JP', {maximumFractionDigits:2}); }
+function fmtK(n) { if (Math.abs(n) >= 1e6) return (n/1e6).toFixed(1)+'M'; if (Math.abs(n) >= 1e3) return (n/1e3).toFixed(0)+'K'; return n; }
+function pad(n) { return n != null ? String(n).padStart(2,'0') : '??'; }
+function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+</script>
+</body>
+</html>
