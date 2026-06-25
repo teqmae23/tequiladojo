@@ -155,9 +155,9 @@ import re as _re
 
 def _clean_value(val, col_name=None):
     """DSRリテラル値をPythonネイティブ型に変換"""
-    # Unixタイムスタンプ（ms）→ 日付文字列 (Fecha列 or 大きな整数)
-    # 年2000〜2100の範囲: 946684800000 〜 4102444800000
-    if isinstance(val, (int, float)) and 9.4e11 < val < 4.2e12:
+    # Unixタイムスタンプ（ms）→ 日付文字列
+    # 年1990〜2100の範囲: 631152000000 〜 4102444800000
+    if isinstance(val, (int, float)) and 6.3e11 < val < 4.2e12:
         from datetime import datetime, timezone
         return datetime.fromtimestamp(val / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
     if not isinstance(val, str):
@@ -242,9 +242,10 @@ def parse_results(data):
                 else:
                     row["Año"] = None
                     row["Mes"] = None
-                # 浮動小数点誤差を丸める
-                if "Litros_40" in row and isinstance(row["Litros_40"], float):
-                    row["Litros_40"] = round(row["Litros_40"], 4)
+                # 浮動小数点誤差を丸める（全float列）
+                for k, v in row.items():
+                    if isinstance(v, float):
+                        row[k] = round(v, 4)
             col_names = col_names + ["Año", "Mes"]
 
         return col_names, rows
