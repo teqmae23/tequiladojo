@@ -433,10 +433,11 @@ def upsert_month(year, month, rows, col_names, compare_only=False):
     _init_db(con, col_names)
 
     month_prefix = f"{year}-{month:02d}-"
+    key_cols = ", ".join('"' + k + '"' for k in DB_KEYS)
     existing = {
         tuple(r[:len(DB_KEYS)]): r[len(DB_KEYS)]  # キー → Litros_40
         for r in con.execute(
-            f"SELECT {', '.join(f'\"{ k}\"' for k in DB_KEYS)}, \"Litros_40\" FROM exports WHERE Fecha LIKE ?",
+            f'SELECT {key_cols}, "Litros_40" FROM exports WHERE Fecha LIKE ?',
             (month_prefix + "%",)
         )
     }
@@ -464,8 +465,9 @@ def upsert_month(year, month, rows, col_names, compare_only=False):
 
     # UPSERT（INSERT OR REPLACE）
     placeholders = ",".join(["?"] * len(col_names))
+    col_list = ", ".join('"' + c + '"' for c in col_names)
     con.executemany(
-        f"INSERT OR REPLACE INTO exports ({', '.join(f'\"{ c}\"' for c in col_names)}) VALUES ({placeholders})",
+        f"INSERT OR REPLACE INTO exports ({col_list}) VALUES ({placeholders})",
         [tuple(row.get(c) for c in col_names) for row in rows]
     )
     con.commit()
@@ -551,8 +553,9 @@ def fetch_data(country=None, output="stdout", columns=None, year=None, month=Non
         con = sqlite3.connect(DB_PATH)
         _init_db(con, col_names)
         placeholders = ",".join(["?"] * len(col_names))
+        col_list = ", ".join('"' + c + '"' for c in col_names)
         con.executemany(
-            f"INSERT OR REPLACE INTO exports ({', '.join(f'\"{ c}\"' for c in col_names)}) VALUES ({placeholders})",
+            f"INSERT OR REPLACE INTO exports ({col_list}) VALUES ({placeholders})",
             [tuple(row.get(c) for c in col_names) for row in rows]
         )
         con.commit()
