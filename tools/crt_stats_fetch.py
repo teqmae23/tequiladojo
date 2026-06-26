@@ -429,6 +429,27 @@ def discover_columns_for(entity, candidates):
     return found
 
 
+def dump_entity_raw(entity, dim_cols):
+    """エンティティの生DSRレスポンスをダンプ（メジャー名発見用）"""
+    print(f"\n=== {entity} 生レスポンス ===")
+    payload = build_query(entity, dim_cols)
+    data = query_api(payload)
+    # descriptor.Select からカラム/メジャー名を抽出
+    try:
+        selects = data["results"][0]["result"]["data"].get("descriptor", {}).get("Select", [])
+        print(f"descriptor.Select ({len(selects)} 項目):")
+        for s in selects:
+            print(f"  {json.dumps(s, ensure_ascii=False)}")
+        ds = data["results"][0]["result"]["data"]["dsr"]["DS"][0]
+        if "S" in ds:
+            print(f"DS.S (列名): {[c['N'] for c in ds['S']]}")
+        if "ValueDicts" in ds:
+            print(f"DS.ValueDicts keys: {list(ds['ValueDicts'].keys())}")
+    except Exception as e:
+        print(f"パース失敗: {e}")
+    print(json.dumps(data, ensure_ascii=False, indent=2)[:3000])
+
+
 # ── Fetch by year ──────────────────────────────────────────────────────────────
 
 def fetch_produccion_year(year):
@@ -629,12 +650,15 @@ def main():
     if args.dump:
         ds_name = args.dump
         if ds_name not in DATASETS:
-            print(f"不明なデータセット: {ds_name}")
-            sys.exit(1)
+            # エンティティ名直接指定も許容
+            dump_entity_raw(ds_name, ["Fecha"])
+            return
         ds_cfg = DATASETS[ds_name]
         payload = build_query(ds_cfg["entity"], ds_cfg["columns"])
         data = query_api(payload)
         print(json.dumps(data, ensure_ascii=False, indent=2))
+        # 生レスポンスも解析して列名を表示
+        dump_entity_raw(ds_cfg["entity"], ds_cfg["columns"])
         return
 
     targets = [args.dataset] if args.dataset else list(DATASETS.keys())
