@@ -48,7 +48,7 @@ ENTITY_CANDIDATES = [
     "vEstPBIIntConsumoAgave",
     "vEstPBIIntAgave",
     "vEstPBIIntConsumo",
-    # 座標候補（より多くのパターン）
+    # 座標候補（vEstPBIInt prefix）
     "vEstPBIIntFabricas",
     "vEstPBIIntFabricasMapa",
     "vEstPBIIntEmpresas",
@@ -59,15 +59,35 @@ ENTITY_CANDIDATES = [
     "vEstPBIIntPlantasFabricantes",
     "vEstPBIIntCertificados",
     "vEstPBIIntPlantas",
+    "vEstPBIIntFabricantes",
+    "vEstPBIIntRegistros",
+    "vEstPBIIntNOMs",
+    "vEstPBIIntLocalizacion",
+    "vEstPBIIntUbicacion",
+    "vEstPBIIntGeorreferenciacion",
+    "vEstPBIIntPlanteles",
+    # vEstPagWeb prefix
     "vEstPagWebFabricas",
     "vEstPagWebMapa",
+    "vEstPagWebNOM",
+    "vEstPagWebEmpresas",
+    "vEstPagWebPlanteles",
+    "vEstPagWebPlantasFabricantes",
+    "vEstPagWebCertificados",
     # その他テーブル
     "Calendario",
     "Medidas",
     "Fabricas",
     "NOM",
+    "NOMs",
     "Empresas",
     "Plantas",
+    "Planteles",
+    "Mapa",
+    "MapaFabricas",
+    "Distillerias",
+    "Destillerias",
+    "FabricasMapa",
 ]
 
 DATASETS = {
@@ -602,19 +622,38 @@ def fetch_fabricas():
     ]
 
     for entity in entity_candidates:
+        # まずエンティティ存在確認 (NOM 1カラムのみ)
+        try:
+            payload_nom = build_query(entity, ["NOM"])
+            data_nom = query_api(payload_nom)
+            if has_error(data_nom):
+                err_raw = json.dumps(data_nom, ensure_ascii=False)
+                err_snippet = err_raw[:200]
+                print(f"  ✗ {entity} (エンティティなし: {err_snippet})")
+                continue  # このエンティティは存在しない、次へ
+            print(f"  ✓ {entity} エンティティ存在、カラム探索中...")
+        except Exception as e:
+            print(f"  ? {entity}: {e}")
+            continue
+
         for cols in col_candidates:
             try:
-                print(f"  試行: {entity} {cols}")
+                print(f"    試行: {cols}")
                 payload = build_query(entity, cols)
                 data = query_api(payload)
                 if not has_error(data):
                     _, rows = parse_results(data)
                     if rows:
-                        print(f"  ✓ {entity}: {len(rows)} 行")
-                        print(f"    例: {rows[0]}")
+                        print(f"    ✓ {cols}: {len(rows)} 行")
+                        print(f"       例: {rows[0]}")
                         return entity, cols, rows
+                    else:
+                        print(f"    △ {cols}: 行なし (空レスポンス)")
+                else:
+                    err_raw = json.dumps(data, ensure_ascii=False)
+                    print(f"    ✗ {cols}: {err_raw[:150]}")
             except Exception as e:
-                print(f"  ? {e}")
+                print(f"    ? {e}")
     return None, None, []
 
 
