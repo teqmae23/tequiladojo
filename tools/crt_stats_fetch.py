@@ -116,8 +116,8 @@ DATASETS = {
         "keys": ["Categoria", "Año"],
     },
     "fabricas": {
-        "entity": "vEstPBIIntFabricas",            # エンティティ未確認
-        "columns": ["NOM", "Empresa", "Municipio", "Estado", "Latitud", "Longitud"],
+        "entity": "vEstPBIIntFabricasMapas",
+        "columns": ["Latitud", "Longitud", "Fabricas", "NOM", "EstadoMunicipio"],
         "table": "fabricas",
         "keys": ["NOM"],
         "date_col": None,
@@ -188,6 +188,43 @@ def has_error(data):
             "Cannot find field" in raw or
             "InvalidEntity" in raw or
             "doesn't contain a table" in raw)
+
+
+def build_fabricas_query():
+    """蒸留所マップクエリ: vEstPBIIntFabricasMapas（実ペイロードから判明）"""
+    return {
+        "version": "1.0.0",
+        "queries": [{
+            "Query": {"Commands": [{"SemanticQueryDataShapeCommand": {
+                "Query": {
+                    "Version": 2,
+                    "From": [{"Name": "v1", "Entity": "vEstPBIIntFabricasMapas", "Type": 0}],
+                    "Select": [
+                        {"Column": {"Expression": {"SourceRef": {"Source": "v1"}}, "Property": "Latitud"},
+                         "Name": "v1.Latitud", "NativeReferenceName": "Latitud"},
+                        {"Column": {"Expression": {"SourceRef": {"Source": "v1"}}, "Property": "Longitud"},
+                         "Name": "v1.Longitud", "NativeReferenceName": "Longitud"},
+                        {"Column": {"Expression": {"SourceRef": {"Source": "v1"}}, "Property": "Fabricas"},
+                         "Name": "v1.Fabricas", "NativeReferenceName": "Fabricas"},
+                        {"Aggregation": {"Expression": {"Column": {"Expression": {"SourceRef": {"Source": "v1"}}, "Property": "NOM"}}, "Function": 3},
+                         "Name": "Min(vEstPBIIntFabricasMapas.NOM)", "NativeReferenceName": "NOM"},
+                        {"Aggregation": {"Expression": {"Column": {"Expression": {"SourceRef": {"Source": "v1"}}, "Property": "EstadoMunicipio"}}, "Function": 3},
+                         "Name": "Min(vEstPBIIntFabricasMapas.EstadoMunicipio)", "NativeReferenceName": "EstadoMunicipio"},
+                    ],
+                },
+                "Binding": {
+                    "Primary": {"Groupings": [{"Projections": [0, 1, 2, 3, 4]}]},
+                    "DataReduction": {"DataVolume": 4, "Primary": {"Window": {"Count": 2000}}},
+                    "Version": 1,
+                },
+                "ExecutionMetricsKind": 1,
+            }}]},
+            "QueryId": "",
+            "ApplicationContext": {"DatasetId": DATASET_ID, "Sources": [{"ReportId": REPORT_ID}]},
+        }],
+        "cancelQueries": [],
+        "modelId": MODEL_ID,
+    }
 
 
 def build_produccion_query(year=None):
@@ -598,63 +635,25 @@ def store_to_sqlite(ds_name, rows):
 # ── Fabricas (distillery coordinates) ─────────────────────────────────────────
 
 def fetch_fabricas():
-    """蒸留所座標を取得（エンティティは複数候補を試す）"""
-    entity_candidates = [
-        "vEstPBIIntFabricas",
-        "vEstPagWebFabricas",
-        "vEstPagWebFabricasMapa",
-        "vEstPagWebEmpresas",
-        "vEstPagWebNOM",
-        "vEstPBIFabricas",
-        "vEstPBIIntNOM",
-        "vEstPBIIntEmpresas",
-        "FabricasMapa",
-        "Fabricas",
-    ]
-    col_candidates = [
-        ["NOM", "Empresa", "Municipio", "Estado", "Latitud", "Longitud"],
-        ["NOM", "Empresa", "Estado", "Latitud", "Longitud"],
-        ["NOM", "Empresa", "Latitud", "Longitud"],
-        ["NOM", "Latitud", "Longitud"],
-        ["NOM", "Lat", "Long"],
-        ["NOM", "Lat", "Lng"],
-        ["NOM", "latitude", "longitude"],
-    ]
-
-    for entity in entity_candidates:
-        # まずエンティティ存在確認 (NOM 1カラムのみ)
-        try:
-            payload_nom = build_query(entity, ["NOM"])
-            data_nom = query_api(payload_nom)
-            if has_error(data_nom):
-                err_raw = json.dumps(data_nom, ensure_ascii=False)
-                err_snippet = err_raw[:200]
-                print(f"  ✗ {entity} (エンティティなし: {err_snippet})")
-                continue  # このエンティティは存在しない、次へ
-            print(f"  ✓ {entity} エンティティ存在、カラム探索中...")
-        except Exception as e:
-            print(f"  ? {entity}: {e}")
-            continue
-
-        for cols in col_candidates:
-            try:
-                print(f"    試行: {cols}")
-                payload = build_query(entity, cols)
-                data = query_api(payload)
-                if not has_error(data):
-                    _, rows = parse_results(data)
-                    if rows:
-                        print(f"    ✓ {cols}: {len(rows)} 行")
-                        print(f"       例: {rows[0]}")
-                        return entity, cols, rows
-                    else:
-                        print(f"    △ {cols}: 行なし (空レスポンス)")
-                else:
-                    err_raw = json.dumps(data, ensure_ascii=False)
-                    print(f"    ✗ {cols}: {err_raw[:150]}")
-            except Exception as e:
-                print(f"    ? {e}")
-    return None, None, []
+    """蒸留所座標を取得（vEstPBIIntFabricasMapas エンティティ確定済み）"""
+    print("  vEstPBIIntFabricasMapas クエリ実行中...")
+    try:
+        payload = build_fabricas_query()
+        data = query_api(payload)
+        if has_error(data):
+            print(f"  ✗ エラー: {json.dumps(data, ensure_ascii=False)[:400]}")
+            return None, None, []
+        cols, rows = parse_results(data)
+        if rows:
+            print(f"  ✓ {len(rows)} 行取得")
+            print(f"    例: {rows[0]}")
+            return "vEstPBIIntFabricasMapas", ["Latitud", "Longitud", "Fabricas", "NOM", "EstadoMunicipio"], rows
+        else:
+            print("  △ 行なし（フィルターなしで空レスポンス）")
+            return None, None, []
+    except Exception as e:
+        print(f"  ? {e}")
+        return None, None, []
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
