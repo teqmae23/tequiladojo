@@ -644,13 +644,27 @@ def fetch_fabricas():
             print(f"  ✗ エラー: {json.dumps(data, ensure_ascii=False)[:400]}")
             return None, None, []
         cols, rows = parse_results(data)
-        if rows:
-            print(f"  ✓ {len(rows)} 行取得")
-            print(f"    例: {rows[0]}")
-            return "vEstPBIIntFabricasMapas", ["Latitud", "Longitud", "Fabricas", "NOM", "EstadoMunicipio"], rows
-        else:
+        if not rows:
             print("  △ 行なし（フィルターなしで空レスポンス）")
             return None, None, []
+
+        # APIがAggregation列に "Min(entity.col)" 形式の Name を返す場合にリネーム
+        if rows:
+            sample = rows[0]
+            rename = {}
+            for k in sample.keys():
+                if k in ("Latitud", "Longitud", "Fabricas", "NOM", "EstadoMunicipio"):
+                    continue
+                for target in ("NOM", "EstadoMunicipio"):
+                    if target in k:
+                        rename[k] = target
+            if rename:
+                rows = [{rename.get(k, k): v for k, v in row.items()} for row in rows]
+
+        final_cols = ["Latitud", "Longitud", "Fabricas", "NOM", "EstadoMunicipio"]
+        print(f"  ✓ {len(rows)} 行取得")
+        print(f"    例: {rows[0]}")
+        return "vEstPBIIntFabricasMapas", final_cols, rows
     except Exception as e:
         print(f"  ? {e}")
         return None, None, []
