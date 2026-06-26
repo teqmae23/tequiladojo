@@ -48,19 +48,26 @@ ENTITY_CANDIDATES = [
     "vEstPBIIntConsumoAgave",
     "vEstPBIIntAgave",
     "vEstPBIIntConsumo",
-    # 座標候補
+    # 座標候補（より多くのパターン）
     "vEstPBIIntFabricas",
     "vEstPBIIntFabricasMapa",
     "vEstPBIIntEmpresas",
     "vEstPBIIntNOM",
-    # vEstPagWeb系も念のため
-    "vEstPagWebProduccion",
-    "vEstPagWebExportacionesForma",
-    "vEstPagWebConsumoAgave",
+    "vEstPBIIntMapa",
+    "vEstPBIIntMapaFabricas",
+    "vEstPBIIntDistillerias",
+    "vEstPBIIntPlantasFabricantes",
+    "vEstPBIIntCertificados",
+    "vEstPBIIntPlantas",
     "vEstPagWebFabricas",
+    "vEstPagWebMapa",
     # その他テーブル
     "Calendario",
     "Medidas",
+    "Fabricas",
+    "NOM",
+    "Empresas",
+    "Plantas",
 ]
 
 DATASETS = {
@@ -73,21 +80,21 @@ DATASETS = {
         "date_col": None,  # Calendario結合で取得
     },
     "forma": {
-        "entity": "vEstPBIIntExportacionesForma",  # discover後に修正予定
-        "columns": ["Forma", "Fecha", "Litros_40"],
+        "entity": "vEstPBIIntExportacionesForma",  # エンティティ確認済み、数量カラム要確認
+        "columns": ["Forma", "Fecha"],             # 数量カラム判明後に追加
         "table": "exportaciones_forma",
         "keys": ["Forma", "Fecha"],
         "date_col": "Fecha",
     },
     "agave": {
-        "entity": "vEstPBIIntConsumoAgave",  # discover後に修正予定
-        "columns": ["Categoria", "Fecha", "TonelAzucar"],
+        "entity": "vEstPBIIntConsumoAgave",        # エンティティ確認済み、数量カラム要確認
+        "columns": ["Categoria", "Fecha"],         # 数量カラム判明後に追加
         "table": "consumo_agave",
         "keys": ["Categoria", "Fecha"],
         "date_col": "Fecha",
     },
     "fabricas": {
-        "entity": "vEstPBIIntFabricas",  # discover後に修正予定
+        "entity": "vEstPBIIntFabricas",            # エンティティ未確認
         "columns": ["NOM", "Empresa", "Municipio", "Estado", "Latitud", "Longitud"],
         "table": "fabricas",
         "keys": ["NOM"],
@@ -108,21 +115,28 @@ COLUMN_CANDIDATES = {
         "Envasado", "Granel",
         "Fecha", "Año", "Mes",
         "Litros_40", "Litros", "LitrosEnvasados", "LitrosGranel",
+        "Litros 40", "LitrosTotales", "VolumenTotal", "Volumen",
+        "Exportaciones", "Total", "Cantidad",
+        "Litros_40_Envasado", "Litros_40_Granel",
     ],
     "agave": [
         "Categoria", "Categoría", "Clase",
         "Fecha", "Año", "Mes",
         "TonelAzucar", "Toneladas", "Toneladas_Azucar", "KgAzucar",
         "Litros_40", "Litros",
+        "ToneladasAzucar", "Toneladas Azucar", "Total",
+        "Consumo", "ConsumoTotal", "Azucar", "Agave",
+        "TonelAzúcar", "Toneladas de Azucar",
     ],
     "fabricas": [
-        "NOM", "Nom", "CertificadoNOM",
-        "Empresa", "RazonSocial", "Nombre",
+        "NOM", "Nom", "CertificadoNOM", "NumNOM",
+        "Empresa", "RazonSocial", "Nombre", "NombreEmpresa",
         "Municipio", "Ciudad", "Localidad",
         "Estado", "Region",
-        "Latitud", "Lat", "Latitude",
-        "Longitud", "Long", "Lng", "Longitude",
+        "Latitud", "Lat", "Latitude", "lat",
+        "Longitud", "Long", "Lng", "Longitude", "lon",
         "CP", "CodigoPostal",
+        "X", "Y", "Coordenadas",
     ],
 }
 
