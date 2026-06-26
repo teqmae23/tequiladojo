@@ -82,6 +82,7 @@ td.loc-cell{position:relative}
 <div class="controls">
   <button class="btn btn-primary" id="btn-load">① データ読み込み</button>
   <button class="btn btn-secondary" id="btn-import" disabled>② Firestoreに一括書き込み</button>
+  <button class="btn btn-secondary" id="btn-copy-to-master" disabled title="チェック行のCRT緯度経度をマスタ緯度経度にコピー">📋 CRT緯度経度をマスタにコピー</button>
   <button class="btn btn-secondary" id="btn-check-master-empty" disabled title="マスタ緯度経度が空欄の行だけチェックを入れる">📍 マスタ緯度経度が空欄の行を選択</button>
   <button class="btn btn-secondary" id="btn-check-all" style="display:none">全選択</button>
   <button class="btn btn-secondary" id="btn-uncheck-all" style="display:none">全解除</button>
@@ -465,6 +466,7 @@ document.getElementById("btn-load").addEventListener("click",async function(){
   renderTable();
   setStatus("読み込み完了。","ok");
   document.getElementById("btn-import").disabled=false;
+  document.getElementById("btn-copy-to-master").disabled=false;
   document.getElementById("btn-check-master-empty").disabled=false;
   document.getElementById("btn-check-all").style.display="";
   document.getElementById("btn-uncheck-all").style.display="";
@@ -487,6 +489,44 @@ document.getElementById("btn-check-master-empty").addEventListener("click",funct
     var v=(p.masterLat==null||p.masterLng==null);
     c.checked=v; chkState[idx]=v;
   });
+});
+
+// ── Copy CRT → Master ───────────────────────────────────
+document.getElementById("btn-copy-to-master").addEventListener("click",async function(){
+  var toWrite=[];
+  document.querySelectorAll(".row-chk:checked").forEach(function(c){
+    var p=planRows[parseInt(c.dataset.idx)];
+    if(p.fab.lat!=null&&p.fab.lng!=null&&p.docId) toWrite.push(p);
+  });
+  if(!toWrite.length){ setStatus("コピー対象なし（チェックあり・docIdあり・CRT座標ありの行が必要）","info"); return; }
+  if(!confirm(toWrite.length+"件のCRT緯度経度をマスタ緯度経度（latitude/longitude）にコピーします。よろしいですか？")) return;
+
+  this.disabled=true;
+  log("=== CRT→マスタ コピー開始: "+toWrite.length+" 件 ===");
+  setStatus("コピー中… 0/"+toWrite.length,"info");
+
+  var batch=fsDb.batch(), count=0, done=0;
+  for(var i=0;i<toWrite.length;i++){
+    var p=toWrite[i];
+    batch.update(fsDb.collection("distilleries").doc(p.docId),{latitude:p.fab.lat,longitude:p.fab.lng});
+    count++; done++;
+    if(count===500||i===toWrite.length-1){
+      try{
+        await batch.commit();
+        log("  バッチコミット: "+count+"件 (累計"+done+")");
+        setStatus("コピー中… "+done+"/"+toWrite.length,"info");
+        batch=fsDb.batch(); count=0;
+      }catch(e){
+        setStatus("書き込みエラー: "+e,"err"); log("ERROR: "+e);
+        document.getElementById("btn-copy-to-master").disabled=false; return;
+      }
+    }
+  }
+  toWrite.forEach(function(p){ p.masterLat=p.fab.lat; p.masterLng=p.fab.lng; });
+  renderTable();
+  log("=== 完了 ===");
+  setStatus("✅ "+toWrite.length+" 件のマスタ緯度経度を更新しました","ok");
+  document.getElementById("btn-copy-to-master").disabled=false;
 });
 
 // ── Import ───────────────────────────────────────────────
