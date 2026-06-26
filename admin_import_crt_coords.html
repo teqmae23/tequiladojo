@@ -110,7 +110,7 @@ document.getElementById("btn-load").addEventListener("click", async function() {
   var res = sqlDb.exec("SELECT NOM, Fabricas, EstadoMunicipio, Latitud, Longitud FROM fabricas WHERE CAST(NOM AS INTEGER) >= 1000 ORDER BY CAST(NOM AS INTEGER)");
   if(res.length) {
     res[0].values.forEach(function(row){
-      fabricas.push({ nom: String(row[0]), empresa: String(row[1]), estado: String(row[2]), lat: parseFloat(row[3]), lng: parseFloat(row[4]) });
+      fabricas.push({ nom: String(parseInt(String(row[0]),10)), empresa: String(row[1]), estado: String(row[2]), lat: parseFloat(row[3]), lng: parseFloat(row[4]) });
     });
   }
   log("fabricas (NOM≥1000): "+fabricas.length+" 件");
@@ -120,23 +120,13 @@ document.getElementById("btn-load").addEventListener("click", async function() {
   try { snap = await fsDb.collection("distilleries").get(); } catch(e){ setStatus("Firestore エラー: "+e,"err"); return; }
   log("Firestore distilleries: "+snap.size+" 件");
 
-  // Debug: dump first 3 documents to understand field structure
-  var sampleCount = 0;
-  snap.forEach(function(doc){
-    if(sampleCount++ < 3) {
-      var r = doc.data();
-      log("  [サンプル] ID="+doc.id+" fields="+JSON.stringify(Object.keys(r)));
-      log("  crtDot="+JSON.stringify(r.crtDot)+" nom="+JSON.stringify(r.nom)+" fullName="+JSON.stringify(r.fullName));
-    }
-  });
-
-  // Build NOM index from crtDot
+  // Build NOM index by document ID (= NOM number)
   var fsNomIndex = {};
   snap.forEach(function(doc){
     var r = doc.data();
-    var dot = String(r.crtDot || "");
-    var m = dot.match(/NOM-(\d+)/i);
-    if(m) fsNomIndex[m[1]] = {
+    // doc.id is the NOM number (e.g. "1068"); also try zero-padded match
+    var nomKey = String(parseInt(doc.id, 10)); // strip leading zeros
+    fsNomIndex[nomKey] = {
       docId: doc.id,
       masterLat: r.latitude != null ? parseFloat(r.latitude) : null,
       masterLng: r.longitude != null ? parseFloat(r.longitude) : null,
@@ -144,7 +134,7 @@ document.getElementById("btn-load").addEventListener("click", async function() {
       crtLng: r.crtLongitude != null ? parseFloat(r.crtLongitude) : null,
     };
   });
-  log("crtDot設定済み: "+Object.keys(fsNomIndex).length+" 件");
+  log("Firestoreインデックス構築: "+Object.keys(fsNomIndex).length+" 件");
 
   var cntRegister=0, cntUpdate=0, cntCreate=0, cntSame=0;
   fabricas.forEach(function(fab){
@@ -245,10 +235,9 @@ document.getElementById("btn-import").addEventListener("click", async function()
         crtLongitude: p.fab.lng,
       });
     } else {
-      var newRef = fsDb.collection("distilleries").doc("NOM"+p.fab.nom);
+      var newRef = fsDb.collection("distilleries").doc(p.fab.nom);
       batch.set(newRef, {
-        nom: "NOM"+p.fab.nom,
-        crtDot: "NOM-"+p.fab.nom,
+        nom: p.fab.nom,
         crtEmpresa: p.fab.empresa,
         crtDireccion: p.fab.estado,
         crtLatitude: p.fab.lat,
