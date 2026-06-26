@@ -313,15 +313,17 @@ def parse_results(data):
         result_data = data["results"][0]["result"]["data"]
         col_names = []
         for sel in result_data.get("descriptor", {}).get("Select", []):
-            gk = sel.get("GroupKeys", [])
-            col_names.append(gk[0]["Source"]["Property"] if gk else sel.get("Name", f"col{len(col_names)}"))
+            name = sel.get("NativeReferenceName")
+            if not name:
+                gk = sel.get("GroupKeys", [])
+                name = gk[0]["Source"]["Property"] if gk else sel.get("Name", f"col{len(col_names)}")
+            col_names.append(name)
 
         if "dsr" not in result_data:
             return col_names, []
 
         ds = result_data["dsr"]["DS"][0]
-        if "S" in ds:
-            col_names = [c["N"] for c in ds["S"]]
+        # DS.S contains short internal names — do NOT override col_names with them
 
         n_cols = len(col_names)
         value_dicts = ds.get("ValueDicts", {})
