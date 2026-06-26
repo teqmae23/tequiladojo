@@ -73,11 +73,11 @@ ENTITY_CANDIDATES = [
 DATASETS = {
     "produccion": {
         "entity": "vEstPBIIntProduccionTequila",
-        "columns": ["Categoria", "Producción Total"],
-        "cal_entity": "Calendario",      # 日付は Calendario テーブルから
+        "vol_col": "Producción Total",
+        "dim_col": "Categoria",
+        "cal_entity": "Calendario",
         "table": "produccion",
-        "keys": ["Categoria", "Año", "Mes"],
-        "date_col": None,  # Calendario結合で取得
+        "keys": ["Año", "Categoria"],
     },
     "forma": {
         "entity": "vEstPBIIntExportacionesForma",
@@ -171,83 +171,25 @@ def has_error(data):
 
 
 def build_produccion_query(year=None):
-    """生産統計クエリ: vEstPBIIntProduccionTequila + Calendario 結合"""
-    from_clause = [
-        {"Name": "c", "Entity": "Calendario", "Type": 0},
-        {"Name": "v1", "Entity": "vEstPBIIntProduccionTequila", "Type": 0},
-    ]
-    select_clause = [
-        {"Column": {"Expression": {"SourceRef": {"Source": "c"}}, "Property": "Año"},
-         "Name": "Calendario.Año", "NativeReferenceName": "Año"},
-        {"Aggregation": {
-            "Expression": {"Column": {"Expression": {"SourceRef": {"Source": "v1"}}, "Property": "Producción Total"}},
-            "Function": 0},
-         "Name": "Sum(vEstPBIIntProduccionTequila.ProduccionTotal)", "NativeReferenceName": "ProduccionTotal"},
-        {"Column": {"Expression": {"SourceRef": {"Source": "v1"}}, "Property": "Categoria"},
-         "Name": "vEstPBIIntProduccionTequila.Categoria", "NativeReferenceName": "Categoria"},
-    ]
-
-    query = {
-        "Version": 2,
-        "From": from_clause,
-        "Select": select_clause,
-    }
-
-    if year:
-        query["Where"] = [{
-            "Condition": {
-                "In": {
-                    "Expressions": [{"Column": {"Expression": {"SourceRef": {"Source": "c"}}, "Property": "Año"}}],
-                    "Values": [[{"Literal": {"Value": f"{year}L"}}]]
-                }
-            }
-        }]
-
-    return {
-        "version": "1.0.0",
-        "queries": [{
-            "Query": {
-                "Commands": [{
-                    "SemanticQueryDataShapeCommand": {
-                        "Query": query,
-                        "Binding": {
-                            "Primary": {"Groupings": [{"Projections": [0, 1]}]},
-                            "Secondary": {"Groupings": [{"Projections": [2]}]},
-                            "DataReduction": {"DataVolume": 4,
-                                             "Primary": {"Window": {"Count": 200}},
-                                             "Secondary": {"Top": {"Count": 60}}},
-                            "Version": 1
-                        },
-                        "ExecutionMetricsKind": 1
-                    }
-                }]
-            },
-            "QueryId": "",
-            "ApplicationContext": {
-                "DatasetId": DATASET_ID,
-                "Sources": [{"ReportId": REPORT_ID}]
-            }
-        }],
-        "cancelQueries": [],
-        "modelId": MODEL_ID
-    }
+    """生産統計クエリ: vEstPBIIntProduccionTequila + Calendario 結合（フラット形式）"""
+    return build_cal_join_query("vEstPBIIntProduccionTequila", "Categoria", "Producción Total", year, src="v1")
 
 
-def build_cal_join_query(entity, dim_col, vol_col, year=None):
-    """Calendario結合クエリ: entity + Calendario join で Año×dim_col×sum(vol_col) を取得"""
+def build_cal_join_query(entity, dim_col, vol_col, year=None, src="v"):
+    """Calendario結合クエリ（フラット形式）: Año × dim_col × Sum(vol_col) を行ごとに返す"""
     query = {
         "Version": 2,
         "From": [
-            {"Name": "v", "Entity": entity, "Type": 0},
+            {"Name": src, "Entity": entity, "Type": 0},
             {"Name": "c", "Entity": "Calendario", "Type": 0},
         ],
         "Select": [
             {"Column": {"Expression": {"SourceRef": {"Source": "c"}}, "Property": "Año"},
              "Name": "Calendario.Año", "NativeReferenceName": "Año"},
-            {"Column": {"Expression": {"SourceRef": {"Source": "v"}}, "Property": dim_col},
-             "Name": f"v.{dim_col}", "NativeReferenceName": dim_col},
+            {"Column": {"Expression": {"SourceRef": {"Source": src}}, "Property": dim_col},
+             "Name": f"{src}.{dim_col}", "NativeReferenceName": dim_col},
             {"Aggregation": {
-                "Expression": {"Column": {"Expression": {"SourceRef": {"Source": "v"}}, "Property": vol_col}},
+                "Expression": {"Column": {"Expression": {"SourceRef": {"Source": src}}, "Property": vol_col}},
                 "Function": 0},
              "Name": f"Sum({entity}.{vol_col})", "NativeReferenceName": "Total"},
         ],
@@ -267,11 +209,8 @@ def build_cal_join_query(entity, dim_col, vol_col, year=None):
             "Query": {"Commands": [{"SemanticQueryDataShapeCommand": {
                 "Query": query,
                 "Binding": {
-                    "Primary": {"Groupings": [{"Projections": [0, 2]}]},
-                    "Secondary": {"Groupings": [{"Projections": [1]}]},
-                    "DataReduction": {"DataVolume": 4,
-                                     "Primary": {"Window": {"Count": 200}},
-                                     "Secondary": {"Top": {"Count": 60}}},
+                    "Primary": {"Groupings": [{"Projections": [0, 1, 2]}]},
+                    "DataReduction": {"DataVolume": 4, "Primary": {"Window": {"Count": 500}}},
                     "Version": 1
                 },
                 "ExecutionMetricsKind": 1
@@ -374,15 +313,17 @@ def parse_results(data):
         result_data = data["results"][0]["result"]["data"]
         col_names = []
         for sel in result_data.get("descriptor", {}).get("Select", []):
-            gk = sel.get("GroupKeys", [])
-            col_names.append(gk[0]["Source"]["Property"] if gk else sel.get("Name", f"col{len(col_names)}"))
+            name = sel.get("NativeReferenceName")
+            if not name:
+                gk = sel.get("GroupKeys", [])
+                name = gk[0]["Source"]["Property"] if gk else sel.get("Name", f"col{len(col_names)}")
+            col_names.append(name)
 
         if "dsr" not in result_data:
             return col_names, []
 
         ds = result_data["dsr"]["DS"][0]
-        if "S" in ds:
-            col_names = [c["N"] for c in ds["S"]]
+        # DS.S contains short internal names — do NOT override col_names with them
 
         n_cols = len(col_names)
         value_dicts = ds.get("ValueDicts", {})
@@ -561,9 +502,7 @@ def fetch_all_years(ds_name, ds_cfg, year_from=2003):
     all_rows = []
     for year in range(year_from, current_year + 1):
         print(f"  {year}年 取得中...", end=" ", flush=True)
-        if ds_name == "produccion":
-            rows = fetch_produccion_year(year)
-        elif "vol_col" in ds_cfg:
+        if "vol_col" in ds_cfg:
             rows = fetch_cal_join_year(ds_cfg, year)
         else:
             rows = fetch_dataset_year(ds_cfg, year)
