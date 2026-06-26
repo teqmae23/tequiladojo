@@ -20,18 +20,23 @@ h1{font-size:18px;margin-bottom:16px}
 .status.err{background:#ffebee;border:1px solid #ef9a9a}
 table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}
 th,td{border:1px solid #ddd;padding:5px 8px;text-align:left;white-space:nowrap}
-th{background:#f0ebe0;font-weight:600}
+th{background:#f0ebe0;font-weight:600;cursor:pointer;user-select:none}
+th:hover{background:#e0d8c8}
+th .sort-icon{margin-left:4px;font-size:10px;opacity:0.5}
+th.sort-asc .sort-icon::after{content:'▲';opacity:1}
+th.sort-desc .sort-icon::after{content:'▼';opacity:1}
+th:not(.sort-asc):not(.sort-desc) .sort-icon::after{content:'⇅'}
 tr.register{background:#e8f5e9}
 tr.update{background:#fff8e1}
 tr.create{background:#e3f2fd}
 tr.same{background:#fff;color:#aaa}
 tr.done{background:#c8e6c9}
-tr.skip{background:#f5f5f5;color:#bbb}
 .controls{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
 #log{max-height:200px;overflow-y:auto;font-size:11px;font-family:monospace;background:#1a1a1a;color:#ccc;padding:10px;border-radius:6px;margin-top:12px}
 .legend{display:flex;gap:12px;font-size:11px;margin-bottom:8px;flex-wrap:wrap}
 .legend span{padding:2px 8px;border-radius:3px;border:1px solid #ddd}
 .diff-big{color:#d32f2f;font-weight:600}
+.loc-mismatch{color:#d32f2f;font-weight:600}
 td.diff{font-size:11px;color:#666}
 </style>
 </head>
@@ -70,6 +75,24 @@ var fsDb = firebase.firestore();
 
 var DB_URL = "https://raw.githubusercontent.com/teqmae23/tequiladojo/main/data/crt_stats.db";
 var planRows = [];
+var sortCol = null, sortDir = 1;
+
+// Column definitions: key for planRows, label, value extractor
+var COLS = [
+  { key:'nom',           label:'NOM',          val:function(p){ return parseInt(p.fab.nom); } },
+  { key:'empresa',       label:'CRT会社名',     val:function(p){ return p.fab.empresa; } },
+  { key:'crtEstado',     label:'CRT所在地',     val:function(p){ return p.fab.estado; } },
+  { key:'masterDireccion',label:'マスタ所在地', val:function(p){ return p.masterDireccion||''; } },
+  { key:'masterLat',     label:'マスタ緯度',    val:function(p){ return p.masterLat; } },
+  { key:'masterLng',     label:'マスタ経度',    val:function(p){ return p.masterLng; } },
+  { key:'currentCrtLat', label:'現在CRT緯度',   val:function(p){ return p.currentCrtLat; } },
+  { key:'currentCrtLng', label:'現在CRT経度',   val:function(p){ return p.currentCrtLng; } },
+  { key:'newCrtLat',     label:'新CRT緯度',     val:function(p){ return p.fab.lat; } },
+  { key:'newCrtLng',     label:'新CRT経度',     val:function(p){ return p.fab.lng; } },
+  { key:'diffLat',       label:'緯度差分',      val:function(p){ return p.fab.lat!=null&&p.masterLat!=null?p.fab.lat-p.masterLat:null; } },
+  { key:'diffLng',       label:'経度差分',      val:function(p){ return p.fab.lng!=null&&p.masterLng!=null?p.fab.lng-p.masterLng:null; } },
+  { key:'action',        label:'アクション',    val:function(p){ return p.action; } },
+];
 
 function log(msg) {
   var el = document.getElementById("log");
@@ -79,20 +102,91 @@ function log(msg) {
 function setStatus(msg, cls) {
   document.getElementById("status-area").innerHTML = '<div class="status '+cls+'">'+msg+'</div>';
 }
-function fmt(v) {
-  return v != null ? Number(v).toFixed(5) : '―';
-}
-function fmtDiff(a, b) {
-  if(a == null || b == null) return '―';
-  var d = (parseFloat(a) - parseFloat(b));
+function fmt(v) { return v != null ? Number(v).toFixed(5) : '―'; }
+function fmtDiff(d) {
+  if(d == null) return '―';
   var s = (d >= 0 ? '+' : '') + d.toFixed(5);
-  return Math.abs(d) >= 0.1 ? '<span class="diff-big">'+s+'</span>' : s;
+  return Math.abs(d) >= 0.1 ? '<span class="diff-big">'+s+'</span>' : '<span style="color:#666;font-size:11px">'+s+'</span>';
+}
+
+function renderTable() {
+  var rows = planRows.slice();
+  if(sortCol !== null) {
+    var fn = COLS[sortCol].val;
+    rows.sort(function(a, b){
+      var av = fn(a), bv = fn(b);
+      if(av == null) return sortDir;
+      if(bv == null) return -sortDir;
+      return av < bv ? -sortDir : av > bv ? sortDir : 0;
+    });
+  }
+
+  var actionLabel = { register:'🟢 登録', update:'🟡 更新', create:'🔵 新規', same:'⬜ 変化なし' };
+
+  var html = '<table id="main-table"><thead><tr><th data-col="-1"><input type="checkbox" id="chk-header" checked></th>';
+  COLS.forEach(function(c, i){
+    var cls = sortCol===i ? (sortDir===1?'sort-asc':'sort-desc') : '';
+    html += '<th class="'+cls+'" data-col="'+i+'">'+c.label+'<span class="sort-icon"></span></th>';
+  });
+  html += '</tr></thead><tbody>';
+
+  rows.forEach(function(p){
+    var origIdx = planRows.indexOf(p);
+    var cls = p.action;
+    var chk = p.action !== 'same' ? ' checked' : '';
+    var dis = p.action === 'same' ? ' disabled' : '';
+
+    // Location comparison: city part of CRT estado (before comma) vs masterDireccion
+    var crtCity = p.fab.estado.split(',')[0].trim().toUpperCase();
+    var masterDir = (p.masterDireccion || '').toUpperCase();
+    var locMismatch = masterDir && crtCity !== masterDir.split(',')[0].trim();
+    var locCls = locMismatch ? ' class="loc-mismatch"' : '';
+
+    // Diff values
+    var diffLat = (p.fab.lat != null && p.masterLat != null) ? p.fab.lat - p.masterLat : null;
+    var diffLng = (p.fab.lng != null && p.masterLng != null) ? p.fab.lng - p.masterLng : null;
+
+    html += '<tr class="'+cls+'" id="row-'+origIdx+'">'
+      +'<td><input type="checkbox" class="row-chk" data-idx="'+origIdx+'"'+chk+dis+'></td>'
+      +'<td>'+p.fab.nom+'</td>'
+      +'<td>'+p.fab.empresa+'</td>'
+      +'<td'+locCls+'>'+p.fab.estado+'</td>'
+      +'<td'+locCls+'>'+(p.masterDireccion||'―')+'</td>'
+      +'<td>'+fmt(p.masterLat)+'</td><td>'+fmt(p.masterLng)+'</td>'
+      +'<td>'+fmt(p.currentCrtLat)+'</td><td>'+fmt(p.currentCrtLng)+'</td>'
+      +'<td>'+p.fab.lat+'</td><td>'+p.fab.lng+'</td>'
+      +'<td>'+fmtDiff(diffLat)+'</td>'
+      +'<td>'+fmtDiff(diffLng)+'</td>'
+      +'<td>'+actionLabel[p.action]+'</td>'
+      +'</tr>';
+  });
+  html += '</tbody></table>';
+  document.getElementById("table-area").innerHTML = html;
+
+  // Sort click
+  document.querySelectorAll("#main-table thead th[data-col]").forEach(function(th){
+    th.addEventListener("click", function(e){
+      if(e.target.type==='checkbox') return;
+      var c = parseInt(this.dataset.col);
+      if(c < 0) return;
+      if(sortCol === c) sortDir = -sortDir;
+      else { sortCol = c; sortDir = 1; }
+      renderTable();
+    });
+  });
+
+  // Header checkbox
+  var hdr = document.getElementById("chk-header");
+  if(hdr) hdr.addEventListener("change", function(){
+    var v = this.checked;
+    document.querySelectorAll(".row-chk:not(:disabled)").forEach(function(c){ c.checked=v; });
+  });
 }
 
 document.getElementById("btn-load").addEventListener("click", async function() {
   setStatus("読み込み中…", "info");
   log("=== 開始 ===");
-  planRows = [];
+  planRows = []; sortCol = null; sortDir = 1;
 
   var SQL;
   try {
@@ -120,18 +214,17 @@ document.getElementById("btn-load").addEventListener("click", async function() {
   try { snap = await fsDb.collection("distilleries").get(); } catch(e){ setStatus("Firestore エラー: "+e,"err"); return; }
   log("Firestore distilleries: "+snap.size+" 件");
 
-  // Build NOM index by document ID (= NOM number)
   var fsNomIndex = {};
   snap.forEach(function(doc){
     var r = doc.data();
-    // doc.id is the NOM number (e.g. "1068"); also try zero-padded match
-    var nomKey = String(parseInt(doc.id, 10)); // strip leading zeros
-    fsNomIndex[nomKey] = {
+    var nomKey = String(parseInt(doc.id, 10));
+    if(!isNaN(nomKey)) fsNomIndex[nomKey] = {
       docId: doc.id,
       masterLat: r.latitude != null ? parseFloat(r.latitude) : null,
       masterLng: r.longitude != null ? parseFloat(r.longitude) : null,
       crtLat: r.crtLatitude != null ? parseFloat(r.crtLatitude) : null,
       crtLng: r.crtLongitude != null ? parseFloat(r.crtLongitude) : null,
+      masterDireccion: r.crtDireccion || null,
     };
   });
   log("Firestoreインデックス構築: "+Object.keys(fsNomIndex).length+" 件");
@@ -139,13 +232,14 @@ document.getElementById("btn-load").addEventListener("click", async function() {
   var cntRegister=0, cntUpdate=0, cntCreate=0, cntSame=0;
   fabricas.forEach(function(fab){
     var existing = fsNomIndex[fab.nom];
-    var action, docId=null, masterLat=null, masterLng=null, currentCrtLat=null, currentCrtLng=null;
+    var action, docId=null, masterLat=null, masterLng=null, currentCrtLat=null, currentCrtLng=null, masterDireccion=null;
     if(existing) {
       docId = existing.docId;
       masterLat = existing.masterLat;
       masterLng = existing.masterLng;
       currentCrtLat = existing.crtLat;
       currentCrtLng = existing.crtLng;
+      masterDireccion = existing.masterDireccion;
       if(currentCrtLat == null && currentCrtLng == null) {
         action = 'register'; cntRegister++;
       } else {
@@ -157,50 +251,14 @@ document.getElementById("btn-load").addEventListener("click", async function() {
     } else {
       action = 'create'; cntCreate++;
     }
-    planRows.push({ fab, docId, action, masterLat, masterLng, currentCrtLat, currentCrtLng });
+    planRows.push({ fab, docId, action, masterLat, masterLng, currentCrtLat, currentCrtLng, masterDireccion });
   });
 
   document.getElementById("summary").textContent =
     "登録: "+cntRegister+"件 / 更新: "+cntUpdate+"件 / 新規: "+cntCreate+"件 / 変化なし: "+cntSame+"件";
   log("登録: "+cntRegister+", 更新: "+cntUpdate+", 新規: "+cntCreate+", 同じ: "+cntSame);
 
-  var html = '<table><thead><tr>'
-    +'<th><input type="checkbox" id="chk-header" checked></th>'
-    +'<th>NOM</th><th>CRT会社名</th><th>所在地</th>'
-    +'<th>マスタ緯度</th><th>マスタ経度</th>'
-    +'<th>現在CRT緯度</th><th>現在CRT経度</th>'
-    +'<th>新CRT緯度</th><th>新CRT経度</th>'
-    +'<th>緯度差分</th><th>経度差分</th>'
-    +'<th>アクション</th>'
-    +'</tr></thead><tbody>';
-
-  var actionLabel = { register:'🟢 登録', update:'🟡 更新', create:'🔵 新規', same:'⬜ 変化なし' };
-  planRows.forEach(function(p, i){
-    var cls = p.action;
-    var chk = p.action !== 'same' ? ' checked' : '';
-    var dis = p.action === 'same' ? ' disabled' : '';
-    html += '<tr class="'+cls+'" id="row-'+i+'">'
-      +'<td><input type="checkbox" class="row-chk" data-idx="'+i+'"'+chk+dis+'></td>'
-      +'<td>'+p.fab.nom+'</td>'
-      +'<td>'+p.fab.empresa+'</td>'
-      +'<td>'+p.fab.estado+'</td>'
-      +'<td>'+fmt(p.masterLat)+'</td><td>'+fmt(p.masterLng)+'</td>'
-      +'<td>'+fmt(p.currentCrtLat)+'</td><td>'+fmt(p.currentCrtLng)+'</td>'
-      +'<td>'+p.fab.lat+'</td><td>'+p.fab.lng+'</td>'
-      +'<td class="diff">'+fmtDiff(p.fab.lat, p.masterLat)+'</td>'
-      +'<td class="diff">'+fmtDiff(p.fab.lng, p.masterLng)+'</td>'
-      +'<td>'+actionLabel[p.action]+'</td>'
-      +'</tr>';
-  });
-  html += '</tbody></table>';
-  document.getElementById("table-area").innerHTML = html;
-
-  // Header checkbox toggle
-  document.getElementById("chk-header").addEventListener("change", function(){
-    var v = this.checked;
-    document.querySelectorAll(".row-chk:not(:disabled)").forEach(function(c){ c.checked=v; });
-  });
-
+  renderTable();
   setStatus("読み込み完了。", "ok");
   document.getElementById("btn-import").disabled = false;
   document.getElementById("btn-check-all").style.display = "";
