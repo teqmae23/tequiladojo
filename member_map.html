@@ -1,0 +1,1339 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>テキーラ道場 — 私の蒸留所マップ</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
+};
+</script>
+<script src="/auth-role.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/osmtogeojson@3.0.0-beta.5/osmtogeojson.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#F1EFE8;--cream2:#E8E4D8;--cream3:#DDD8C8;
+  --red:#b03020;--teal:#1a6e58;
+  --sans:'Noto Sans JP',sans-serif;--serif:'Cormorant Garamond',serif;--mono:'DM Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100vh;overflow:hidden;}
+
+/* ── Header ── */
+.hdr{background:var(--ink);padding:0 16px;display:flex;align-items:center;gap:12px;height:52px;flex-shrink:0;}
+.hdr-logo{font-family:var(--serif);font-size:17px;color:var(--gold-l);letter-spacing:.04em;}
+.hdr-sub{font-size:11px;color:var(--ink3);margin-top:1px;}
+.hdr-back{margin-left:auto;color:var(--gold-l);font-size:12px;text-decoration:none;opacity:.8;}
+.hdr-back:hover{opacity:1;}
+
+/* ── Controls bar ── */
+.ctrl-bar{background:var(--cream2);border-bottom:1px solid var(--cream3);padding:8px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0;}
+.ctrl-bar select,.ctrl-bar input{padding:5px 9px;border:1px solid var(--cream3);border-radius:5px;background:#fff;color:var(--ink);font-family:var(--sans);font-size:12px;}
+.ctrl-bar select:focus,.ctrl-bar input:focus{outline:none;border-color:var(--gold);}
+#map-count{font-size:11px;color:var(--ink3);margin-left:auto;}
+.ctrl-btn{padding:5px 11px;border:1px solid var(--cream3);border-radius:5px;background:#fff;color:var(--ink2);font-family:var(--sans);font-size:12px;cursor:pointer;transition:.15s;}
+.ctrl-btn.on{background:var(--ink);color:var(--cream);border-color:var(--ink);}
+.ctrl-btn:hover{border-color:var(--gold);}
+
+/* ── NOM range slider ── */
+.nom-range-wrap{position:relative;width:120px;height:20px;flex-shrink:0;}
+.nom-range-wrap::before{content:'';position:absolute;top:50%;transform:translateY(-50%);left:0;right:0;height:3px;background:var(--cream3);border-radius:2px;}
+#nom-range-fill{position:absolute;top:50%;transform:translateY(-50%);height:3px;background:var(--gold);border-radius:2px;pointer-events:none;}
+.nom-range-wrap input[type=range]{position:absolute;top:50%;transform:translateY(-50%);left:0;width:100%;height:20px;-webkit-appearance:none;appearance:none;background:transparent;pointer-events:none;outline:none;margin:0;padding:0;}
+.nom-range-wrap input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--gold);cursor:pointer;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);pointer-events:all;}
+.nom-range-wrap input[type=range]::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:var(--gold);cursor:pointer;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);pointer-events:all;}
+.nom-range-wrap input[type=range]::-webkit-slider-runnable-track{background:transparent;height:3px;}
+.nom-range-wrap input[type=range]::-moz-range-track{background:transparent;}
+
+/* ── Legend ── */
+.legend{position:absolute;bottom:28px;right:10px;z-index:999;background:rgba(241,239,232,.95);backdrop-filter:blur(4px);border:1px solid var(--cream3);border-radius:6px;padding:10px 14px;font-size:12px;color:var(--ink);}
+.legend-item{display:flex;align-items:center;gap:7px;margin-bottom:5px;}
+.legend-item:last-child{margin-bottom:0;}
+.legend-dot{width:12px;height:12px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.3);flex-shrink:0;}
+
+/* ── Loading overlay ── */
+#map-loading{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1000;background:rgba(24,17,10,.8);color:var(--cream);padding:10px 22px;border-radius:8px;font-size:13px;pointer-events:none;}
+
+/* ── Map ── */
+#map{flex:1;position:relative;}
+
+/* ── Popup ── */
+.dis-pop{font-family:var(--sans);min-width:190px;line-height:1.5;}
+.dis-pop .p-nom{font-family:var(--mono);font-size:10px;color:var(--ink3);letter-spacing:.05em;}
+.dis-pop .p-ja{font-size:14px;font-weight:500;color:var(--ink);margin:2px 0 1px;}
+.dis-pop .p-es{font-size:11px;color:var(--ink3);margin-bottom:5px;}
+.dis-pop .p-loc{font-size:11px;color:var(--ink2);margin-bottom:8px;}
+.dis-pop .p-btn{display:inline-block;background:var(--ink);color:var(--cream);font-size:11px;padding:4px 11px;border-radius:4px;text-decoration:none;font-family:var(--sans);}
+.dis-pop .p-btn:hover{background:var(--gold-d);}
+.dis-pop .p-shared{font-size:10px;color:var(--gold-d);margin-bottom:6px;font-weight:500;}
+.leaflet-popup-content-wrapper{border-radius:8px!important;}
+
+/* ── Pin labels ── */
+.dis-label{
+  background:rgba(241,239,232,.88);
+  border:1px solid var(--cream3);
+  border-radius:3px;
+  color:var(--ink);
+  font-family:var(--sans);
+  font-size:11px;
+  padding:2px 6px;
+  box-shadow:0 1px 3px rgba(0,0,0,.18);
+  white-space:nowrap;
+}
+.dis-label.leaflet-tooltip-right::before{border-right-color:var(--cream3);}
+#map.labels-off .dis-label{display:none!important;}
+
+/* ── Ruler control ── */
+.ruler-ctrl{background:rgba(241,239,232,.9);padding:5px 8px 4px;border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.2);}
+
+/* ── Elevation legend ── */
+.legend-grade{height:10px;width:100px;border-radius:3px;margin-bottom:4px;border:1px solid var(--cream3);}
+.legend-scale{display:flex;justify-content:space-between;font-size:11px;width:100px;color:var(--ink2);}
+.legend-item.clickable{cursor:pointer;border-radius:3px;padding:1px 3px;margin:-1px -3px;}
+.legend-item.clickable:hover{background:rgba(180,140,50,.15);}
+@keyframes markerFlash{0%,100%{box-shadow:0 1px 4px rgba(0,0,0,.45)}40%{box-shadow:0 0 0 5px rgba(200,146,30,.5),0 2px 8px rgba(0,0,0,.5)}}
+
+/* ── DOT境界ステータスパネル ── */
+.dot-sp{position:absolute;top:10px;left:52px;z-index:998;background:rgba(241,239,232,.97);border:1px solid var(--cream3);border-radius:6px;width:268px;max-height:calc(100vh - 130px);overflow-y:auto;font-size:11px;color:var(--ink2);display:none;box-shadow:0 3px 14px rgba(0,0,0,.18);}
+.dot-sp.open{display:block;}
+.dot-sp-head{background:var(--ink);color:var(--cream);padding:8px 12px;font-size:12px;font-weight:500;display:flex;align-items:center;justify-content:space-between;border-radius:5px 5px 0 0;position:sticky;top:0;z-index:1;}
+.dot-sp-head button{background:none;border:none;color:rgba(241,239,232,.7);cursor:pointer;font-size:18px;line-height:1;padding:0 0 1px 0;}
+.dot-sp-head button:hover{color:var(--cream);}
+.dot-sp-state{padding:6px 10px 2px;margin-top:2px;font-weight:500;color:var(--ink);display:flex;align-items:center;gap:5px;cursor:pointer;}
+.dot-sp-toggle{background:none;border:none;color:var(--ink3);cursor:pointer;font-size:10px;margin-left:auto;padding:0 2px;line-height:1;flex-shrink:0;}
+.dot-sp-toggle:hover{color:var(--ink);}
+.dot-sp-row{display:flex;align-items:center;gap:5px;padding:2px 10px 2px 20px;line-height:1.5;}
+.dot-sp-ok{color:#2e7d32;}
+.dot-sp-err{color:#b03020;}
+.dot-sp-sub{padding:1px 10px 3px 20px;color:var(--ink3);font-size:10px;}
+.dot-sp-retry{padding:1px 7px;font-size:10px;border:1px solid var(--cream3);border-radius:3px;background:#fff;cursor:pointer;color:var(--ink2);flex-shrink:0;}
+.dot-sp-retry:hover{border-color:var(--gold);}
+.dot-sp-retry:disabled{opacity:.5;cursor:default;}
+.dot-sp-name{cursor:pointer;flex:1;border-radius:3px;padding:0 2px;transition:background .2s;}
+.dot-sp-name:hover{background:rgba(180,140,50,.18);}
+@keyframes dot-name-flash{0%,100%{background:transparent}20%{background:rgba(255,200,0,.5)}}
+.dot-sp-name.flash{animation:dot-name-flash 1.4s ease;}
+.dot-desc{width:100%;background:rgba(241,239,232,.97);border-bottom:1px solid var(--cream3);padding:7px 16px;font-size:11px;color:var(--ink2);line-height:1.6;flex-shrink:0;}
+#dot-opacity-range{-webkit-appearance:none;appearance:none;height:4px;background:var(--cream3);border-radius:2px;border:none;padding:0;outline:none;vertical-align:middle;}
+#dot-opacity-range::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--ink2);cursor:pointer;margin-top:-5px;}
+#dot-opacity-range::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--cream3);}
+#dot-opacity-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--ink2);cursor:pointer;border:none;}
+#dot-opacity-range::-moz-range-track{height:4px;border-radius:2px;background:var(--cream3);}
+
+/* ── Login screen ── */
+#login-screen{display:none;align-items:center;justify-content:center;min-height:100vh;background:var(--cream);}
+.lcard{background:#fff;border:1px solid var(--cream3);border-radius:10px;padding:32px 28px;width:100%;max-width:360px;box-shadow:0 4px 20px rgba(0,0,0,.08);}
+.lcard h2{font-family:var(--serif);font-size:22px;color:var(--gold-d);margin-bottom:4px;}
+.lcard .lsub{font-size:12px;color:var(--ink3);margin-bottom:20px;}
+.lcard label{display:block;font-size:11px;color:var(--ink3);margin-bottom:4px;margin-top:14px;}
+.lcard input{width:100%;padding:9px 11px;border:1px solid var(--cream3);border-radius:5px;font-size:13px;box-sizing:border-box;font-family:var(--sans);}
+.lcard input:focus{outline:none;border-color:var(--gold);}
+#lerr{font-size:12px;color:var(--red);margin-top:8px;min-height:16px;}
+.lcard .lbtn{width:100%;margin-top:18px;padding:10px;background:var(--gold-d);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;font-family:var(--sans);}
+.lcard .lbtn:hover{background:var(--gold);}
+#app{display:none;height:100vh;flex-direction:column;}
+
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="lcard">
+    <h2>テキーラ道場</h2>
+    <div class="lsub">会員マップにログインしてください</div>
+    <label>メールアドレス</label>
+    <input id="l-email" type="email" autocomplete="username">
+    <label>パスワード</label>
+    <input id="l-pass" type="password" autocomplete="current-password">
+    <div id="lerr"></div>
+    <button class="lbtn" id="l-btn">ログイン</button>
+  </div>
+</div>
+<div id="app">
+<div class="hdr">
+  <div>
+    <div class="hdr-logo">テキーラ道場</div>
+    <div class="hdr-sub">私の蒸留所マップ</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;margin-left:auto;">
+    <span id="member-label" style="font-size:11px;color:var(--ink3);font-family:var(--mono);"></span>
+    <button id="btn-logout" style="padding:4px 10px;border:1px solid var(--cream3);border-radius:5px;background:transparent;color:var(--gold-l);font-size:11px;cursor:pointer;font-family:var(--sans);">ログアウト</button>
+    <a class="hdr-back" href="index.html">← ホームへ</a>
+  </div>
+</div>
+<div class="dot-desc" id="dot-desc">テキーラは原産地呼称制度の定めにより、Jalisco州の全域（125自治区）とMichoacán州の一部（30自治区）、Guanajuato州の一部（7自治区）、Tamaulipas州の一部（11自治区）、Nayarit州の一部（8自治区）で原材料のアガベの栽培からテキーラの製造まで行わなければいけない（100%アガベテキーラ以外のボトリングについては指定地域外でも可能）。</div>
+
+<div class="ctrl-bar">
+  <select id="filter-district">
+    <option value="">すべての地区</option>
+  </select>
+  <select id="filter-sales">
+    <option value="">全件</option>
+    <option value="1">道場</option>
+    <option value="2">国内</option>
+  </select>
+  <button id="btn-labels" class="ctrl-btn" onclick="toggleLabels()">名前 OFF</button>
+  <label style="font-size:10px;color:var(--ink2);white-space:nowrap;">地図</label>
+  <select id="sel-basemap" class="ctrl-btn" onchange="onBasemapChange(this.value)" style="cursor:pointer;">
+    <option value="esristreet">ESRI道路</option>
+    <option value="topo">OpenTopo</option>
+    <option value="esritopo">ESRI地形</option>
+    <option value="terrain">Stamen地形</option>
+  </select>
+  <button id="btn-color-mode" class="ctrl-btn" onclick="toggleColorMode()">色: 地区</button>
+  <label style="font-size:10px;color:var(--ink2);white-space:nowrap;">境界</label>
+  <select id="sel-dot" class="ctrl-btn" onchange="onDotSelChange(this.value)" style="cursor:pointer;">
+    <option value="none">なし</option>
+    <option value="state">州境界</option>
+    <option value="municipio">自治区境界</option>
+    <option value="all" selected>全境界</option>
+  </select>
+  <span id="dot-opacity-ctrl" style="display:none;align-items:center;gap:3px;font-size:10px;color:var(--ink3);">
+    <label>透過</label>
+    <input type="range" id="dot-opacity-range" min="0" max="100" step="1" value="15" style="width:70px;cursor:pointer;vertical-align:middle;">
+    <span id="dot-opacity-pct" style="width:26px;display:inline-block;">15%</span>
+  </span>
+  <button id="btn-dot-status" class="ctrl-btn" onclick="toggleDotStatus()">DOT自治区リスト表示</button>
+  <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--ink2);white-space:nowrap;">
+    <label style="font-size:10px;color:var(--ink2);">NOM</label>
+    <span id="nom-from-val" style="font-size:10px;font-family:var(--mono);min-width:28px;text-align:right;"></span>
+    <div class="nom-range-wrap">
+      <div id="nom-range-fill"></div>
+      <input type="range" id="nom-from" min="1000" max="2000" value="1000" step="1">
+      <input type="range" id="nom-to"   min="1000" max="2000" value="2000" step="1">
+    </div>
+    <span id="nom-to-val" style="font-size:10px;font-family:var(--mono);min-width:28px;"></span>
+  </span>
+  <input list="nom-list" id="nom-search" placeholder="NOM検索…" style="width:170px;padding:5px 9px;border:1px solid var(--cream3);border-radius:5px;background:#fff;color:var(--ink);font-family:var(--sans);font-size:12px;" autocomplete="off">
+  <datalist id="nom-list"></datalist>
+  <span id="map-count"></span>
+  <button id="btn-visited" class="ctrl-btn" onclick="toggleVisitedFilter()" style="flex-shrink:0;">飲んだのみ</button>
+  <button class="ctrl-btn" onclick="setInfoOff()" style="margin-left:auto;flex-shrink:0;">情報オフ</button>
+</div>
+
+<button id="btn-info-on" onclick="setInfoOn()" style="display:none;position:fixed;bottom:36px;left:10px;z-index:1100;padding:5px 11px;border:1px solid var(--cream3);border-radius:5px;background:rgba(241,239,232,.92);color:var(--ink2);font-family:var(--sans);font-size:12px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.18);backdrop-filter:blur(4px);">情報オン</button>
+
+<div id="map" class="labels-off">
+  <div class="dot-sp" id="dot-sp">
+    <div class="dot-sp-head">
+      <span>DOT自治区リスト</span>
+      <button onclick="toggleDotStatus()">×</button>
+    </div>
+    <div id="dot-sp-body" style="padding-bottom:8px;"></div>
+  </div>
+  <div id="map-loading">読み込み中...</div>
+  <div class="legend" id="map-legend">
+    <div id="legend-content"></div>
+  </div>
+</div>
+
+<script>
+if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth();
+var db=firebase.firestore();
+
+var memberNoms=new Set();
+var map=L.map('map',{zoomControl:true}).setView([20.5,-103.5],8);
+
+L.Control.Ruler=L.Control.extend({
+  options:{position:'bottomleft',maxWidth:200},
+  onAdd:function(map){
+    this._div=L.DomUtil.create('div','ruler-ctrl');
+    L.DomEvent.disableClickPropagation(this._div);
+    this._update();
+    map.on('zoomend moveend',this._update,this);
+    return this._div;
+  },
+  onRemove:function(map){map.off('zoomend moveend',this._update,this);},
+  _nice:function(n){var r=Math.pow(10,Math.floor(Math.log(n)/Math.LN10));return n>=10*r?10*r:n>=5*r?5*r:n>=2*r?2*r:r;},
+  _update:function(){
+    var maxW=this.options.maxWidth,map=this._map;
+    var y=map.getSize().y/2;
+    var maxM=map.containerPointToLatLng([0,y]).distanceTo(map.containerPointToLatLng([maxW,y]));
+    var nice=this._nice(maxM);
+    var pxW=Math.round(maxW*nice/maxM);
+    var label=nice>=1000?(nice/1000)+' km':nice+' m';
+    var ticks='';
+    for(var i=1;i<10;i++){
+      var h=i===5?8:3;
+      ticks+='<i style="position:absolute;bottom:0;left:'+(i*10)+'%;width:1px;height:'+h+'px;background:var(--ink3);transform:translateX(-50%);display:block;"></i>';
+    }
+    this._div.innerHTML=
+      '<div style="position:relative;width:'+pxW+'px;height:10px;border-bottom:2px solid var(--ink2);border-left:2px solid var(--ink2);border-right:2px solid var(--ink2);box-sizing:border-box;">'+ticks+'</div>'
+      +'<div style="display:flex;justify-content:space-between;width:'+pxW+'px;font-family:var(--mono);font-size:10px;color:var(--ink2);margin-top:2px;"><span>0</span><span>'+label+'</span></div>';
+  }
+});
+new L.Control.Ruler().addTo(map);
+
+var _baseLayers={
+  topo:L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{
+    attribution:'© <a href="https://opentopomap.org">OpenTopoMap</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',maxZoom:17
+  }),
+  esritopo:L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',{
+    attribution:'Esri, HERE, Garmin, © OpenStreetMap contributors',maxZoom:19
+  }),
+  esristreet:L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',{
+    attribution:'Esri, HERE, Garmin, © OpenStreetMap contributors',maxZoom:19
+  }),
+  terrain:L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.png?api_key=378e3626-20aa-4634-8172-c2efd21fbd3c',{
+    attribution:'© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com">Stamen Design</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',maxZoom:18
+  })
+};
+var _currentBase='esristreet';
+_baseLayers.esristreet.addTo(map);
+
+function onBasemapChange(val){
+  if(!_baseLayers[val]||_currentBase===val) return;
+  map.removeLayer(_baseLayers[_currentBase]);
+  _currentBase=val;
+  _baseLayers[val].addTo(map);
+}
+
+function makeIcon(color, visited){
+  if(visited){
+    return L.divIcon({
+      html:'<div style="width:13px;height:13px;border-radius:50%;background:'+color+';border:3px solid #c8860a;box-shadow:0 0 0 2px rgba(200,134,10,.35),0 1px 4px rgba(0,0,0,.45)"></div>',
+      iconSize:[20,20],iconAnchor:[10,10],className:''
+    });
+  }
+  return L.divIcon({
+    html:'<div style="width:11px;height:11px;border-radius:50%;background:'+color+';border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45)"></div>',
+    iconSize:[16,16],iconAnchor:[8,8],className:''
+  });
+}
+
+var DISTRICT_COLORS={
+  '11':'#2e7d32','12':'#c62828','13':'#e91e8c','14':'#795548',
+  '21':'#7b1fa2','31':'#e65100','41':'#e69900','51':'#1565c0'
+};
+var DISTRICT_LABELS={
+  '11':'Jalisco (Valles)','12':'Jalisco (Los Altos)','13':'Jalisco (Central)',
+  '14':'Jalisco (Other)','21':'Guanajuato','31':'Michoacan',
+  '41':'Nayarit','51':'Tamaulipas'
+};
+var colorMode='district';
+var elevSettings={stops:[{elev:0,color:'#ffffff'},{elev:2500,color:'#e53935'}]};
+var isAdmin=false; // member map: never admin
+
+async function loadElevSettings(){
+  try{
+    var doc=await db.collection('settings').doc('map').get();
+    if(doc.exists){
+      var d=doc.data();
+      if(d.elevStops&&d.elevStops.length>=2){
+        elevSettings.stops=d.elevStops.slice().sort(function(a,b){return a.elev-b.elev;});
+      } else if(d.elevMinM!=null&&d.elevMaxM!=null){
+        elevSettings.stops=[{elev:Number(d.elevMinM),color:'#ffffff'},{elev:Number(d.elevMaxM),color:'#e53935'}];
+      }
+    }
+  }catch(e){}
+}
+
+
+function hexToRgb(hex){
+  var m=(hex||'').replace('#','').match(/.{2}/g);
+  return m?{r:parseInt(m[0],16),g:parseInt(m[1],16),b:parseInt(m[2],16)}:{r:255,g:255,b:255};
+}
+function lerpColor(c1,c2,t){
+  var a=hexToRgb(c1),b=hexToRgb(c2);
+  return 'rgb('+Math.round(a.r+(b.r-a.r)*t)+','+Math.round(a.g+(b.g-a.g)*t)+','+Math.round(a.b+(b.b-a.b)*t)+')';
+}
+function stopsToGradientCss(stops){
+  if(!stops||stops.length===0) return '#ffffff';
+  if(stops.length===1) return stops[0].color;
+  var min=stops[0].elev,max=stops[stops.length-1].elev,range=max-min||1;
+  return 'linear-gradient(to right,'+stops.map(function(s){
+    return s.color+' '+Math.round((s.elev-min)/range*100)+'%';
+  }).join(',')+')';
+}
+function elevationColor(elev){
+  if(elev==null||isNaN(elev)) return '#ffffff';
+  var stops=elevSettings.stops;
+  if(!stops||stops.length===0) return '#ffffff';
+  if(stops.length===1) return stops[0].color;
+  if(elev<=stops[0].elev) return stops[0].color;
+  if(elev>=stops[stops.length-1].elev) return stops[stops.length-1].color;
+  for(var i=0;i<stops.length-1;i++){
+    if(elev>=stops[i].elev&&elev<=stops[i+1].elev){
+      var t=(elev-stops[i].elev)/((stops[i+1].elev-stops[i].elev)||1);
+      return lerpColor(stops[i].color,stops[i+1].color,t);
+    }
+  }
+  return '#ffffff';
+}
+function getMarkerColor(dis){
+  if(colorMode==='elevation') return elevationColor(dis.elevation!=null?Number(dis.elevation):null);
+  return DISTRICT_COLORS[dis.districtId]||'#ffffff';
+}
+function flashMarkersByDistrict(districtId){
+  var isOther=districtId==='other';
+  var targets=allMarkers.filter(function(m){
+    return isOther?!DISTRICT_COLORS[m.dis.districtId]:(m.dis.districtId===districtId);
+  });
+  if(!targets.length) return;
+  targets.forEach(function(m){
+    var c=getMarkerColor(m.dis);
+    m.marker.setIcon(L.divIcon({
+      html:'<div style="width:13px;height:13px;border-radius:50%;background:'+c+';border:2.5px solid #fff;animation:markerFlash .55s ease 3;box-shadow:0 1px 4px rgba(0,0,0,.45)"></div>',
+      iconSize:[18,18],iconAnchor:[9,9],className:''
+    }));
+  });
+  setTimeout(function(){
+    targets.forEach(function(m){ m.marker.setIcon(makeIcon(getMarkerColor(m.dis), memberNoms.has(String(m.dis.nom||m.dis.id)))); });
+  },1800);
+}
+function updateLegend(){
+  var el=document.getElementById('legend-content'); if(!el) return;
+  if(colorMode==='district'){
+    var cnt={};
+    allMarkers.forEach(function(m){
+      var id=DISTRICT_COLORS[m.dis.districtId]?m.dis.districtId:'__other__';
+      cnt[id]=(cnt[id]||0)+1;
+    });
+    el.innerHTML=Object.keys(DISTRICT_COLORS).map(function(id){
+      return '<div class="legend-item clickable" onclick="flashMarkersByDistrict(\''+id+'\')" style="min-width:160px;">'
+        +'<div class="legend-dot" style="background:'+DISTRICT_COLORS[id]+'"></div>'
+        +'<span style="flex:1;">'+DISTRICT_LABELS[id]+'</span>'
+        +'<span style="font-family:var(--mono);font-size:10px;color:var(--ink3);margin-left:6px;">'+(cnt[id]||0)+'</span>'
+        +'</div>';
+    }).join('')+'<div class="legend-item clickable" onclick="flashMarkersByDistrict(\'other\')" style="min-width:160px;">'
+      +'<div class="legend-dot" style="background:#ffffff;border-color:var(--cream3);"></div>'
+      +'<span style="flex:1;">その他</span>'
+      +'<span style="font-family:var(--mono);font-size:10px;color:var(--ink3);margin-left:6px;">'+(cnt['__other__']||0)+'</span>'
+      +'</div>';
+  } else {
+    var stops=elevSettings.stops;
+    var firstStop=stops&&stops.length?stops[0]:null;
+    var lastStop=stops&&stops.length?stops[stops.length-1]:null;
+    var gradCss=stopsToGradientCss(stops);
+    el.innerHTML='<div style="font-size:11px;color:var(--ink2);font-weight:600;margin-bottom:5px;">標高</div>'
+      +'<div class="legend-grade" style="background:'+gradCss+'"></div>'
+      +'<div class="legend-scale"><span>'+(firstStop?firstStop.elev+'m':'')+'</span><span>'+(lastStop?lastStop.elev+'m':'')+'</span></div>'
+      +'<div class="legend-item" style="margin-top:4px;"><div class="legend-dot" style="background:#fff;border:1px solid var(--cream3);"></div>未設定</div>';
+  }
+  // visited
+  var visitedCount=allMarkers.filter(function(m){return memberNoms.has(String(m.dis.nom||m.dis.id));}).length;
+  if(visitedCount){
+    el.innerHTML+='<div style="margin-top:6px;padding-top:5px;border-top:1px solid var(--cream3);">'+'<div class="legend-item"><div class="legend-dot" style="background:var(--gold);border:3px solid #c8860a;"></div><span>✅ 飲んだ蒸留所</span><span style="font-family:var(--mono);font-size:10px;color:var(--ink3);margin-left:auto;">'+visitedCount+'</span></div></div>';
+  }
+  // DOT原産地呼称境界は自治区リストの各行に埋め込み済みのため凡例には表示しない
+  // オーバーレイ凡例（ラベルのある図形のみ）
+  var overlayItems=overlayData.map(function(o,i){return {o:o,i:i};}).filter(function(x){return x.o.label;});
+  if(overlayItems.length){
+    el.innerHTML+='<div style="margin-top:7px;padding-top:6px;border-top:1px solid var(--cream3);font-size:10px;color:var(--ink3);margin-bottom:4px;">図形</div>'
+      +overlayItems.map(function(x){
+        var o=x.o, idx=x.i;
+        var isLine=o.type==='polyline';
+        var color=o.color||'#1565c0';
+        var fill=o.fillColor||color;
+        var fr=hexToRgb(fill);
+        var vis=overlayVisible[idx]!==false;
+        var icon=isLine
+          ?'<div style="width:16px;height:3px;background:'+color+';border-radius:1px;flex-shrink:0;margin:3px 0;opacity:'+(vis?1:0.35)+';"></div>'
+          :'<div style="width:14px;height:10px;background:rgba('+fr.r+','+fr.g+','+fr.b+',0.45);border:2px solid '+color+';border-radius:2px;flex-shrink:0;box-sizing:border-box;opacity:'+(vis?1:0.35)+';"></div>';
+        return '<div class="legend-item">'
+          +icon
+          +'<span style="opacity:'+(vis?1:0.45)+';flex:1;">'+o.label+'</span>'
+          +'<button onclick="toggleOverlay('+idx+')" style="background:none;border:1px solid var(--cream3);border-radius:3px;font-size:9px;padding:1px 5px;cursor:pointer;color:var(--ink3);flex-shrink:0;font-family:var(--sans);">'+(vis?'非表示':'表示')+'</button>'
+          +'</div>';
+      }).join('');
+  }
+}
+function toggleOverlay(idx){
+  var layer=overlayLayers[idx];
+  if(!layer) return;
+  var vis=overlayVisible[idx]!==false;
+  if(vis){ map.removeLayer(layer); overlayVisible[idx]=false; }
+  else { layer.addTo(map); overlayVisible[idx]=true; }
+  updateLegend();
+}
+function recolorMarkers(){
+  allMarkers.forEach(function(m){ m.marker.setIcon(makeIcon(getMarkerColor(m.dis), memberNoms.has(String(m.dis.nom||m.dis.id)))); });
+  updateLegend();
+}
+function toggleColorMode(){
+  colorMode=colorMode==='district'?'elevation':'district';
+  var btn=document.getElementById('btn-color-mode');
+  btn.textContent=colorMode==='elevation'?'色: 標高':'色: 地区';
+  btn.classList.toggle('on',colorMode==='elevation');
+  recolorMarkers();
+}
+
+var allMarkers=[], districtNames={};
+
+// ── 情報パネル オンオフ ─────────────────────────────────────────
+function setInfoOff(){
+  document.querySelector('.ctrl-bar').style.display='none';
+  document.getElementById('dot-desc').style.display='none';
+  document.getElementById('map-legend').style.display='none';
+  var dp=document.getElementById('dot-sp');
+  if(dp) dp.style.display='none';
+  document.getElementById('btn-info-on').style.display='';
+  map.invalidateSize();
+}
+function setInfoOn(){
+  document.querySelector('.ctrl-bar').style.display='';
+  document.getElementById('dot-desc').style.display='';
+  document.getElementById('map-legend').style.display='';
+  // dot-sp は open クラスがついているときだけ再表示
+  var dp=document.getElementById('dot-sp');
+  if(dp&&dp.classList.contains('open')) dp.style.display='';
+  document.getElementById('btn-info-on').style.display='none';
+  map.invalidateSize();
+}
+
+// ── 名前ラベル オンオフ ─────────────────────────────────────────
+function toggleLabels(){
+  var mapEl=document.getElementById('map');
+  var btn=document.getElementById('btn-labels');
+  var off=mapEl.classList.toggle('labels-off');
+  btn.textContent=off?'名前 OFF':'名前 ON';
+  btn.classList.toggle('on',!off);
+}
+
+function buildDistrictFilter(dists){
+  var sel=document.getElementById('filter-district');
+  Object.keys(dists).sort().forEach(function(id){
+    var o=document.createElement('option');
+    o.value=id; o.textContent=dists[id]; sel.appendChild(o);
+  });
+  var other=document.createElement('option');
+  other.value='__other__'; other.textContent='その他（地区不明）'; sel.appendChild(other);
+}
+
+function applyFilters(){
+  var distFilter=document.getElementById('filter-district').value;
+  var salesFilter=document.getElementById('filter-sales').value;
+  var nomFrom=parseInt(document.getElementById('nom-from').value)||0;
+  var nomTo=parseInt(document.getElementById('nom-to').value)||9999;
+  var visible=0;
+  allMarkers.forEach(function(m){
+    var nom=parseInt(m.dis.nom||m.dis.id||0);
+    var show=!distFilter||(distFilter==='__other__'?!DISTRICT_COLORS[m.dis.districtId]:m.dis.districtId===distFilter);
+    if(_visitedOnly) show=show&&memberNoms.has(String(m.dis.nom||m.dis.id));
+    if(salesFilter==='1') show=show&&m.dis.introduced===1;
+    if(salesFilter==='2') show=show&&m.dis.salesCategory===0;
+    show=show&&nom>=nomFrom&&nom<=nomTo;
+    if(show){ m.marker.addTo(map); visible++; }
+    else { map.removeLayer(m.marker); }
+  });
+  document.getElementById('map-count').textContent='表示中: '+visible+' / '+allMarkers.length+' 蒸留所';
+}
+
+document.getElementById('filter-district').addEventListener('change',applyFilters);
+document.getElementById('filter-sales').addEventListener('change',applyFilters);
+
+// ── NOM範囲スライダー ─────────────────────────────────────────
+var _nomMin=1000,_nomMax=2000;
+
+function _updateNomFill(){
+  var from=parseInt(document.getElementById('nom-from').value);
+  var to=parseInt(document.getElementById('nom-to').value);
+  var range=_nomMax-_nomMin||1;
+  var fill=document.getElementById('nom-range-fill');
+  fill.style.left=((from-_nomMin)/range*100)+'%';
+  fill.style.width=((to-from)/range*100)+'%';
+}
+document.getElementById('nom-from').addEventListener('input',function(){
+  var toVal=parseInt(document.getElementById('nom-to').value);
+  if(parseInt(this.value)>toVal) this.value=toVal;
+  document.getElementById('nom-from-val').textContent=this.value;
+  _updateNomFill(); applyFilters();
+});
+document.getElementById('nom-to').addEventListener('input',function(){
+  var fromVal=parseInt(document.getElementById('nom-from').value);
+  if(parseInt(this.value)<fromVal) this.value=fromVal;
+  document.getElementById('nom-to-val').textContent=this.value;
+  _updateNomFill(); applyFilters();
+});
+document.getElementById('nom-from-val').textContent=_nomMin;
+document.getElementById('nom-to-val').textContent=_nomMax;
+_updateNomFill();
+
+// ── NOM検索・ピン詳細表示 ──────────────────────────────────────
+document.getElementById('nom-search').addEventListener('change',function(){
+  var val=this.value.trim();
+  if(!val) return;
+  var m=val.match(/(\d{3,4})/);
+  if(!m) return;
+  var nomVal=m[1];
+  var found=allMarkers.find(function(mk){ return String(mk.dis.nom||mk.dis.id)===nomVal; });
+  if(found){
+    map.panTo(found.marker.getLatLng());
+    found.marker.openPopup();
+  }
+  this.value='';
+});
+
+var _visitedOnly=false;
+function toggleVisitedFilter(){
+  _visitedOnly=!_visitedOnly;
+  var btn=document.getElementById('btn-visited');
+  if(btn){ btn.textContent=_visitedOnly?'全件表示':'飲んだのみ'; btn.classList.toggle('on',_visitedOnly); }
+  applyFilters();
+}
+function loadData(){
+  Promise.all([
+    db.collection('distilleries').get(),
+    db.collection('locations').get(),
+    db.collection('districts').get()
+  ]).then(function(results){
+    var distilleries=results[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    var locMap={};
+    results[1].docs.forEach(function(d){locMap[d.id]=d.data();});
+    var distMap={};
+    results[2].docs.forEach(function(d){distMap[d.id]=d.data(); districtNames[d.id]=d.data().districtName||d.id;});
+
+    buildDistrictFilter(districtNames);
+
+    // ── 同座標グループ化 ──────────────────────────────────────────
+    // 同じ座標を持つ蒸留所を小さな円形に分散して全件クリック可能にする
+    var coordGroups={};
+    distilleries.forEach(function(dis){
+      var lat=parseFloat(dis.latitude);
+      var lng=parseFloat(dis.longitude);
+      if(!lat||!lng) return;
+      var key=lat.toFixed(5)+','+lng.toFixed(5);
+      if(!coordGroups[key]) coordGroups[key]={lat:lat,lng:lng,items:[]};
+      coordGroups[key].items.push(dis);
+    });
+
+    Object.keys(coordGroups).forEach(function(key){
+      var group=coordGroups[key];
+      var n=group.items.length;
+      // 半径 ~55m のオフセット（1件の場合はそのまま）
+      var R=0.0005;
+
+      group.items.forEach(function(dis,i){
+        var lat=group.lat, lng=group.lng;
+        if(n>1){
+          var angle=(2*Math.PI*i)/n - Math.PI/2;
+          lat+=R*Math.cos(angle);
+          lng+=R*Math.sin(angle);
+        }
+
+        var loc=dis.locationId?locMap[dis.locationId]:null;
+        var dist=dis.districtId?distMap[dis.districtId]:null;
+        var locName=loc?loc.locationName:'';
+        var distName=dist?dist.districtName:'';
+        var nomKey=String(dis.nom||dis.id);
+        var visited=memberNoms.has(nomKey);
+        var marker=L.marker([lat,lng],{icon:makeIcon(getMarkerColor(dis),visited),zIndexOffset:visited?100:0});
+
+        var coordStr=(dis.latitude&&dis.longitude)?dis.latitude.toFixed(5)+', '+dis.longitude.toFixed(5):'';
+        var elevStr=dis.elevation!=null?dis.elevation+'m':'—';
+        var ammUrl=dis.ammUrl||'';
+        marker.bindPopup(function(){
+          var zoom=map.getZoom();
+          var mapUrl=dis.mapUrl||(dis.latitude&&dis.longitude?'https://maps.google.com/@'+dis.latitude+','+dis.longitude+','+zoom+'z':'');
+          var nomId=dis.nom||dis.id;
+          var sharedList=n>1
+            ?'<div style="margin-top:5px;border-top:1px solid var(--cream3);padding-top:4px;">'
+              +'<div class="p-shared" style="margin-bottom:3px;">📌 同所在地 '+n+'件</div>'
+              +'<div style="max-height:120px;overflow-y:auto;">'
+              +group.items.map(function(g){
+                var gid=g.nom||g.id;
+                var active=gid===nomId;
+                return '<a href="distillery.html?nom='+encodeURIComponent(gid)+'" style="display:block;font-size:11px;padding:1px 0;text-decoration:none;color:'+(active?'var(--gold-d)':'var(--teal)')+';'+(active?'font-weight:500;':'')+'">'
+                  +'NOM '+gid+' '+(g.nomJa||g.nomEs||'')+'</a>';
+              }).join('')
+              +'</div></div>'
+            :'';
+          return '<div class="dis-pop">'
+            +'<div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin-bottom:2px;">'
+            +'<div class="p-nom" style="margin-bottom:0;">NOM '+nomId+'</div>'
+            +(mapUrl?'<a href="'+mapUrl+'" target="_blank" rel="noopener noreferrer" style="font-size:10px;color:var(--teal);text-decoration:none;white-space:nowrap;flex-shrink:0;">🗺 MAP</a>':'')
+            +(ammUrl?'<a href="'+ammUrl+'" target="_blank" rel="noopener noreferrer" style="font-size:10px;color:var(--gold-d);text-decoration:none;white-space:nowrap;flex-shrink:0;">📋 AMM</a>':'')
+            +(dis.latitude&&dis.longitude?'<a href="https://maps.google.com/?cbll='+dis.latitude+','+dis.longitude+'&layer=c" target="_blank" rel="noopener noreferrer" style="font-size:10px;color:var(--ink3);text-decoration:none;white-space:nowrap;flex-shrink:0;">👁 SV</a>':'')
+            +(memberNoms.has(String(nomId))?'<span style="font-size:10px;color:var(--gold-d);white-space:nowrap;flex-shrink:0;margin-left:auto;font-weight:500;">✅ 飲んだ</span>':'')
+            +'</div>'
+            +'<div class="p-ja">'+(dis.nomJa||'—')+'</div>'
+            +'<div class="p-es">'+(dis.nomEs||'—')+'</div>'
+            +((locName||distName)?'<div class="p-loc">📍 '+[locName,distName].filter(Boolean).join(' / ')+'</div>':'')
+            +(coordStr?'<div class="p-loc" style="font-family:var(--mono);font-size:10px;">'+coordStr+(dis.elevation!=null?' / ▲'+elevStr:'')+'</div>':'')
+            +sharedList
+            +'<a class="p-btn" href="distillery.html?nom='+encodeURIComponent(nomId)+'">詳細を見る →</a>'
+            +'</div>';
+        },{maxWidth:280,minWidth:200});
+        if(dis.nomEs) marker.bindTooltip(dis.nomEs,{permanent:true,direction:'right',offset:[6,0],className:'dis-label'});
+
+        allMarkers.push({marker:marker,dis:dis});
+      });
+    });
+
+    // NOM検索リスト（NOM番号順）を構築
+    var _sortedDis=distilleries.slice().sort(function(a,b){
+      return (parseInt(a.nom||a.id)||0)-(parseInt(b.nom||b.id)||0);
+    });
+    var dl=document.getElementById('nom-list');
+    _sortedDis.forEach(function(d){
+      var nom=d.nom||d.id;
+      var opt=document.createElement('option');
+      opt.value='NOM '+nom+' — '+(d.nomJa||d.nomEs||nom);
+      dl.appendChild(opt);
+    });
+
+    applyFilters();
+    updateLegend();
+
+    var loading=document.getElementById('map-loading');
+    if(loading) loading.style.display='none';
+
+    if(allMarkers.length===0){
+      if(loading){loading.textContent='座標が登録された蒸留所がありません';loading.style.display='block';}
+    }
+  }).catch(function(e){
+    var loading=document.getElementById('map-loading');
+    if(loading){loading.textContent='読み込み失敗: '+e.message;loading.style.display='block';}
+  });
+}
+
+// ── ログインフォーム ──────────────────────────────────────────────
+document.getElementById('l-btn').addEventListener('click', async function(){
+  var email=document.getElementById('l-email').value.trim();
+  var pass=document.getElementById('l-pass').value;
+  document.getElementById('lerr').textContent='';
+  this.disabled=true;
+  try{ await auth.signInWithEmailAndPassword(email, pass); }
+  catch(e){ document.getElementById('lerr').textContent=e.message; this.disabled=false; }
+});
+document.getElementById('l-pass').addEventListener('keydown',function(e){
+  if(e.key==='Enter') document.getElementById('l-btn').click();
+});
+document.getElementById('btn-logout').addEventListener('click',function(){ auth.signOut(); });
+
+// ── 会員NOMs読み込み ──────────────────────────────────────────────
+async function loadMemberNoms(user){
+  memberNoms=new Set();
+  try{
+    // membersコレクションからauthUidでdocIdを取得
+    var msnap=await db.collection('members').where('authUid','==',user.uid).limit(1).get();
+    var memberId=msnap.empty?user.uid:msnap.docs[0].id;
+    // visits/{memberId}/orders を取得
+    var vsnap=await db.collection('visits').doc(memberId).collection('orders').get();
+    vsnap.docs.forEach(function(doc){
+      var d=doc.data();
+      // bottleData配列 or オブジェクトからbrandIdを抽出
+      var bottles=d.bottleData;
+      if(Array.isArray(bottles)){
+        bottles.forEach(function(b){ if(b.brandId) memberNoms.add(String(b.brandId).slice(0,4)); });
+      } else if(bottles&&typeof bottles==='object'){
+        Object.values(bottles).forEach(function(b){ if(b&&b.brandId) memberNoms.add(String(b.brandId).slice(0,4)); });
+      }
+      // orderItems等も確認
+      var items=d.orderItems||d.items;
+      if(Array.isArray(items)){
+        items.forEach(function(it){ if(it.brandId) memberNoms.add(String(it.brandId).slice(0,4)); });
+      }
+    });
+  }catch(e){ console.warn('loadMemberNoms error:',e); }
+}
+
+// ── 会員認証 ──────────────────────────────────────────────────────
+AuthRole.requireMember(auth, async function(user){
+  var lbl=document.getElementById('member-label');
+  if(lbl) lbl.textContent=user.email||'';
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').style.display='flex';
+  await loadMemberNoms(user);
+  await loadElevSettings();
+  loadDotStatusFromFirestore();
+  loadData(); loadOverlays(); onDotSelChange('all');
+}, function(){
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('app').style.display='none';
+});
+
+// ── マップオーバーレイ ──────────────────────────────────
+var overlayLayers=[], overlayData=[], overlayVisible=[];
+
+function smoothChaikin(pts, iter){
+  if(!iter||iter<1) return pts;
+  var r=pts;
+  for(var k=0;k<iter;k++){
+    var n=[];
+    for(var i=0;i<r.length;i++){
+      var p0=r[i], p1=r[(i+1)%r.length];
+      n.push([p0[0]*0.75+p1[0]*0.25, p0[1]*0.75+p1[1]*0.25]);
+      n.push([p0[0]*0.25+p1[0]*0.75, p0[1]*0.25+p1[1]*0.75]);
+    }
+    r=n;
+  }
+  return r;
+}
+
+function generateEllipsePoints(lat, lng, radiusX, radiusY, rotation){
+  var n=64, R=6371000;
+  var rad=(rotation||0)*Math.PI/180;
+  var cosR=Math.cos(rad), sinR=Math.sin(rad);
+  var latR=lat*Math.PI/180;
+  var pts=[];
+  for(var i=0;i<n;i++){
+    var a=2*Math.PI*i/n;
+    var dx=radiusX*Math.cos(a), dy=radiusY*Math.sin(a);
+    var rx=dx*cosR-dy*sinR, ry=dx*sinR+dy*cosR;
+    pts.push([lat+ry/R*(180/Math.PI), lng+rx/(R*Math.cos(latR))*(180/Math.PI)]);
+  }
+  return pts;
+}
+
+function drawOverlay(o){
+  var layer;
+  var opts={color:o.color||'#1565c0',weight:o.weight||2,fillColor:o.fillColor||o.color||'#1565c0',fillOpacity:o.fillOpacity!=null?o.fillOpacity:0.08};
+  var latlngs=(o.coords||[]).map(function(c){return Array.isArray(c)?[c[0],c[1]]:[c.lat,c.lng];});
+  if(o.type==='polygon'){
+    if(o.smooth>0) latlngs=smoothChaikin(latlngs,o.smooth);
+    layer=L.polygon(latlngs,opts);
+  } else if(o.type==='polyline'){
+    layer=L.polyline(latlngs,{color:opts.color,weight:opts.weight,dashArray:o.dashArray||null});
+  } else if(o.type==='circle'){
+    layer=L.circle(latlngs[0],Object.assign({radius:o.radius||10000},opts));
+  } else if(o.type==='ellipse'&&latlngs.length){
+    var epts=generateEllipsePoints(latlngs[0][0],latlngs[0][1],o.radiusX||10000,o.radiusY||5000,o.rotation||0);
+    layer=L.polygon(epts,opts);
+  }
+  if(!layer) return;
+  if(o.label) layer.bindTooltip(o.label,{sticky:true,className:'dis-label'});
+  layer.addTo(map);
+  overlayLayers.push(layer);
+  overlayVisible.push(true);
+}
+function loadOverlays(){
+  db.collection('mapOverlays').where('active','==',true).get().then(function(snap){
+    overlayLayers.forEach(function(l){map.removeLayer(l);}); overlayLayers=[]; overlayVisible=[];
+    overlayData=snap.docs.map(function(d){return d.data();});
+    overlayData.forEach(function(o){ drawOverlay(o); });
+    updateLegend();
+  }).catch(function(){});
+}
+
+// ── DOT原産地呼称自治区オーバーレイ ─────────────────────────────
+var DOT_STATES=[
+  {state:'Jalisco',   iso:'MX-JAL',stateLevel:true,   color:'#2e7d32'},
+  {state:'Guanajuato',iso:'MX-GUA',color:'#7b1fa2',municipios:['Abasolo','Ciudad Manuel Doblado','Cuerámaro','Huanímaro','Pénjamo','Purísima del Rincón','Romita']},
+  {state:'Michoacán', iso:'MX-MIC',color:'#e65100',municipios:['Briseñas de Matamoros','Chavinda','Chilchota','Churintzio','Cotija','Ecuandureo','Jacona','Jiquilpan','Maravatío','Marcos Castellanos','Nuevo Parangaricutiro','Numarán','Pajacuarán','Peribán','La Piedad','Régules','Los Reyes','Sahuayo','Tancítaro','Tangamandapio','Tangancícuaro','Tanhuato','Tingüindín','Tocumbo','Venustiano Carranza','Villa Mar','Vista Hermosa','Yurécuaro','Zamora','Zináparo']},
+  {state:'Nayarit',   iso:'MX-NAY',color:'#e69900',muniColor:'#3d2800',municipios:['Ahuacatlán','Amatlán de Cañas','Ixtlán del Río','Jala','Xalisco','San Pedro Lagunillas','Santa María del Oro','Tepic']},
+  {state:'Tamaulipas',iso:'MX-TAM',color:'#1565c0',municipios:['Aldama','Altamira','Antiguo Morelos','Gómez Farías','González','Llera','El Mante','Nuevo Morelos','Ocampo','Tula','Xicotencatl']}
+];
+
+var OVERPASS_ENDPOINTS=[
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://lz4.overpass-api.de/api/interpreter'
+];
+
+var dotLayer=null, dotLoading=false, dotGJ=null, dotFetchStatus=null, dotFirestoreSnap=null;
+var dotLayerMap={}; // origName → Leaflet layer (for click-to-highlight)
+var dotFillOpacity=0.15; // loaded from Firestore _config（初期値15%）
+// Firestore doc ID ヘルパー
+function dotDocId(sq,name){
+  if(!name) return sq.stateLevel?sq.iso+'_dotState':sq.iso+'_stateBoundary';
+  return sq.iso+'_municipio_'+name.replace(/\s+/g,'_');
+}
+
+// ジオメトリが有効な Polygon/MultiPolygon か確認
+function _dotGeomOk(d){
+  if(!d||!d.geomJson) return false;
+  try{ var g=JSON.parse(d.geomJson); return g&&(g.type==='Polygon'||g.type==='MultiPolygon'); }catch(e){ return false; }
+}
+
+// Firestoreスナップから取得状況を派生
+function deriveDotFetchStatusFromFirestore(snap){
+  var fetchedSet=new Set();
+  snap.docs.forEach(function(doc){ if(doc.data().geomJson) fetchedSet.add(doc.id); });
+  return DOT_STATES.map(function(sq){
+    if(sq.stateLevel){
+      // stateLevel州はFirestoreの municipio_ ドキュメントを動的に集計
+      var prefix=sq.iso+'_municipio_';
+      var munis=[];
+      snap.docs.forEach(function(doc){
+        if(doc.id.startsWith(prefix)){
+          var d=doc.data();
+          var mName=d.name||(doc.id.slice(prefix.length).replace(/_/g,' '));
+          munis.push({name:mName,ok:_dotGeomOk(d)});
+        }
+      });
+      // 州境界線: stateBoundary doc が優先、なければ dotState で代替
+      var bndOk=fetchedSet.has(sq.iso+'_stateBoundary')||fetchedSet.has(dotDocId(sq));
+      return {state:sq.state,iso:sq.iso,color:sq.color,stateLevel:true,
+        stateBoundaryOk:bndOk,
+        municipioResults:munis.length?munis:null};
+    } else {
+      return {state:sq.state,iso:sq.iso,color:sq.color,stateLevel:false,
+        stateBoundaryOk:fetchedSet.has(dotDocId(sq)),
+        municipioResults:sq.municipios.map(function(m){
+          return {name:m,ok:fetchedSet.has(dotDocId(sq,m))};
+        })};
+    }
+  });
+}
+
+// Firestore から取得状況のみ読み込み（起動時）
+async function loadDotStatusFromFirestore(){
+  try{
+    var snap=await db.collection('dotMunicipios').get();
+    dotFirestoreSnap=snap;
+    dotFetchStatus=deriveDotFetchStatusFromFirestore(snap);
+  }catch(e){}
+  buildStatusPanel();
+}
+
+// _config（透過度等）のリアルタイム監視 — 管理者が設定変更したら反映
+db.collection('dotMunicipios').doc('_config').onSnapshot(function(doc){
+  if(!doc.exists) return;
+  var data=doc.data();
+  if(typeof data.fillOpacity==='number'){
+    dotFillOpacity=data.fillOpacity;
+    _syncOpacitySlider(data.fillOpacity);
+    if(dotLayer) dotLayer.setStyle(dotLayerStyle);
+  }
+});
+
+// 透過度スライダーの値を同期するヘルパー
+function _syncOpacitySlider(v){
+  var r=document.getElementById('dot-opacity-range');
+  var p=document.getElementById('dot-opacity-pct');
+  if(r){ r.value=Math.round(v*100); }
+  if(p){ p.textContent=Math.round(v*100)+'%'; }
+}
+
+// 透過度スライダーの入力イベント
+(function(){
+  var r=document.getElementById('dot-opacity-range');
+  var p=document.getElementById('dot-opacity-pct');
+  if(r) r.addEventListener('input',function(){
+    dotFillOpacity=parseInt(this.value)/100;
+    if(p) p.textContent=this.value+'%';
+    if(dotLayer) dotLayer.setStyle(dotLayerStyle);
+  });
+})();
+
+async function overpassFetch(query, timeoutMs){
+  timeoutMs=timeoutMs||45000;
+  var lastErr;
+  for(var i=0;i<OVERPASS_ENDPOINTS.length;i++){
+    try{
+      var ctrl=new AbortController();
+      var tid=setTimeout(function(){ctrl.abort();},timeoutMs);
+      var resp=await fetch(OVERPASS_ENDPOINTS[i],{method:'POST',body:'data='+encodeURIComponent(query),signal:ctrl.signal});
+      clearTimeout(tid);
+      if(resp.status===429){
+        // レートリミット → 3秒待って次のエンドポイントへ
+        await new Promise(function(r){setTimeout(r,3000);});
+        throw new Error('429');
+      }
+      if(!resp.ok) throw new Error('HTTP '+resp.status);
+      return await resp.json();
+    }catch(e){ lastErr=e; }
+  }
+  throw lastErr;
+}
+
+var _nrmFn=function(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim();};
+
+async function fetchStateGeoJSON(sq){
+  var query;
+  if(sq.stateLevel){
+    query='[out:json][timeout:90];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
+  } else {
+    // 全自治区を取得してクライアント側でフィルタ（特殊文字・表記揺れ対応）
+    query='[out:json][timeout:60];area["ISO3166-2"="'+sq.iso+'"]->.s;rel["admin_level"="6"](area.s);out geom qt;';
+  }
+  var json=await overpassFetch(query, sq.stateLevel ? 120000 : 65000);
+  var features=osmtogeojson(json).features;
+  var unmatched=[];
+
+  if(!sq.stateLevel && sq.municipios){
+    var allowed=sq.municipios.map(_nrmFn);
+    var matchedNames=new Set();
+    features=features.filter(function(f){
+      var nm=_nrmFn((f.properties&&(f.properties.name||f.properties['name:es']))||'');
+      if(!nm) return false;
+      for(var i=0;i<allowed.length;i++){
+        var a=allowed[i];
+        if(a===nm||(nm.length>=4&&(a.indexOf(nm)===0||nm.indexOf(a)===0))){
+          matchedNames.add(sq.municipios[i]);
+          f.properties._municipioName=sq.municipios[i];
+          return true;
+        }
+      }
+      return false;
+    });
+    unmatched=sq.municipios.filter(function(m){return !matchedNames.has(m);});
+  }
+  features.forEach(function(f){
+    f.properties=f.properties||{};
+    f.properties._dotColor=sq.color;
+  });
+  return {features:features, unmatched:unmatched};
+}
+
+async function fetchStateBoundaryGeoJSON(sq){
+  var query='[out:json][timeout:90];rel["ISO3166-2"="'+sq.iso+'"]["admin_level"="4"];out geom qt;';
+  var json=await overpassFetch(query, 120000);
+  var features=osmtogeojson(json).features;
+  features=features.filter(function(f){ var t=f.geometry&&f.geometry.type; return t&&t!=='Point'&&t!=='MultiPoint'; });
+  features.forEach(function(f){
+    f.properties=f.properties||{};
+    f.properties._dotColor=sq.color;
+    f.properties._isStateOutline=true;
+  });
+  return features;
+}
+
+// ── 自治区1件取得（管理者用リトライ）─────────────────────────────
+async function fetchSingleMunicipio(iso,color,name){
+  var stopWords=/^(de|del|el|la|los|las|san|santa|nuevo|nueva|general)$/i;
+  var kw=_nrmFn(name).split(/\s+/).find(function(w){return w.length>3&&!stopWords.test(w);})||_nrmFn(name);
+  var query='[out:json][timeout:30];area["ISO3166-2"="'+iso+'"]->.s;rel["admin_level"="6"]["name"~"'+kw+'",i](area.s);out geom qt;';
+  var json=await overpassFetch(query,35000);
+  var feats=osmtogeojson(json).features.filter(function(f){
+    var t=f.geometry&&f.geometry.type; return t&&t!=='Point'&&t!=='MultiPoint';
+  });
+  if(!feats.length) return null;
+  var feat=feats[0];
+  feat.properties=feat.properties||{};
+  feat.properties._dotColor=color;
+  feat.properties._municipioName=name;
+  return feat;
+}
+
+// ── DOTレイヤースタイル ──────────────────────────────────────────
+var _dotColorByIso={}, _muniColorByIso={};
+DOT_STATES.forEach(function(s){
+  _dotColorByIso[s.iso]=s.color;
+  if(s.muniColor) _muniColorByIso[s.iso]=s.muniColor;
+});
+function dotLayerStyle(f){
+  var iso=f.properties&&f.properties._iso;
+  var c=(iso&&_dotColorByIso[iso])||(f.properties&&f.properties._dotColor)||'#2e7d32';
+  var fo=typeof dotFillOpacity==='number'?dotFillOpacity:0.07;
+  if(f.properties&&f.properties._isStateOutline){
+    return {color:c,weight:3,fillOpacity:0,opacity:0.9};
+  }
+  if(f.properties&&f.properties._isDotState){
+    return {color:c,weight:3,fillColor:c,fillOpacity:fo,opacity:0.9};
+  }
+  var mc=(iso&&_muniColorByIso[iso])||c;
+  return {color:mc,weight:0.6,fillColor:c,fillOpacity:fo,opacity:0.85};
+}
+
+async function onDotSelChange(mode){
+  var sel=document.getElementById('sel-dot');
+  if(dotLayer){ map.removeLayer(dotLayer); dotLayer=null; dotLayerMap={}; }
+  if(mode==='none'){
+    dotGJ=null;
+    var oc=document.getElementById('dot-opacity-ctrl'); if(oc) oc.style.display='none';
+    document.getElementById('dot-sp').classList.remove('open');
+    buildStatusPanel(); updateLegend(); return;
+  }
+  if(!dotGJ){
+    if(dotLoading) return;
+    dotLoading=true; if(sel) sel.disabled=true;
+    try{
+      var snap=await db.collection('dotMunicipios').get();
+      dotFirestoreSnap=snap;
+      dotFetchStatus=deriveDotFetchStatusFromFirestore(snap);
+      snap.docs.forEach(function(doc){
+        if(doc.id==='_config'){
+          var s=doc.data();
+          if(typeof s.fillOpacity==='number'){ dotFillOpacity=s.fillOpacity; _syncOpacitySlider(s.fillOpacity); }
+        }
+      });
+      var stateLevelMuniIsos=new Set();
+      snap.docs.forEach(function(doc){
+        var m=doc.id.match(/^([^_]+-[^_]+)_municipio_/);
+        if(m){
+          var sq=DOT_STATES.find(function(s){return s.stateLevel&&s.iso===m[1];});
+          if(sq) stateLevelMuniIsos.add(m[1]);
+        }
+      });
+      var features=[];
+      snap.docs.forEach(function(doc){
+        var d=doc.data(); if(!d.geomJson) return;
+        try{
+          var geom=JSON.parse(d.geomJson);
+          if((d.entryType==='dotState'||d.entryType==='stateBoundary')&&geom.type==='Polygon'&&geom.coordinates.length>1){
+            geom={type:'Polygon',coordinates:[geom.coordinates[0]]};
+          }
+          var nm=d.entryType==='municipio'?d.name:(d.entryType==='dotState'?(d.name||d.state):null);
+          var mOrig=doc.id.match(/_municipio_(.+)$/);
+          var mapKey=mOrig?(mOrig[1].replace(/_/g,' ')):(d.entryType==='dotState'?d.state:null);
+          var docIso=d.iso||((doc.id.match(/^([^_]+-[^_]+)_/)||['',''])[1]);
+          var isOutline=d.entryType==='stateBoundary'||(d.entryType==='dotState'&&stateLevelMuniIsos.has(d.iso));
+          features.push({type:'Feature',geometry:geom,properties:{
+            _dotColor:d.color,_municipioName:mapKey,
+            _isStateOutline:isOutline,
+            _isDotState:d.entryType==='dotState'&&!stateLevelMuniIsos.has(d.iso),
+            _displayName:nm,_mapKey:mapKey,_iso:docIso
+          }});
+        }catch(e){}
+      });
+      dotGJ={type:'FeatureCollection',features:features};
+    }catch(e){
+      alert('DOT境界の読み込みに失敗しました:\n'+e.message);
+      if(sel){ sel.value='none'; sel.disabled=false; } dotLoading=false;
+      buildStatusPanel(); updateLegend(); return;
+    }finally{
+      dotLoading=false; if(sel) sel.disabled=false;
+    }
+  }
+  _rebuildDotLayer(mode);
+}
+
+function _rebuildDotLayer(mode){
+  if(dotLayer){ map.removeLayer(dotLayer); dotLayer=null; dotLayerMap={}; }
+  if(!dotGJ) return;
+  dotLayerMap={};
+  dotLayer=L.geoJSON(dotGJ,{
+    filter:function(f){
+      var t=f.geometry&&f.geometry.type;
+      if(!t||t==='Point'||t==='MultiPoint') return false;
+      var p=f.properties||{};
+      var isState=p._isStateOutline||p._isDotState;
+      if(mode==='state') return !!isState;
+      if(mode==='municipio') return !isState;
+      return true;
+    },
+    style:dotLayerStyle,
+    onEachFeature:function(f,layer){
+      var nm=f.properties&&f.properties._displayName;
+      var mk=f.properties&&f.properties._mapKey;
+      if(nm) layer.bindPopup('<div style="font-family:var(--sans);padding:4px 6px;font-size:13px;font-weight:500;">'+nm+'</div>',{maxWidth:200});
+      if(mk){
+        dotLayerMap[mk]=layer;
+        layer.on('click',function(){dotHighlightPanelEntry(mk);});
+      }
+    }
+  }).addTo(map);
+  _bringJaliscoToFront();
+  var oc=document.getElementById('dot-opacity-ctrl'); if(oc) oc.style.display='flex';
+  buildStatusPanel(); updateLegend();
+}
+
+// ── DOT境界ステータスパネル ──────────────────────────────────────
+function toggleDotStatus(){
+  document.getElementById('dot-sp').classList.toggle('open');
+}
+
+function buildStatusPanel(){
+  var body=document.getElementById('dot-sp-body');
+  var status=dotFetchStatus||DOT_STATES.map(function(sq){
+    return {state:sq.state,iso:sq.iso,color:sq.color,stateLevel:!!sq.stateLevel,
+      stateBoundaryOk:false,
+      municipioResults:sq.stateLevel?null:sq.municipios.map(function(m){return {name:m,ok:false};})};
+  });
+  function _cnt(iso,fallback){
+    var s=status.find(function(x){return x.iso===iso;});
+    return s&&s.municipioResults?s.municipioResults.length:fallback;
+  }
+  var jalCnt=_cnt('MX-JAL',125),micCnt=_cnt('MX-MIC',30),guaCnt=_cnt('MX-GUA',7),tamCnt=_cnt('MX-TAM',11),nayCnt=_cnt('MX-NAY',8);
+  var descEl=document.getElementById('dot-desc');
+  if(descEl){
+    descEl.textContent='テキーラは原産地呼称制度の定めにより、Jalisco州の全域（'+jalCnt+'自治区）とMichoacán州の一部（'+micCnt+'自治区）、Guanajuato州の一部（'+guaCnt+'自治区）、Tamaulipas州の一部（'+tamCnt+'自治区）、Nayarit州の一部（'+nayCnt+'自治区）で原材料のアガベの栽培からテキーラの製造まで行わなければいけない（100%アガベテキーラ以外のボトリングについては指定地域外でも可能）。';
+  }
+  var html='';
+  status.forEach(function(st,si){
+    var cnt=st.municipioResults?st.municipioResults.length:(st.stateLevel?125:0);
+    html+='<div class="dot-sp-state" data-dot-iso="'+st.iso+'">'
+      +'<span style="width:8px;height:8px;border-radius:50%;background:'+st.color+';display:inline-block;flex-shrink:0"></span>'
+      +'<span style="flex:1;min-width:0;overflow:hidden;">'
+        +'<strong>'+st.state+'</strong>'
+        +(cnt?' <span class="dot-sp-allhighlight" data-highlight-iso="'+st.iso+'" style="color:var(--ink3);font-size:10px;font-weight:normal;cursor:pointer;text-decoration:underline dotted var(--ink3);" title="クリックで全自治区を強調">（'+cnt+'自治区）</span>':'')
+      +'</span>'
+      +'<div style="width:18px;height:0;border-top:3px solid '+st.color+';flex-shrink:0;" title="州境界"></div>'
+      +'<button class="dot-sp-toggle" data-toggle-iso="'+st.iso+'">▶</button>'
+      +'</div>';
+    html+='<div class="dot-sp-rows" data-rows-iso="'+st.iso+'" style="display:none;">';
+    if(st.stateLevel){
+      if(!st.municipioResults||!st.municipioResults.length){
+        html+='<div class="dot-sp-row">'
+          +'<span class="dot-sp-name" data-dot-name="'+st.state+'">DOT境界</span>';
+        if(!st.stateBoundaryOk&&isAdmin) html+=' <button class="dot-sp-retry" data-retry-bnd data-si="'+si+'">再取得</button>';
+        html+='</div>';
+      } else {
+        st.municipioResults.forEach(function(m){
+          html+='<div class="dot-sp-row">'
+            +'<div style="width:10px;height:7px;border:1.5px solid '+st.color+';border-radius:1px;background:transparent;flex-shrink:0;box-sizing:border-box;"></div>'
+            +'<span class="dot-sp-name" data-dot-name="'+m.name+'">'+m.name+'</span>'
+            +'</div>';
+        });
+      }
+    } else {
+      if(st.municipioResults){
+        st.municipioResults.forEach(function(m,mi){
+          html+='<div class="dot-sp-row">'
+            +'<div style="width:10px;height:7px;border:1.5px solid '+st.color+';border-radius:1px;background:transparent;flex-shrink:0;box-sizing:border-box;"></div>'
+            +'<span class="dot-sp-name" data-dot-name="'+m.name+'">'+m.name+'</span>';
+          if(!m.ok&&isAdmin) html+='<button class="dot-sp-retry" data-retry-muni data-si="'+si+'" data-mi="'+mi+'">再取得</button>';
+          html+='</div>';
+        });
+      }
+    }
+    html+='</div>';
+  });
+  body.innerHTML=html;
+  body.querySelectorAll('[data-retry-bnd]').forEach(function(btn){
+    var si=parseInt(btn.dataset.si);
+    btn.addEventListener('click',function(){retryStateBoundary(btn,status[si].iso);});
+  });
+  body.querySelectorAll('[data-retry-muni]').forEach(function(btn){
+    var si=parseInt(btn.dataset.si),mi=parseInt(btn.dataset.mi);
+    btn.addEventListener('click',function(){
+      var st=status[si]; retryMunicipio(btn,st.iso,st.color,st.municipioResults[mi].name);
+    });
+  });
+  body.querySelectorAll('.dot-sp-name').forEach(function(span){
+    span.addEventListener('click',function(){ dotHighlightMapLayer(this.dataset.dotName); });
+  });
+  body.querySelectorAll('.dot-sp-state[data-dot-iso]').forEach(function(div){
+    div.addEventListener('click',function(){ dotHighlightState(this.dataset.dotIso); });
+  });
+  body.querySelectorAll('.dot-sp-allhighlight').forEach(function(span){
+    span.addEventListener('click',function(e){
+      e.stopPropagation();
+      dotHighlightAllMunicipios(this.dataset.highlightIso);
+    });
+  });
+  body.querySelectorAll('.dot-sp-toggle').forEach(function(btn){
+    btn.addEventListener('click',function(e){
+      e.stopPropagation();
+      var iso=this.dataset.toggleIso;
+      var rows=body.querySelector('.dot-sp-rows[data-rows-iso="'+iso+'"]');
+      if(!rows) return;
+      var open=rows.style.display!=='none';
+      rows.style.display=open?'none':'block';
+      this.textContent=open?'▶':'▼';
+    });
+  });
+}
+
+// ── DOT 相互ハイライト ────────────────────────────────────────────
+function _bringJaliscoToFront(){
+  if(!dotLayer) return;
+  dotLayer.eachLayer(function(l){
+    var p=l.feature&&l.feature.properties;
+    if(p&&p._iso==='MX-JAL'&&(p._isStateOutline||p._isDotState)) l.bringToFront();
+  });
+}
+function dotHighlightMapLayer(nm){
+  var layer=dotLayerMap[nm];
+  if(!layer||!dotLayer) return;
+  layer.bringToFront();
+  layer.setStyle({weight:4,fillOpacity:0.35,opacity:1});
+  setTimeout(function(){ if(dotLayer) dotLayer.resetStyle(layer); _bringJaliscoToFront(); },2000);
+}
+function dotHighlightState(iso){
+  if(!dotLayer) return;
+  var stateLayers=[], allIsoLayers=[];
+  dotLayer.eachLayer(function(l){
+    var p=l.feature&&l.feature.properties;
+    if(!p||p._iso!==iso) return;
+    allIsoLayers.push(l);
+    if(p._isStateOutline||p._isDotState) stateLayers.push(l);
+  });
+  // 専用の州境界レイヤーがある場合はそれのみ、なければその州の全自治区レイヤーを強調
+  var toHighlight=stateLayers.length?stateLayers:allIsoLayers;
+  toHighlight.forEach(function(l){ l.bringToFront(); l.setStyle({weight:5,fillOpacity:0.4,opacity:1}); });
+  setTimeout(function(){
+    toHighlight.forEach(function(l){ if(dotLayer) dotLayer.resetStyle(l); });
+    if(iso!=='MX-JAL') _bringJaliscoToFront();
+  },2000);
+}
+function dotHighlightPanelEntry(nm){
+  var el=document.querySelector('.dot-sp-name[data-dot-name="'+nm.replace(/"/g,'\\"')+'"]');
+  if(!el) return;
+  el.scrollIntoView({behavior:'smooth',block:'nearest'});
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+}
+function dotHighlightAllMunicipios(iso){
+  if(!dotLayer) return;
+  var layers=[];
+  dotLayer.eachLayer(function(l){
+    var p=l.feature&&l.feature.properties;
+    if(p&&p._iso===iso&&!p._isStateOutline) layers.push(l);
+  });
+  layers.forEach(function(l){ l.bringToFront(); l.setStyle({weight:3,fillOpacity:0.4,opacity:1}); });
+  setTimeout(function(){
+    layers.forEach(function(l){ if(dotLayer) dotLayer.resetStyle(l); });
+    if(iso!=='MX-JAL') _bringJaliscoToFront();
+  },2000);
+}
+
+// ── 自治区 個別再取得（管理者用・Firestoreに保存）─────────────────
+async function retryMunicipio(btn,iso,color,name){
+  btn.disabled=true; btn.textContent='取得中...';
+  try{
+    var feat=await fetchSingleMunicipio(iso,color,name);
+    if(!feat){btn.textContent='見つからず';btn.disabled=false;return;}
+    var sq=DOT_STATES.find(function(s){return s.iso===iso;});
+    feat.properties._displayName=name;
+    feat.properties._mapKey=name;
+    await db.collection('dotMunicipios').doc(dotDocId(sq,name)).set({
+      state:sq?sq.state:iso,iso:iso,name:name,color:color,entryType:'municipio',
+      geomJson:JSON.stringify(feat.geometry),
+      fetchedAt:firebase.firestore.FieldValue.serverTimestamp()
+    },{merge:true});
+    if(dotLayer) dotLayer.addData(feat);
+    if(dotGJ) dotGJ.features.push(feat);
+    var snap=await db.collection('dotMunicipios').get();
+    dotFirestoreSnap=snap; dotFetchStatus=deriveDotFetchStatusFromFirestore(snap);
+    buildStatusPanel();
+  }catch(e){
+    btn.textContent='再取得'; btn.disabled=false;
+    console.warn('retryMunicipio failed:',name,e.message);
+  }
+}
+
+// ── 州境界 再取得（管理者用・Firestoreに保存）─────────────────────
+async function retryStateBoundary(btn,iso){
+  btn.disabled=true; btn.textContent='取得中...';
+  var sq=DOT_STATES.find(function(s){return s.iso===iso;});
+  if(!sq){btn.disabled=false;btn.textContent='再取得';return;}
+  try{
+    var feats,docId,entryType,displayName;
+    if(sq.stateLevel){
+      var r=await fetchStateGeoJSON(sq); feats=r.features;
+      docId=dotDocId(sq); entryType='dotState'; displayName=sq.state;
+    } else {
+      feats=await fetchStateBoundaryGeoJSON(sq);
+      docId=dotDocId(sq); entryType='stateBoundary'; displayName=null;
+    }
+    if(!feats.length){btn.textContent='見つからず';btn.disabled=false;return;}
+    var geom=feats[0].geometry;
+    await db.collection('dotMunicipios').doc(docId).set({
+      state:sq.state,iso:iso,name:displayName,color:sq.color,entryType:entryType,
+      geomJson:JSON.stringify(geom),
+      fetchedAt:firebase.firestore.FieldValue.serverTimestamp()
+    },{merge:true});
+    var stateMapKey=entryType==='dotState'?sq.state:null;
+    feats.forEach(function(f){f.properties._displayName=displayName;f.properties._mapKey=stateMapKey;});
+    if(dotLayer) dotLayer.addData({type:'FeatureCollection',features:feats});
+    if(dotGJ) dotGJ.features=dotGJ.features.concat(feats);
+    var snap=await db.collection('dotMunicipios').get();
+    dotFirestoreSnap=snap; dotFetchStatus=deriveDotFetchStatusFromFirestore(snap);
+    buildStatusPanel();
+  }catch(e){
+    btn.textContent='再取得'; btn.disabled=false;
+    console.warn('retryStateBoundary failed:',iso,e.message);
+  }
+}
+</script>
+</div><!-- #app -->
+</body>
+</html>
