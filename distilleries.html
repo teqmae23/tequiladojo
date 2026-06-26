@@ -661,18 +661,31 @@ function loadData(){
 }
 
 var _authDone=false;
+// まず現在のユーザーを確認してからデータロード（signInAnonymouslyより先に）
 auth.onAuthStateChanged(async function(user){
-  // adminチェックは毎回実行（ログイン/ログアウトに追従）
+  // adminチェックは毎回実行
   isAdmin=await checkAdmin(user);
   var badge=document.getElementById('admin-badge');
-  if(badge) badge.style.display=isAdmin?'':'none';
+  if(badge){
+    badge.style.display=isAdmin?'':'none';
+    // デバッグ用：ユーザーメールも表示
+    if(isAdmin&&user) badge.title=user.email;
+  }
 
   // データロードは初回のみ
   if(_authDone) return; _authDone=true;
   await loadElevSettings();
   loadDotStatusFromFirestore();
-  if(user&&!user.isAnonymous){loadData();loadOverlays();onDotSelChange('all');return;}
-  auth.signInAnonymously().then(function(){ loadData(); loadOverlays(); onDotSelChange('all'); }).catch(function(){ loadData(); loadOverlays(); onDotSelChange('all'); });
+
+  if(user){
+    // ログイン済み（匿名・非匿名とも）はそのままデータロード
+    loadData(); loadOverlays(); onDotSelChange('all');
+  } else {
+    // 未ログインのみ匿名サインイン（既存セッションを絶対に上書きしない）
+    auth.signInAnonymously()
+      .then(function(){ loadData(); loadOverlays(); onDotSelChange('all'); })
+      .catch(function(){ loadData(); loadOverlays(); onDotSelChange('all'); });
+  }
 });
 
 // ── マップオーバーレイ ──────────────────────────────────
