@@ -19,16 +19,20 @@ h1{font-size:18px;margin-bottom:16px}
 .status.ok{background:#e8f5e9;border:1px solid #a5d6a7}
 .status.err{background:#ffebee;border:1px solid #ef9a9a}
 table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}
-th,td{border:1px solid #ddd;padding:5px 8px;text-align:left}
+th,td{border:1px solid #ddd;padding:5px 8px;text-align:left;white-space:nowrap}
 th{background:#f0ebe0;font-weight:600}
+tr.register{background:#e8f5e9}
 tr.update{background:#fff8e1}
 tr.create{background:#e3f2fd}
 tr.same{background:#fff;color:#aaa}
-tr.done{background:#e8f5e9}
+tr.done{background:#c8e6c9}
+tr.skip{background:#f5f5f5;color:#bbb}
 .controls{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
 #log{max-height:200px;overflow-y:auto;font-size:11px;font-family:monospace;background:#1a1a1a;color:#ccc;padding:10px;border-radius:6px;margin-top:12px}
-.legend{display:flex;gap:16px;font-size:11px;margin-bottom:8px}
-.legend span{padding:2px 8px;border-radius:3px}
+.legend{display:flex;gap:12px;font-size:11px;margin-bottom:8px;flex-wrap:wrap}
+.legend span{padding:2px 8px;border-radius:3px;border:1px solid #ddd}
+.diff-big{color:#d32f2f;font-weight:600}
+td.diff{font-size:11px;color:#666}
 </style>
 </head>
 <body>
@@ -37,16 +41,19 @@ tr.done{background:#e8f5e9}
 <div class="controls">
   <button class="btn btn-primary" id="btn-load">① データ読み込み</button>
   <button class="btn btn-secondary" id="btn-import" disabled>② Firestoreに一括書き込み</button>
+  <button class="btn btn-secondary" id="btn-check-all" style="display:none">全選択</button>
+  <button class="btn btn-secondary" id="btn-uncheck-all" style="display:none">全解除</button>
   <span id="summary"></span>
 </div>
 <div class="legend">
-  <span style="background:#fff8e1;border:1px solid #ddd">🟡 更新</span>
-  <span style="background:#e3f2fd;border:1px solid #ddd">🔵 新規作成</span>
-  <span style="background:#fff;border:1px solid #ddd;color:#aaa">⬜ 変化なし</span>
+  <span style="background:#e8f5e9">🟢 登録（レコードあり・CRT未設定）</span>
+  <span style="background:#fff8e1">🟡 更新（レコードあり・CRT変化あり）</span>
+  <span style="background:#e3f2fd">🔵 新規（レコードなし）</span>
+  <span style="background:#fff;color:#aaa">⬜ 変化なし</span>
 </div>
 
 <div id="status-area"></div>
-<div id="table-area"></div>
+<div id="table-area" style="overflow-x:auto"></div>
 <div id="log"></div>
 
 <script>
@@ -62,7 +69,7 @@ if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
 var fsDb = firebase.firestore();
 
 var DB_URL = "https://raw.githubusercontent.com/teqmae23/tequiladojo/main/data/crt_stats.db";
-var planRows = []; // {fab, docId|null, action:'update'|'create'|'same', currentCrtLat, currentCrtLng}
+var planRows = [];
 
 function log(msg) {
   var el = document.getElementById("log");
@@ -71,6 +78,15 @@ function log(msg) {
 }
 function setStatus(msg, cls) {
   document.getElementById("status-area").innerHTML = '<div class="status '+cls+'">'+msg+'</div>';
+}
+function fmt(v) {
+  return v != null ? Number(v).toFixed(5) : '―';
+}
+function fmtDiff(a, b) {
+  if(a == null || b == null) return '―';
+  var d = (parseFloat(a) - parseFloat(b));
+  var s = (d >= 0 ? '+' : '') + d.toFixed(5);
+  return Math.abs(d) >= 0.1 ? '<span class="diff-big">'+s+'</span>' : s;
 }
 
 document.getElementById("btn-load").addEventListener("click", async function() {
@@ -104,70 +120,121 @@ document.getElementById("btn-load").addEventListener("click", async function() {
   try { snap = await fsDb.collection("distilleries").get(); } catch(e){ setStatus("Firestore エラー: "+e,"err"); return; }
   log("Firestore distilleries: "+snap.size+" 件");
 
-  // Build Firestore NOM index from crtDot field
-  var fsNomIndex = {}; // nomNum -> {docId, crtLatitude, crtLongitude}
+  // Build NOM index from crtDot
+  var fsNomIndex = {};
   snap.forEach(function(doc){
     var r = doc.data();
     var dot = String(r.crtDot || "");
     var m = dot.match(/NOM-(\d+)/i);
-    if(m) fsNomIndex[m[1]] = { docId: doc.id, crtLatitude: r.crtLatitude, crtLongitude: r.crtLongitude };
+    if(m) fsNomIndex[m[1]] = {
+      docId: doc.id,
+      masterLat: r.latitude != null ? parseFloat(r.latitude) : null,
+      masterLng: r.longitude != null ? parseFloat(r.longitude) : null,
+      crtLat: r.crtLatitude != null ? parseFloat(r.crtLatitude) : null,
+      crtLng: r.crtLongitude != null ? parseFloat(r.crtLongitude) : null,
+    };
   });
-  log("FirestoreでcrtDot設定済み: "+Object.keys(fsNomIndex).length+" 件");
+  log("crtDot設定済み: "+Object.keys(fsNomIndex).length+" 件");
 
-  var cntUpdate=0, cntCreate=0, cntSame=0;
+  var cntRegister=0, cntUpdate=0, cntCreate=0, cntSame=0;
   fabricas.forEach(function(fab){
     var existing = fsNomIndex[fab.nom];
+    var action, docId=null, masterLat=null, masterLng=null, currentCrtLat=null, currentCrtLng=null;
     if(existing) {
-      var ld = existing.crtLatitude!=null ? Math.abs(existing.crtLatitude-fab.lat) : 1;
-      var lgd = existing.crtLongitude!=null ? Math.abs(existing.crtLongitude-fab.lng) : 1;
-      var changed = ld>0.000001 || lgd>0.000001;
-      planRows.push({ fab:fab, docId:existing.docId, action:changed?'update':'same', currentCrtLat:existing.crtLatitude, currentCrtLng:existing.crtLongitude });
-      if(changed) cntUpdate++; else cntSame++;
+      docId = existing.docId;
+      masterLat = existing.masterLat;
+      masterLng = existing.masterLng;
+      currentCrtLat = existing.crtLat;
+      currentCrtLng = existing.crtLng;
+      if(currentCrtLat == null && currentCrtLng == null) {
+        action = 'register'; cntRegister++;
+      } else {
+        var ld = Math.abs(currentCrtLat - fab.lat);
+        var lgd = Math.abs(currentCrtLng - fab.lng);
+        action = (ld > 0.000001 || lgd > 0.000001) ? 'update' : 'same';
+        if(action==='update') cntUpdate++; else cntSame++;
+      }
     } else {
-      planRows.push({ fab:fab, docId:null, action:'create', currentCrtLat:null, currentCrtLng:null });
-      cntCreate++;
+      action = 'create'; cntCreate++;
     }
+    planRows.push({ fab, docId, action, masterLat, masterLng, currentCrtLat, currentCrtLng });
   });
 
-  document.getElementById("summary").textContent = "更新: "+cntUpdate+"件 / 新規作成: "+cntCreate+"件 / 変化なし: "+cntSame+"件";
-  log("更新: "+cntUpdate+", 新規: "+cntCreate+", 同じ: "+cntSame);
+  document.getElementById("summary").textContent =
+    "登録: "+cntRegister+"件 / 更新: "+cntUpdate+"件 / 新規: "+cntCreate+"件 / 変化なし: "+cntSame+"件";
+  log("登録: "+cntRegister+", 更新: "+cntUpdate+", 新規: "+cntCreate+", 同じ: "+cntSame);
 
-  var html = '<table><thead><tr><th>NOM</th><th>CRT会社名</th><th>所在地</th><th>現在CRT緯度</th><th>現在CRT経度</th><th>新CRT緯度</th><th>新CRT経度</th><th>アクション</th></tr></thead><tbody>';
-  planRows.forEach(function(p){
-    if(p.action==='same') return;
-    var cls = p.action==='create'?'create':'update';
-    var label = p.action==='create'?'🔵 新規':'🟡 更新';
-    html += '<tr class="'+cls+'"><td>'+p.fab.nom+'</td><td>'+p.fab.empresa+'</td><td>'+p.fab.estado+'</td>';
-    html += '<td>'+(p.currentCrtLat!=null?p.currentCrtLat:'―')+'</td><td>'+(p.currentCrtLng!=null?p.currentCrtLng:'―')+'</td>';
-    html += '<td>'+p.fab.lat+'</td><td>'+p.fab.lng+'</td><td>'+label+'</td></tr>';
+  var html = '<table><thead><tr>'
+    +'<th><input type="checkbox" id="chk-header" checked></th>'
+    +'<th>NOM</th><th>CRT会社名</th><th>所在地</th>'
+    +'<th>マスタ緯度</th><th>マスタ経度</th>'
+    +'<th>現在CRT緯度</th><th>現在CRT経度</th>'
+    +'<th>新CRT緯度</th><th>新CRT経度</th>'
+    +'<th>緯度差分</th><th>経度差分</th>'
+    +'<th>アクション</th>'
+    +'</tr></thead><tbody>';
+
+  var actionLabel = { register:'🟢 登録', update:'🟡 更新', create:'🔵 新規', same:'⬜ 変化なし' };
+  planRows.forEach(function(p, i){
+    var cls = p.action;
+    var chk = p.action !== 'same' ? ' checked' : '';
+    var dis = p.action === 'same' ? ' disabled' : '';
+    html += '<tr class="'+cls+'" id="row-'+i+'">'
+      +'<td><input type="checkbox" class="row-chk" data-idx="'+i+'"'+chk+dis+'></td>'
+      +'<td>'+p.fab.nom+'</td>'
+      +'<td>'+p.fab.empresa+'</td>'
+      +'<td>'+p.fab.estado+'</td>'
+      +'<td>'+fmt(p.masterLat)+'</td><td>'+fmt(p.masterLng)+'</td>'
+      +'<td>'+fmt(p.currentCrtLat)+'</td><td>'+fmt(p.currentCrtLng)+'</td>'
+      +'<td>'+p.fab.lat+'</td><td>'+p.fab.lng+'</td>'
+      +'<td class="diff">'+fmtDiff(p.fab.lat, p.masterLat)+'</td>'
+      +'<td class="diff">'+fmtDiff(p.fab.lng, p.masterLng)+'</td>'
+      +'<td>'+actionLabel[p.action]+'</td>'
+      +'</tr>';
   });
   html += '</tbody></table>';
   document.getElementById("table-area").innerHTML = html;
 
-  setStatus("読み込み完了。更新 "+cntUpdate+"件 + 新規 "+cntCreate+"件 = 合計 "+(cntUpdate+cntCreate)+"件を書き込みます。", "ok");
-  document.getElementById("btn-import").disabled = (cntUpdate+cntCreate===0);
+  // Header checkbox toggle
+  document.getElementById("chk-header").addEventListener("change", function(){
+    var v = this.checked;
+    document.querySelectorAll(".row-chk:not(:disabled)").forEach(function(c){ c.checked=v; });
+  });
+
+  setStatus("読み込み完了。", "ok");
+  document.getElementById("btn-import").disabled = false;
+  document.getElementById("btn-check-all").style.display = "";
+  document.getElementById("btn-uncheck-all").style.display = "";
+});
+
+document.getElementById("btn-check-all").addEventListener("click", function(){
+  document.querySelectorAll(".row-chk:not(:disabled)").forEach(function(c){ c.checked=true; });
+});
+document.getElementById("btn-uncheck-all").addEventListener("click", function(){
+  document.querySelectorAll(".row-chk:not(:disabled)").forEach(function(c){ c.checked=false; });
 });
 
 document.getElementById("btn-import").addEventListener("click", async function() {
-  var toWrite = planRows.filter(function(p){ return p.action!=='same'; });
-  if(!toWrite.length){ setStatus("書き込み対象なし","info"); return; }
+  var toWrite = [];
+  document.querySelectorAll(".row-chk:checked:not(:disabled)").forEach(function(c){
+    toWrite.push(planRows[parseInt(c.dataset.idx)]);
+  });
+  if(!toWrite.length){ setStatus("書き込み対象なし（チェックなし）","info"); return; }
 
   this.disabled = true;
   log("=== Firestore 書き込み開始: "+toWrite.length+" 件 ===");
   setStatus("書き込み中… 0/"+toWrite.length, "info");
 
   var batch = fsDb.batch();
-  var count = 0;
-  var done = 0;
+  var count = 0, done = 0;
   for(var i=0; i<toWrite.length; i++) {
     var p = toWrite[i];
-    if(p.action==='update') {
+    if(p.action==='update' || p.action==='register') {
       batch.update(fsDb.collection("distilleries").doc(p.docId), {
         crtLatitude: p.fab.lat,
         crtLongitude: p.fab.lng,
       });
     } else {
-      // 新規作成: NOMをドキュメントIDとして使用
       var newRef = fsDb.collection("distilleries").doc("NOM"+p.fab.nom);
       batch.set(newRef, {
         nom: "NOM"+p.fab.nom,
@@ -196,8 +263,12 @@ document.getElementById("btn-import").addEventListener("click", async function()
   }
 
   log("=== 完了 ===");
-  setStatus("✅ "+toWrite.length+" 件をFirestoreに書き込みました（更新+新規作成）", "ok");
-  document.querySelectorAll("table tbody tr").forEach(function(tr){ tr.className="done"; });
+  setStatus("✅ "+toWrite.length+" 件をFirestoreに書き込みました", "ok");
+  document.querySelectorAll(".row-chk:checked:not(:disabled)").forEach(function(c){
+    var row = document.getElementById("row-"+c.dataset.idx);
+    if(row) row.className = "done";
+  });
+  document.getElementById("btn-import").disabled = false;
 });
 </script>
 </body>
