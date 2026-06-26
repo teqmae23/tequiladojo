@@ -80,18 +80,20 @@ DATASETS = {
         "date_col": None,  # Calendario結合で取得
     },
     "forma": {
-        "entity": "vEstPBIIntExportacionesForma",  # エンティティ確認済み、数量カラム要確認
-        "columns": ["Forma", "Fecha"],             # 数量カラム判明後に追加
+        "entity": "vEstPBIIntExportacionesForma",
+        "vol_col": "Total Por Forma",
+        "dim_col": "Forma",
+        "cal_entity": "Calendario",
         "table": "exportaciones_forma",
-        "keys": ["Forma", "Fecha"],
-        "date_col": "Fecha",
+        "keys": ["Forma", "Año"],
     },
     "agave": {
-        "entity": "vEstPBIIntConsumoAgave",        # エンティティ確認済み、数量カラム要確認
-        "columns": ["Categoria", "Fecha"],         # 数量カラム判明後に追加
+        "entity": "vEstPBIIntConsumoAgave",
+        "vol_col": "Total Consumo Agave",
+        "dim_col": "Categoria",
+        "cal_entity": "Calendario",
         "table": "consumo_agave",
-        "keys": ["Categoria", "Fecha"],
-        "date_col": "Fecha",
+        "keys": ["Categoria", "Año"],
     },
     "fabricas": {
         "entity": "vEstPBIIntFabricas",            # エンティティ未確認
@@ -225,6 +227,57 @@ def build_produccion_query(year=None):
                 "DatasetId": DATASET_ID,
                 "Sources": [{"ReportId": REPORT_ID}]
             }
+        }],
+        "cancelQueries": [],
+        "modelId": MODEL_ID
+    }
+
+
+def build_cal_join_query(entity, dim_col, vol_col, year=None):
+    """Calendario結合クエリ: entity + Calendario join で Año×dim_col×sum(vol_col) を取得"""
+    query = {
+        "Version": 2,
+        "From": [
+            {"Name": "v", "Entity": entity, "Type": 0},
+            {"Name": "c", "Entity": "Calendario", "Type": 0},
+        ],
+        "Select": [
+            {"Column": {"Expression": {"SourceRef": {"Source": "c"}}, "Property": "Año"},
+             "Name": "Calendario.Año", "NativeReferenceName": "Año"},
+            {"Column": {"Expression": {"SourceRef": {"Source": "v"}}, "Property": dim_col},
+             "Name": f"v.{dim_col}", "NativeReferenceName": dim_col},
+            {"Aggregation": {
+                "Expression": {"Column": {"Expression": {"SourceRef": {"Source": "v"}}, "Property": vol_col}},
+                "Function": 0},
+             "Name": f"Sum({entity}.{vol_col})", "NativeReferenceName": "Total"},
+        ],
+    }
+    if year:
+        query["Where"] = [{
+            "Condition": {
+                "In": {
+                    "Expressions": [{"Column": {"Expression": {"SourceRef": {"Source": "c"}}, "Property": "Año"}}],
+                    "Values": [[{"Literal": {"Value": f"{year}L"}}]]
+                }
+            }
+        }]
+    return {
+        "version": "1.0.0",
+        "queries": [{
+            "Query": {"Commands": [{"SemanticQueryDataShapeCommand": {
+                "Query": query,
+                "Binding": {
+                    "Primary": {"Groupings": [{"Projections": [0, 2]}]},
+                    "Secondary": {"Groupings": [{"Projections": [1]}]},
+                    "DataReduction": {"DataVolume": 4,
+                                     "Primary": {"Window": {"Count": 200}},
+                                     "Secondary": {"Top": {"Count": 60}}},
+                    "Version": 1
+                },
+                "ExecutionMetricsKind": 1
+            }}]},
+            "QueryId": "",
+            "ApplicationContext": {"DatasetId": DATASET_ID, "Sources": [{"ReportId": REPORT_ID}]}
         }],
         "cancelQueries": [],
         "modelId": MODEL_ID
@@ -488,6 +541,20 @@ def fetch_dataset_year(ds_cfg, year):
     return rows
 
 
+def fetch_cal_join_year(ds_cfg, year):
+    """forma/agave用: Calendario結合クエリで1年分取得"""
+    payload = build_cal_join_query(
+        ds_cfg["entity"], ds_cfg["dim_col"], ds_cfg["vol_col"], year
+    )
+    data = query_api(payload)
+    if has_error(data):
+        return None
+    _, rows = parse_results(data)
+    for row in rows:
+        row.setdefault("Año", year)
+    return rows
+
+
 def fetch_all_years(ds_name, ds_cfg, year_from=2003):
     """全年分を順番に取得して結合"""
     current_year = datetime.now(timezone.utc).year
@@ -496,6 +563,8 @@ def fetch_all_years(ds_name, ds_cfg, year_from=2003):
         print(f"  {year}年 取得中...", end=" ", flush=True)
         if ds_name == "produccion":
             rows = fetch_produccion_year(year)
+        elif "vol_col" in ds_cfg:
+            rows = fetch_cal_join_year(ds_cfg, year)
         else:
             rows = fetch_dataset_year(ds_cfg, year)
         if rows is None:
@@ -673,8 +742,10 @@ def main():
             rows = rows or []
             print(f"  {args.year}/{args.month:02d}: {len(rows)} 行")
         elif args.year:
-            rows = fetch_dataset_year(ds_cfg, args.year)
-            rows = rows or []
+            if "vol_col" in ds_cfg:
+                rows = fetch_cal_join_year(ds_cfg, args.year) or []
+            else:
+                rows = fetch_dataset_year(ds_cfg, args.year) or []
             print(f"  {args.year}: {len(rows)} 行")
         else:
             rows = fetch_all_years(ds_name, ds_cfg)
