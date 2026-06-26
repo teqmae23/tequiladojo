@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CRT 統計ビューア — テキーラ道場</title>
+<script src="https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/sql-wasm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#F1EFE8;--cream2:#E8E4D8;--cream3:#DDD8C8;
+  --teal:#1a6e58;--red:#b03020;--red-l:rgba(176,48,32,.1);
+  --warn:#7a5200;--warn-l:rgba(200,146,30,.12);
+  --sans:'Noto Sans JP',sans-serif;--serif:'Cormorant Garamond',serif;--mono:'DM Mono',monospace;
+  --r:6px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--cream);color:var(--ink);font-family:var(--sans);min-height:100vh;}
+
+.hdr{background:var(--ink);padding:0 20px;display:flex;align-items:center;gap:12px;height:52px;}
+.hdr-logo{font-family:var(--serif);font-size:17px;color:var(--gold-l);letter-spacing:.04em;}
+.hdr-sub{font-size:11px;color:var(--ink3);margin-top:1px;}
+.hdr-nav{margin-left:auto;display:flex;gap:14px;}
+.hdr-nav a{color:var(--gold-l);font-size:12px;text-decoration:none;opacity:.8;}
+.hdr-nav a:hover{opacity:1;}
+
+.page{max-width:1200px;margin:0 auto;padding:24px 16px 80px;}
+
+#status-bar{padding:10px 16px;font-size:12px;border-radius:var(--r);margin-bottom:20px;display:flex;align-items:center;gap:10px;}
+#status-bar.loading{background:var(--warn-l);color:var(--warn);}
+#status-bar.ok{background:rgba(26,110,88,.1);color:var(--teal);}
+#status-bar.err{background:var(--red-l);color:var(--red);}
+.spin{display:inline-block;animation:spin .8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* Dataset switcher */
+.ds-bar{display:flex;gap:0;border-bottom:2px solid var(--cream3);margin-bottom:20px;}
+.ds-btn{padding:10px 28px;font-size:13px;font-weight:500;border:none;
+  border-bottom:2px solid transparent;margin-bottom:-2px;
+  background:none;color:var(--ink3);cursor:pointer;font-family:var(--sans);transition:.12s;}
+.ds-btn.active{color:var(--gold-d);border-bottom-color:var(--gold);font-weight:600;}
+.ds-btn:hover:not(.active){color:var(--ink2);}
+.ds-btn-ext{display:flex;align-items:center;gap:5px;}
+.ds-btn-ext::after{content:'↗';font-size:10px;opacity:.6;}
+
+.filter-panel{background:var(--cream2);border:1px solid var(--cream3);border-radius:10px;padding:14px 18px;margin-bottom:16px;}
+.filter-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;}
+.filter-group{display:flex;flex-direction:column;gap:4px;min-width:130px;}
+.filter-group.grow{flex:1;}
+.filter-label{font-size:10px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;}
+select,input[type=number]{padding:7px 10px;border:1px solid var(--cream3);border-radius:var(--r);font-family:var(--sans);font-size:12px;background:var(--cream);color:var(--ink);outline:none;}
+select:focus,input:focus{border-color:var(--gold);}
+select[multiple]{height:80px;}
+.btn{padding:7px 16px;border-radius:var(--r);border:none;font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;transition:.15s;}
+.btn-primary{background:var(--ink);color:#fff;}
+.btn-primary:hover:not(:disabled){background:var(--gold-d);}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed;}
+.btn-ghost{background:none;border:1px solid var(--cream3);color:var(--ink2);}
+.btn-ghost:hover{background:var(--cream3);}
+.btn-teal{background:var(--teal);color:#fff;}
+.btn-teal:hover:not(:disabled){opacity:.85;}
+.btn-teal:disabled{opacity:.4;cursor:not-allowed;}
+.btn-sm{padding:5px 12px;font-size:12px;}
+
+.sum-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;}
+.sum-card{background:var(--cream2);border:1px solid var(--cream3);border-radius:var(--r);padding:12px 16px;min-width:150px;flex:1;}
+.sum-label{font-size:10px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;}
+.sum-val{font-size:20px;font-weight:500;font-family:var(--mono);color:var(--ink);}
+.sum-sub{font-size:10px;color:var(--ink3);margin-top:2px;}
+
+.tab-bar{display:flex;gap:0;border-bottom:2px solid var(--cream3);margin-bottom:0;}
+.tab-btn{padding:9px 22px;font-size:13px;font-weight:500;border:none;
+  border-bottom:2px solid transparent;margin-bottom:-2px;
+  background:none;color:var(--ink3);cursor:pointer;font-family:var(--sans);transition:.12s;}
+.tab-btn.active{color:var(--gold-d);border-bottom-color:var(--gold);font-weight:600;}
+.tab-btn:hover:not(.active){color:var(--ink2);}
+.tab-panel{display:none;background:var(--cream);border:1px solid var(--cream3);border-top:none;border-radius:0 0 10px 10px;padding:20px;}
+.tab-panel.active{display:block;}
+
+.chart-wrap{position:relative;height:360px;margin-bottom:16px;}
+.chart-opts{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;}
+.export-bar{display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;}
+
+.tbl-wrap{overflow-x:auto;max-height:60vh;overflow-y:auto;border-radius:var(--r);border:1px solid var(--cream3);}
+.data-table{width:100%;border-collapse:collapse;font-size:12px;}
+.data-table thead{position:sticky;top:0;z-index:2;}
+.data-table th{text-align:left;font-size:10px;font-weight:700;color:var(--ink3);
+  letter-spacing:.06em;text-transform:uppercase;padding:8px 10px;
+  border-bottom:2px solid var(--cream3);background:var(--cream2);white-space:nowrap;cursor:pointer;user-select:none;}
+.data-table th:hover{color:var(--ink);}
+.data-table th.r{text-align:right;}
+.data-table td{padding:6px 10px;border-bottom:1px solid var(--cream3);vertical-align:middle;}
+.data-table tr:last-child td{border-bottom:none;}
+.data-table tbody tr:hover td{background:rgba(200,146,30,.05);}
+.mono{font-family:var(--mono);}
+.r{text-align:right;}
+.sort-arrow{font-size:9px;margin-left:3px;opacity:.5;}
+
+.pager{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;color:var(--ink3);}
+.pager button{padding:4px 12px;border:1px solid var(--cream3);border-radius:var(--r);background:none;font-size:12px;cursor:pointer;font-family:var(--sans);}
+.pager button:hover:not(:disabled){background:var(--cream3);}
+.pager button:disabled{opacity:.35;cursor:not-allowed;}
+.pager-info{font-family:var(--mono);}
+
+.placeholder{padding:48px;text-align:center;font-size:13px;color:var(--ink3);}
+
+.rank-bar-bg{display:inline-block;width:80px;height:4px;background:var(--cream3);border-radius:2px;vertical-align:middle;margin-left:8px;}
+.rank-bar-fg{display:inline-block;height:4px;border-radius:2px;background:var(--gold);}
+
+.note{font-size:11px;color:var(--ink3);margin-top:4px;}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div>
+    <div class="hdr-logo">テキーラ道場</div>
+    <div class="hdr-sub">CRT 統計ビューア</div>
+  </div>
+  <nav class="hdr-nav">
+    <a href="admin.html">← 管理ハブ</a>
+    <a href="index.html">ホーム</a>
+  </nav>
+</div>
+
+<div class="page">
+
+  <div id="status-bar" class="loading"><span class="spin">⏳</span> データベース読み込み中...</div>
+
+  <!-- Dataset switcher -->
+  <div class="ds-bar">
+    <button class="ds-btn active" onclick="switchDataset('produccion')">生産量</button>
+    <button class="ds-btn" onclick="switchDataset('forma')">輸出形態</button>
+    <button class="ds-btn" onclick="switchDataset('agave')">アガベ消費</button>
+    <a href="admin_crt_stats.html" class="ds-btn ds-btn-ext" style="text-decoration:none;">輸出国別</a>
+  </div>
+
+  <!-- Filter panel -->
+  <div class="filter-panel">
+    <div class="filter-row">
+      <div class="filter-group">
+        <div class="filter-label">年 (From)</div>
+        <input type="number" id="f-year-from" min="2003" max="2030" placeholder="2003" oninput="applyFilter()">
+      </div>
+      <div class="filter-group">
+        <div class="filter-label">年 (To)</div>
+        <input type="number" id="f-year-to" min="2003" max="2030" placeholder="2026" oninput="applyFilter()">
+      </div>
+      <div class="filter-group grow" id="dim-filter-group">
+        <div class="filter-label" id="dim-filter-label">Categoria</div>
+        <select id="f-dim" multiple></select>
+      </div>
+      <div style="display:flex;flex-direction:column;justify-content:flex-end;gap:6px;">
+        <button class="btn btn-ghost btn-sm" onclick="clearFilter()">クリア</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Summary cards -->
+  <div class="sum-row" id="sum-row">
+    <div class="sum-card">
+      <div class="sum-label" id="sum-vol-label">総量</div>
+      <div class="sum-val" id="sum-total">—</div>
+      <div class="sum-sub">フィルター結果の合計</div>
+    </div>
+    <div class="sum-card">
+      <div class="sum-label">年数</div>
+      <div class="sum-val" id="sum-years">—</div>
+      <div class="sum-sub" id="sum-year-range">—</div>
+    </div>
+    <div class="sum-card">
+      <div class="sum-label" id="sum-dim-label">カテゴリ数</div>
+      <div class="sum-val" id="sum-dims">—</div>
+      <div class="sum-sub">種類</div>
+    </div>
+  </div>
+
+  <!-- View tabs -->
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('chart')">グラフ</button>
+    <button class="tab-btn" onclick="switchTab('table')">テーブル</button>
+    <button class="tab-btn" onclick="switchTab('rank')">ランキング</button>
+  </div>
+
+  <!-- Chart tab -->
+  <div class="tab-panel active" id="tab-chart">
+    <div class="chart-opts">
+      <div class="filter-group">
+        <div class="filter-label">グループ軸</div>
+        <select id="chart-group" onchange="renderChart()">
+          <option value="year">年別</option>
+          <option value="dim">カテゴリ別</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <div class="filter-label">グラフ種別</div>
+        <select id="chart-type" onchange="renderChart()">
+          <option value="bar">棒グラフ</option>
+          <option value="line">折れ線</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <div class="filter-label">分割（色分け）</div>
+        <select id="chart-split" onchange="renderChart()">
+          <option value="">なし</option>
+          <option value="dim">カテゴリ</option>
+          <option value="year">年</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <div class="filter-label">積み上げ</div>
+        <select id="chart-stack" onchange="renderChart()">
+          <option value="">なし</option>
+          <option value="1">積み上げ</option>
+        </select>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="main-chart"></canvas>
+    </div>
+    <div id="chart-placeholder" class="placeholder" style="display:none;">データがありません</div>
+  </div>
+
+  <!-- Table tab -->
+  <div class="tab-panel" id="tab-table">
+    <div class="export-bar">
+      <button class="btn btn-teal btn-sm" id="btn-csv" onclick="exportCSV()" disabled>CSV ダウンロード</button>
+    </div>
+    <div id="table-placeholder" class="placeholder" style="display:none;">データがありません</div>
+    <div id="table-wrap">
+      <div class="tbl-wrap">
+        <table class="data-table" id="data-table">
+          <thead><tr id="table-head"></tr></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+      <div class="pager" id="pager">
+        <button id="btn-prev" onclick="changePage(-1)" disabled>← 前</button>
+        <span class="pager-info" id="pager-info"></span>
+        <button id="btn-next" onclick="changePage(1)" disabled>次 →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rank tab -->
+  <div class="tab-panel" id="tab-rank">
+    <div class="chart-opts">
+      <div class="filter-group">
+        <div class="filter-label">表示件数</div>
+        <select id="rank-limit" onchange="renderRank()">
+          <option value="10">Top 10</option>
+          <option value="20">Top 20</option>
+          <option value="0">全件</option>
+        </select>
+      </div>
+    </div>
+    <div id="rank-placeholder" class="placeholder" style="display:none;">データがありません</div>
+    <div id="rank-wrap">
+      <div class="tbl-wrap">
+        <table class="data-table" id="rank-table">
+          <thead><tr>
+            <th class="r" style="width:50px;">順位</th>
+            <th id="rank-head-key">カテゴリ</th>
+            <th class="r">総量</th>
+            <th class="r">シェア</th>
+          </tr></thead>
+          <tbody id="rank-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+var DB_URL = 'https://raw.githubusercontent.com/teqmae23/tequiladojo/main/data/crt_stats.db';
+var PAGE_SIZE = 200;
+
+var DATASETS = {
+  produccion: { table:'produccion',    dimCol:'Categoria', volLabel:'生産量 (Litros)', unit:'L' },
+  forma:      { table:'exportaciones_forma', dimCol:'Forma', volLabel:'輸出量 (Litros)', unit:'L' },
+  agave:      { table:'consumo_agave', dimCol:'Categoria', volLabel:'アガベ消費量 (Ton)', unit:'t' },
+};
+
+var SQL = null;
+var db = null;
+var currentDs = 'produccion';
+var allRows = [];
+var tableRows = [];
+var sortCol = 'Año';
+var sortAsc = false;
+var currentPage = 0;
+var chartInst = null;
+
+var PALETTE = ['#c8921e','#1a6e58','#4a3820','#b03020','#2c5f8a','#6b4c9a','#d4882e','#3a8a6a','#8a5a30','#d44a30','#4a7ab0','#8a6aaa'];
+
+window.addEventListener('DOMContentLoaded', function() {
+  setStatus('loading', '⏳ データベース読み込み中...');
+  initSqlJs({ locateFile: function(f) {
+    return 'https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/' + f;
+  }}).then(function(SqlJs) {
+    SQL = SqlJs;
+    return fetch(DB_URL);
+  }).then(function(resp) {
+    if (resp.status === 404) throw new Error('NOT_FOUND');
+    if (!resp.ok) throw new Error('DB fetch failed: ' + resp.status);
+    return resp.arrayBuffer();
+  }).then(function(buf) {
+    db = new SQL.Database(new Uint8Array(buf));
+    setStatus('ok', '✓ データベース読み込み完了');
+    initDataset();
+  }).catch(function(e) {
+    if (e.message === 'NOT_FOUND') {
+      setStatus('err', '✗ データベースがまだ構築されていません。GitHub Actions → crt-stats-fetch → Run workflow → mode: fetch で初回構築してください。');
+    } else {
+      setStatus('err', '✗ ' + e.message);
+    }
+  });
+});
+
+function setStatus(cls, msg) {
+  var bar = document.getElementById('status-bar');
+  bar.className = cls;
+  bar.textContent = msg;
+}
+
+// ─── Dataset switching ────────────────────────────────────────────────
+function switchDataset(name) {
+  currentDs = name;
+  document.querySelectorAll('.ds-btn').forEach(function(b, i) {
+    var names = ['produccion','forma','agave'];
+    b.classList.toggle('active', names[i] === name);
+  });
+  if (db) initDataset();
+}
+
+function initDataset() {
+  var cfg = DATASETS[currentDs];
+  // Update UI labels
+  document.getElementById('dim-filter-label').textContent = cfg.dimCol;
+  document.getElementById('rank-head-key').textContent = cfg.dimCol;
+  document.getElementById('sum-vol-label').textContent = cfg.volLabel;
+  document.getElementById('sum-dim-label').textContent = cfg.dimCol + '数';
+  // Update chart group labels
+  document.getElementById('chart-group').options[1].text = cfg.dimCol + '別';
+  document.getElementById('chart-split').options[1].text = cfg.dimCol;
+
+  populateFilters();
+  applyFilter();
+}
+
+// ─── Filters ─────────────────────────────────────────────────────────
+function populateFilters() {
+  var cfg = DATASETS[currentDs];
+  var tbl = cfg.table;
+
+  var res = db.exec('SELECT DISTINCT "' + cfg.dimCol + '" FROM "' + tbl + '" WHERE "' + cfg.dimCol + '" IS NOT NULL ORDER BY "' + cfg.dimCol + '"');
+  var sel = document.getElementById('f-dim');
+  var prev = Array.from(sel.selectedOptions).map(function(o){return o.value;});
+  sel.innerHTML = '';
+  if (res.length) {
+    res[0].values.forEach(function(r) {
+      var v = r[0];
+      var opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = v;
+      if (!prev.length || prev.indexOf(v) >= 0) opt.selected = false;
+      sel.appendChild(opt);
+    });
+  }
+
+  var yr = db.exec('SELECT MIN(CAST("Año" AS INT)), MAX(CAST("Año" AS INT)) FROM "' + tbl + '"');
+  if (yr.length && yr[0].values.length) {
+    var mn = yr[0].values[0][0], mx = yr[0].values[0][1];
+    if (!document.getElementById('f-year-from').value) document.getElementById('f-year-from').value = mn || '';
+    if (!document.getElementById('f-year-to').value) document.getElementById('f-year-to').value = mx || '';
+  }
+}
+
+function buildWhere() {
+  var cfg = DATASETS[currentDs];
+  var clauses = [];
+  var yf = document.getElementById('f-year-from').value.trim();
+  var yt = document.getElementById('f-year-to').value.trim();
+  if (yf) clauses.push('CAST("Año" AS INT) >= ' + parseInt(yf));
+  if (yt) clauses.push('CAST("Año" AS INT) <= ' + parseInt(yt));
+  var sel = document.getElementById('f-dim');
+  var vals = Array.from(sel.selectedOptions).map(function(o) { return "'" + o.value.replace(/'/g,"''") + "'"; });
+  if (vals.length) clauses.push('"' + cfg.dimCol + '" IN (' + vals.join(',') + ')');
+  return clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
+}
+
+function applyFilter() {
+  if (!db) return;
+  var cfg = DATASETS[currentDs];
+  var tbl = cfg.table;
+  var dim = cfg.dimCol;
+  var where = buildWhere();
+  var sql = 'SELECT "Año", "' + dim + '", CAST("Total" AS REAL) as Total FROM "' + tbl + '" ' + where + ' ORDER BY CAST("Año" AS INT), "' + dim + '"';
+  var res = db.exec(sql);
+  allRows = [];
+  if (res.length) {
+    var cols = res[0].columns;
+    res[0].values.forEach(function(r) {
+      var obj = {};
+      cols.forEach(function(c, i) { obj[c] = r[i]; });
+      allRows.push(obj);
+    });
+  }
+
+  var total = allRows.reduce(function(s, r) { return s + (r.Total || 0); }, 0);
+  var anos = [...new Set(allRows.map(function(r){return r['Año'];}))].sort();
+  var dims = [...new Set(allRows.map(function(r){return r[dim];}))];
+
+  document.getElementById('sum-total').textContent = fmtVol(total);
+  document.getElementById('sum-years').textContent = anos.length;
+  document.getElementById('sum-year-range').textContent = anos.length ? anos[0] + ' – ' + anos[anos.length-1] : '—';
+  document.getElementById('sum-dims').textContent = dims.length;
+
+  tableRows = allRows.slice();
+  sortCol = 'Año'; sortAsc = true;
+  doSort();
+  currentPage = 0;
+  renderTable();
+  renderChart();
+  renderRank();
+  document.getElementById('btn-csv').disabled = allRows.length === 0;
+}
+
+function clearFilter() {
+  document.getElementById('f-year-from').value = '';
+  document.getElementById('f-year-to').value = '';
+  Array.from(document.getElementById('f-dim').options).forEach(function(o){o.selected=false;});
+  populateFilters();
+  applyFilter();
+}
+
+// ─── Table ────────────────────────────────────────────────────────────
+function doSort() {
+  var col = sortCol, asc = sortAsc;
+  tableRows.sort(function(a, b) {
+    var av = a[col], bv = b[col];
+    if (av == null) av = ''; if (bv == null) bv = '';
+    if (typeof av === 'number' && typeof bv === 'number') return asc ? av - bv : bv - av;
+    var ai = parseInt(av), bi = parseInt(bv);
+    if (!isNaN(ai) && !isNaN(bi)) return asc ? ai - bi : bi - ai;
+    return asc ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+  });
+}
+
+function sortTable(col) {
+  if (sortCol === col) sortAsc = !sortAsc; else { sortCol = col; sortAsc = true; }
+  doSort(); currentPage = 0; renderTable();
+}
+
+function renderTable() {
+  var cfg = DATASETS[currentDs];
+  var dim = cfg.dimCol;
+  var cols = ['Año', dim, 'Total'];
+  var labels = ['年', dim, cfg.volLabel];
+
+  // Build header
+  var thead = document.getElementById('table-head');
+  thead.innerHTML = cols.map(function(c, i) {
+    var r = c === 'Total' ? ' class="r"' : '';
+    return '<th' + r + ' onclick="sortTable(\'' + c + '\')">' + labels[i] + ' <span class="sort-arrow" id="sa-' + c + '"></span></th>';
+  }).join('');
+
+  if (!tableRows.length) {
+    document.getElementById('table-wrap').style.display = 'none';
+    document.getElementById('table-placeholder').style.display = '';
+    return;
+  }
+  document.getElementById('table-wrap').style.display = '';
+  document.getElementById('table-placeholder').style.display = 'none';
+
+  var start = currentPage * PAGE_SIZE;
+  var slice = tableRows.slice(start, start + PAGE_SIZE);
+  document.getElementById('table-body').innerHTML = slice.map(function(r) {
+    return '<tr>'
+      + '<td class="mono">' + esc(r['Año']) + '</td>'
+      + '<td>' + esc(r[dim]) + '</td>'
+      + '<td class="mono r">' + fmtVol(r.Total) + '</td>'
+      + '</tr>';
+  }).join('');
+
+  var total = tableRows.length, pages = Math.ceil(total / PAGE_SIZE);
+  document.getElementById('pager-info').textContent = (start+1) + '–' + Math.min(start+PAGE_SIZE, total) + ' / ' + fmt(total) + ' 件';
+  document.getElementById('btn-prev').disabled = currentPage === 0;
+  document.getElementById('btn-next').disabled = currentPage >= pages - 1;
+
+  cols.forEach(function(c) {
+    var el = document.getElementById('sa-' + c);
+    if (el) el.textContent = sortCol === c ? (sortAsc ? '▲' : '▼') : '';
+  });
+}
+
+function changePage(d) { currentPage += d; renderTable(); }
+
+// ─── Chart ────────────────────────────────────────────────────────────
+function renderChart() {
+  var placeholder = document.getElementById('chart-placeholder');
+  var canvas = document.getElementById('main-chart');
+  if (!allRows.length) {
+    placeholder.style.display = ''; canvas.style.display = 'none';
+    if (chartInst) { chartInst.destroy(); chartInst = null; }
+    return;
+  }
+  placeholder.style.display = 'none';
+  canvas.style.display = '';
+
+  var cfg = DATASETS[currentDs];
+  var dim = cfg.dimCol;
+  var groupBy = document.getElementById('chart-group').value; // 'year' | 'dim'
+  var chartType = document.getElementById('chart-type').value;
+  var splitBy = document.getElementById('chart-split').value; // '' | 'dim' | 'year'
+  var stacked = !!document.getElementById('chart-stack').value;
+
+  function xKey(r) { return groupBy === 'year' ? String(r['Año']) : String(r[dim]); }
+  function sKey(r) { return splitBy === 'year' ? String(r['Año']) : String(r[dim]); }
+
+  if (!splitBy) {
+    var agg = {};
+    allRows.forEach(function(r) { var k = xKey(r); agg[k] = (agg[k]||0)+(r.Total||0); });
+    var labels = Object.keys(agg).sort(smartSort);
+    var data = labels.map(function(k){ return Math.round(agg[k]); });
+    draw(canvas, chartType, labels, [{label: cfg.volLabel, data:data, backgroundColor:PALETTE[0], borderColor:PALETTE[0], fill:false}], stacked);
+  } else {
+    var xKeys = [], xSeen = {}, sKeys = [], sSeen = {};
+    allRows.forEach(function(r) {
+      var xk = xKey(r), sk = sKey(r);
+      if (!xSeen[xk]) { xSeen[xk]=true; xKeys.push(xk); }
+      if (!sSeen[sk]) { sSeen[sk]=true; sKeys.push(sk); }
+    });
+    xKeys.sort(smartSort); sKeys.sort(smartSort);
+    var agg2 = {};
+    allRows.forEach(function(r) {
+      var xk = xKey(r), sk = sKey(r);
+      if (!agg2[sk]) agg2[sk]={};
+      agg2[sk][xk] = (agg2[sk][xk]||0)+(r.Total||0);
+    });
+    var datasets = sKeys.map(function(sk, i) {
+      return { label:sk, data:xKeys.map(function(xk){return Math.round((agg2[sk]&&agg2[sk][xk])||0);}),
+        backgroundColor:PALETTE[i%PALETTE.length], borderColor:PALETTE[i%PALETTE.length], fill:false };
+    });
+    draw(canvas, chartType, xKeys, datasets, stacked);
+  }
+}
+
+function smartSort(a, b) {
+  var ai = parseInt(a), bi = parseInt(b);
+  if (!isNaN(ai) && !isNaN(bi)) return ai - bi;
+  return String(a).localeCompare(String(b));
+}
+
+function draw(canvas, type, labels, datasets, stacked) {
+  if (chartInst) { chartInst.destroy(); chartInst = null; }
+  var cfg = DATASETS[currentDs];
+  chartInst = new Chart(canvas, {
+    type: type,
+    data: { labels: labels, datasets: datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { font: { family:"'DM Mono',monospace", size:11 }, boxWidth:14 } },
+        tooltip: { callbacks: { label: function(ctx) {
+          return ctx.dataset.label + ': ' + fmtVol(ctx.raw) + ' ' + cfg.unit;
+        }}}
+      },
+      scales: {
+        x: { stacked: stacked, ticks: { font: { family:"'DM Mono',monospace", size:10 }, maxRotation:45 } },
+        y: { stacked: stacked, ticks: { font: { family:"'DM Mono',monospace", size:10 },
+          callback: function(v) { return fmtK(v); }
+        }}
+      }
+    }
+  });
+}
+
+// ─── Rank ─────────────────────────────────────────────────────────────
+function renderRank() {
+  var cfg = DATASETS[currentDs];
+  var dim = cfg.dimCol;
+  document.getElementById('rank-head-key').textContent = dim;
+
+  if (!allRows.length) {
+    document.getElementById('rank-placeholder').style.display='';
+    document.getElementById('rank-wrap').style.display='none';
+    return;
+  }
+  document.getElementById('rank-placeholder').style.display='none';
+  document.getElementById('rank-wrap').style.display='';
+
+  var limit = parseInt(document.getElementById('rank-limit').value);
+  var agg = {};
+  allRows.forEach(function(r) {
+    var k = String(r[dim]||'(不明)');
+    agg[k] = (agg[k]||0)+(r.Total||0);
+  });
+  var sorted = Object.keys(agg).sort(function(a,b){return agg[b]-agg[a];});
+  if (limit > 0) sorted = sorted.slice(0, limit);
+  var grandTotal = Object.values(agg).reduce(function(s,v){return s+v;},0);
+  var maxVal = agg[sorted[0]]||1;
+
+  document.getElementById('rank-body').innerHTML = sorted.map(function(k, i) {
+    var v = agg[k];
+    var share = grandTotal>0?(v/grandTotal*100).toFixed(1):'0.0';
+    var barW = Math.round(v/maxVal*100);
+    return '<tr>'
+      + '<td class="mono r" style="color:var(--ink3);">' + (i+1) + '</td>'
+      + '<td>' + esc(k)
+        + '<span class="rank-bar-bg"><span class="rank-bar-fg" style="width:'+barW+'%;"></span></span>'
+      + '</td>'
+      + '<td class="mono r">' + fmtVol(v) + '</td>'
+      + '<td class="mono r" style="color:var(--ink3);">' + share + '%</td>'
+      + '</tr>';
+  }).join('');
+}
+
+// ─── CSV export ───────────────────────────────────────────────────────
+function exportCSV() {
+  var cfg = DATASETS[currentDs];
+  var dim = cfg.dimCol;
+  var header = ['Año', dim, 'Total'];
+  var lines = [header.join(',')];
+  tableRows.forEach(function(r) {
+    var vals = [r['Año'], r[dim], r.Total];
+    lines.push(vals.map(function(v) {
+      v = v==null?'':String(v);
+      if (v.includes(',')||v.includes('"')||v.includes('\n')) v='"'+v.replace(/"/g,'""')+'"';
+      return v;
+    }).join(','));
+  });
+  var blob = new Blob(['﻿'+lines.join('\n')], {type:'text/csv;charset=utf-8'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href=url; a.download='crt_'+currentDs+'_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click(); URL.revokeObjectURL(url);
+}
+
+// ─── Tab switching ────────────────────────────────────────────────────
+function switchTab(name) {
+  var names = ['chart','table','rank'];
+  document.querySelectorAll('.tab-btn').forEach(function(b, i) {
+    b.classList.toggle('active', names[i]===name);
+  });
+  document.querySelectorAll('.tab-panel').forEach(function(p){p.classList.remove('active');});
+  document.getElementById('tab-'+name).classList.add('active');
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────
+function fmt(n) { if (n==null) return '—'; return Number(n).toLocaleString('ja-JP',{maximumFractionDigits:0}); }
+function fmtVol(n) { if (n==null||isNaN(n)) return '—'; return Number(n).toLocaleString('ja-JP',{maximumFractionDigits:1}); }
+function fmtK(n) { if (Math.abs(n)>=1e6) return (n/1e6).toFixed(1)+'M'; if (Math.abs(n)>=1e3) return (n/1e3).toFixed(0)+'K'; return n; }
+function esc(s) { var d=document.createElement('div'); d.textContent=s==null?'':String(s); return d.innerHTML; }
+</script>
+</body>
+</html>
