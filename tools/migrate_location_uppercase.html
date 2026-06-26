@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>所在地名 大文字変換</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<style>
+body{font-family:sans-serif;font-size:13px;padding:20px;background:#faf9f6;color:#3a2e20}
+.btn{padding:8px 18px;border:none;border-radius:6px;cursor:pointer;font-size:13px}
+.btn-primary{background:#c8860a;color:#fff}
+.btn-sec{background:#eee;color:#333}
+#log{max-height:400px;overflow-y:auto;font-size:11px;font-family:monospace;background:#1a1a1a;color:#ccc;padding:12px;border-radius:6px;margin-top:12px;white-space:pre}
+.status{padding:10px;border-radius:6px;margin:10px 0;font-size:12px}
+.ok{background:#e8f5e9;border:1px solid #a5d6a7}
+.err{background:#ffebee;border:1px solid #ef9a9a}
+.info{background:#e8f4fd;border:1px solid #90caf9}
+#login-box{max-width:360px;background:#fff;border:1px solid #ddd;border-radius:8px;padding:28px;margin:60px auto}
+#login-box h3{margin-bottom:16px;color:#7a5610}
+#login-box label{display:block;font-size:11px;color:#888;margin-bottom:4px;margin-top:12px}
+#login-box input{width:100%;padding:9px 11px;border:1px solid #ccc;border-radius:5px;font-size:13px;box-sizing:border-box}
+#lerr{font-size:12px;color:#c00;margin-top:8px;min-height:16px}
+#main{display:none}
+</style>
+</head>
+<body>
+
+<div id="login-box">
+  <h3>ログイン</h3>
+  <label>メールアドレス</label>
+  <input id="l-email" type="email" autocomplete="username">
+  <label>パスワード</label>
+  <input id="l-pass" type="password" autocomplete="current-password">
+  <div id="lerr"></div>
+  <button class="btn btn-primary" id="l-btn" style="width:100%;margin-top:16px;">ログイン</button>
+</div>
+
+<div id="main">
+  <h2>所在地マスタ（locations）— locationName 大文字変換</h2>
+  <p style="color:#666;margin-bottom:12px">locationsコレクションの全locationNameをtoUpperCase()で更新します。</p>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;">
+    <button class="btn btn-primary" id="btn-run">実行</button>
+    <button class="btn btn-sec" id="btn-logout">ログアウト</button>
+    <span id="user-email" style="font-size:11px;color:#999;font-family:monospace;"></span>
+  </div>
+  <div id="status"></div>
+  <div id="log"></div>
+</div>
+
+<script>
+var FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:        "tequiladojo.firebaseapp.com",
+  projectId:         "tequiladojo",
+  storageBucket:     "tequiladojo.firebasestorage.app",
+  messagingSenderId: "56663296233",
+  appId:             "1:56663296233:web:c8cac2fcbeb4faa09e0878",
+};
+if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+var auth = firebase.auth();
+var db = firebase.firestore();
+
+function log(msg) {
+  document.getElementById("log").textContent += msg + "\n";
+}
+function setStatus(msg, cls) {
+  document.getElementById("status").innerHTML = '<div class="status '+cls+'">'+msg+'</div>';
+}
+
+// Auth state
+auth.onAuthStateChanged(function(user) {
+  if (user) {
+    document.getElementById("login-box").style.display = "none";
+    document.getElementById("main").style.display = "block";
+    document.getElementById("user-email").textContent = user.email;
+  } else {
+    document.getElementById("login-box").style.display = "block";
+    document.getElementById("main").style.display = "none";
+  }
+});
+
+// Login
+document.getElementById("l-btn").addEventListener("click", async function() {
+  var email = document.getElementById("l-email").value.trim();
+  var pass = document.getElementById("l-pass").value;
+  document.getElementById("lerr").textContent = "";
+  this.disabled = true;
+  try {
+    await auth.signInWithEmailAndPassword(email, pass);
+  } catch(e) {
+    document.getElementById("lerr").textContent = e.message;
+    this.disabled = false;
+  }
+});
+document.getElementById("l-pass").addEventListener("keydown", function(e) {
+  if (e.key === "Enter") document.getElementById("l-btn").click();
+});
+
+// Logout
+document.getElementById("btn-logout").addEventListener("click", function() {
+  auth.signOut();
+});
+
+// Run migration
+document.getElementById("btn-run").addEventListener("click", async function() {
+  this.disabled = true;
+  document.getElementById("log").textContent = "";
+  setStatus("取得中…", "info");
+
+  var snap;
+  try { snap = await db.collection("locations").get(); }
+  catch(e) { setStatus("取得エラー: "+e, "err"); this.disabled=false; return; }
+
+  log("locations: "+snap.size+" 件");
+
+  var toUpdate = [];
+  snap.forEach(function(doc) {
+    var name = doc.data().locationName;
+    if (name && name !== name.toUpperCase()) {
+      toUpdate.push({ id: doc.id, old: name, newName: name.toUpperCase() });
+    }
+  });
+  log("変更対象: "+toUpdate.length+" 件（既に大文字: "+(snap.size-toUpdate.length)+"件）\n");
+
+  if (!toUpdate.length) {
+    setStatus("✅ 全件既に大文字です", "ok");
+    this.disabled = false;
+    return;
+  }
+
+  toUpdate.forEach(function(r) { log(r.id+": "+r.old+" → "+r.newName); });
+  log("");
+
+  var batch = db.batch(), count = 0, done = 0;
+  for (var i = 0; i < toUpdate.length; i++) {
+    var r = toUpdate[i];
+    batch.update(db.collection("locations").doc(r.id), { locationName: r.newName });
+    count++; done++;
+    if (count === 500 || i === toUpdate.length - 1) {
+      try {
+        await batch.commit();
+        log("バッチコミット: "+count+"件 (累計"+done+")");
+        setStatus("書き込み中… "+done+"/"+toUpdate.length, "info");
+        batch = db.batch(); count = 0;
+      } catch(e) {
+        setStatus("保存エラー: "+e, "err");
+        log("ERROR: "+e);
+        document.getElementById("btn-run").disabled = false;
+        return;
+      }
+    }
+  }
+  log("\n=== 完了 ===");
+  setStatus("✅ "+toUpdate.length+" 件のlocationNameを大文字に更新しました", "ok");
+  document.getElementById("btn-run").disabled = false;
+});
+</script>
+</body>
+</html>
