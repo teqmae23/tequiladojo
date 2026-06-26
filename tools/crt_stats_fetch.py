@@ -580,17 +580,25 @@ def store_to_sqlite(ds_name, rows):
 def fetch_fabricas():
     """蒸留所座標を取得（エンティティは複数候補を試す）"""
     entity_candidates = [
+        "vEstPBIIntFabricas",
         "vEstPagWebFabricas",
         "vEstPagWebFabricasMapa",
         "vEstPagWebEmpresas",
         "vEstPagWebNOM",
+        "vEstPBIFabricas",
+        "vEstPBIIntNOM",
+        "vEstPBIIntEmpresas",
+        "FabricasMapa",
+        "Fabricas",
     ]
     col_candidates = [
         ["NOM", "Empresa", "Municipio", "Estado", "Latitud", "Longitud"],
         ["NOM", "Empresa", "Estado", "Latitud", "Longitud"],
+        ["NOM", "Empresa", "Latitud", "Longitud"],
         ["NOM", "Latitud", "Longitud"],
         ["NOM", "Lat", "Long"],
         ["NOM", "Lat", "Lng"],
+        ["NOM", "latitude", "longitude"],
     ]
 
     for entity in entity_candidates:
