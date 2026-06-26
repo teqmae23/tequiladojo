@@ -1,0 +1,117 @@
+name: CRT統計データ取得（生産・輸出形態・アガベ・座標）
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '実行モード'
+        required: true
+        default: 'discover'
+        type: choice
+        options:
+          - discover
+          - fetch
+          - fabricas
+          - dump
+      dataset:
+        description: 'データセット (fetch/dumpモード: produccion/forma/agave、省略=全部)'
+        required: false
+        default: ''
+      year:
+        description: '取得年（省略=全年）'
+        required: false
+        default: ''
+      month:
+        description: '取得月（yearと組み合わせ）'
+        required: false
+        default: ''
+  schedule:
+    # 毎月3日 9:00 JST (0:00 UTC)
+    - cron: '0 0 3 * *'
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 依存ライブラリインストール
+        run: pip install requests python-dateutil
+
+      - name: エンティティ・カラム探索（discoverモード）
+        if: github.event.inputs.mode == 'discover'
+        run: python3 tools/crt_stats_fetch.py --discover
+
+      - name: 生レスポンスダンプ（dumpモード）
+        if: github.event.inputs.mode == 'dump'
+        run: |
+          DS="${{ github.event.inputs.dataset }}"
+          if [ -z "$DS" ]; then DS="produccion"; fi
+          python3 tools/crt_stats_fetch.py --dump "$DS"
+
+      - name: 蒸留所座標取得（fabricasモード）
+        if: github.event.inputs.mode == 'fabricas'
+        run: |
+          python3 tools/crt_stats_fetch.py --fabricas --output sqlite
+          ls -la data/ 2>/dev/null || echo "dataディレクトリなし"
+
+      - name: 全データ取得（fetchモード・手動）
+        if: github.event.inputs.mode == 'fetch'
+        run: |
+          ARGS="--output sqlite"
+          if [ -n "${{ github.event.inputs.dataset }}" ]; then
+            ARGS="$ARGS --dataset ${{ github.event.inputs.dataset }}"
+          fi
+          if [ -n "${{ github.event.inputs.year }}" ]; then
+            ARGS="$ARGS --year ${{ github.event.inputs.year }}"
+          fi
+          if [ -n "${{ github.event.inputs.month }}" ]; then
+            ARGS="$ARGS --month ${{ github.event.inputs.month }}"
+          fi
+          python3 tools/crt_stats_fetch.py $ARGS
+          ls -la data/ 2>/dev/null || echo "dataディレクトリなし"
+
+      - name: 月次更新（スケジュール）
+        if: github.event_name == 'schedule'
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess, sys
+          from datetime import datetime, timezone
+          from dateutil.relativedelta import relativedelta
+
+          now = datetime.now(timezone.utc)
+          t_new  = now - relativedelta(months=2)
+          t_prev = now - relativedelta(months=3)
+
+          def run(year, month):
+              cmd = f"python3 tools/crt_stats_fetch.py --output sqlite --year {year} --month {month}"
+              print(f">> {cmd}")
+              r = subprocess.run(cmd, shell=True)
+              if r.returncode != 0:
+                  sys.exit(r.returncode)
+
+          print(f"=== {t_prev.year}/{t_prev.month:02d} 比較・更新 ===")
+          run(t_prev.year, t_prev.month)
+          print(f"=== {t_new.year}/{t_new.month:02d} 新規追加 ===")
+          run(t_new.year, t_new.month)
+          PYEOF
+
+      - name: SQLite をリポジトリにコミット
+        if: github.event.inputs.mode == 'fetch' || github.event.inputs.mode == 'fabricas' || github.event_name == 'schedule'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}
+          git add data/crt_stats.db
+          git diff --cached --quiet || git commit -m "data: CRT統計DB更新 $(date +'%Y-%m-%d')"
+          git push
