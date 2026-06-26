@@ -36,59 +36,59 @@ DB_PATH = "data/crt_stats.db"
 
 # 候補エンティティ名（--discover で総当たりテスト）
 ENTITY_CANDIDATES = [
+    # 確認済み
+    "vEstPBIIntProduccionTequila",    # 生産統計（確認済み）
+    "vEstPagWebExportacionesDestino", # 輸出先（確認済み）
+    # 輸出形態候補（vEstPBIInt prefix）
+    "vEstPBIIntExportacionesForma",
+    "vEstPBIIntExportaciones",
+    "vEstPBIIntExportacionesTipo",
+    "vEstPBIIntExportacionesEnvase",
+    # アガベ消費候補
+    "vEstPBIIntConsumoAgave",
+    "vEstPBIIntAgave",
+    "vEstPBIIntConsumo",
+    # 座標候補
+    "vEstPBIIntFabricas",
+    "vEstPBIIntFabricasMapa",
+    "vEstPBIIntEmpresas",
+    "vEstPBIIntNOM",
+    # vEstPagWeb系も念のため
     "vEstPagWebProduccion",
-    "vEstPagWebProduccionTotal",
-    "vEstPagWebProduccionMensual",
-    "vEstPagWebProduccionAnual",
-    "Produccion",
-    "ProduccionMensual",
-    "vEstPagWebExportaciones",
     "vEstPagWebExportacionesForma",
-    "vEstPagWebExportacionesTipo",
-    "vEstPagWebExportacionesEnvase",
-    "vEstPagWebExportacionesDestino",  # known (exports by destination)
-    "ExportacionesForma",
-    "vEstPagWebConsumo",
     "vEstPagWebConsumoAgave",
-    "vEstPagWebAgave",
-    "ConsumoAgave",
     "vEstPagWebFabricas",
-    "vEstPagWebFabricasMapa",
-    "vEstPagWebEmpresas",
-    "vEstPagWebNOM",
-    "Fabricas",
-    "FabricasMapa",
+    # その他テーブル
+    "Calendario",
+    "Medidas",
 ]
 
 DATASETS = {
     "produccion": {
-        "entity": "vEstPagWebProduccion",
-        "columns": ["Categoria", "Fecha", "Litros_40"],
-        "measures": [],
+        "entity": "vEstPBIIntProduccionTequila",
+        "columns": ["Categoria", "Producción Total"],
+        "cal_entity": "Calendario",      # 日付は Calendario テーブルから
         "table": "produccion",
-        "keys": ["Categoria", "Fecha"],
-        "date_col": "Fecha",
+        "keys": ["Categoria", "Año", "Mes"],
+        "date_col": None,  # Calendario結合で取得
     },
     "forma": {
-        "entity": "vEstPagWebExportacionesForma",
+        "entity": "vEstPBIIntExportacionesForma",  # discover後に修正予定
         "columns": ["Forma", "Fecha", "Litros_40"],
-        "measures": [],
         "table": "exportaciones_forma",
         "keys": ["Forma", "Fecha"],
         "date_col": "Fecha",
     },
     "agave": {
-        "entity": "vEstPagWebConsumoAgave",
+        "entity": "vEstPBIIntConsumoAgave",  # discover後に修正予定
         "columns": ["Categoria", "Fecha", "TonelAzucar"],
-        "measures": [],
         "table": "consumo_agave",
         "keys": ["Categoria", "Fecha"],
         "date_col": "Fecha",
     },
     "fabricas": {
-        "entity": "vEstPagWebFabricas",
+        "entity": "vEstPBIIntFabricas",  # discover後に修正予定
         "columns": ["NOM", "Empresa", "Municipio", "Estado", "Latitud", "Longitud"],
-        "measures": [],
         "table": "fabricas",
         "keys": ["NOM"],
         "date_col": None,
@@ -101,6 +101,7 @@ COLUMN_CANDIDATES = {
         "Categoria", "Categoría", "Clase", "TipoProducto",
         "Fecha", "Año", "Ano", "Anio", "Mes",
         "Litros_40", "Litros", "LitrosTotal", "Produccion", "VolumenTotal",
+        "Producción Total", "ProduccionTotal", "Total",
     ],
     "forma": [
         "Forma", "TipoEnvase", "Envase", "Tipo", "Presentacion",
@@ -151,6 +152,69 @@ def has_error(data):
             "Cannot find field" in raw or
             "InvalidEntity" in raw or
             "doesn't contain a table" in raw)
+
+
+def build_produccion_query(year=None):
+    """生産統計クエリ: vEstPBIIntProduccionTequila + Calendario 結合"""
+    from_clause = [
+        {"Name": "c", "Entity": "Calendario", "Type": 0},
+        {"Name": "v1", "Entity": "vEstPBIIntProduccionTequila", "Type": 0},
+    ]
+    select_clause = [
+        {"Column": {"Expression": {"SourceRef": {"Source": "c"}}, "Property": "Año"},
+         "Name": "Calendario.Año", "NativeReferenceName": "Año"},
+        {"Aggregation": {
+            "Expression": {"Column": {"Expression": {"SourceRef": {"Source": "v1"}}, "Property": "Producción Total"}},
+            "Function": 0},
+         "Name": "Sum(vEstPBIIntProduccionTequila.ProduccionTotal)", "NativeReferenceName": "ProduccionTotal"},
+        {"Column": {"Expression": {"SourceRef": {"Source": "v1"}}, "Property": "Categoria"},
+         "Name": "vEstPBIIntProduccionTequila.Categoria", "NativeReferenceName": "Categoria"},
+    ]
+
+    query = {
+        "Version": 2,
+        "From": from_clause,
+        "Select": select_clause,
+    }
+
+    if year:
+        query["Where"] = [{
+            "Condition": {
+                "In": {
+                    "Expressions": [{"Column": {"Expression": {"SourceRef": {"Source": "c"}}, "Property": "Año"}}],
+                    "Values": [[{"Literal": {"Value": f"{year}L"}}]]
+                }
+            }
+        }]
+
+    return {
+        "version": "1.0.0",
+        "queries": [{
+            "Query": {
+                "Commands": [{
+                    "SemanticQueryDataShapeCommand": {
+                        "Query": query,
+                        "Binding": {
+                            "Primary": {"Groupings": [{"Projections": [0, 1]}]},
+                            "Secondary": {"Groupings": [{"Projections": [2]}]},
+                            "DataReduction": {"DataVolume": 4,
+                                             "Primary": {"Window": {"Count": 200}},
+                                             "Secondary": {"Top": {"Count": 60}}},
+                            "Version": 1
+                        },
+                        "ExecutionMetricsKind": 1
+                    }
+                }]
+            },
+            "QueryId": "",
+            "ApplicationContext": {
+                "DatasetId": DATASET_ID,
+                "Sources": [{"ReportId": REPORT_ID}]
+            }
+        }],
+        "cancelQueries": [],
+        "modelId": MODEL_ID
+    }
 
 
 def build_query(entity, columns, filters=None, date_range=None):
@@ -353,6 +417,20 @@ def discover_columns_for(entity, candidates):
 
 # ── Fetch by year ──────────────────────────────────────────────────────────────
 
+def fetch_produccion_year(year):
+    """生産統計1年分を Calendario 結合クエリで取得"""
+    payload = build_produccion_query(year)
+    data = query_api(payload)
+    if has_error(data):
+        return None
+    _, rows = parse_results(data)
+    # Año列を追加（クエリ結果に含まれているはず）
+    for row in rows:
+        if "Año" not in row or row["Año"] is None:
+            row["Año"] = year
+    return rows
+
+
 def fetch_dataset_year(ds_cfg, year):
     """1年分のデータを取得（30k行制限回避のため年単位）"""
     entity = ds_cfg["entity"]
@@ -375,13 +453,16 @@ def fetch_dataset_year(ds_cfg, year):
     return rows
 
 
-def fetch_all_years(ds_cfg, year_from=2003):
+def fetch_all_years(ds_name, ds_cfg, year_from=2003):
     """全年分を順番に取得して結合"""
     current_year = datetime.now(timezone.utc).year
     all_rows = []
     for year in range(year_from, current_year + 1):
         print(f"  {year}年 取得中...", end=" ", flush=True)
-        rows = fetch_dataset_year(ds_cfg, year)
+        if ds_name == "produccion":
+            rows = fetch_produccion_year(year)
+        else:
+            rows = fetch_dataset_year(ds_cfg, year)
         if rows is None:
             print(f"エラー（スキップ）")
             continue
@@ -558,7 +639,7 @@ def main():
             rows = rows or []
             print(f"  {args.year}: {len(rows)} 行")
         else:
-            rows = fetch_all_years(ds_cfg)
+            rows = fetch_all_years(ds_name, ds_cfg)
 
         if not rows:
             print(f"  データなし（エンティティ名確認が必要な可能性）")
