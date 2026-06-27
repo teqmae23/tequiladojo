@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>テキーラ道場 — ツリーボトル管理</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
+};
+</script>
+<script src="/auth-role.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;1,400&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#F1EFE8;--cream2:#E8E4D8;--cream3:#DDD8C8;
+  --red:#b03020;--teal:#1a6e58;
+  --c-dis:#7a4010;--c-brand:#1a6e58;--c-bottle:#1252a0;--c-bdata:#c8860a;
+  --sans:'Noto Sans JP',sans-serif;--serif:'Cormorant Garamond',serif;--mono:'DM Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+
+/* ── Login ── */
+#login-screen{display:none;align-items:center;justify-content:center;height:100vh;background:var(--cream);}
+.lcard{background:#fff;border:1px solid var(--cream3);border-radius:10px;padding:32px 28px;width:100%;max-width:360px;box-shadow:0 4px 20px rgba(0,0,0,.08);}
+.lcard h2{font-family:var(--serif);font-size:22px;color:var(--gold-d);margin-bottom:4px;}
+.lcard .lsub{font-size:12px;color:var(--ink3);margin-bottom:20px;}
+.lcard label{display:block;font-size:11px;color:var(--ink3);margin-bottom:4px;margin-top:14px;}
+.lcard input{width:100%;padding:9px 11px;border:1px solid var(--cream3);border-radius:5px;font-size:13px;box-sizing:border-box;font-family:var(--sans);}
+.lcard input:focus{outline:none;border-color:var(--gold);}
+#lerr{font-size:12px;color:var(--red);margin-top:8px;min-height:16px;}
+.lcard .lbtn{width:100%;margin-top:18px;padding:10px;background:var(--gold-d);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;font-family:var(--sans);}
+.lcard .lbtn:hover{background:var(--gold);}
+#app{display:none;flex-direction:column;height:100vh;}
+
+/* ── Header ── */
+.hdr{background:var(--ink);padding:0 16px;display:flex;align-items:center;gap:12px;height:48px;flex-shrink:0;}
+.hdr-logo{font-family:var(--serif);font-size:16px;color:var(--gold-l);letter-spacing:.04em;}
+.hdr-sub{font-size:11px;color:var(--ink3);margin-left:4px;}
+.hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+.hdr-user{font-size:11px;color:var(--ink3);font-family:var(--mono);}
+.hdr-btn{padding:4px 10px;border:1px solid rgba(255,255,255,.2);border-radius:5px;background:transparent;color:var(--gold-l);font-size:11px;cursor:pointer;font-family:var(--sans);}
+.hdr-btn:hover{border-color:var(--gold-l);}
+.hdr-link{color:var(--gold-l);font-size:12px;text-decoration:none;opacity:.7;}
+.hdr-link:hover{opacity:1;}
+
+/* ── Controls ── */
+.ctrl{background:var(--cream2);border-bottom:1px solid var(--cream3);padding:8px 14px;display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap;}
+.ctrl input[type=text]{padding:5px 9px;border:1px solid var(--cream3);border-radius:5px;background:#fff;font-family:var(--mono);font-size:12px;width:130px;}
+.ctrl input:focus{outline:none;border-color:var(--gold);}
+.cbtn{padding:4px 10px;border:1px solid var(--cream3);border-radius:5px;background:#fff;color:var(--ink2);font-size:12px;cursor:pointer;font-family:var(--sans);}
+.cbtn:hover{border-color:var(--gold);}
+.cbtn.active{background:var(--ink);color:var(--cream);border-color:var(--ink);}
+#ctrl-count{font-size:11px;color:var(--ink3);margin-left:auto;}
+#loading-msg{font-size:12px;color:var(--ink3);}
+
+/* ── Column Settings Panel ── */
+#col-panel{background:#fff;border-bottom:1px solid var(--cream3);padding:10px 14px;display:none;flex-shrink:0;}
+.col-panel-inner{display:flex;gap:20px;flex-wrap:wrap;}
+.col-group{min-width:160px;}
+.col-group-title{font-size:11px;font-weight:600;color:var(--ink2);margin-bottom:6px;display:flex;align-items:center;gap:5px;}
+.col-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex-shrink:0;}
+.col-item{display:flex;align-items:center;gap:5px;margin-bottom:3px;font-size:12px;color:var(--ink);cursor:pointer;}
+.col-item input{cursor:pointer;accent-color:var(--gold-d);}
+
+/* ── Tree ── */
+#tree-wrap{flex:1;overflow-y:auto;padding:10px 14px 30px;}
+.tree-node{margin-bottom:1px;}
+.tree-row{display:flex;align-items:center;gap:6px;padding:4px 7px;border-radius:5px;cursor:default;transition:background .1s;}
+.tree-row:hover{background:rgba(180,140,50,.1);}
+.tree-toggle{width:18px;height:18px;border:none;background:none;cursor:pointer;color:var(--ink3);font-size:12px;padding:0;flex-shrink:0;display:flex;align-items:center;justify-content:center;border-radius:3px;}
+.tree-toggle:hover{background:var(--cream3);color:var(--ink);}
+.tree-toggle.leaf{cursor:default;color:transparent;}
+.level-badge{font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;color:#fff;flex-shrink:0;letter-spacing:.03em;}
+.tree-id{font-family:var(--mono);font-size:11px;color:var(--ink3);flex-shrink:0;}
+.tree-name{font-size:12px;font-weight:500;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tree-name.secondary{font-weight:400;color:var(--ink2);}
+.opt-field{font-size:11px;color:var(--ink2);background:var(--cream2);border-radius:3px;padding:1px 5px;white-space:nowrap;flex-shrink:0;}
+.opt-label{font-size:10px;color:var(--ink3);margin-right:2px;}
+.tree-edit{font-size:10px;color:var(--gold-d);text-decoration:none;padding:2px 6px;border:1px solid var(--cream3);border-radius:3px;white-space:nowrap;flex-shrink:0;margin-left:4px;}
+.tree-edit:hover{border-color:var(--gold-d);background:rgba(200,134,10,.08);}
+.tree-children{padding-left:22px;border-left:1px dashed var(--cream3);margin-left:9px;}
+.tree-children.hidden{display:none;}
+.empty-label{font-size:11px;color:var(--ink3);padding:2px 7px;font-style:italic;}
+
+/* ── Level indent colors ── */
+.lvl-dis .level-badge{background:var(--c-dis);}
+.lvl-brand .level-badge{background:var(--c-brand);}
+.lvl-bottle .level-badge{background:var(--c-bottle);}
+.lvl-bdata .level-badge{background:var(--c-bdata);}
+.lvl-dis>.tree-row{background:rgba(122,64,16,.04);}
+.lvl-brand>.tree-row{background:rgba(26,110,88,.03);}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="lcard">
+    <h2>テキーラ道場</h2>
+    <div class="lsub">スタッフとしてログインしてください</div>
+    <label>メールアドレス</label>
+    <input id="l-email" type="email" autocomplete="username">
+    <label>パスワード</label>
+    <input id="l-pass" type="password" autocomplete="current-password">
+    <div id="lerr"></div>
+    <button class="lbtn" id="l-btn">ログイン</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="hdr">
+    <div class="hdr-logo">テキーラ道場</div>
+    <div class="hdr-sub">ツリーボトル管理</div>
+    <div class="hdr-right">
+      <span class="hdr-user" id="hdr-user"></span>
+      <button class="hdr-btn" id="btn-logout">ログアウト</button>
+      <a class="hdr-link" href="admin_tequila.html">テキーラ管理 →</a>
+    </div>
+  </div>
+
+  <div class="ctrl">
+    <label style="font-size:12px;color:var(--ink2);">NOM</label>
+    <input type="text" id="nom-filter" placeholder="例: 1079" maxlength="4">
+    <button class="cbtn" id="btn-search">検索</button>
+    <button class="cbtn" id="btn-clear">クリア</button>
+    <span style="width:1px;height:20px;background:var(--cream3);display:inline-block;"></span>
+    <button class="cbtn" id="btn-expand-all">全展開</button>
+    <button class="cbtn" id="btn-collapse-all">全折り畳み</button>
+    <span style="width:1px;height:20px;background:var(--cream3);display:inline-block;"></span>
+    <button class="cbtn" id="btn-col-toggle">列設定 ▼</button>
+    <span id="loading-msg"></span>
+    <span id="ctrl-count"></span>
+  </div>
+
+  <div id="col-panel">
+    <div class="col-panel-inner" id="col-panel-inner"></div>
+  </div>
+
+  <div id="tree-wrap">
+    <div id="tree-root"></div>
+  </div>
+</div>
+
+<script>
+if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth();
+var db=firebase.firestore();
+
+// ── 列定義 ──────────────────────────────────────────────────────────
+var LEVELS=[
+  {
+    key:'dis', label:'蒸留所', badge:'蒸留所', color:'var(--c-dis)',
+    idField:'id',
+    nameFields:['nomJa','nomEs'],
+    editUrl:function(r){ return 'admin_distillery.html?nom='+encodeURIComponent(r.nom||r.id); },
+    optFields:[
+      {field:'introduced',  label:'導入',    fmt:function(v){return v===1?'✓導入':'—';}},
+      {field:'salesCategory',label:'販売区分',fmt:function(v){return v===0?'国内':'海外';}},
+      {field:'districtId',  label:'地区'},
+      {field:'elevation',   label:'標高',    fmt:function(v){return v!=null?v+'m':'—';}},
+      {field:'locationId',  label:'所在地ID'},
+    ]
+  },
+  {
+    key:'brand', label:'ブランド', badge:'ブランド', color:'var(--c-brand)',
+    idField:'id',
+    nameFields:['brandEs','brandJa'],
+    editUrl:function(r){ return 'admin_tequila.html'; },
+    optFields:[
+      {field:'brandType',   label:'種別',    fmt:function(v){return v==='0'?'蒸留':'委託';}},
+      {field:'brandStatus', label:'状態',    fmt:function(v){return v==='0'?'稼働':v==='1'?'終了':'移行';}},
+      {field:'salesCategory',label:'販売区分',fmt:function(v){return v===0?'国内':'海外';}},
+      {field:'foundedYear', label:'創設年'},
+    ]
+  },
+  {
+    key:'bottle', label:'ボトル', badge:'ボトル', color:'var(--c-bottle)',
+    idField:'id',
+    nameFields:['bottleEs','bottleJa'],
+    editUrl:function(r){ return 'admin_tequila.html'; },
+    optFields:[
+      {field:'classId',     label:'クラス'},
+      {field:'abv',         label:'ABV',     fmt:function(v){return v!=null?parseFloat(v).toFixed(1)+'%':'—';}},
+      {field:'serviceStatus',label:'提供',   fmt:function(v){return v==='0'?'OP':v==='1'?'CL':'—';}},
+    ]
+  },
+  {
+    key:'bdata', label:'ボトルデータ', badge:'BD', color:'var(--c-bdata)',
+    idField:'id',
+    nameFields:['bottleEs','bottleJa'],
+    editUrl:function(r){ return 'admin_tequila.html'; },
+    optFields:[
+      {field:'lotNo',       label:'ロット'},
+      {field:'volume',      label:'容量',    fmt:function(v){return v!=null?v+'ml':'—';}},
+      {field:'remaining',   label:'残量',    fmt:function(v){return v!=null?v+'ml':'—';}},
+      {field:'price',       label:'単価',    fmt:function(v){return v!=null?'¥'+v.toLocaleString():'—';}},
+      {field:'visibility',  label:'公開',    fmt:function(v){return v==='0'?'公開':'非公開';}},
+      {field:'importType',  label:'仕入れ区分',fmt:function(v){var m={'0':'日本','1':'米国','2':'メキシコ','3':'EU','4':'英国','5':'その他'};return m[String(v)]||v;}},
+      {field:'domesticDist',label:'国内流通',fmt:function(v){return v==='1'?'非流通':'流通';}},
+      {field:'cost',        label:'仕入れ価格',fmt:function(v){return v!=null?'¥'+v.toLocaleString():'—';}},
+    ]
+  }
+];
+
+// 列表示状態（デフォルト全OFF）
+var colVis={};
+LEVELS.forEach(function(lv){
+  colVis[lv.key]={};
+  lv.optFields.forEach(function(f){ colVis[lv.key][f.field]=false; });
+});
+
+// ── ログイン ─────────────────────────────────────────────────────────
+document.getElementById('l-btn').addEventListener('click',async function(){
+  var email=document.getElementById('l-email').value.trim();
+  var pass=document.getElementById('l-pass').value;
+  document.getElementById('lerr').textContent='';
+  this.disabled=true;
+  try{ await auth.signInWithEmailAndPassword(email,pass); }
+  catch(e){ document.getElementById('lerr').textContent=e.message; this.disabled=false; }
+});
+document.getElementById('l-pass').addEventListener('keydown',function(e){
+  if(e.key==='Enter') document.getElementById('l-btn').click();
+});
+document.getElementById('btn-logout').addEventListener('click',function(){ auth.signOut(); });
+
+// ── データ ───────────────────────────────────────────────────────────
+var rawDis=[], rawBrands=[], rawBottles=[], rawBdata=[];
+var tree={};
+
+function buildTree(){
+  tree={};
+  rawDis.forEach(function(d){
+    var nom=String(d.nom||d.id);
+    tree[nom]={dis:d, brands:{}};
+  });
+  rawBrands.forEach(function(b){
+    var nom=String(b.id).slice(0,4);
+    if(!tree[nom]) tree[nom]={dis:null, brands:{}};
+    tree[nom].brands[b.id]={brand:b, bottles:{}};
+  });
+  rawBottles.forEach(function(b){
+    var nom=String(b.id).slice(0,4);
+    var brandId=String(b.brandId||b.id.slice(0,7));
+    if(!tree[nom]) return;
+    if(!tree[nom].brands[brandId]) tree[nom].brands[brandId]={brand:null, bottles:{}};
+    tree[nom].brands[brandId].bottles[b.id]={bottle:b, bdatas:[]};
+  });
+  rawBdata.forEach(function(bd){
+    var nom=String(bd.brandId||bd.bottleId||bd.id).slice(0,4);
+    var brandId=String(bd.brandId||'').slice(0,7);
+    var bottleId=bd.bottleId||'';
+    if(!tree[nom]||!brandId||!bottleId) return;
+    var be=tree[nom].brands[brandId];
+    if(!be) return;
+    var boe=be.bottles[bottleId];
+    if(!boe) return;
+    boe.bdatas.push(bd);
+  });
+}
+
+// ── 列設定パネル ──────────────────────────────────────────────────────
+function buildColPanel(){
+  var wrap=document.getElementById('col-panel-inner');
+  wrap.innerHTML='';
+  LEVELS.forEach(function(lv){
+    var grp=document.createElement('div');
+    grp.className='col-group';
+    grp.innerHTML='<div class="col-group-title"><span class="col-dot" style="background:'+lv.color+'"></span>'+lv.label+'</div>';
+    lv.optFields.forEach(function(f){
+      var item=document.createElement('label');
+      item.className='col-item';
+      var chk=document.createElement('input');
+      chk.type='checkbox';
+      chk.checked=colVis[lv.key][f.field];
+      chk.addEventListener('change',function(){
+        colVis[lv.key][f.field]=this.checked;
+        renderTree();
+      });
+      item.appendChild(chk);
+      item.appendChild(document.createTextNode(f.label));
+      grp.appendChild(item);
+    });
+    wrap.appendChild(grp);
+  });
+}
+
+document.getElementById('btn-col-toggle').addEventListener('click',function(){
+  var p=document.getElementById('col-panel');
+  var open=p.style.display==='block';
+  p.style.display=open?'none':'block';
+  this.textContent=open?'列設定 ▼':'列設定 ▲';
+});
+
+// ── ツリー描画 ────────────────────────────────────────────────────────
+var nomFilterVal='';
+var openState={}; // key -> bool (true=open)
+
+function getName(r, nameFields){
+  for(var i=0;i<nameFields.length;i++){
+    if(r[nameFields[i]]) return r[nameFields[i]];
+  }
+  return '—';
+}
+function getSecondaryName(r, nameFields){
+  var first=false;
+  for(var i=0;i<nameFields.length;i++){
+    if(r[nameFields[i]]){ if(first) return r[nameFields[i]]; first=true; }
+  }
+  return '';
+}
+function getOptHtml(r, lv){
+  return lv.optFields.filter(function(f){ return colVis[lv.key][f.field]; }).map(function(f){
+    var raw=r[f.field];
+    var val=(raw===undefined||raw===null)?'—':(f.fmt?f.fmt(raw):String(raw));
+    return '<span class="opt-field"><span class="opt-label">'+f.label+'</span>'+escH(val)+'</span>';
+  }).join('');
+}
+function escH(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function makeRow(lv, r, stateKey, hasChildren){
+  var node=document.createElement('div');
+  node.className='tree-node lvl-'+lv.key;
+
+  var row=document.createElement('div');
+  row.className='tree-row';
+
+  // toggle button
+  var tog=document.createElement('button');
+  tog.className='tree-toggle'+(hasChildren?'':' leaf');
+  tog.textContent=hasChildren?(openState[stateKey]!==false?'▼':'▶'):'•';
+  if(hasChildren) tog.addEventListener('click',function(e){
+    e.stopPropagation();
+    openState[stateKey]=openState[stateKey]===false?true:false;
+    renderTree();
+  });
+  row.appendChild(tog);
+
+  // badge
+  var badge=document.createElement('span');
+  badge.className='level-badge';
+  badge.textContent=lv.badge;
+  row.appendChild(badge);
+
+  // id
+  var idSpan=document.createElement('span');
+  idSpan.className='tree-id';
+  idSpan.textContent=r[lv.idField]||r.id||'';
+  row.appendChild(idSpan);
+
+  // name
+  var nameSpan=document.createElement('span');
+  nameSpan.className='tree-name';
+  nameSpan.textContent=getName(r, lv.nameFields);
+  row.appendChild(nameSpan);
+
+  // secondary name
+  var sec=getSecondaryName(r, lv.nameFields);
+  if(sec){
+    var secSpan=document.createElement('span');
+    secSpan.className='tree-name secondary';
+    secSpan.style.cssText='flex:0;margin-left:4px;font-size:11px;';
+    secSpan.textContent=sec;
+    row.appendChild(secSpan);
+  }
+
+  // opt fields
+  var optHtml=getOptHtml(r, lv);
+  if(optHtml){
+    var optWrap=document.createElement('span');
+    optWrap.style.cssText='display:flex;gap:4px;flex-wrap:wrap;';
+    optWrap.innerHTML=optHtml;
+    row.appendChild(optWrap);
+  }
+
+  // edit link
+  var editA=document.createElement('a');
+  editA.className='tree-edit';
+  editA.href=lv.editUrl(r);
+  editA.target='_blank';
+  editA.rel='noopener';
+  editA.textContent='編集';
+  row.appendChild(editA);
+
+  node.appendChild(row);
+  return node;
+}
+
+function renderTree(){
+  var root=document.getElementById('tree-root');
+  root.innerHTML='';
+  var noms=Object.keys(tree).sort();
+  if(nomFilterVal) noms=noms.filter(function(n){ return n.indexOf(nomFilterVal)===0; });
+
+  var disLv=LEVELS[0], brandLv=LEVELS[1], bottleLv=LEVELS[2], bdataLv=LEVELS[3];
+
+  var disCount=0;
+  noms.forEach(function(nom){
+    var entry=tree[nom];
+    if(!entry) return;
+    var dis=entry.dis||{id:nom};
+    disCount++;
+
+    var brandIds=Object.keys(entry.brands).sort();
+    var disKey='dis:'+nom;
+    var disNode=makeRow(disLv, dis, disKey, brandIds.length>0);
+
+    if(brandIds.length>0 && openState[disKey]!==false){
+      var disChildren=document.createElement('div');
+      disChildren.className='tree-children';
+
+      brandIds.forEach(function(brandId){
+        var be=entry.brands[brandId];
+        var brand=be.brand||{id:brandId};
+        var bottleIds=Object.keys(be.bottles).sort();
+        var brandKey='brand:'+brandId;
+        var brandNode=makeRow(brandLv, brand, brandKey, bottleIds.length>0);
+
+        if(bottleIds.length>0 && openState[brandKey]!==false){
+          var brandChildren=document.createElement('div');
+          brandChildren.className='tree-children';
+
+          bottleIds.forEach(function(bottleId){
+            var boe=be.bottles[bottleId];
+            var bottle=boe.bottle||{id:bottleId};
+            var bdatas=boe.bdatas||[];
+            var bottleKey='bottle:'+bottleId;
+            var bottleNode=makeRow(bottleLv, bottle, bottleKey, bdatas.length>0);
+
+            if(bdatas.length>0 && openState[bottleKey]!==false){
+              var bottleChildren=document.createElement('div');
+              bottleChildren.className='tree-children';
+
+              bdatas.sort(function(a,b){ return (a.id||'').localeCompare(b.id||''); }).forEach(function(bd){
+                var bdKey='bd:'+bd.id;
+                var bdNode=makeRow(bdataLv, bd, bdKey, false);
+                bottleChildren.appendChild(bdNode);
+              });
+
+              bottleNode.appendChild(bottleChildren);
+            }
+
+            brandChildren.appendChild(bottleNode);
+          });
+
+          brandNode.appendChild(brandChildren);
+        }
+
+        disChildren.appendChild(brandNode);
+      });
+
+      disNode.appendChild(disChildren);
+    }
+
+    root.appendChild(disNode);
+  });
+
+  document.getElementById('ctrl-count').textContent='蒸留所: '+disCount+'件';
+}
+
+// ── フィルター ────────────────────────────────────────────────────────
+document.getElementById('btn-search').addEventListener('click',function(){
+  nomFilterVal=document.getElementById('nom-filter').value.trim();
+  renderTree();
+});
+document.getElementById('nom-filter').addEventListener('keydown',function(e){
+  if(e.key==='Enter'){ nomFilterVal=this.value.trim(); renderTree(); }
+});
+document.getElementById('btn-clear').addEventListener('click',function(){
+  document.getElementById('nom-filter').value='';
+  nomFilterVal='';
+  renderTree();
+});
+
+// ── 全展開 / 全折り畳み ───────────────────────────────────────────────
+document.getElementById('btn-expand-all').addEventListener('click',function(){
+  openState={};
+  renderTree();
+});
+document.getElementById('btn-collapse-all').addEventListener('click',function(){
+  Object.keys(tree).forEach(function(nom){
+    openState['dis:'+nom]=false;
+    var entry=tree[nom];
+    Object.keys(entry.brands).forEach(function(brandId){
+      openState['brand:'+brandId]=false;
+      Object.keys(entry.brands[brandId].bottles).forEach(function(bottleId){
+        openState['bottle:'+bottleId]=false;
+      });
+    });
+  });
+  renderTree();
+});
+
+// ── データ読み込み ────────────────────────────────────────────────────
+function loadAll(){
+  var msg=document.getElementById('loading-msg');
+  msg.textContent='読み込み中...';
+  Promise.all([
+    db.collection('distilleries').get(),
+    db.collection('brands').get(),
+    db.collection('bottles').get(),
+    db.collection('bottleData').get()
+  ]).then(function(results){
+    rawDis=results[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    rawBrands=results[1].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    rawBottles=results[2].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    rawBdata=results[3].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    msg.textContent='';
+    buildTree();
+    buildColPanel();
+    renderTree();
+  }).catch(function(e){
+    msg.textContent='読み込み失敗: '+e.message;
+  });
+}
+
+// ── 認証 ─────────────────────────────────────────────────────────────
+AuthRole.requireStaff(auth, function(user){
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').style.display='flex';
+  document.getElementById('hdr-user').textContent=user.email||'';
+  loadAll();
+}, function(){
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('app').style.display='none';
+});
+</script>
+</body>
+</html>
