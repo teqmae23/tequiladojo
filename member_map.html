@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>テキーラ道場 — 蒸留所マップ</title>
+<title>テキーラ道場 — 私の蒸留所マップ</title>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -17,6 +17,7 @@ var FIREBASE_CONFIG={
   appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
 };
 </script>
+<script src="/auth-role.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/osmtogeojson@3.0.0-beta.5/osmtogeojson.js"></script>
@@ -31,7 +32,7 @@ var FIREBASE_CONFIG={
   --sans:'Noto Sans JP',sans-serif;--serif:'Cormorant Garamond',serif;--mono:'DM Mono',monospace;
 }
 *{box-sizing:border-box;margin:0;padding:0;}
-body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100vh;display:flex;flex-direction:column;}
+body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100vh;overflow:hidden;}
 
 /* ── Header ── */
 .hdr{background:var(--ink);padding:0 16px;display:flex;align-items:center;gap:12px;height:52px;flex-shrink:0;}
@@ -133,17 +134,45 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 #dot-opacity-range::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--cream3);}
 #dot-opacity-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--ink2);cursor:pointer;border:none;}
 #dot-opacity-range::-moz-range-track{height:4px;border-radius:2px;background:var(--cream3);}
+
+/* ── Login screen ── */
+#login-screen{display:none;align-items:center;justify-content:center;min-height:100vh;background:var(--cream);}
+.lcard{background:#fff;border:1px solid var(--cream3);border-radius:10px;padding:32px 28px;width:100%;max-width:360px;box-shadow:0 4px 20px rgba(0,0,0,.08);}
+.lcard h2{font-family:var(--serif);font-size:22px;color:var(--gold-d);margin-bottom:4px;}
+.lcard .lsub{font-size:12px;color:var(--ink3);margin-bottom:20px;}
+.lcard label{display:block;font-size:11px;color:var(--ink3);margin-bottom:4px;margin-top:14px;}
+.lcard input{width:100%;padding:9px 11px;border:1px solid var(--cream3);border-radius:5px;font-size:13px;box-sizing:border-box;font-family:var(--sans);}
+.lcard input:focus{outline:none;border-color:var(--gold);}
+#lerr{font-size:12px;color:var(--red);margin-top:8px;min-height:16px;}
+.lcard .lbtn{width:100%;margin-top:18px;padding:10px;background:var(--gold-d);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;font-family:var(--sans);}
+.lcard .lbtn:hover{background:var(--gold);}
+#app{display:none;height:100vh;flex-direction:column;}
+
 </style>
 </head>
 <body>
 
+<div id="login-screen">
+  <div class="lcard">
+    <h2>テキーラ道場</h2>
+    <div class="lsub">会員マップにログインしてください</div>
+    <label>メールアドレス</label>
+    <input id="l-email" type="email" autocomplete="username">
+    <label>パスワード</label>
+    <input id="l-pass" type="password" autocomplete="current-password">
+    <div id="lerr"></div>
+    <button class="lbtn" id="l-btn">ログイン</button>
+  </div>
+</div>
+<div id="app">
 <div class="hdr">
   <div>
     <div class="hdr-logo">テキーラ道場</div>
-    <div class="hdr-sub">蒸留所マップ</div>
+    <div class="hdr-sub">私の蒸留所マップ</div>
   </div>
   <div style="display:flex;align-items:center;gap:10px;margin-left:auto;">
-    <span id="admin-badge" style="display:none;font-size:11px;font-weight:600;color:#fff;background:#c8320a;padding:3px 10px;border-radius:12px;letter-spacing:.04em;">🔑 管理者モード</span>
+    <span id="member-label" style="font-size:11px;color:var(--ink3);font-family:var(--mono);"></span>
+    <button id="btn-logout" style="padding:4px 10px;border:1px solid var(--cream3);border-radius:5px;background:transparent;color:var(--gold-l);font-size:11px;cursor:pointer;font-family:var(--sans);">ログアウト</button>
     <a class="hdr-back" href="index.html">← ホームへ</a>
   </div>
 </div>
@@ -154,9 +183,10 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
     <option value="">すべての地区</option>
   </select>
   <select id="filter-sales">
-    <option value="">全件</option>
-    <option value="1">道場</option>
-    <option value="2">国内</option>
+    <option value="">全蒸留所</option>
+    <option value="1">道場(全件)</option>
+    <option value="3">道場(国内)</option>
+    <option value="2">国内流通</option>
   </select>
   <button id="btn-labels" class="ctrl-btn" onclick="toggleLabels()">名前 OFF</button>
   <label style="font-size:10px;color:var(--ink2);white-space:nowrap;">地図</label>
@@ -193,6 +223,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
   <input list="nom-list" id="nom-search" placeholder="NOM検索…" style="width:170px;padding:5px 9px;border:1px solid var(--cream3);border-radius:5px;background:#fff;color:var(--ink);font-family:var(--sans);font-size:12px;" autocomplete="off">
   <datalist id="nom-list"></datalist>
   <span id="map-count"></span>
+  <button id="btn-visited" class="ctrl-btn" onclick="toggleVisitedFilter()" style="flex-shrink:0;">既飲</button>
   <button class="ctrl-btn" onclick="setInfoOff()" style="margin-left:auto;flex-shrink:0;">情報オフ</button>
 </div>
 
@@ -217,6 +248,9 @@ if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
 var auth=firebase.auth();
 var db=firebase.firestore();
 
+var memberNoms=new Set();
+var nomHasBottle=new Set();
+var nomHasJapanBottle=new Set();
 var map=L.map('map',{zoomControl:true}).setView([20.5,-103.5],8);
 
 L.Control.Ruler=L.Control.extend({
@@ -273,7 +307,13 @@ function onBasemapChange(val){
   _baseLayers[val].addTo(map);
 }
 
-function makeIcon(color){
+function makeIcon(color, visited){
+  if(visited){
+    return L.divIcon({
+      html:'<div style="width:13px;height:13px;border-radius:50%;background:'+color+';border:3px solid #c8860a;box-shadow:0 0 0 2px rgba(200,134,10,.35),0 1px 4px rgba(0,0,0,.45)"></div>',
+      iconSize:[20,20],iconAnchor:[10,10],className:''
+    });
+  }
   return L.divIcon({
     html:'<div style="width:11px;height:11px;border-radius:50%;background:'+color+';border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45)"></div>',
     iconSize:[16,16],iconAnchor:[8,8],className:''
@@ -291,7 +331,7 @@ var DISTRICT_LABELS={
 };
 var colorMode='district';
 var elevSettings={stops:[{elev:0,color:'#ffffff'},{elev:2500,color:'#e53935'}]};
-var isAdmin=false;
+var isAdmin=false; // member map: never admin
 
 async function loadElevSettings(){
   try{
@@ -306,14 +346,7 @@ async function loadElevSettings(){
     }
   }catch(e){}
 }
-async function checkAdmin(user){
-  if(!user||user.isAnonymous) return false;
-  try{
-    var snap=await db.collection('staffRoles').doc(user.uid).get();
-    var role=snap.exists?snap.data().role:null;
-    return role==='owner'||role==='staff';
-  }catch(e){return false;}
-}
+
 
 function hexToRgb(hex){
   var m=(hex||'').replace('#','').match(/.{2}/g);
@@ -364,7 +397,7 @@ function flashMarkersByDistrict(districtId){
     }));
   });
   setTimeout(function(){
-    targets.forEach(function(m){ m.marker.setIcon(makeIcon(getMarkerColor(m.dis))); });
+    targets.forEach(function(m){ m.marker.setIcon(makeIcon(getMarkerColor(m.dis), memberNoms.has(String(m.dis.nom||m.dis.id)))); });
   },1800);
 }
 function updateLegend(){
@@ -395,6 +428,11 @@ function updateLegend(){
       +'<div class="legend-grade" style="background:'+gradCss+'"></div>'
       +'<div class="legend-scale"><span>'+(firstStop?firstStop.elev+'m':'')+'</span><span>'+(lastStop?lastStop.elev+'m':'')+'</span></div>'
       +'<div class="legend-item" style="margin-top:4px;"><div class="legend-dot" style="background:#fff;border:1px solid var(--cream3);"></div>未設定</div>';
+  }
+  // visited
+  var visitedCount=allMarkers.filter(function(m){return memberNoms.has(String(m.dis.nom||m.dis.id));}).length;
+  if(visitedCount){
+    el.innerHTML+='<div style="margin-top:6px;padding-top:5px;border-top:1px solid var(--cream3);">'+'<div class="legend-item"><div class="legend-dot" style="background:var(--gold);border:3px solid #c8860a;"></div><span>✅ 飲んだ蒸留所</span><span style="font-family:var(--mono);font-size:10px;color:var(--ink3);margin-left:auto;">'+visitedCount+'</span></div></div>';
   }
   // DOT原産地呼称境界は自治区リストの各行に埋め込み済みのため凡例には表示しない
   // オーバーレイ凡例（ラベルのある図形のみ）
@@ -428,7 +466,7 @@ function toggleOverlay(idx){
   updateLegend();
 }
 function recolorMarkers(){
-  allMarkers.forEach(function(m){ m.marker.setIcon(makeIcon(getMarkerColor(m.dis))); });
+  allMarkers.forEach(function(m){ m.marker.setIcon(makeIcon(getMarkerColor(m.dis), memberNoms.has(String(m.dis.nom||m.dis.id)))); });
   updateLegend();
 }
 function toggleColorMode(){
@@ -490,8 +528,11 @@ function applyFilters(){
   allMarkers.forEach(function(m){
     var nom=parseInt(m.dis.nom||m.dis.id||0);
     var show=!distFilter||(distFilter==='__other__'?!DISTRICT_COLORS[m.dis.districtId]:m.dis.districtId===distFilter);
-    if(salesFilter==='1') show=show&&m.dis.introduced===1;
+    if(_visitedOnly) show=show&&memberNoms.has(String(m.dis.nom||m.dis.id));
+    if(salesFilter==='1') show=show&&nomHasBottle.has(String(m.dis.nom||m.dis.id));
+    if(salesFilter==='3') show=show&&nomHasJapanBottle.has(String(m.dis.nom||m.dis.id));
     if(salesFilter==='2') show=show&&m.dis.salesCategory===0;
+    if(salesFilter==='3') show=show&&m.dis.introduced===1&&m.dis.salesCategory===0;
     show=show&&nom>=nomFrom&&nom<=nomTo;
     if(show){ m.marker.addTo(map); visible++; }
     else { map.removeLayer(m.marker); }
@@ -544,17 +585,32 @@ document.getElementById('nom-search').addEventListener('change',function(){
   this.value='';
 });
 
+var _visitedOnly=false;
+function toggleVisitedFilter(){
+  _visitedOnly=!_visitedOnly;
+  var btn=document.getElementById('btn-visited');
+  if(btn){ btn.textContent=_visitedOnly?'全件':'既飲'; btn.classList.toggle('on',_visitedOnly); }
+  applyFilters();
+}
 function loadData(){
   Promise.all([
     db.collection('distilleries').get(),
     db.collection('locations').get(),
-    db.collection('districts').get()
+    db.collection('districts').get(),
+    db.collection('bottleData').get()
   ]).then(function(results){
     var distilleries=results[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
     var locMap={};
     results[1].docs.forEach(function(d){locMap[d.id]=d.data();});
     var distMap={};
     results[2].docs.forEach(function(d){distMap[d.id]=d.data(); districtNames[d.id]=d.data().districtName||d.id;});
+    nomHasBottle=new Set(); nomHasJapanBottle=new Set();
+    results[3].docs.forEach(function(d){
+      var bd=d.data(); if(!bd.brandId) return;
+      var nom=String(bd.brandId).slice(0,4);
+      nomHasBottle.add(nom);
+      if(String(bd.importType||'')===String(0)||bd.importType===0) nomHasJapanBottle.add(nom);
+    });
 
     buildDistrictFilter(districtNames);
 
@@ -588,7 +644,9 @@ function loadData(){
         var dist=dis.districtId?distMap[dis.districtId]:null;
         var locName=loc?loc.locationName:'';
         var distName=dist?dist.districtName:'';
-        var marker=L.marker([lat,lng],{icon:makeIcon(getMarkerColor(dis))});
+        var nomKey=String(dis.nom||dis.id);
+        var visited=memberNoms.has(nomKey);
+        var marker=L.marker([lat,lng],{icon:makeIcon(getMarkerColor(dis),visited),zIndexOffset:visited?100:0});
 
         var coordStr=(dis.latitude&&dis.longitude)?dis.latitude.toFixed(5)+', '+dis.longitude.toFixed(5):'';
         var elevStr=dis.elevation!=null?dis.elevation+'m':'—';
@@ -611,13 +669,11 @@ function loadData(){
             :'';
           return '<div class="dis-pop">'
             +'<div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin-bottom:2px;">'
-            +(isAdmin
-            ?'<a class="p-nom" style="margin-bottom:0;text-decoration:underline dotted;color:var(--gold-d);cursor:pointer;" href="admin_distillery.html?nom='+encodeURIComponent(nomId)+'" target="_blank" rel="noopener" title="蒸留所マスタを編集（新しいタブ）">NOM '+nomId+'</a>'
-            :'<div class="p-nom" style="margin-bottom:0;">NOM '+nomId+'</div>')
+            +'<div class="p-nom" style="margin-bottom:0;">NOM '+nomId+'</div>'
             +(mapUrl?'<a href="'+mapUrl+'" target="_blank" rel="noopener noreferrer" style="font-size:10px;color:var(--teal);text-decoration:none;white-space:nowrap;flex-shrink:0;">🗺 MAP</a>':'')
             +(ammUrl?'<a href="'+ammUrl+'" target="_blank" rel="noopener noreferrer" style="font-size:10px;color:var(--gold-d);text-decoration:none;white-space:nowrap;flex-shrink:0;">📋 AMM</a>':'')
             +(dis.latitude&&dis.longitude?'<a href="https://maps.google.com/?cbll='+dis.latitude+','+dis.longitude+'&layer=c" target="_blank" rel="noopener noreferrer" style="font-size:10px;color:var(--ink3);text-decoration:none;white-space:nowrap;flex-shrink:0;">👁 SV</a>':'')
-            +(isAdmin?'<a href="admin_distillery.html?nom='+encodeURIComponent(nomId)+'" style="font-size:10px;color:var(--red);text-decoration:none;white-space:nowrap;flex-shrink:0;margin-left:auto;">✏️ 編集</a>':'')
+            +(memberNoms.has(String(nomId))?'<span style="font-size:10px;color:var(--gold-d);white-space:nowrap;flex-shrink:0;margin-left:auto;font-weight:500;">✅ 飲んだ</span>':'')
             +'</div>'
             +'<div class="p-ja">'+(dis.nomJa||'—')+'</div>'
             +'<div class="p-es">'+(dis.nomEs||'—')+'</div>'
@@ -660,32 +716,60 @@ function loadData(){
   });
 }
 
-var _authDone=false;
-// まず現在のユーザーを確認してからデータロード（signInAnonymouslyより先に）
-auth.onAuthStateChanged(async function(user){
-  // adminチェックは毎回実行
-  isAdmin=await checkAdmin(user);
-  var badge=document.getElementById('admin-badge');
-  if(badge){
-    badge.style.display=isAdmin?'':'none';
-    // デバッグ用：ユーザーメールも表示
-    if(isAdmin&&user) badge.title=user.email;
-  }
+// ── ログインフォーム ──────────────────────────────────────────────
+document.getElementById('l-btn').addEventListener('click', async function(){
+  var email=document.getElementById('l-email').value.trim();
+  var pass=document.getElementById('l-pass').value;
+  document.getElementById('lerr').textContent='';
+  this.disabled=true;
+  try{ await auth.signInWithEmailAndPassword(email, pass); }
+  catch(e){ document.getElementById('lerr').textContent=e.message; this.disabled=false; }
+});
+document.getElementById('l-pass').addEventListener('keydown',function(e){
+  if(e.key==='Enter') document.getElementById('l-btn').click();
+});
+document.getElementById('btn-logout').addEventListener('click',function(){ auth.signOut(); });
 
-  // データロードは初回のみ
-  if(_authDone) return; _authDone=true;
+// ── 会員NOMs読み込み ──────────────────────────────────────────────
+async function loadMemberNoms(user){
+  memberNoms=new Set();
+  try{
+    // membersコレクションからauthUidでdocIdを取得
+    var msnap=await db.collection('members').where('authUid','==',user.uid).limit(1).get();
+    var memberId=msnap.empty?user.uid:msnap.docs[0].id;
+    // visits/{memberId}/orders を取得
+    var vsnap=await db.collection('visits').doc(memberId).collection('orders').get();
+    vsnap.docs.forEach(function(doc){
+      var d=doc.data();
+      // bottleData配列 or オブジェクトからbrandIdを抽出
+      var bottles=d.bottleData;
+      if(Array.isArray(bottles)){
+        bottles.forEach(function(b){ if(b.brandId) memberNoms.add(String(b.brandId).slice(0,4)); });
+      } else if(bottles&&typeof bottles==='object'){
+        Object.values(bottles).forEach(function(b){ if(b&&b.brandId) memberNoms.add(String(b.brandId).slice(0,4)); });
+      }
+      // orderItems等も確認
+      var items=d.orderItems||d.items;
+      if(Array.isArray(items)){
+        items.forEach(function(it){ if(it.brandId) memberNoms.add(String(it.brandId).slice(0,4)); });
+      }
+    });
+  }catch(e){ console.warn('loadMemberNoms error:',e); }
+}
+
+// ── 会員認証 ──────────────────────────────────────────────────────
+AuthRole.requireMember(auth, async function(user){
+  var lbl=document.getElementById('member-label');
+  if(lbl) lbl.textContent=user.email||'';
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').style.display='flex';
+  await loadMemberNoms(user);
   await loadElevSettings();
   loadDotStatusFromFirestore();
-
-  if(user){
-    // ログイン済み（匿名・非匿名とも）はそのままデータロード
-    loadData(); loadOverlays(); onDotSelChange('all');
-  } else {
-    // 未ログインのみ匿名サインイン（既存セッションを絶対に上書きしない）
-    auth.signInAnonymously()
-      .then(function(){ loadData(); loadOverlays(); onDotSelChange('all'); })
-      .catch(function(){ loadData(); loadOverlays(); onDotSelChange('all'); });
-  }
+  loadData(); loadOverlays(); onDotSelChange('all');
+}, function(){
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('app').style.display='none';
 });
 
 // ── マップオーバーレイ ──────────────────────────────────
@@ -1263,5 +1347,6 @@ async function retryStateBoundary(btn,iso){
   }
 }
 </script>
+</div><!-- #app -->
 </body>
 </html>

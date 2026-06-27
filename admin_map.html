@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>テキーラ道場 — 蒸留所マップ</title>
+<title>テキーラ道場 — 管理者マップ</title>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -17,6 +17,7 @@ var FIREBASE_CONFIG={
   appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
 };
 </script>
+<script src="/auth-role.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/osmtogeojson@3.0.0-beta.5/osmtogeojson.js"></script>
@@ -133,18 +134,44 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 #dot-opacity-range::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--cream3);}
 #dot-opacity-range::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--ink2);cursor:pointer;border:none;}
 #dot-opacity-range::-moz-range-track{height:4px;border-radius:2px;background:var(--cream3);}
+
+/* ── Login screen ── */
+#login-screen{display:none;min-height:100vh;align-items:center;justify-content:center;background:var(--cream);}
+.lcard{width:100%;max-width:360px;background:#fff;border:1px solid var(--cream3);border-radius:8px;padding:32px;box-shadow:0 4px 16px rgba(0,0,0,.08);}
+.lcard h3{margin-bottom:16px;color:var(--gold-d);font-family:var(--serif);font-size:22px;}
+.lcard label{display:block;font-size:11px;color:var(--ink3);margin-bottom:4px;margin-top:12px;letter-spacing:.06em;}
+.lcard input{width:100%;padding:9px 11px;border:1px solid var(--cream3);border-radius:5px;font-size:13px;box-sizing:border-box;font-family:var(--sans);}
+#lerr{font-size:12px;color:var(--red);margin-top:8px;min-height:16px;}
+.lbtn{width:100%;margin-top:16px;padding:11px;background:var(--gold-d);color:#fff;border:none;border-radius:5px;font-size:13px;cursor:pointer;font-family:var(--sans);}
+.lbtn:hover{background:var(--gold);}
+#app-wrap{display:none;flex-direction:column;height:100vh;}
 </style>
 </head>
 <body>
 
+<div id="login-screen" style="display:flex">
+  <div class="lcard">
+    <h3>管理者マップ</h3>
+    <label>メールアドレス</label>
+    <input id="l-email" type="email" autocomplete="username">
+    <label>パスワード</label>
+    <input id="l-pass" type="password" autocomplete="current-password">
+    <div id="lerr"></div>
+    <button class="lbtn" id="l-btn">ログイン</button>
+  </div>
+</div>
+
+<div id="app-wrap" style="display:none;flex-direction:column;height:100vh;">
 <div class="hdr">
   <div>
     <div class="hdr-logo">テキーラ道場</div>
-    <div class="hdr-sub">蒸留所マップ</div>
+    <div class="hdr-sub">管理者マップ</div>
   </div>
   <div style="display:flex;align-items:center;gap:10px;margin-left:auto;">
-    <span id="admin-badge" style="display:none;font-size:11px;font-weight:600;color:#fff;background:#c8320a;padding:3px 10px;border-radius:12px;letter-spacing:.04em;">🔑 管理者モード</span>
-    <a class="hdr-back" href="index.html">← ホームへ</a>
+    <span style="font-size:11px;font-weight:600;color:#fff;background:#c8320a;padding:3px 10px;border-radius:12px;letter-spacing:.04em;">🔑 管理者モード</span>
+    <span id="hdr-user" style="font-size:10px;color:rgba(255,255,255,.45);font-family:var(--mono);"></span>
+    <button id="btn-logout" style="padding:4px 10px;border:1px solid rgba(255,255,255,.2);border-radius:4px;background:none;color:rgba(255,255,255,.5);font-size:11px;cursor:pointer;" onclick="firebase.auth().signOut()">ログアウト</button>
+    <a class="hdr-back" href="admin.html">← 管理へ</a>
   </div>
 </div>
 <div class="dot-desc" id="dot-desc">テキーラは原産地呼称制度の定めにより、Jalisco州の全域（125自治区）とMichoacán州の一部（30自治区）、Guanajuato州の一部（7自治区）、Tamaulipas州の一部（11自治区）、Nayarit州の一部（8自治区）で原材料のアガベの栽培からテキーラの製造まで行わなければいけない（100%アガベテキーラ以外のボトリングについては指定地域外でも可能）。</div>
@@ -291,7 +318,30 @@ var DISTRICT_LABELS={
 };
 var colorMode='district';
 var elevSettings={stops:[{elev:0,color:'#ffffff'},{elev:2500,color:'#e53935'}]};
-var isAdmin=false;
+var isAdmin=true; // 管理者専用ページ
+
+// auth-role: staff認証
+AuthRole.requireStaff(firebase.auth(), function(user){
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app-wrap').style.display='flex';
+  var hdrUser=document.getElementById('hdr-user');
+  if(hdrUser) hdrUser.textContent=user.email;
+}, function(){
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('app-wrap').style.display='none';
+});
+
+document.getElementById('l-btn').addEventListener('click', async function(){
+  var email=document.getElementById('l-email').value.trim();
+  var pass=document.getElementById('l-pass').value;
+  document.getElementById('lerr').textContent='';
+  this.disabled=true;
+  try{ await firebase.auth().signInWithEmailAndPassword(email,pass); }
+  catch(e){ document.getElementById('lerr').textContent=e.message; this.disabled=false; }
+});
+document.getElementById('l-pass').addEventListener('keydown',function(e){
+  if(e.key==='Enter') document.getElementById('l-btn').click();
+});
 
 async function loadElevSettings(){
   try{
@@ -306,13 +356,6 @@ async function loadElevSettings(){
     }
   }catch(e){}
 }
-async function checkAdmin(user){
-  if(!user||user.isAnonymous) return false;
-  try{
-    var snap=await db.collection('staffRoles').doc(user.uid).get();
-    var role=snap.exists?snap.data().role:null;
-    return role==='owner'||role==='staff';
-  }catch(e){return false;}
 }
 
 function hexToRgb(hex){
@@ -660,32 +703,12 @@ function loadData(){
   });
 }
 
-var _authDone=false;
-// まず現在のユーザーを確認してからデータロード（signInAnonymouslyより先に）
-auth.onAuthStateChanged(async function(user){
-  // adminチェックは毎回実行
-  isAdmin=await checkAdmin(user);
-  var badge=document.getElementById('admin-badge');
-  if(badge){
-    badge.style.display=isAdmin?'':'none';
-    // デバッグ用：ユーザーメールも表示
-    if(isAdmin&&user) badge.title=user.email;
-  }
-
-  // データロードは初回のみ
-  if(_authDone) return; _authDone=true;
+// auth-role のログイン成功後にデータロード
+firebase.auth().onAuthStateChanged(async function(user){
+  if(!user||user.isAnonymous) return;
   await loadElevSettings();
   loadDotStatusFromFirestore();
-
-  if(user){
-    // ログイン済み（匿名・非匿名とも）はそのままデータロード
-    loadData(); loadOverlays(); onDotSelChange('all');
-  } else {
-    // 未ログインのみ匿名サインイン（既存セッションを絶対に上書きしない）
-    auth.signInAnonymously()
-      .then(function(){ loadData(); loadOverlays(); onDotSelChange('all'); })
-      .catch(function(){ loadData(); loadOverlays(); onDotSelChange('all'); });
-  }
+  loadData(); loadOverlays(); onDotSelChange('all');
 });
 
 // ── マップオーバーレイ ──────────────────────────────────
@@ -1263,5 +1286,6 @@ async function retryStateBoundary(btn,iso){
   }
 }
 </script>
+</div><!-- #app-wrap -->
 </body>
 </html>

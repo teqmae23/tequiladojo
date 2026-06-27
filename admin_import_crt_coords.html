@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>CRT座標インポート</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+<script src="/auth-role.js"></script>
+<style>
+#login-screen{display:none;min-height:100vh;align-items:center;justify-content:center;background:#faf9f6}
+.lcard{width:100%;max-width:360px;background:#fff;border:1px solid #ddd;border-radius:8px;padding:32px;box-shadow:0 4px 16px rgba(0,0,0,.08)}
+.lcard h3{margin-bottom:16px;color:#7a5610;font-size:18px}
+.lcard label{display:block;font-size:11px;color:#888;margin-bottom:4px;margin-top:12px}
+.lcard input{width:100%;padding:9px 11px;border:1px solid #ccc;border-radius:5px;font-size:13px;box-sizing:border-box}
+#lerr{font-size:12px;color:#c00;margin-top:8px;min-height:16px}
+.lbtn{width:100%;margin-top:16px;padding:11px;background:#7a5610;color:#fff;border:none;border-radius:5px;font-size:13px;cursor:pointer}
+.lbtn:hover{background:#c8860a}
+#app{display:none}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:sans-serif;font-size:13px;background:#faf9f6;color:#3a2e20;padding:20px}
+h1{font-size:18px;margin-bottom:16px}
+.btn{padding:5px 12px;border:none;border-radius:6px;cursor:pointer;font-size:12px}
+.btn-primary{background:#c8860a;color:#fff}
+.btn-secondary{background:#e8e0d4;color:#3a2e20}
+.btn-sm{padding:3px 8px;font-size:11px;background:#e8e0d4;border:none;border-radius:4px;cursor:pointer}
+.btn-sm:hover{background:#d8cfc0}
+.status{margin:12px 0;padding:10px;border-radius:6px;font-size:12px}
+.status.info{background:#e8f4fd;border:1px solid #90caf9}
+.status.ok{background:#e8f5e9;border:1px solid #a5d6a7}
+.status.err{background:#ffebee;border:1px solid #ef9a9a}
+table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}
+th,td{border:1px solid #ddd;padding:5px 8px;text-align:left;white-space:nowrap}
+th{background:#f0ebe0;font-weight:600;cursor:pointer;user-select:none}
+th:hover{background:#e0d8c8}
+th .sort-icon{margin-left:3px;font-size:10px}
+th.sort-asc .sort-icon::after{content:'▲'}
+th.sort-desc .sort-icon::after{content:'▼'}
+th:not(.sort-asc):not(.sort-desc) .sort-icon::after{content:'⇅';opacity:0.4}
+tr.register{background:#e8f5e9}
+tr.update{background:#fff8e1}
+tr.create{background:#e3f2fd}
+tr.same{background:#fff;color:#aaa}
+tr.done{background:#c8e6c9}
+.controls{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+#log{max-height:180px;overflow-y:auto;font-size:11px;font-family:monospace;background:#1a1a1a;color:#ccc;padding:10px;border-radius:6px;margin-top:12px}
+.legend{display:flex;gap:10px;font-size:11px;margin-bottom:8px;flex-wrap:wrap}
+.legend span{padding:2px 8px;border-radius:3px;border:1px solid #ddd}
+.diff-big{color:#d32f2f;font-weight:600}
+.loc-mismatch{color:#d32f2f;font-weight:600}
+/* inline location editor */
+.loc-editor{display:none;position:absolute;z-index:100;background:#fff;border:1px solid #c8a060;border-radius:6px;padding:10px;box-shadow:0 4px 12px rgba(0,0,0,.15);min-width:280px}
+.loc-editor.open{display:block}
+.loc-editor select{width:100%;margin-top:4px;padding:4px;font-size:12px;border:1px solid #ccc;border-radius:4px}
+.loc-editor label{font-size:11px;color:#666;display:block;margin-top:6px}
+.loc-editor .ebtns{display:flex;gap:6px;margin-top:8px}
+.loc-editor .ebtns button{flex:1}
+td.loc-cell{position:relative}
+</style>
+</head>
+<body>
+
+<div id="login-screen" style="display:flex">
+  <div class="lcard">
+    <h3>CRT座標インポート</h3>
+    <label>メールアドレス</label>
+    <input id="l-email" type="email" autocomplete="username">
+    <label>パスワード</label>
+    <input id="l-pass" type="password" autocomplete="current-password">
+    <div id="lerr"></div>
+    <button class="lbtn" id="l-btn">ログイン</button>
+  </div>
+</div>
+
+<div id="app">
+<h1 style="display:flex;align-items:center;gap:12px">CRT座標インポート（fabricas → Firestore）
+  <span id="user-info" style="font-size:11px;color:#999;font-family:monospace;font-weight:normal"></span>
+  <button class="btn btn-secondary" id="btn-logout" style="font-size:11px;padding:3px 10px">ログアウト</button>
+</h1>
+
+<div class="controls">
+  <button class="btn btn-primary" id="btn-load">① データ読み込み</button>
+  <button class="btn btn-secondary" id="btn-import" disabled>② Firestoreに一括書き込み</button>
+  <button class="btn btn-secondary" id="btn-copy-to-master" disabled title="チェック行のCRT緯度経度をマスタ緯度経度にコピー">📋 CRT緯度経度をマスタにコピー</button>
+  <button class="btn btn-secondary" id="btn-check-master-empty" disabled title="マスタ緯度経度が空欄の行だけチェックを入れる">📍 マスタ緯度経度が空欄の行を選択</button>
+  <button class="btn btn-secondary" id="btn-check-all" style="display:none">全選択</button>
+  <button class="btn btn-secondary" id="btn-uncheck-all" style="display:none">全解除</button>
+  <span id="summary"></span>
+</div>
+<div class="legend">
+  <span style="background:#e8f5e9">🟢 登録（レコードあり・CRT未設定）</span>
+  <span style="background:#fff8e1">🟡 更新（レコードあり・CRT変化あり）</span>
+  <span style="background:#e3f2fd">🔵 新規（レコードなし）</span>
+  <span style="background:#fff;color:#aaa">⬜ 変化なし</span>
+</div>
+
+<!-- inline location editor popup -->
+<div class="loc-editor" id="loc-editor">
+  <label>地区</label>
+  <select id="le-district"><option value="">選択...</option></select>
+  <label>所在地</label>
+  <select id="le-location"><option value="">選択...</option></select>
+  <div class="ebtns">
+    <button class="btn btn-primary" id="le-save">保存</button>
+    <button class="btn btn-secondary" id="le-cancel">キャンセル</button>
+  </div>
+</div>
+
+<div id="status-area"></div>
+<div id="table-area" style="overflow-x:auto"></div>
+<div id="log"></div>
+</div><!-- #app -->
+
+<script>
+var FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:        "tequiladojo.firebaseapp.com",
+  projectId:         "tequiladojo",
+  storageBucket:     "tequiladojo.firebasestorage.app",
+  messagingSenderId: "56663296233",
+  appId:             "1:56663296233:web:c8cac2fcbeb4faa09e0878",
+};
+if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+var fsDb = firebase.firestore();
+var fsAuth = firebase.auth();
+
+// Auth
+AuthRole.requireStaff(fsAuth, function(user){
+  document.getElementById("login-screen").style.display="none";
+  document.getElementById("app").style.display="block";
+  document.getElementById("user-info").textContent=user.email;
+}, function(){
+  document.getElementById("login-screen").style.display="flex";
+  document.getElementById("app").style.display="none";
+});
+
+document.getElementById("l-btn").addEventListener("click", async function(){
+  var email=document.getElementById("l-email").value.trim();
+  var pass=document.getElementById("l-pass").value;
+  document.getElementById("lerr").textContent="";
+  this.disabled=true;
+  try{ await fsAuth.signInWithEmailAndPassword(email, pass); }
+  catch(e){ document.getElementById("lerr").textContent=e.message; this.disabled=false; }
+});
+document.getElementById("l-pass").addEventListener("keydown",function(e){
+  if(e.key==="Enter") document.getElementById("l-btn").click();
+});
+document.getElementById("btn-logout").addEventListener("click",function(){ fsAuth.signOut(); });
+
+var DB_URL = "https://raw.githubusercontent.com/teqmae23/tequiladojo/main/data/crt_stats.db";
+var planRows = [];
+var sortCol = null, sortDir = 1;
+var allDistricts = [], allLocations = [], locMap = {};
+// checkbox state: indexed by origIdx
+var chkState = {};
+
+var COLS = [
+  { key:'chk',           label:'',              val:function(p){ return chkState[planRows.indexOf(p)]?0:1; } },
+  { key:'nom',           label:'NOM',           val:function(p){ return parseInt(p.fab.nom); } },
+  { key:'empresa',       label:'CRT会社名',      val:function(p){ return p.fab.empresa; } },
+  { key:'crtEstado',     label:'CRT所在地',      val:function(p){ return p.fab.estado; } },
+  { key:'masterLoc',     label:'マスタ所在地',   val:function(p){ return p.masterDireccion||''; } },
+  { key:'masterLat',     label:'マスタ緯度',     val:function(p){ return p.masterLat; } },
+  { key:'masterLng',     label:'マスタ経度',     val:function(p){ return p.masterLng; } },
+  { key:'currentCrtLat', label:'現在CRT緯度',    val:function(p){ return p.currentCrtLat; } },
+  { key:'currentCrtLng', label:'現在CRT経度',    val:function(p){ return p.currentCrtLng; } },
+  { key:'newCrtLat',     label:'新CRT緯度',      val:function(p){ return p.fab.lat; } },
+  { key:'newCrtLng',     label:'新CRT経度',      val:function(p){ return p.fab.lng; } },
+  { key:'diffLat',       label:'緯度差分',       val:function(p){ return p.fab.lat!=null&&p.masterLat!=null?p.fab.lat-p.masterLat:null; } },
+  { key:'diffLng',       label:'経度差分',       val:function(p){ return p.fab.lng!=null&&p.masterLng!=null?p.fab.lng-p.masterLng:null; } },
+  { key:'action',        label:'アクション',     val:function(p){ return p.action; } },
+];
+
+function normLoc(s){
+  return (s||'').toUpperCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g,'')  // アクセント除去 (é→e, ñ→n)
+    .replace(/[~\-_\.]/g,' ')                          // チルダ・ハイフン等をスペースに
+    .replace(/\s+/g,' ').trim();                       // 連続スペース圧縮
+}
+
+function log(msg){
+  var el=document.getElementById("log");
+  el.textContent+=msg+"\n"; el.scrollTop=el.scrollHeight;
+}
+function setStatus(msg,cls){
+  document.getElementById("status-area").innerHTML='<div class="status '+cls+'">'+msg+'</div>';
+}
+function fmt(v){ return v!=null?Number(v).toFixed(5):'―'; }
+function fmtDiff(d){
+  if(d==null) return '―';
+  var s=(d>=0?'+':'')+d.toFixed(5);
+  return Math.abs(d)>=0.1?'<span class="diff-big">'+s+'</span>':'<span style="color:#666;font-size:11px">'+s+'</span>';
+}
+
+function renderTable(){
+  // Persist current checkbox states before re-render
+  document.querySelectorAll(".row-chk").forEach(function(c){
+    chkState[parseInt(c.dataset.idx)] = c.checked;
+  });
+
+  var rows = planRows.slice();
+  if(sortCol !== null){
+    var fn = COLS[sortCol].val;
+    rows.sort(function(a,b){
+      var av=fn(a), bv=fn(b);
+      if(av==null) return sortDir; if(bv==null) return -sortDir;
+      return av<bv?-sortDir:av>bv?sortDir:0;
+    });
+  }
+
+  var actionLabel={register:'🟢 登録',update:'🟡 更新',create:'🔵 新規',same:'⬜ 変化なし'};
+
+  var html='<table id="main-table"><thead><tr>';
+  // Checkbox header (col 0)
+  var chkCls = sortCol===0?(sortDir===1?'sort-asc':'sort-desc'):'';
+  html+='<th class="'+chkCls+'" data-col="0"><input type="checkbox" id="chk-header"><span class="sort-icon"></span></th>';
+  for(var i=1;i<COLS.length;i++){
+    var cls=sortCol===i?(sortDir===1?'sort-asc':'sort-desc'):'';
+    html+='<th class="'+cls+'" data-col="'+i+'">'+COLS[i].label+'<span class="sort-icon"></span></th>';
+  }
+  html+='</tr></thead><tbody>';
+
+  rows.forEach(function(p){
+    var origIdx=planRows.indexOf(p);
+    var isChecked = chkState[origIdx] !== undefined ? chkState[origIdx] : (p.action!=='same');
+    var cls=p.action;
+    var chk=isChecked?' checked':'';
+    var dis='';
+
+    var crtCity=normLoc(p.fab.estado.split(',')[0]);
+    var masterLoc=normLoc(p.masterDireccion);
+    var locMismatch=masterLoc && crtCity!==masterLoc;
+    var locCls=locMismatch?' class="loc-mismatch"':'';
+
+    var diffLat=(p.fab.lat!=null&&p.masterLat!=null)?p.fab.lat-p.masterLat:null;
+    var diffLng=(p.fab.lng!=null&&p.masterLng!=null)?p.fab.lng-p.masterLng:null;
+
+    html+='<tr class="'+cls+'" id="row-'+origIdx+'">'
+      +'<td><input type="checkbox" class="row-chk" data-idx="'+origIdx+'"'+chk+dis+'></td>'
+      +'<td>'+p.fab.nom+'</td>'
+      +'<td>'+p.fab.empresa+'</td>'
+      +'<td'+locCls+'>'+p.fab.estado+'</td>'
+      +'<td class="loc-cell"'+locCls+'>'
+        +(p.masterDireccion||'―')
+        +(p.docId?'&nbsp;<button class="btn-sm btn-loc-edit" data-idx="'+origIdx+'">変更</button>':'')
+      +'</td>'
+      +'<td>'+fmt(p.masterLat)+'</td><td>'+fmt(p.masterLng)+'</td>'
+      +'<td>'+fmt(p.currentCrtLat)+'</td><td>'+fmt(p.currentCrtLng)+'</td>'
+      +'<td>'+p.fab.lat+'</td><td>'+p.fab.lng+'</td>'
+      +'<td>'+fmtDiff(diffLat)+'</td>'
+      +'<td>'+fmtDiff(diffLng)+'</td>'
+      +'<td>'+actionLabel[p.action]+'</td>'
+      +'</tr>';
+  });
+  html+='</tbody></table>';
+  document.getElementById("table-area").innerHTML=html;
+
+  // Sort click
+  document.querySelectorAll("#main-table thead th[data-col]").forEach(function(th){
+    th.addEventListener("click",function(e){
+      if(e.target.type==='checkbox') return;
+      var c=parseInt(this.dataset.col);
+      if(sortCol===c) sortDir=-sortDir; else{sortCol=c;sortDir=1;}
+      renderTable();
+    });
+  });
+
+  // Header checkbox
+  var hdr=document.getElementById("chk-header");
+  if(hdr) hdr.addEventListener("change",function(){
+    var v=this.checked;
+    document.querySelectorAll(".row-chk").forEach(function(c){
+      c.checked=v;
+      chkState[parseInt(c.dataset.idx)]=v;
+    });
+  });
+
+  // Checkbox change → update state
+  document.querySelectorAll(".row-chk").forEach(function(c){
+    c.addEventListener("change",function(){
+      chkState[parseInt(this.dataset.idx)]=this.checked;
+    });
+  });
+
+  // Location edit buttons
+  document.querySelectorAll(".btn-loc-edit").forEach(function(btn){
+    btn.addEventListener("click",function(e){
+      e.stopPropagation();
+      var idx=parseInt(this.dataset.idx);
+      openLocEditor(idx, this);
+    });
+  });
+}
+
+// ── Location editor ─────────────────────────────────────
+var leCurrentIdx=null;
+
+function buildDistrictSel(selectedDistId){
+  var sel=document.getElementById("le-district");
+  sel.innerHTML='<option value="">選択...</option>';
+  allDistricts.forEach(function(d){
+    var opt=document.createElement("option");
+    opt.value=d.id; opt.textContent=d.districtName||d.id;
+    if(d.id===selectedDistId) opt.selected=true;
+    sel.appendChild(opt);
+  });
+  buildLocSel(selectedDistId, null);
+}
+
+function buildLocSel(distId, selectedLocId){
+  var sel=document.getElementById("le-location");
+  sel.innerHTML='<option value="">選択...</option>';
+  var filtered=distId?allLocations.filter(function(l){return l.districtId===distId;}):allLocations;
+  filtered.forEach(function(l){
+    var opt=document.createElement("option");
+    opt.value=l.id; opt.textContent=l.locationName||l.id;
+    if(l.id===selectedLocId) opt.selected=true;
+    sel.appendChild(opt);
+  });
+}
+
+function openLocEditor(idx, btn){
+  leCurrentIdx=idx;
+  var p=planRows[idx];
+  // Find current district/location from Firestore data (stored in p.locationId, p.districtId)
+  buildDistrictSel(p.districtId||null);
+  buildLocSel(p.districtId||null, p.locationId||null);
+
+  var editor=document.getElementById("loc-editor");
+  editor.classList.add("open");
+  // Position near button
+  var rect=btn.getBoundingClientRect();
+  editor.style.top=(rect.bottom+window.scrollY+4)+"px";
+  editor.style.left=Math.min(rect.left+window.scrollX, window.innerWidth-300)+"px";
+  editor.style.position="absolute";
+}
+
+document.getElementById("le-district").addEventListener("change",function(){
+  buildLocSel(this.value, null);
+});
+
+document.getElementById("le-save").addEventListener("click",async function(){
+  if(leCurrentIdx===null) return;
+  var p=planRows[leCurrentIdx];
+  var distId=document.getElementById("le-district").value;
+  var locId=document.getElementById("le-location").value;
+  if(!locId){alert("所在地を選択してください"); return;}
+
+  this.disabled=true; this.textContent="保存中…";
+  try{
+    await fsDb.collection("distilleries").doc(p.docId).update({
+      districtId: distId||null,
+      locationId: locId,
+    });
+    p.districtId=distId||null;
+    p.locationId=locId;
+    p.masterDireccion=locMap[locId]||locId;
+    log("所在地更新: NOM"+p.fab.nom+" → "+p.masterDireccion);
+    document.getElementById("loc-editor").classList.remove("open");
+    renderTable();
+  }catch(e){
+    alert("保存エラー: "+e);
+  }
+  this.disabled=false; this.textContent="保存";
+});
+
+document.getElementById("le-cancel").addEventListener("click",function(){
+  document.getElementById("loc-editor").classList.remove("open");
+  leCurrentIdx=null;
+});
+document.addEventListener("click",function(e){
+  var editor=document.getElementById("loc-editor");
+  if(editor.classList.contains("open") && !editor.contains(e.target) && !e.target.classList.contains("btn-loc-edit")){
+    editor.classList.remove("open");
+  }
+});
+
+// ── Load ────────────────────────────────────────────────
+document.getElementById("btn-load").addEventListener("click",async function(){
+  setStatus("読み込み中…","info");
+  log("=== 開始 ===");
+  planRows=[]; chkState={}; sortCol=null; sortDir=1;
+
+  var SQL;
+  try{ SQL=await initSqlJs({locateFile:function(f){return "https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/"+f;}}); }
+  catch(e){ setStatus("sql.js 読み込みエラー: "+e,"err"); return; }
+
+  log("SQLite DB 取得中…");
+  var resp;
+  try{ resp=await fetch(DB_URL); }catch(e){ setStatus("DB取得エラー: "+e,"err"); return; }
+  if(!resp.ok){ setStatus("DB取得失敗: HTTP "+resp.status,"err"); return; }
+  var buf=await resp.arrayBuffer();
+  var sqlDb=new SQL.Database(new Uint8Array(buf));
+
+  var fabricas=[];
+  var res=sqlDb.exec("SELECT NOM, Fabricas, EstadoMunicipio, Latitud, Longitud FROM fabricas WHERE CAST(NOM AS INTEGER) >= 1000 ORDER BY CAST(NOM AS INTEGER)");
+  if(res.length) res[0].values.forEach(function(row){
+    fabricas.push({nom:String(parseInt(String(row[0]),10)),empresa:String(row[1]),estado:String(row[2]),lat:parseFloat(row[3]),lng:parseFloat(row[4])});
+  });
+  log("fabricas (NOM≥1000): "+fabricas.length+" 件");
+
+  // Fetch districts, locations, distilleries in parallel
+  log("Firestore 取得中…");
+  var [distSnap, locSnap, snap] = await Promise.all([
+    fsDb.collection("districts").get(),
+    fsDb.collection("locations").get(),
+    fsDb.collection("distilleries").get(),
+  ]);
+
+  allDistricts=[]; distSnap.forEach(function(d){ allDistricts.push({id:d.id,...d.data()}); });
+  allDistricts.sort(function(a,b){ return (a.districtName||a.id)<(b.districtName||b.id)?-1:1; });
+
+  allLocations=[]; locMap={};
+  locSnap.forEach(function(d){
+    var r=d.data();
+    allLocations.push({id:d.id,locationName:r.locationName||d.id,districtId:r.districtId||null});
+    locMap[d.id]=r.locationName||d.id;
+  });
+  allLocations.sort(function(a,b){ return (a.locationName)<(b.locationName)?-1:1; });
+
+  log("districts: "+distSnap.size+" / locations: "+locSnap.size+" / distilleries: "+snap.size);
+
+  var fsNomIndex={};
+  snap.forEach(function(doc){
+    var r=doc.data();
+    var nomKey=String(parseInt(doc.id,10));
+    if(!isNaN(parseInt(nomKey))) fsNomIndex[nomKey]={
+      docId:doc.id,
+      masterLat:r.latitude!=null?parseFloat(r.latitude):null,
+      masterLng:r.longitude!=null?parseFloat(r.longitude):null,
+      crtLat:r.crtLatitude!=null?parseFloat(r.crtLatitude):null,
+      crtLng:r.crtLongitude!=null?parseFloat(r.crtLongitude):null,
+      masterDireccion:r.locationId?(locMap[r.locationId]||r.locationId):null,
+      locationId:r.locationId||null,
+      districtId:r.districtId||null,
+    };
+  });
+  log("Firestoreインデックス: "+Object.keys(fsNomIndex).length+" 件");
+
+  var cntR=0,cntU=0,cntC=0,cntS=0;
+  fabricas.forEach(function(fab){
+    var ex=fsNomIndex[fab.nom];
+    var action,docId=null,masterLat=null,masterLng=null,currentCrtLat=null,currentCrtLng=null,masterDireccion=null,locationId=null,districtId=null;
+    if(ex){
+      docId=ex.docId; masterLat=ex.masterLat; masterLng=ex.masterLng;
+      currentCrtLat=ex.crtLat; currentCrtLng=ex.crtLng;
+      masterDireccion=ex.masterDireccion; locationId=ex.locationId; districtId=ex.districtId;
+      if(currentCrtLat==null&&currentCrtLng==null){ action='register'; cntR++; }
+      else{
+        var ld=Math.abs(currentCrtLat-fab.lat), lgd=Math.abs(currentCrtLng-fab.lng);
+        action=(ld>0.000001||lgd>0.000001)?'update':'same';
+        if(action==='update') cntU++; else cntS++;
+      }
+    } else { action='create'; cntC++; }
+    planRows.push({fab,docId,action,masterLat,masterLng,currentCrtLat,currentCrtLng,masterDireccion,locationId,districtId});
+  });
+
+  // Init checkbox state
+  planRows.forEach(function(p,i){ chkState[i]=(p.action!=='same'); });
+
+  document.getElementById("summary").textContent=
+    "登録: "+cntR+"件 / 更新: "+cntU+"件 / 新規: "+cntC+"件 / 変化なし: "+cntS+"件";
+  log("登録:"+cntR+" 更新:"+cntU+" 新規:"+cntC+" 同:"+cntS);
+
+  renderTable();
+  setStatus("読み込み完了。","ok");
+  document.getElementById("btn-import").disabled=false;
+  document.getElementById("btn-copy-to-master").disabled=false;
+  document.getElementById("btn-check-master-empty").disabled=false;
+  document.getElementById("btn-check-all").style.display="";
+  document.getElementById("btn-uncheck-all").style.display="";
+});
+
+document.getElementById("btn-check-all").addEventListener("click",function(){
+  document.querySelectorAll(".row-chk").forEach(function(c){
+    c.checked=true; chkState[parseInt(c.dataset.idx)]=true;
+  });
+});
+document.getElementById("btn-uncheck-all").addEventListener("click",function(){
+  document.querySelectorAll(".row-chk").forEach(function(c){
+    c.checked=false; chkState[parseInt(c.dataset.idx)]=false;
+  });
+});
+document.getElementById("btn-check-master-empty").addEventListener("click",function(){
+  document.querySelectorAll(".row-chk").forEach(function(c){
+    var idx=parseInt(c.dataset.idx);
+    var p=planRows[idx];
+    var v=(p.masterLat==null||p.masterLng==null);
+    c.checked=v; chkState[idx]=v;
+  });
+});
+
+// ── Copy CRT → Master ───────────────────────────────────
+document.getElementById("btn-copy-to-master").addEventListener("click",async function(){
+  var toWrite=[];
+  document.querySelectorAll(".row-chk:checked").forEach(function(c){
+    var p=planRows[parseInt(c.dataset.idx)];
+    if(p.fab.lat!=null&&p.fab.lng!=null&&p.docId) toWrite.push(p);
+  });
+  if(!toWrite.length){ setStatus("コピー対象なし（チェックあり・docIdあり・CRT座標ありの行が必要）","info"); return; }
+  if(!confirm(toWrite.length+"件のCRT緯度経度をマスタ緯度経度（latitude/longitude）にコピーします。よろしいですか？")) return;
+
+  this.disabled=true;
+  log("=== CRT→マスタ コピー開始: "+toWrite.length+" 件 ===");
+  setStatus("コピー中… 0/"+toWrite.length,"info");
+
+  var batch=fsDb.batch(), count=0, done=0;
+  for(var i=0;i<toWrite.length;i++){
+    var p=toWrite[i];
+    batch.update(fsDb.collection("distilleries").doc(p.docId),{latitude:p.fab.lat,longitude:p.fab.lng});
+    count++; done++;
+    if(count===500||i===toWrite.length-1){
+      try{
+        await batch.commit();
+        log("  バッチコミット: "+count+"件 (累計"+done+")");
+        setStatus("コピー中… "+done+"/"+toWrite.length,"info");
+        batch=fsDb.batch(); count=0;
+      }catch(e){
+        setStatus("書き込みエラー: "+e,"err"); log("ERROR: "+e);
+        document.getElementById("btn-copy-to-master").disabled=false; return;
+      }
+    }
+  }
+  toWrite.forEach(function(p){ p.masterLat=p.fab.lat; p.masterLng=p.fab.lng; });
+  renderTable();
+  log("=== 完了 ===");
+  setStatus("✅ "+toWrite.length+" 件のマスタ緯度経度を更新しました","ok");
+  document.getElementById("btn-copy-to-master").disabled=false;
+});
+
+// ── Import ───────────────────────────────────────────────
+document.getElementById("btn-import").addEventListener("click",async function(){
+  var toWrite=[];
+  document.querySelectorAll(".row-chk:checked").forEach(function(c){
+    toWrite.push(planRows[parseInt(c.dataset.idx)]);
+  });
+  if(!toWrite.length){ setStatus("書き込み対象なし（チェックなし）","info"); return; }
+
+  this.disabled=true;
+  log("=== Firestore 書き込み開始: "+toWrite.length+" 件 ===");
+  setStatus("書き込み中… 0/"+toWrite.length,"info");
+
+  var batch=fsDb.batch(), count=0, done=0;
+  for(var i=0;i<toWrite.length;i++){
+    var p=toWrite[i];
+    if(p.action==='update'||p.action==='register'){
+      batch.update(fsDb.collection("distilleries").doc(p.docId),{
+        crtLatitude:p.fab.lat, crtLongitude:p.fab.lng,
+      });
+    } else {
+      batch.set(fsDb.collection("distilleries").doc(p.fab.nom),{
+        nom:p.fab.nom, crtEmpresa:p.fab.empresa, crtDireccion:p.fab.estado,
+        crtLatitude:p.fab.lat, crtLongitude:p.fab.lng,
+      },{merge:true});
+    }
+    count++; done++;
+    if(count===500||i===toWrite.length-1){
+      try{
+        await batch.commit();
+        log("  バッチコミット: "+count+"件 (累計"+done+")");
+        setStatus("書き込み中… "+done+"/"+toWrite.length,"info");
+        batch=fsDb.batch(); count=0;
+      }catch(e){
+        setStatus("書き込みエラー: "+e,"err"); log("ERROR: "+e);
+        document.getElementById("btn-import").disabled=false; return;
+      }
+    }
+  }
+  log("=== 完了 ===");
+  setStatus("✅ "+toWrite.length+" 件をFirestoreに書き込みました","ok");
+  document.querySelectorAll(".row-chk:checked").forEach(function(c){
+    var row=document.getElementById("row-"+c.dataset.idx);
+    if(row) row.className="done";
+  });
+  document.getElementById("btn-import").disabled=false;
+});
+</script>
+</body>
+</html>
