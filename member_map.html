@@ -183,9 +183,10 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
     <option value="">すべての地区</option>
   </select>
   <select id="filter-sales">
-    <option value="">全件</option>
-    <option value="1">道場</option>
-    <option value="2">国内</option>
+    <option value="">全蒸留所</option>
+    <option value="1">道場(全件)</option>
+    <option value="3">道場(国内)</option>
+    <option value="2">国内流通</option>
   </select>
   <button id="btn-labels" class="ctrl-btn" onclick="toggleLabels()">名前 OFF</button>
   <label style="font-size:10px;color:var(--ink2);white-space:nowrap;">地図</label>
@@ -222,7 +223,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
   <input list="nom-list" id="nom-search" placeholder="NOM検索…" style="width:170px;padding:5px 9px;border:1px solid var(--cream3);border-radius:5px;background:#fff;color:var(--ink);font-family:var(--sans);font-size:12px;" autocomplete="off">
   <datalist id="nom-list"></datalist>
   <span id="map-count"></span>
-  <button id="btn-visited" class="ctrl-btn" onclick="toggleVisitedFilter()" style="flex-shrink:0;">飲んだのみ</button>
+  <button id="btn-visited" class="ctrl-btn" onclick="toggleVisitedFilter()" style="flex-shrink:0;">既飲</button>
   <button class="ctrl-btn" onclick="setInfoOff()" style="margin-left:auto;flex-shrink:0;">情報オフ</button>
 </div>
 
@@ -248,6 +249,8 @@ var auth=firebase.auth();
 var db=firebase.firestore();
 
 var memberNoms=new Set();
+var nomHasBottle=new Set();
+var nomHasJapanBottle=new Set();
 var map=L.map('map',{zoomControl:true}).setView([20.5,-103.5],8);
 
 L.Control.Ruler=L.Control.extend({
@@ -526,7 +529,8 @@ function applyFilters(){
     var nom=parseInt(m.dis.nom||m.dis.id||0);
     var show=!distFilter||(distFilter==='__other__'?!DISTRICT_COLORS[m.dis.districtId]:m.dis.districtId===distFilter);
     if(_visitedOnly) show=show&&memberNoms.has(String(m.dis.nom||m.dis.id));
-    if(salesFilter==='1') show=show&&m.dis.introduced===1;
+    if(salesFilter==='1') show=show&&nomHasBottle.has(String(m.dis.nom||m.dis.id));
+    if(salesFilter==='3') show=show&&nomHasJapanBottle.has(String(m.dis.nom||m.dis.id));
     if(salesFilter==='2') show=show&&m.dis.salesCategory===0;
     show=show&&nom>=nomFrom&&nom<=nomTo;
     if(show){ m.marker.addTo(map); visible++; }
@@ -584,20 +588,28 @@ var _visitedOnly=false;
 function toggleVisitedFilter(){
   _visitedOnly=!_visitedOnly;
   var btn=document.getElementById('btn-visited');
-  if(btn){ btn.textContent=_visitedOnly?'全件表示':'飲んだのみ'; btn.classList.toggle('on',_visitedOnly); }
+  if(btn){ btn.textContent=_visitedOnly?'全件':'既飲'; btn.classList.toggle('on',_visitedOnly); }
   applyFilters();
 }
 function loadData(){
   Promise.all([
     db.collection('distilleries').get(),
     db.collection('locations').get(),
-    db.collection('districts').get()
+    db.collection('districts').get(),
+    db.collection('bottleData').get()
   ]).then(function(results){
     var distilleries=results[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
     var locMap={};
     results[1].docs.forEach(function(d){locMap[d.id]=d.data();});
     var distMap={};
     results[2].docs.forEach(function(d){distMap[d.id]=d.data(); districtNames[d.id]=d.data().districtName||d.id;});
+    nomHasBottle=new Set(); nomHasJapanBottle=new Set();
+    results[3].docs.forEach(function(d){
+      var bd=d.data(); if(!bd.brandId) return;
+      var nom=String(bd.brandId).slice(0,4);
+      nomHasBottle.add(nom);
+      if(String(bd.importType||'')===String(0)||bd.importType===0) nomHasJapanBottle.add(nom);
+    });
 
     buildDistrictFilter(districtNames);
 
