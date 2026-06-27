@@ -249,6 +249,8 @@ var auth=firebase.auth();
 var db=firebase.firestore();
 
 var memberNoms=new Set();
+var nomHasBottle=new Set();
+var nomHasJapanBottle=new Set();
 var map=L.map('map',{zoomControl:true}).setView([20.5,-103.5],8);
 
 L.Control.Ruler=L.Control.extend({
@@ -527,7 +529,8 @@ function applyFilters(){
     var nom=parseInt(m.dis.nom||m.dis.id||0);
     var show=!distFilter||(distFilter==='__other__'?!DISTRICT_COLORS[m.dis.districtId]:m.dis.districtId===distFilter);
     if(_visitedOnly) show=show&&memberNoms.has(String(m.dis.nom||m.dis.id));
-    if(salesFilter==='1') show=show&&m.dis.introduced===1;
+    if(salesFilter==='1') show=show&&nomHasBottle.has(String(m.dis.nom||m.dis.id));
+    if(salesFilter==='3') show=show&&nomHasJapanBottle.has(String(m.dis.nom||m.dis.id));
     if(salesFilter==='2') show=show&&m.dis.salesCategory===0;
     if(salesFilter==='3') show=show&&m.dis.introduced===1&&m.dis.salesCategory===0;
     show=show&&nom>=nomFrom&&nom<=nomTo;
@@ -593,13 +596,21 @@ function loadData(){
   Promise.all([
     db.collection('distilleries').get(),
     db.collection('locations').get(),
-    db.collection('districts').get()
+    db.collection('districts').get(),
+    db.collection('bottleData').get()
   ]).then(function(results){
     var distilleries=results[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
     var locMap={};
     results[1].docs.forEach(function(d){locMap[d.id]=d.data();});
     var distMap={};
     results[2].docs.forEach(function(d){distMap[d.id]=d.data(); districtNames[d.id]=d.data().districtName||d.id;});
+    nomHasBottle=new Set(); nomHasJapanBottle=new Set();
+    results[3].docs.forEach(function(d){
+      var bd=d.data(); if(!bd.brandId) return;
+      var nom=String(bd.brandId).slice(0,4);
+      nomHasBottle.add(nom);
+      if(String(bd.importType||'')===String(0)||bd.importType===0) nomHasJapanBottle.add(nom);
+    });
 
     buildDistrictFilter(districtNames);
 
