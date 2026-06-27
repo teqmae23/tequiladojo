@@ -172,6 +172,11 @@ canvas#logo-canvas { display: block; margin: 0 auto 8px; }
     <div class="modal-body">
       <canvas id="logo-canvas" width="200" height="60"></canvas>
       <div id="receipt-preview"></div>
+      <div id="guest-qr-area" style="display:none;margin-top:14px;padding-top:12px;border-top:1px dashed #ccc;text-align:center;">
+        <div style="font-size:12px;color:#555;margin-bottom:6px;">本登録のご案内（QRコード）</div>
+        <div id="guest-qr-canvas"></div>
+        <div id="guest-qr-url" style="font-size:10px;color:#888;margin-top:4px;word-break:break-all;"></div>
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-outline" onclick="closePrintModal()">閉じる</button>
@@ -263,6 +268,7 @@ canvas#logo-canvas { display: block; margin: 0 auto 8px; }
 </div>
 
 <!-- Firebase -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-functions-compat.js"></script>
@@ -616,11 +622,25 @@ function buildInvoiceText(name, tadashi, amount){
 
 // ===== 印刷モーダルを開く =====
 var currentPrintText = '';
+var currentGuestTransferUrl = '';
 
-function openPrintModal(title, text){
+function openPrintModal(title, text, guestTransferUrl){
   currentPrintText = text;
+  currentGuestTransferUrl = guestTransferUrl || '';
   document.getElementById('print-modal-title').textContent = title;
   document.getElementById('receipt-preview').textContent  = text;
+
+  // ゲストQRコード表示
+  var qrArea = document.getElementById('guest-qr-area');
+  var qrDiv = document.getElementById('guest-qr-canvas');
+  if(currentGuestTransferUrl){
+    qrDiv.innerHTML = '';
+    new QRCode(qrDiv, { text: currentGuestTransferUrl, width: 160, height: 160, correctLevel: QRCode.CorrectLevel.M });
+    document.getElementById('guest-qr-url').textContent = currentGuestTransferUrl;
+    qrArea.style.display = 'block';
+  } else {
+    qrArea.style.display = 'none';
+  }
 
   // ロゴCanvas描画
   var canvas = document.getElementById('logo-canvas');
@@ -638,12 +658,46 @@ function closePrintModal(){
   document.getElementById('print-modal').classList.remove('active');
 }
 
-function openReceiptPrint(){
+async function openReceiptPrint(){
   var visitKey = document.getElementById('r-visit').value;
   var groupId  = document.getElementById('r-group').value;
   if(!visitKey){ showStatus('r-status', '来店を選択してください', 'err'); return; }
   var text = buildReceiptText(visitKey, groupId);
-  openPrintModal('レシートプレビュー', text);
+
+  // 仮会員の場合、引継コードを取得してQRを表示
+  var guestTransferUrl = '';
+  var visit = allVisits.find(function(v){ return v.id === visitKey; });
+  if(visit && visit.memberId){
+    var mem = allMembers[visit.memberId];
+    if(mem && mem.isGuest){
+      try{
+        var now = new Date();
+        var expiresAt = new Date(now.getTime() + 72*60*60*1000);
+        var snap = await db.collection('tempRegistrations').where('tempId','==',visit.memberId).get();
+        var code = null;
+        snap.forEach(function(doc){
+          var d = doc.data();
+          if(!d.used && d.expiresAt > now.toISOString()) code = doc.id;
+        });
+        if(!code){
+          var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+          code = '';
+          for(var i=0;i<8;i++) code += chars[Math.floor(Math.random()*chars.length)];
+          await db.collection('tempRegistrations').doc(code).set({
+            tempId: visit.memberId,
+            nickname: mem.nickname || mem.name || visit.memberId,
+            createdAt: now.toISOString(),
+            expiresAt: expiresAt.toISOString(),
+            used: false, issuedBy: 'receipt'
+          });
+        }
+        var nickname = mem.nickname || mem.name || visit.memberId;
+        guestTransferUrl = 'https://tequiladojo.com/member_register2.html?transfer=' + code + '&nick=' + encodeURIComponent(nickname);
+      }catch(e){ console.warn('transfer code lookup failed', e); }
+    }
+  }
+
+  openPrintModal('レシートプレビュー', text, guestTransferUrl);
 }
 
 function openInvoicePrint(){
@@ -661,6 +715,20 @@ function printBrowser(){
   var logoDataUrl = canvas.toDataURL('image/png');
   var text = currentPrintText;
 
+  // ゲストQRコードのDataURLを取得（QRCode.jsはcanvasを生成する）
+  var guestQrSection = '';
+  if(currentGuestTransferUrl){
+    var qrDiv = document.getElementById('guest-qr-canvas');
+    var qrCanvas = qrDiv ? qrDiv.querySelector('canvas') : null;
+    if(qrCanvas){
+      var qrDataUrl = qrCanvas.toDataURL('image/png');
+      guestQrSection = '<hr style="border:none;border-top:1px dashed #aaa;margin:12px 0">'
+        + '<div style="text-align:center;font-size:11px;color:#555;margin-bottom:6px">本登録のご案内</div>'
+        + '<img src="' + qrDataUrl + '" width="160" height="160" style="display:block;margin:0 auto 6px">'
+        + '<div style="text-align:center;font-size:9px;color:#888;word-break:break-all">' + currentGuestTransferUrl + '</div>';
+    }
+  }
+
   var w = window.open('', '_blank', 'width=400,height=600');
   w.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8">');
   w.document.write('<style>');
@@ -671,9 +739,31 @@ function printBrowser(){
   w.document.write('</style></head><body>');
   w.document.write('<img class="logo" src="' + logoDataUrl + '" />');
   w.document.write('<pre>' + text + '</pre>');
+  w.document.write(guestQrSection);
   w.document.write('<br><button onclick="window.print()">🖨️ 印刷</button>');
   w.document.write('</body></html>');
   w.document.close();
+}
+
+// ===== ESC/POS QRコード生成 =====
+function makeReceiptQR(url){
+  var GS = 0x1D;
+  var parts = [];
+  var urlBytes = new TextEncoder().encode(url);
+  var len = urlBytes.length;
+  parts.push(new Uint8Array([GS,0x28,0x6B,0x04,0x00,0x31,0x41,0x32,0x00]));
+  parts.push(new Uint8Array([GS,0x28,0x6B,0x03,0x00,0x31,0x43,0x08]));
+  parts.push(new Uint8Array([GS,0x28,0x6B,0x03,0x00,0x31,0x45,0x30]));
+  var pL=(len+3)&0xFF, pH=((len+3)>>8)&0xFF;
+  var dataCmd = new Uint8Array(6 + len);
+  dataCmd.set([GS,0x28,0x6B,pL,pH,0x31,0x50,0x30]);
+  dataCmd.set(urlBytes, 8);
+  // rebuild properly
+  var header = new Uint8Array([GS,0x28,0x6B,pL,pH,0x31,0x50,0x30]);
+  parts.push(header);
+  parts.push(urlBytes);
+  parts.push(new Uint8Array([GS,0x28,0x6B,0x03,0x00,0x31,0x51,0x30]));
+  return parts;
 }
 
 // ===== Bluetooth印刷（ESC/POS） =====
@@ -690,23 +780,30 @@ async function printBluetooth(){
     var service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
     var char    = await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
 
-    // ESC/POSコマンド
     var ESC = 0x1B, GS = 0x1D;
-    var init  = new Uint8Array([ESC, 0x40]);             // 初期化
-    var center= new Uint8Array([ESC, 0x61, 0x01]);       // センター揃え
-    var left  = new Uint8Array([ESC, 0x61, 0x00]);       // 左揃え
-    var cut   = new Uint8Array([GS,  0x56, 0x42, 0x00]); // カット
-    var lf    = new Uint8Array([0x0A]);                   // 改行
-
     var encoder = new TextEncoder();
-    var textBytes = encoder.encode(currentPrintText + '\n\n\n');
 
-    await char.writeValue(init);
-    await char.writeValue(center);
-    await char.writeValue(lf);
-    await char.writeValue(left);
-    await char.writeValue(textBytes);
-    await char.writeValue(cut);
+    await char.writeValue(new Uint8Array([ESC, 0x40]));
+    await char.writeValue(new Uint8Array([ESC, 0x61, 0x01]));
+    await char.writeValue(new Uint8Array([0x0A]));
+    await char.writeValue(new Uint8Array([ESC, 0x61, 0x00]));
+    await char.writeValue(encoder.encode(currentPrintText + '\n\n'));
+
+    if(currentGuestTransferUrl){
+      await char.writeValue(encoder.encode('================================\n'));
+      await char.writeValue(new Uint8Array([ESC, 0x61, 0x01]));
+      await char.writeValue(new Uint8Array([ESC, 0x21, 0x10]));
+      await char.writeValue(encoder.encode('本登録のご案内\n'));
+      await char.writeValue(new Uint8Array([ESC, 0x21, 0x00]));
+      await char.writeValue(encoder.encode('QRコードから72時間以内に\n会員本登録をお願いします\n\n'));
+      var qrParts = makeReceiptQR(currentGuestTransferUrl);
+      for(var i=0;i<qrParts.length;i++) await char.writeValue(qrParts[i]);
+      await char.writeValue(new Uint8Array([0x0A]));
+      await char.writeValue(new Uint8Array([ESC, 0x61, 0x00]));
+      await char.writeValue(new Uint8Array([0x0A]));
+    }
+
+    await char.writeValue(new Uint8Array([GS, 0x56, 0x42, 0x00]));
 
     device.gatt.disconnect();
     alert('印刷しました！');
