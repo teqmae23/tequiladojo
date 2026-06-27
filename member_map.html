@@ -251,6 +251,8 @@ var db=firebase.firestore();
 var memberNoms=new Set();
 var nomHasBottle=new Set();
 var nomHasJapanBottle=new Set();
+var _currentUser=null;
+var _memberNomsLoaded=false;
 var map=L.map('map',{zoomControl:true}).setView([20.5,-103.5],8);
 
 L.Control.Ruler=L.Control.extend({
@@ -586,31 +588,30 @@ document.getElementById('nom-search').addEventListener('change',function(){
 });
 
 var _visitedOnly=false;
-function toggleVisitedFilter(){
+async function toggleVisitedFilter(){
   _visitedOnly=!_visitedOnly;
   var btn=document.getElementById('btn-visited');
   if(btn){ btn.textContent=_visitedOnly?'全件':'既飲'; btn.classList.toggle('on',_visitedOnly); }
+  if(_visitedOnly && !_memberNomsLoaded && _currentUser){
+    var loading=document.getElementById('map-loading');
+    if(loading){ loading.textContent='データ抽出中...'; loading.style.display='block'; }
+    await loadMemberNoms(_currentUser);
+    _memberNomsLoaded=true;
+    if(loading) loading.style.display='none';
+  }
   applyFilters();
 }
 function loadData(){
   Promise.all([
     db.collection('distilleries').get(),
     db.collection('locations').get(),
-    db.collection('districts').get(),
-    db.collection('bottleData').get()
+    db.collection('districts').get()
   ]).then(function(results){
     var distilleries=results[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
     var locMap={};
     results[1].docs.forEach(function(d){locMap[d.id]=d.data();});
     var distMap={};
     results[2].docs.forEach(function(d){distMap[d.id]=d.data(); districtNames[d.id]=d.data().districtName||d.id;});
-    nomHasBottle=new Set(); nomHasJapanBottle=new Set();
-    results[3].docs.forEach(function(d){
-      var bd=d.data(); if(!bd.brandId) return;
-      var nom=String(bd.brandId).slice(0,4);
-      nomHasBottle.add(nom);
-      if(String(bd.importType||'')===String(0)||bd.importType===0) nomHasJapanBottle.add(nom);
-    });
 
     buildDistrictFilter(districtNames);
 
@@ -759,11 +760,11 @@ async function loadMemberNoms(user){
 
 // ── 会員認証 ──────────────────────────────────────────────────────
 AuthRole.requireMember(auth, async function(user){
+  _currentUser=user;
   var lbl=document.getElementById('member-label');
   if(lbl) lbl.textContent=user.email||'';
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').style.display='flex';
-  await loadMemberNoms(user);
   await loadElevSettings();
   loadDotStatusFromFirestore();
   loadData(); loadOverlays(); onDotSelChange('all');
