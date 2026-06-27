@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>テキーラ道場 — 蒸留所ツリー管理</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
+};
+</script>
+<script src="/auth-role.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;1,400&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#F1EFE8;--cream2:#E8E4D8;--cream3:#DDD8C8;
+  --red:#b03020;--teal:#1a6e58;
+  --c-dis:#7a4010;--c-brand:#1a6e58;--c-bottle:#1252a0;--c-bdata:#c8860a;
+  --sans:'Noto Sans JP',sans-serif;--serif:'Cormorant Garamond',serif;--mono:'DM Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+#login-screen{display:none;align-items:center;justify-content:center;height:100vh;background:var(--cream);}
+.lcard{background:#fff;border:1px solid var(--cream3);border-radius:10px;padding:32px 28px;width:100%;max-width:360px;box-shadow:0 4px 20px rgba(0,0,0,.08);}
+.lcard h2{font-family:var(--serif);font-size:22px;color:var(--gold-d);margin-bottom:4px;}
+.lcard .lsub{font-size:12px;color:var(--ink3);margin-bottom:20px;}
+.lcard label{display:block;font-size:11px;color:var(--ink3);margin-bottom:4px;margin-top:14px;}
+.lcard input{width:100%;padding:9px 11px;border:1px solid var(--cream3);border-radius:5px;font-size:13px;box-sizing:border-box;font-family:var(--sans);}
+.lcard input:focus{outline:none;border-color:var(--gold);}
+#lerr{font-size:12px;color:var(--red);margin-top:8px;min-height:16px;}
+.lcard .lbtn{width:100%;margin-top:18px;padding:10px;background:var(--gold-d);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;font-family:var(--sans);}
+.lcard .lbtn:hover{background:var(--gold);}
+#app{display:none;flex-direction:column;height:100vh;}
+/* Header */
+.hdr{background:var(--ink);padding:0 16px;display:flex;align-items:center;gap:12px;height:48px;flex-shrink:0;}
+.hdr-logo{font-family:var(--serif);font-size:16px;color:var(--gold-l);letter-spacing:.04em;}
+.hdr-sub{font-size:11px;color:var(--ink3);margin-left:4px;}
+.hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+.hdr-user{font-size:11px;color:var(--ink3);font-family:var(--mono);}
+.hdr-btn{padding:4px 10px;border:1px solid rgba(255,255,255,.2);border-radius:5px;background:transparent;color:var(--gold-l);font-size:11px;cursor:pointer;font-family:var(--sans);}
+.hdr-link{color:var(--gold-l);font-size:12px;text-decoration:none;opacity:.7;}
+.hdr-link:hover{opacity:1;}
+/* Controls */
+.ctrl{background:var(--cream2);border-bottom:1px solid var(--cream3);padding:8px 14px;display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap;}
+.ctrl input[type=text]{padding:5px 9px;border:1px solid var(--cream3);border-radius:5px;background:#fff;font-family:var(--mono);font-size:12px;width:120px;}
+.ctrl input:focus{outline:none;border-color:var(--gold);}
+.cbtn{padding:4px 10px;border:1px solid var(--cream3);border-radius:5px;background:#fff;color:var(--ink2);font-size:12px;cursor:pointer;font-family:var(--sans);}
+.cbtn:hover{border-color:var(--gold);}
+.cbtn.active{background:var(--ink);color:var(--cream);border-color:var(--ink);}
+#ctrl-count{font-size:11px;color:var(--ink3);margin-left:auto;}
+#loading-msg{font-size:12px;color:var(--ink3);}
+/* Column settings */
+#col-panel{background:#fff;border-bottom:1px solid var(--cream3);padding:10px 14px;display:none;flex-shrink:0;max-height:220px;overflow-y:auto;}
+.col-panel-inner{display:flex;gap:20px;flex-wrap:wrap;}
+.col-group{min-width:200px;}
+.col-group-title{font-size:11px;font-weight:600;color:var(--ink2);margin-bottom:6px;display:flex;align-items:center;gap:5px;}
+.col-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex-shrink:0;}
+.col-item{display:flex;align-items:center;gap:5px;margin-bottom:3px;font-size:12px;color:var(--ink);cursor:pointer;user-select:none;}
+.col-item input{cursor:pointer;accent-color:var(--gold-d);}
+/* Tree */
+#tree-wrap{flex:1;overflow-y:auto;padding:10px 14px 30px;}
+.tree-node{margin-bottom:1px;}
+.tree-row{display:flex;align-items:center;gap:6px;padding:4px 7px;border-radius:5px;transition:background .1s;}
+.tree-row:hover{background:rgba(180,140,50,.09);}
+.tree-toggle{width:18px;height:18px;border:none;background:none;cursor:pointer;color:var(--ink3);font-size:11px;padding:0;flex-shrink:0;display:flex;align-items:center;justify-content:center;border-radius:3px;}
+.tree-toggle:hover:not(.leaf){background:var(--cream3);color:var(--ink);}
+.tree-toggle.leaf{cursor:default;color:var(--cream3);}
+.level-badge{font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;color:#fff;flex-shrink:0;letter-spacing:.04em;}
+.tree-id{font-family:var(--mono);font-size:11px;color:var(--ink3);flex-shrink:0;}
+.tree-name{font-size:12px;font-weight:500;color:var(--ink);}
+.tree-name2{font-size:11px;color:var(--ink3);margin-left:4px;}
+.tree-opts{display:flex;gap:4px;flex-wrap:wrap;margin-left:2px;flex:1;min-width:0;}
+.opt-cell{font-size:11px;color:var(--ink2);background:var(--cream2);border-radius:3px;padding:1px 6px;white-space:nowrap;cursor:pointer;border:1px solid transparent;transition:border-color .15s;}
+.opt-cell:hover{border-color:var(--gold);background:#fff;}
+.opt-lbl{font-size:10px;color:var(--ink3);margin-right:2px;}
+.opt-cell input,.opt-cell select{font-size:11px;padding:0 2px;border:none;outline:none;background:transparent;font-family:var(--sans);min-width:40px;max-width:110px;}
+.tree-acts{display:flex;gap:4px;align-items:center;flex-shrink:0;margin-left:4px;}
+.act-link{font-size:10px;color:var(--gold-d);text-decoration:none;padding:2px 6px;border:1px solid var(--cream3);border-radius:3px;white-space:nowrap;cursor:pointer;background:#fff;}
+.act-link:hover{border-color:var(--gold-d);}
+.act-dup{font-size:10px;color:var(--teal);padding:2px 6px;border:1px solid var(--cream3);border-radius:3px;white-space:nowrap;cursor:pointer;background:#fff;}
+.act-dup:hover{border-color:var(--teal);}
+.act-del{font-size:10px;color:var(--red);padding:2px 6px;border:1px solid var(--cream3);border-radius:3px;white-space:nowrap;cursor:pointer;background:#fff;}
+.act-del:hover{border-color:var(--red);}
+.tree-children{padding-left:22px;border-left:1px dashed var(--cream3);margin-left:9px;}
+.lvl-dis>.tree-row{background:rgba(122,64,16,.04);}
+.lvl-brand>.tree-row{background:rgba(26,110,88,.03);}
+.lvl-dis .level-badge{background:var(--c-dis);}
+.lvl-brand .level-badge{background:var(--c-brand);}
+.lvl-bottle .level-badge{background:var(--c-bottle);}
+.lvl-bdata .level-badge{background:var(--c-bdata);}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="lcard">
+    <h2>テキーラ道場</h2>
+    <div class="lsub">スタッフとしてログインしてください</div>
+    <label>メールアドレス</label>
+    <input id="l-email" type="email" autocomplete="username">
+    <label>パスワード</label>
+    <input id="l-pass" type="password" autocomplete="current-password">
+    <div id="lerr"></div>
+    <button class="lbtn" id="l-btn">ログイン</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="hdr">
+    <div class="hdr-logo">テキーラ道場</div>
+    <div class="hdr-sub">蒸留所ツリー管理</div>
+    <div class="hdr-right">
+      <span class="hdr-user" id="hdr-user"></span>
+      <button class="hdr-btn" id="btn-logout">ログアウト</button>
+      <a class="hdr-link" href="admin_tequila.html">テキーラ管理 →</a>
+      <a class="hdr-link" href="admin_distillery.html" style="margin-left:4px;">蒸留所管理 →</a>
+    </div>
+  </div>
+
+  <div class="ctrl">
+    <label style="font-size:12px;color:var(--ink2);">NOM</label>
+    <input type="text" id="nom-filter" placeholder="例: 1079" maxlength="4">
+    <button class="cbtn" id="btn-search">検索</button>
+    <button class="cbtn" id="btn-clear">クリア</button>
+    <span style="width:1px;height:20px;background:var(--cream3);display:inline-block;"></span>
+    <button class="cbtn" id="btn-expand-all">全展開</button>
+    <button class="cbtn" id="btn-collapse-all">全折り畳み</button>
+    <span style="width:1px;height:20px;background:var(--cream3);display:inline-block;"></span>
+    <button class="cbtn" id="btn-col-toggle">列設定 ▼</button>
+    <button class="cbtn" id="btn-reload" title="データ再読み込み">↺ 再読込</button>
+    <span id="loading-msg"></span>
+    <span id="ctrl-count"></span>
+  </div>
+
+  <div id="col-panel">
+    <div class="col-panel-inner" id="col-panel-inner"></div>
+  </div>
+
+  <div id="tree-wrap"><div id="tree-root"></div></div>
+</div>
+
+<script>
+if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth();
+var db=firebase.firestore();
+
+// ── フィールド定義 ──────────────────────────────────────────────────
+// type: 'text'|'number'|'url'|'select'|'readonly'
+// options: [[value, label], ...]
+var LEVELS=[
+  {
+    key:'dis', label:'蒸留所', badge:'蒸留所', collection:'distilleries',
+    idField:'id', nameFields:['nomJa','nomEs'],
+    editUrl:function(r){ return 'admin_distillery.html?nom='+encodeURIComponent(r.nom||r.id); },
+    canDup:false, canDel:false,
+    optFields:[
+      {field:'nomJa',       label:'名称(J)',   type:'text'},
+      {field:'nomEs',       label:'名称(E)',   type:'text'},
+      {field:'introduced',  label:'導入',      type:'select', options:[['0','未導入'],['1','導入']], fmt:function(v){return v===1||v==='1'?'✓導入':'—';}},
+      {field:'salesCategory',label:'販売区分', type:'select', options:[['0','国内'],['1','海外']], fmt:function(v){return (v===0||v==='0')?'国内':'海外';}},
+      {field:'districtId',  label:'地区ID',    type:'readonly'},
+      {field:'locationId',  label:'所在地ID',  type:'readonly'},
+      {field:'latitude',    label:'緯度',      type:'number'},
+      {field:'longitude',   label:'経度',      type:'number'},
+      {field:'elevation',   label:'標高',      type:'number', fmt:function(v){return v!=null?v+'m':'—';}},
+      {field:'ammUrl',      label:'AMM URL',   type:'url'},
+      {field:'webUrl',      label:'HP URL',    type:'url'},
+      {field:'mapUrl',      label:'地図URL',   type:'url'},
+    ]
+  },
+  {
+    key:'brand', label:'ブランド', badge:'BR', collection:'brands',
+    idField:'id', nameFields:['brandEs','brandJa'],
+    editUrl:function(r){ return 'admin_tequila.html'; },
+    canDup:true, canDel:true,
+    optFields:[
+      {field:'brandEs',     label:'名称(E)',   type:'text'},
+      {field:'brandJa',     label:'名称(J)',   type:'text'},
+      {field:'distilleryId',label:'NOM',       type:'readonly'},
+      {field:'brandType',   label:'種別',      type:'select', options:[['0','蒸留'],['1','委託']], fmt:function(v){return v==='0'?'蒸留':'委託';}},
+      {field:'brandStatus', label:'状態',      type:'select', options:[['0','稼働'],['1','終了'],['2','移行']], fmt:function(v){return v==='0'?'稼働':v==='1'?'終了':'移行';}},
+      {field:'salesCategory',label:'販売区分', type:'select', options:[['0','国内'],['1','海外']], fmt:function(v){return (v===0||v==='0')?'国内':'海外';}},
+      {field:'foundedYear', label:'創設年',    type:'number'},
+      {field:'infoUrl',     label:'HP URL',    type:'url'},
+      {field:'ammUrl',      label:'AMM URL',   type:'url'},
+      {field:'annUrl',      label:'ANN URL',   type:'url'},
+    ]
+  },
+  {
+    key:'bottle', label:'ボトル', badge:'BT', collection:'bottles',
+    idField:'id', nameFields:['bottleEs','bottleJa'],
+    editUrl:function(r){ return 'admin_tequila.html'; },
+    canDup:true, canDel:true,
+    optFields:[
+      {field:'bottleEs',    label:'名称(E)',   type:'text'},
+      {field:'bottleJa',    label:'名称(J)',   type:'text'},
+      {field:'bottleEsBase',label:'基本名(E)', type:'text'},
+      {field:'bottleJaBase',label:'基本名(J)', type:'text'},
+      {field:'suffix',      label:'追記',      type:'text'},
+      {field:'brandId',     label:'ブランドID',type:'readonly'},
+      {field:'classId',     label:'クラスID',  type:'readonly'},
+      {field:'abv',         label:'ABV',       type:'number', fmt:function(v){return v!=null?parseFloat(v).toFixed(1)+'%':'—';}},
+      {field:'production',  label:'生産区分',  type:'select', options:[['0','定番品'],['1','限定品']], fmt:function(v){return v==='0'?'定番':'限定';}},
+      {field:'filtration',  label:'色素濾過',  type:'select', options:[['0','なし'],['1','あり']], fmt:function(v){return v==='1'?'あり':'なし';}},
+      {field:'serviceStatus',label:'提供',     type:'select', options:[['0','OP'],['1','CL']], fmt:function(v){return v==='0'?'OP':'CL';}},
+    ]
+  },
+  {
+    key:'bdata', label:'ボトルデータ', badge:'BD', collection:'bottleData',
+    idField:'id', nameFields:['bottleEs','bottleJa'],
+    editUrl:function(r){ return 'admin_tequila.html'; },
+    canDup:true, canDel:true,
+    optFields:[
+      {field:'bottleEs',    label:'名称(E)',   type:'text'},
+      {field:'bottleJa',    label:'名称(J)',   type:'text'},
+      {field:'bottleEsBase',label:'基本名(E)', type:'text'},
+      {field:'bottleJaBase',label:'基本名(J)', type:'text'},
+      {field:'suffix',      label:'追記',      type:'text'},
+      {field:'bottleId',    label:'ボトルID',  type:'readonly'},
+      {field:'brandId',     label:'ブランドID',type:'readonly'},
+      {field:'classId',     label:'クラスID',  type:'readonly'},
+      {field:'abv',         label:'ABV',       type:'number', fmt:function(v){return v!=null?parseFloat(v).toFixed(1)+'%':'—';}},
+      {field:'lotType',     label:'ロット区分',type:'select', options:[['1','現行'],['2','旧ロット'],['3','非売品']], fmt:function(v){return v==='1'||v===1?'現行':v==='2'||v===2?'旧ロット':'非売品';}},
+      {field:'lotNo',       label:'ロット番号',type:'text'},
+      {field:'volume',      label:'容量',      type:'number', fmt:function(v){return v!=null?v+'ml':'—';}},
+      {field:'remaining',   label:'残量',      type:'number', fmt:function(v){return v!=null?v+'ml':'—';}},
+      {field:'price',       label:'単価',      type:'number', fmt:function(v){return v!=null?'¥'+Number(v).toLocaleString():'—';}},
+      {field:'cost',        label:'仕入れ価格',type:'number', fmt:function(v){return v!=null?'¥'+Number(v).toLocaleString():'—';}},
+      {field:'visibility',  label:'公開',      type:'select', options:[['0','公開(OP)'],['1','非公開(CL)']], fmt:function(v){return v==='0'?'OP':'CL';}},
+      {field:'importType',  label:'仕入れ区分',type:'select', options:[['0','日本'],['1','米国'],['2','メキシコ'],['3','EU'],['4','英国'],['5','その他']], fmt:function(v){var m={'0':'日本','1':'米国','2':'メキシコ','3':'EU','4':'英国','5':'その他'};return m[String(v)]||String(v);}},
+      {field:'domesticDist',label:'国内流通',  type:'select', options:[['0','流通'],['1','非流通']], fmt:function(v){return v==='1'?'非流通':'流通';}},
+      {field:'production',  label:'生産区分',  type:'select', options:[['0','定番品'],['1','限定品']], fmt:function(v){return v==='0'?'定番':'限定';}},
+      {field:'filtration',  label:'色素濾過',  type:'select', options:[['0','なし'],['1','あり']], fmt:function(v){return v==='1'?'あり':'なし';}},
+      {field:'purchaseDate',label:'購入日',    type:'text'},
+      {field:'serveStart',  label:'提供開始',  type:'text'},
+      {field:'serveEnd',    label:'提供終了',  type:'text'},
+      {field:'note',        label:'備考',      type:'text'},
+    ]
+  }
+];
+
+// 列表示状態
+var colVis={};
+LEVELS.forEach(function(lv){
+  colVis[lv.key]={};
+  lv.optFields.forEach(function(f){ colVis[lv.key][f.field]=false; });
+});
+
+// コレクション→rawデータ
+function getArr(col){ return col==='distilleries'?rawDis:col==='brands'?rawBrands:col==='bottles'?rawBottles:rawBdata; }
+
+// ── ログイン ─────────────────────────────────────────────────────────
+document.getElementById('l-btn').addEventListener('click',async function(){
+  var email=document.getElementById('l-email').value.trim();
+  var pass=document.getElementById('l-pass').value;
+  document.getElementById('lerr').textContent='';
+  this.disabled=true;
+  try{ await auth.signInWithEmailAndPassword(email,pass); }
+  catch(e){ document.getElementById('lerr').textContent=e.message; this.disabled=false; }
+});
+document.getElementById('l-pass').addEventListener('keydown',function(e){ if(e.key==='Enter') document.getElementById('l-btn').click(); });
+document.getElementById('btn-logout').addEventListener('click',function(){ auth.signOut(); });
+
+// ── データ ───────────────────────────────────────────────────────────
+var rawDis=[], rawBrands=[], rawBottles=[], rawBdata=[];
+var tree={};
+
+function buildTree(){
+  tree={};
+  rawDis.forEach(function(d){
+    var nom=String(d.nom||d.id);
+    tree[nom]={dis:d, brands:{}};
+  });
+  rawBrands.forEach(function(b){
+    var nom=String(b.id).slice(0,4);
+    if(!tree[nom]) tree[nom]={dis:null, brands:{}};
+    tree[nom].brands[b.id]={brand:b, bottles:{}};
+  });
+  rawBottles.forEach(function(b){
+    var nom=String(b.id).slice(0,4);
+    var brandId=String(b.brandId||b.id.slice(0,7));
+    if(!tree[nom]) return;
+    if(!tree[nom].brands[brandId]) tree[nom].brands[brandId]={brand:null, bottles:{}};
+    tree[nom].brands[brandId].bottles[b.id]={bottle:b, bdatas:[]};
+  });
+  rawBdata.forEach(function(bd){
+    var nom=String(bd.brandId||'').slice(0,4)||String(bd.bottleId||'').slice(0,4);
+    var brandId=String(bd.brandId||'').slice(0,7);
+    var bottleId=bd.bottleId||'';
+    if(!nom||!brandId||!bottleId) return;
+    if(!tree[nom]||!tree[nom].brands[brandId]||!tree[nom].brands[brandId].bottles[bottleId]) return;
+    tree[nom].brands[brandId].bottles[bottleId].bdatas.push(bd);
+  });
+}
+
+// ── 列設定パネル ──────────────────────────────────────────────────────
+function buildColPanel(){
+  var wrap=document.getElementById('col-panel-inner');
+  wrap.innerHTML='';
+  LEVELS.forEach(function(lv){
+    var grp=document.createElement('div');
+    grp.className='col-group';
+    grp.innerHTML='<div class="col-group-title"><span class="col-dot" style="background:'+lv.color+'"></span>'+lv.label+'</div>';
+    lv.optFields.forEach(function(f){
+      var item=document.createElement('label');
+      item.className='col-item';
+      var chk=document.createElement('input');
+      chk.type='checkbox';
+      chk.checked=colVis[lv.key][f.field];
+      chk.addEventListener('change',function(){
+        colVis[lv.key][f.field]=this.checked;
+        renderTree();
+      });
+      item.appendChild(chk);
+      item.appendChild(document.createTextNode(' '+f.label));
+      grp.appendChild(item);
+    });
+    wrap.appendChild(grp);
+  });
+}
+
+document.getElementById('btn-col-toggle').addEventListener('click',function(){
+  var p=document.getElementById('col-panel');
+  var open=p.style.display==='block';
+  p.style.display=open?'none':'block';
+  this.textContent=open?'列設定 ▼':'列設定 ▲';
+});
+
+// ── インライン編集 ────────────────────────────────────────────────────
+function escH(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtVal(f, v){
+  if(v===undefined||v===null||v==='') return '—';
+  return f.fmt ? f.fmt(v) : String(v);
+}
+
+function activateEdit(cell, col, docId, rec, f){
+  var origVal=rec[f.field];
+  var input;
+  if(f.type==='select'){
+    input=document.createElement('select');
+    input.style.cssText='font-size:11px;padding:1px 3px;border:1px solid var(--gold);border-radius:3px;background:#fff;font-family:var(--sans);';
+    (f.options||[]).forEach(function(opt){
+      var o=document.createElement('option');
+      o.value=opt[0]; o.textContent=opt[1];
+      if(String(origVal)===String(opt[0])) o.selected=true;
+      input.appendChild(o);
+    });
+  } else {
+    input=document.createElement('input');
+    input.type=f.type==='number'?'number':'text';
+    input.value=origVal!=null?origVal:'';
+    input.style.cssText='font-size:11px;padding:1px 4px;border:1px solid var(--gold);border-radius:3px;background:#fff;font-family:var(--sans);width:100px;';
+  }
+  var lbl=document.createElement('span');
+  lbl.className='opt-lbl';
+  lbl.textContent=f.label;
+  cell.innerHTML='';
+  cell.appendChild(lbl);
+  cell.appendChild(input);
+  input.focus();
+  if(input.select&&f.type!=='select') input.select();
+
+  var done=false;
+  function save(){
+    if(done) return; done=true;
+    var raw=input.value;
+    var newVal=f.type==='number'?(raw===''?null:Number(raw)):raw||null;
+    var upd={}; upd[f.field]=newVal;
+    db.collection(col).doc(docId).update(upd)
+      .then(function(){
+        rec[f.field]=newVal;
+        renderCell(cell, col, docId, rec, f);
+      })
+      .catch(function(e){
+        alert('保存失敗: '+e.message);
+        renderCell(cell, col, docId, rec, f);
+      });
+  }
+  input.addEventListener('blur',save);
+  input.addEventListener('keydown',function(e){
+    if(e.key==='Enter'&&f.type!=='select'){ input.blur(); }
+    if(e.key==='Escape'){ done=true; renderCell(cell, col, docId, rec, f); }
+  });
+  if(f.type==='select') input.addEventListener('change',function(){ input.blur(); });
+}
+
+function renderCell(cell, col, docId, rec, f){
+  cell.innerHTML='<span class="opt-lbl">'+escH(f.label)+'</span>'+escH(fmtVal(f, rec[f.field]));
+  if(f.type!=='readonly'){
+    cell.style.cursor='pointer';
+    cell.addEventListener('click',function(){ activateEdit(cell, col, docId, rec, f); },{once:true});
+  } else {
+    cell.style.cursor='default';
+  }
+}
+
+// ── 複製 ─────────────────────────────────────────────────────────────
+function duplicateBrand(brand){
+  var nom=brand.id.slice(0,4);
+  var max=0;
+  rawBrands.forEach(function(b){ if(b.id.slice(0,4)===nom){ var s=parseInt(b.id.slice(4,7))||0; if(s>max) max=s; } });
+  var newId=nom+String(max+1).padStart(3,'0');
+  var doc=Object.assign({},brand,{id:newId,brandId:newId,distilleryId:nom}); delete doc.id;
+  db.collection('brands').doc(newId).set(doc).then(function(){
+    rawBrands.push(Object.assign({id:newId},doc)); buildTree(); renderTree();
+  }).catch(function(e){ alert('複製失敗: '+e.message); });
+}
+function duplicateBottle(bottle){
+  var prefix=bottle.id.slice(0,9);
+  var max=0;
+  rawBottles.forEach(function(b){ if(b.id.slice(0,9)===prefix){ var s=parseInt(b.id.slice(9,12))||0; if(s>max) max=s; } });
+  var newId=prefix+String(max+1).padStart(3,'0');
+  var doc=Object.assign({},bottle,{bottleId:newId}); delete doc.id;
+  db.collection('bottles').doc(newId).set(doc).then(function(){
+    rawBottles.push(Object.assign({id:newId},doc)); buildTree(); renderTree();
+  }).catch(function(e){ alert('複製失敗: '+e.message); });
+}
+function duplicateBdata(bd){
+  var max=0;
+  rawBdata.forEach(function(d){ if(d.id&&d.id[0]==='T'){ var s=parseInt(d.id.slice(1))||0; if(s>max) max=s; } });
+  var newId='T'+String(max+1).padStart(5,'0');
+  var doc=Object.assign({},bd,{bottleDataId:newId,seq:newId}); delete doc.id;
+  db.collection('bottleData').doc(newId).set(doc).then(function(){
+    rawBdata.push(Object.assign({id:newId},doc)); buildTree(); renderTree();
+  }).catch(function(e){ alert('複製失敗: '+e.message); });
+}
+
+// ── 削除 ─────────────────────────────────────────────────────────────
+function deleteRecord(col, docId, label){
+  if(!confirm('「'+docId+'」('+label+') を削除しますか？\nこの操作は取り消せません。')) return;
+  db.collection(col).doc(docId).delete().then(function(){
+    var arr=getArr(col);
+    var idx=arr.findIndex(function(r){return r.id===docId;});
+    if(idx>=0) arr.splice(idx,1);
+    buildTree(); renderTree();
+  }).catch(function(e){ alert('削除失敗: '+e.message); });
+}
+
+// ── ツリー描画 ────────────────────────────────────────────────────────
+var nomFilterVal='';
+var openState={};
+
+function getName(r, nameFields){
+  for(var i=0;i<nameFields.length;i++){ if(r[nameFields[i]]) return r[nameFields[i]]; }
+  return '—';
+}
+function getName2(r, nameFields){
+  var found=0;
+  for(var i=0;i<nameFields.length;i++){
+    if(r[nameFields[i]]){ if(found>0) return r[nameFields[i]]; found++; }
+  }
+  return '';
+}
+
+function makeRow(lv, r, stateKey, hasChildren){
+  var node=document.createElement('div');
+  node.className='tree-node lvl-'+lv.key;
+
+  var row=document.createElement('div');
+  row.className='tree-row';
+
+  // toggle
+  var tog=document.createElement('button');
+  tog.className='tree-toggle'+(hasChildren?'':' leaf');
+  tog.textContent=hasChildren?(openState[stateKey]!==false?'▼':'▶'):'•';
+  if(hasChildren) tog.addEventListener('click',function(e){
+    e.stopPropagation();
+    openState[stateKey]=(openState[stateKey]===false)?true:false;
+    renderTree();
+  });
+  row.appendChild(tog);
+
+  // badge
+  var badge=document.createElement('span');
+  badge.className='level-badge';
+  badge.textContent=lv.badge;
+  row.appendChild(badge);
+
+  // id
+  var idSpan=document.createElement('span');
+  idSpan.className='tree-id';
+  idSpan.textContent=r[lv.idField]||r.id||'';
+  row.appendChild(idSpan);
+
+  // name
+  var n1=getName(r,lv.nameFields);
+  var n2=getName2(r,lv.nameFields);
+  var nameSpan=document.createElement('span');
+  nameSpan.className='tree-name';
+  nameSpan.textContent=n1;
+  row.appendChild(nameSpan);
+  if(n2){
+    var n2Span=document.createElement('span');
+    n2Span.className='tree-name2';
+    n2Span.textContent=n2;
+    row.appendChild(n2Span);
+  }
+
+  // opt fields
+  var visFields=lv.optFields.filter(function(f){ return colVis[lv.key][f.field]; });
+  if(visFields.length){
+    var optsWrap=document.createElement('div');
+    optsWrap.className='tree-opts';
+    visFields.forEach(function(f){
+      var cell=document.createElement('span');
+      cell.className='opt-cell';
+      renderCell(cell, lv.collection, r.id, r, f);
+      optsWrap.appendChild(cell);
+    });
+    row.appendChild(optsWrap);
+  }
+
+  // actions
+  var acts=document.createElement('div');
+  acts.className='tree-acts';
+
+  var editA=document.createElement('a');
+  editA.className='act-link';
+  editA.href=lv.editUrl(r);
+  editA.target='_blank';
+  editA.rel='noopener';
+  editA.textContent='編集';
+  acts.appendChild(editA);
+
+  if(lv.canDup){
+    var dupBtn=document.createElement('button');
+    dupBtn.className='act-dup';
+    dupBtn.textContent='複製';
+    (function(rec){ dupBtn.addEventListener('click',function(){
+      if(lv.key==='brand') duplicateBrand(rec);
+      else if(lv.key==='bottle') duplicateBottle(rec);
+      else if(lv.key==='bdata') duplicateBdata(rec);
+    }); })(r);
+    acts.appendChild(dupBtn);
+  }
+
+  if(lv.canDel){
+    var delBtn=document.createElement('button');
+    delBtn.className='act-del';
+    delBtn.textContent='削除';
+    (function(rec){ delBtn.addEventListener('click',function(){
+      deleteRecord(lv.collection, rec.id, lv.label);
+    }); })(r);
+    acts.appendChild(delBtn);
+  }
+
+  row.appendChild(acts);
+  node.appendChild(row);
+  return node;
+}
+
+function renderTree(){
+  var root=document.getElementById('tree-root');
+  root.innerHTML='';
+  var noms=Object.keys(tree).sort();
+  if(nomFilterVal) noms=noms.filter(function(n){ return n.indexOf(nomFilterVal)===0; });
+
+  var disLv=LEVELS[0], brandLv=LEVELS[1], bottleLv=LEVELS[2], bdataLv=LEVELS[3];
+  var disCount=0;
+
+  noms.forEach(function(nom){
+    var entry=tree[nom]; if(!entry) return;
+    var dis=entry.dis||{id:nom};
+    disCount++;
+    var brandIds=Object.keys(entry.brands).sort();
+    var disKey='dis:'+nom;
+    var disNode=makeRow(disLv, dis, disKey, brandIds.length>0);
+
+    if(brandIds.length>0 && openState[disKey]!==false){
+      var disC=document.createElement('div'); disC.className='tree-children';
+      brandIds.forEach(function(brandId){
+        var be=entry.brands[brandId];
+        var brand=be.brand||{id:brandId};
+        var bottleIds=Object.keys(be.bottles).sort();
+        var brandKey='brand:'+brandId;
+        var brandNode=makeRow(brandLv, brand, brandKey, bottleIds.length>0);
+
+        if(bottleIds.length>0 && openState[brandKey]!==false){
+          var brC=document.createElement('div'); brC.className='tree-children';
+          bottleIds.forEach(function(bottleId){
+            var boe=be.bottles[bottleId];
+            var bottle=boe.bottle||{id:bottleId};
+            var bdatas=boe.bdatas||[];
+            var bottleKey='bottle:'+bottleId;
+            var bottleNode=makeRow(bottleLv, bottle, bottleKey, bdatas.length>0);
+
+            if(bdatas.length>0 && openState[bottleKey]!==false){
+              var btC=document.createElement('div'); btC.className='tree-children';
+              bdatas.sort(function(a,b){return (a.id||'').localeCompare(b.id||'');}).forEach(function(bd){
+                btC.appendChild(makeRow(bdataLv, bd, 'bd:'+bd.id, false));
+              });
+              bottleNode.appendChild(btC);
+            }
+            brC.appendChild(bottleNode);
+          });
+          brandNode.appendChild(brC);
+        }
+        disC.appendChild(brandNode);
+      });
+      disNode.appendChild(disC);
+    }
+    root.appendChild(disNode);
+  });
+
+  document.getElementById('ctrl-count').textContent='蒸留所: '+disCount+'件 / 全'+Object.keys(tree).length+'件';
+}
+
+// ── フィルター・展開 ──────────────────────────────────────────────────
+document.getElementById('btn-search').addEventListener('click',function(){
+  nomFilterVal=document.getElementById('nom-filter').value.trim();
+  renderTree();
+});
+document.getElementById('nom-filter').addEventListener('keydown',function(e){
+  if(e.key==='Enter'){ nomFilterVal=this.value.trim(); renderTree(); }
+});
+document.getElementById('btn-clear').addEventListener('click',function(){
+  document.getElementById('nom-filter').value=''; nomFilterVal=''; renderTree();
+});
+document.getElementById('btn-expand-all').addEventListener('click',function(){ openState={}; renderTree(); });
+document.getElementById('btn-collapse-all').addEventListener('click',function(){
+  Object.keys(tree).forEach(function(nom){
+    openState['dis:'+nom]=false;
+    Object.keys(tree[nom].brands).forEach(function(bid){
+      openState['brand:'+bid]=false;
+      Object.keys(tree[nom].brands[bid].bottles).forEach(function(btid){ openState['bottle:'+btid]=false; });
+    });
+  });
+  renderTree();
+});
+document.getElementById('btn-reload').addEventListener('click',function(){ loadAll(); });
+
+// ── データ読み込み ────────────────────────────────────────────────────
+function loadAll(){
+  var msg=document.getElementById('loading-msg');
+  msg.textContent='読み込み中...';
+  document.getElementById('tree-root').innerHTML='';
+  Promise.all([
+    db.collection('distilleries').get(),
+    db.collection('brands').get(),
+    db.collection('bottles').get(),
+    db.collection('bottleData').get()
+  ]).then(function(res){
+    rawDis=res[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    rawBrands=res[1].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    rawBottles=res[2].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    rawBdata=res[3].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    msg.textContent='';
+    buildTree(); buildColPanel(); renderTree();
+  }).catch(function(e){ msg.textContent='読み込み失敗: '+e.message; });
+}
+
+// ── 認証 ─────────────────────────────────────────────────────────────
+AuthRole.requireStaff(auth, function(user){
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').style.display='flex';
+  document.getElementById('hdr-user').textContent=user.email||'';
+  loadAll();
+}, function(){
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('app').style.display='none';
+});
+</script>
+</body>
+</html>
