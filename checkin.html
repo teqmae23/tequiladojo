@@ -640,7 +640,9 @@ g('btn-refresh').addEventListener('click',function(){
 // ── 来場者一覧レンダリング ─────────────────────────────────────
 function getMemberInfo(memberId){
   if(!memberId) return null;
-  return cache.members.find(function(m){ return m.id===memberId||m.memberId===memberId; });
+  return cache.members.find(function(m){
+    return m.id===memberId||m.memberId===memberId||m.realId===memberId||m.displayId===memberId;
+  });
 }
 
 function getVisitOrders(visitId){
@@ -726,7 +728,8 @@ function renderVisCard(v, status){
   var isDone=(status==='done');
   var isPaid=(status==='paid');
   var mem=getMemberInfo(v.memberId);
-  var name=mem?(mem.nickname||mem.name||v.memberId):(v.memberId?'ID: '+v.memberId:'非会員');
+  var dispId=mem?(mem.displayId||mem.memberId||mem.id):v.memberId;
+  var name=mem?(mem.nickname||mem.name||dispId):(dispId?'ID: '+dispId:'非会員');
   var orders=getVisitOrders(v.id);
   var totalAmt=calcAmount(orders);
   var totalTq=calcTequila(orders);
@@ -788,9 +791,10 @@ function openOrdersModal(visitKey, visitorName){
   var infoEl=g('orders-visit-info');
   if(infoEl && v){
     var mem=getMemberInfo(v.memberId);
+    var dispIdV=mem?(mem.displayId||mem.memberId||mem.id):v.memberId;
     infoEl.innerHTML='<span style="font-family:var(--mono);font-size:11px;color:var(--ink3)">来場ID: '+escHtml(v.id)+'</span>'
       +'<span style="font-size:11px;color:var(--ink3);margin-left:12px">来場: '+fmtHHMM(v.visitTime||'')+'</span>'
-      +(v.memberId?'<span style="font-family:var(--mono);font-size:11px;color:var(--ink3);margin-left:12px">会員ID: '+escHtml(v.memberId)+'</span>':'')
+      +(dispIdV?'<span style="font-family:var(--mono);font-size:11px;color:var(--ink3);margin-left:12px">会員ID: '+escHtml(dispIdV)+'</span>':'')
       +(mem&&mem.name?'<span style="font-size:11px;color:var(--ink3);margin-left:12px">'+escHtml(mem.name)+'</span>':'');
   }
   openM('m-orders');
@@ -917,7 +921,7 @@ function openBlindPopup(orderGroupId){
 
   // メンバー名取得
   var memberNames=results.map(function(r){
-    var mem=cache.members.find(function(m){ return m.id===r.customerId||m.memberId===r.customerId; });
+    var mem=cache.members.find(function(m){ return m.id===r.customerId||m.memberId===r.customerId||m.realId===r.customerId||m.displayId===r.customerId; });
     return mem?(mem.nickname||mem.name||r.customerId):(r.customerId||'—');
   });
 
@@ -1194,8 +1198,9 @@ function filterMembers(){
 
   var html=filtered.slice(0,50).map(function(m){
     var name=m.nickname||m.name||m.id;
+    var mDispId=m.displayId||m.memberId||m.id;
     return '<div data-mid="'+escHtml(m.id)+'" class="ci-member-item" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border2);font-size:13px">'
-      +'<span style="font-family:var(--mono);font-size:11px;color:var(--ink3);margin-right:8px">'+m.id+'</span>'
+      +'<span style="font-family:var(--mono);font-size:11px;color:var(--ink3);margin-right:8px">'+mDispId+'</span>'
       +escHtml(name)
       +'<span style="font-size:11px;color:var(--ink3);margin-left:8px">'+(m.rank||'')+'・'+(m.visitCount||0)+'回</span></div>';
   }).join('');
@@ -1271,9 +1276,10 @@ function onMemberInput(idx){
         if(refSel){
           var opts=['<option value="">（紹介なし）</option>'];
           cache.members.forEach(function(m){
-            var mid=m.memberId||m.id;
+            var mid=m.id;
+            var mDisp=m.displayId||m.memberId||m.id;
             if(mid===val) return;
-            opts.push('<option value="'+escHtml(mid)+'">'+escHtml((m.nickname||m.name||mid)+' ['+mid+']')+'</option>');
+            opts.push('<option value="'+escHtml(mid)+'">'+escHtml((m.nickname||m.name||mDisp)+' ['+mDisp+']')+'</option>');
           });
           refSel.innerHTML=opts.join('');
         }
@@ -1299,22 +1305,26 @@ function onMemberInput(idx){
   }
 }
 
-// 仮会員ID採番（900001〜）
-async function fetchNextTempMemberId(){
-  // Firestoreとcacheの両方から既存IDを取得
-  var snap=await db.collection('members').where('memberId','>=','900001').where('memberId','<=','999999').get();
-  var existing=snap.docs.map(function(d){ return parseInt(d.id)||0; });
-  // cacheにある仮会員IDも含める
-  cache.members.forEach(function(m){
-    var n=parseInt(m.id||m.memberId||0);
-    if(n>=900001&&n<=999999&&existing.indexOf(n)<0) existing.push(n);
+// ゲスト新規登録用ID採番（settings/memberCounter トランザクション）
+// 戻り値: { realId: "000101", displayId: "900001" }
+async function fetchNextGuestIds(){
+  var ref=db.collection('settings').doc('memberCounter');
+  return db.runTransaction(function(tx){
+    return tx.get(ref).then(function(doc){
+      var d=doc.exists?doc.data():{};
+      var realSeq =d.realSeq ||101;
+      var guestSeq=d.guestSeq||900001;
+      tx.set(ref,{realSeq:realSeq+1, guestSeq:guestSeq+1},{merge:true});
+      return {
+        realId:    String(realSeq).padStart(6,'0'),
+        displayId: String(guestSeq)
+      };
+    });
   });
-  var next=900001;
-  while(existing.indexOf(next)>=0) next++;
-  return String(next);
 }
 
 // ゲスト会員用72h引継コード取得または新規発行
+// memberId には realId（doc ID）を渡す
 async function getOrCreate72hCode(memberId, nickname){
   var now=new Date();
   var snap=await db.collection('tempRegistrations')
@@ -1420,14 +1430,19 @@ g('m-checkin-save').addEventListener('click', async function(){
 
     // ── 会員の登録（複数人対応） ──
     for(var mi=0;mi<cntMem;mi++){
-      var mid=memberIds[mi]||null;
+      var mid=memberIds[mi]||null;  // mid = doc ID = realId
       if(mid){
         var alreadyIn=cache.visits.find(function(v){ return v.memberId===mid && !v.checkoutTime; });
-        if(alreadyIn){ toast(mid+'は既に在店中です','err'); saveBtn.disabled=false; saveBtn.textContent='登録'; return; }
+        if(alreadyIn){
+          var memDisp=cache.members.find(function(m){return m.id===mid;});
+          var dispLabel=(memDisp&&(memDisp.displayId||memDisp.memberId))||mid;
+          toast(dispLabel+'は既に在店中です','err'); saveBtn.disabled=false; saveBtn.textContent='登録'; return;
+        }
       }
       var visitKey=today+pad(_nextSeq,2);
       var refSelEl=document.getElementById('ci-referrer-'+mi);
       var referredBy=(refSelEl&&refSelEl.value)||null;
+      // memberId には realId（doc ID）を記録
       batch.set(db.collection('visits').doc(visitKey),{
         visitDate:today, visitTime:time, seq:_nextSeq,
         memberId:mid, checkinGroupId:groupId,
@@ -1445,39 +1460,38 @@ g('m-checkin-save').addEventListener('click', async function(){
       _nextSeq++; if(_nextSeq>99) _nextSeq=1;
     }
 
-    // ── 新規来場者の仮会員登録 ──
-    var tempIdSnap=await db.collection('members').where('memberId','>=','900001').where('memberId','<=','999999').get();
-    var existingTempIds=tempIdSnap.docs.map(function(d){ return parseInt(d.id)||0; });
-    var nextTempNum=900001;
-
+    // ── 新規来場者の仮会員登録（realId をdoc IDに使用） ──
     for(var j=0;j<newNicks.length;j++){
-      while(existingTempIds.indexOf(nextTempNum)>=0) nextTempNum++;
-      var tempId=String(nextTempNum);
-      existingTempIds.push(nextTempNum);
-      nextTempNum++;
+      // カウンタートランザクションで realId・displayId を採番
+      var guestIds=await fetchNextGuestIds();
+      var gRealId   =guestIds.realId;    // "000101"（Firestore doc ID）
+      var gDisplayId=guestIds.displayId; // "900001"（表示ID）
 
       var regCode=generateRegCode();
-      batch.set(db.collection('members').doc(tempId),{
-        memberId:tempId, nickname:newNicks[j], status:'guest', isGuest:true, isTemp:false,
+      batch.set(db.collection('members').doc(gRealId),{
+        realId:gRealId, displayId:gDisplayId,
+        memberId:gDisplayId,  // 旧互換フィールド
+        nickname:newNicks[j], status:'guest', isGuest:true, isTemp:false,
         registeredAt:new Date().toISOString().slice(0,10),
         visitCount:0, totalAmount:0, totalTequila:0
       });
       var expiresAt=new Date();
       expiresAt.setDate(expiresAt.getDate()+30);
       batch.set(db.collection('tempRegistrations').doc(regCode),{
-        tempId:tempId, nickname:newNicks[j],
+        tempId:gRealId, nickname:newNicks[j],
         createdAt:new Date().toISOString(), expiresAt:expiresAt.toISOString(), used:false
       });
       var visitKey=today+pad(_nextSeq,2);
+      // visits.memberId には realId を記録
       batch.set(db.collection('visits').doc(visitKey),{
         visitDate:today, visitTime:time, seq:_nextSeq,
-        memberId:tempId, checkinGroupId:groupId,
+        memberId:gRealId, checkinGroupId:groupId,
         tequilaAmount:0, amount:0, payment:payment, receiptIssued:'0', checkoutTime:null
       });
       registeredVisitKeys.push(visitKey);
-      tempMemberIds.push({tempId:tempId, nickname:newNicks[j], regCode:regCode});
+      tempMemberIds.push({tempId:gRealId, displayId:gDisplayId, nickname:newNicks[j], regCode:regCode});
       _nextSeq++;
-      cache.members.push({id:tempId, memberId:tempId, nickname:newNicks[j], name:newNicks[j], status:'guest', isGuest:true});
+      cache.members.push({id:gRealId, realId:gRealId, displayId:gDisplayId, memberId:gDisplayId, nickname:newNicks[j], name:newNicks[j], status:'guest', isGuest:true});
     }
 
     await batch.commit();
