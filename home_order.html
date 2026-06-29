@@ -1133,6 +1133,10 @@ async function serveChecked(){
       b.served=newServed;
     }
     await batch.commit();
+    for(const bid of bids){
+      const b=allBatchGroups.find(x=>x.bid===bid);if(!b)continue;
+      for(const g of b.groups) for(const o of g.orders) if(o.served!==0) writeJournal('update','orders',o.id,{served:1},{served:b.isBlind?2:3});
+    }
     showToast(`${bids.length}グループを提供済みにしました`,'success');
     await loadTodayData();renderOrderList();
   }catch(e){showToast('エラー: '+e.message,'error');}
@@ -1161,6 +1165,10 @@ async function cancelChecked(section){
       b.total=0;
     }
     await fsBatch.commit();
+    for(const bid of bids){
+      const b=allBatchGroups.find(x=>x.bid===bid);if(!b)continue;
+      for(const g of b.groups) for(const o of g.orders) writeJournal('update','orders',o.id,{served:o.served||1},{served:0});
+    }
     await loadTodayData();renderOrderList();
     showToast(`${bids.length}グループをキャンセルしました`,'info');
   }catch(e){showToast('キャンセル失敗: '+e.message,'error');}
@@ -1202,6 +1210,7 @@ async function cancelOrderItem(orderId){
     const fb=db.batch();
     for(const o of equivs){fb.update(db.collection('orders').doc(o.id),{served:0});o.served=0;}
     await fb.commit();
+    for(const o of equivs) writeJournal('update','orders',o.id,{served:1},{served:0});
     await loadTodayData();renderOrderList();
     showToast(`${n}件キャンセルしました`,'info');
   }catch(e){showToast('キャンセル失敗: '+e.message,'error');}
@@ -1231,7 +1240,7 @@ async function saveEditServed(){
   const equivs=_batchEquivOrders(_editTarget,_editTargetBatch);
   try{
     const fb=db.batch();
-    for(const o of equivs){fb.update(db.collection('orders').doc(o.id),{qty,unitPrice});o.qty=qty;o.unitPrice=unitPrice;}
+    for(const o of equivs){fb.update(db.collection('orders').doc(o.id),{qty,unitPrice});const _prevQty=o.qty,_prevUp=o.unitPrice;writeJournal('update','orders',o.id,{qty:_prevQty,unitPrice:_prevUp},{qty,unitPrice});o.qty=qty;o.unitPrice=unitPrice;}
     await fb.commit();
     recomputeBatchTotals();
     renderOrderList();
