@@ -245,17 +245,39 @@ auth.onAuthStateChanged(async function(user){
 });
 
 async function load(user){
-  var email=user.email||'';
+  // 管理者プレビューモード: ?preview=REALID
+  var _previewId=new URLSearchParams(window.location.search).get('preview');
   var mid=null;
-  if(email.indexOf('@tequiladojo.member')>=0){
-    mid=email.replace('@tequiladojo.member','');
-  }else{
+
+  if(_previewId){
+    // 管理者権限チェック
     try{
-      var s=await db.collection('memberIndex').where('email','==',email).limit(1).get();
-      if(!s.empty) mid=s.docs[0].id;
-    }catch(e){
-      var s2=await db.collection('members').where('email','==',email).limit(1).get();
-      if(!s2.empty) mid=s2.docs[0].id;
+      var _tok=await user.getIdTokenResult();
+      var _role=_tok.claims.role||'';
+      if(_role==='owner'||_role==='staff'){
+        mid=_previewId;
+        var _pSnap=await db.collection('members').doc(_previewId).get();
+        var _pName=_pSnap.exists?(_pSnap.data().nickname||_pSnap.data().name||_previewId):_previewId;
+        var _pBanner=document.createElement('div');
+        _pBanner.style.cssText='background:#1a3a6e;color:#fff;font-size:12px;text-align:center;padding:6px;letter-spacing:.04em;margin-bottom:8px';
+        _pBanner.textContent='管理者プレビュー: '+_pName+' ('+_previewId+')';
+        document.getElementById('main-wrap').prepend(_pBanner);
+      }
+    }catch(e){ console.warn('preview mode error:',e); }
+  }
+
+  if(!mid){
+    var email=user.email||'';
+    if(email.indexOf('@tequiladojo.member')>=0){
+      mid=email.replace('@tequiladojo.member','');
+    }else{
+      try{
+        var s=await db.collection('memberIndex').where('email','==',email).limit(1).get();
+        if(!s.empty) mid=s.docs[0].id;
+      }catch(e){
+        var s2=await db.collection('members').where('email','==',email).limit(1).get();
+        if(!s2.empty) mid=s2.docs[0].id;
+      }
     }
   }
   if(!mid){ document.getElementById('grid').innerHTML='<div class="empty">会員情報が見つかりません</div>'; return; }

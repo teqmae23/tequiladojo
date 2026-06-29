@@ -276,7 +276,7 @@ select.fi{min-width:80px}
 
     <!-- 達成リストリンク -->
     <div style="margin-bottom:16px;">
-      <a href="/tastinglog.html" style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:linear-gradient(135deg,#0d3d2e,#1a6640);border-radius:10px;text-decoration:none;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.18);">
+      <a id="tasting-log-link" href="/tastinglog.html" style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:linear-gradient(135deg,#0d3d2e,#1a6640);border-radius:10px;text-decoration:none;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.18);">
         <div>
           <div style="font-size:14px;font-weight:700;letter-spacing:.05em;">🥃 試飲達成リスト</div>
           <div style="font-size:11px;color:rgba(255,255,255,.65);margin-top:2px;">定番品のどれを飲んだか確認できます</div>
@@ -475,6 +475,9 @@ async function initMyPage(user){
           _pBanner.style.cssText='background:#1a3a6e;color:#fff;font-size:12px;text-align:center;padding:6px;letter-spacing:.04em';
           _pBanner.textContent='管理者プレビュー: '+(_previewMemberDoc.nickname||_previewMemberDoc.name||_previewId)+' ('+_previewId+')';
           document.body.prepend(_pBanner);
+          // 試飲達成リストのリンクにプレビューIDを付与
+          var _tlLink=document.getElementById('tasting-log-link');
+          if(_tlLink) _tlLink.href='/tastinglog.html?preview='+encodeURIComponent(_previewId);
         }
       }
     }catch(e){console.warn('preview mode error:',e);}
@@ -523,12 +526,23 @@ async function initMyPage(user){
       }catch(e){console.warn('status auto-fix error:',e);}
     }
     if(_previewMemberDoc){ memberDoc=_previewMemberDoc; memberId=_previewMemberId; }
-    // 管理者プレビュー: pendingメンバーの場合は修正ボタンを表示
+    // 管理者プレビュー: pendingメンバーは自動的にactiveに修正
     if(_previewMemberDoc && _previewMemberDoc.status==='pending'){
-      const _pFixBtn=document.createElement('div');
-      _pFixBtn.style.cssText='background:#7a1a1a;color:#fff;font-size:11px;text-align:center;padding:4px;cursor:pointer';
-      _pFixBtn.innerHTML='⚠ ステータス: 認証待ち &nbsp;<button onclick="(async()=>{await db.collection(\'members\').doc(\''+_previewId+'\').update({status:\'active\'});location.reload();})()" style="font-size:11px;padding:2px 8px;cursor:pointer">→ 本会員に修正</button>';
-      document.body.prepend(_pFixBtn);
+      try{
+        await db.collection('members').doc(_previewId).update({status:'active'});
+        _previewMemberDoc.status='active';
+        memberDoc.status='active';
+        const _pFixNote=document.createElement('div');
+        _pFixNote.style.cssText='background:#1a5e3a;color:#fff;font-size:11px;text-align:center;padding:4px';
+        _pFixNote.textContent='✓ ステータスを認証待ち→本会員に自動修正しました';
+        document.body.prepend(_pFixNote);
+      }catch(e){
+        console.warn('preview status auto-fix error:',e);
+        const _pFixBtn=document.createElement('div');
+        _pFixBtn.style.cssText='background:#7a1a1a;color:#fff;font-size:11px;text-align:center;padding:4px;cursor:pointer';
+        _pFixBtn.innerHTML='⚠ ステータス: 認証待ち &nbsp;<button onclick="(async()=>{await db.collection(\'members\').doc(\''+_previewId+'\').update({status:\'active\'});location.reload();})()" style="font-size:11px;padding:2px 8px;cursor:pointer">→ 本会員に修正</button>';
+        document.body.prepend(_pFixBtn);
+      }
     }
     currentMember=memberDoc;
 
