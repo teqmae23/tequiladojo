@@ -4099,11 +4099,44 @@ function openBlindEditModal(ordId){
   });
 })();
 
-function openTogetherModal(ordId){
+async function openTogetherModal(ordId){
   var ord=_treeCurrentOrders.find(function(o){return o.id===ordId;});
   if(!ord){ toast("注文データが見つかりません","err"); return; }
   _togetherCurrentOrdId=ordId;
   _togetherCurrentBatchId=ord.batchId||null;
+
+  // 会員ツリーモードでは当日の全来場・注文データが不足しているため補完ロード
+  if(_treeMemberFilterId){
+    var _visitDate=ord.orderDate||(ord.visitKey||ord.visitId||'').slice(0,6)||'';
+    if(_visitDate){
+      try{
+        var _vsSnap=await db.collection('visits').where('visitDate','==',_visitDate).get();
+        _vsSnap.docs.forEach(function(d){
+          if(!_treeCurrentVisits.find(function(x){return x.id===d.id;}))
+            _treeCurrentVisits.push(Object.assign({id:d.id},d.data()));
+        });
+        // batchId が既にある場合はそのbatch仲間の注文も取得
+        if(_togetherCurrentBatchId){
+          var _bSnap=await db.collection('orders').where('batchId','==',_togetherCurrentBatchId).get();
+          _bSnap.docs.forEach(function(d){
+            if(!_treeCurrentOrders.find(function(x){return x.id===d.id;}))
+              _treeCurrentOrders.push(Object.assign({id:d.id},d.data()));
+          });
+        }
+        // visitKey で当日の全注文も補完
+        var _dayVids=_vsSnap.docs.map(function(d){return d.id;});
+        for(var _ci=0;_ci<_dayVids.length;_ci+=30){
+          var _chunk=_dayVids.slice(_ci,_ci+30);
+          var _oSnap=await db.collection('orders').where('visitKey','in',_chunk).get().catch(function(){return{docs:[]};});
+          _oSnap.docs.forEach(function(d){
+            if(!_treeCurrentOrders.find(function(x){return x.id===d.id;}))
+              _treeCurrentOrders.push(Object.assign({id:d.id},d.data()));
+          });
+        }
+      }catch(e){ console.warn('[together] supplement load failed:',e); }
+    }
+  }
+
   renderTogetherModal();
   openM("m-together");
 }
@@ -4189,7 +4222,7 @@ function togetherRemove(ordId){
         var idx=_treeCurrentOrders.findIndex(function(o){return o.id===ordId;});
         if(idx>=0) _treeCurrentOrders.splice(idx,1);
         renderTogetherModal();
-        loadTree();
+        if(_treeMemberFilterId) loadMemberTree(_treeMemberFilterId); else loadTree();
       })
       .catch(function(e){toast("削除失敗: "+e.message,"err");});
   });
