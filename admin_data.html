@@ -5210,6 +5210,77 @@ function renderPerfCal(y,mo,daysInMonth,dayData){
   });
 })();
 
+// 一緒に飲んだデータ修正ユーティリティ
+window.fixTogetherData = async function(displayIds, visitDate){
+  displayIds = displayIds || ['900007','900008','900009','900010','900011','900012'];
+  visitDate = visitDate || '260609';
+  var db2 = firebase.firestore();
+  toast('一緒に飲んだデータ修正中...', 'info');
+  console.log('[fixTogether] start', displayIds, visitDate);
+
+  // 1. Get realIds from displayId
+  var memSnap = await db2.collection('members').where('memberId','in',displayIds).get();
+  if(memSnap.empty){ toast('会員が見つかりません','err'); return; }
+  var realIds = memSnap.docs.map(function(d){ return d.id; });
+  console.log('[fixTogether] realIds', realIds);
+
+  // 2. Get visits on visitDate
+  var chunks = [];
+  for(var i=0; i<realIds.length; i+=10) chunks.push(realIds.slice(i,i+10));
+  var visitKeys = [];
+  for(var ci=0; ci<chunks.length; ci++){
+    var vSnap = await db2.collection('visits').where('memberId','in',chunks[ci]).where('visitDate','==',visitDate).get();
+    vSnap.docs.forEach(function(d){ visitKeys.push(d.id); });
+  }
+  console.log('[fixTogether] visitKeys', visitKeys);
+  if(!visitKeys.length){ toast('対象来場データなし','err'); return; }
+
+  // 3. Get all orders for those visits
+  var allOrders = [];
+  var vchunks = [];
+  for(var j=0; j<visitKeys.length; j+=10) vchunks.push(visitKeys.slice(j,j+10));
+  for(var vci=0; vci<vchunks.length; vci++){
+    var oSnap = await db2.collection('orders').where('visitKey','in',vchunks[vci]).get();
+    oSnap.docs.forEach(function(d){ allOrders.push(Object.assign({id:d.id},d.data())); });
+  }
+  console.log('[fixTogether] orders', allOrders.length, allOrders);
+
+  // 4. Group by productCode (or productName fallback), ignoring deleted/discount
+  var groups = {};
+  allOrders.forEach(function(o){
+    if(o.deleted) return;
+    var key = o.productCode || o.productName || '';
+    if(!key) return;
+    if(!groups[key]) groups[key] = [];
+    groups[key].push(o);
+  });
+
+  // 5. For each group with multiple members, assign same batchId
+  var batch = db2.batch();
+  var updateCount = 0;
+  Object.keys(groups).forEach(function(key){
+    var grp = groups[key];
+    if(grp.length < 2) return; // skip solo orders
+    // find existing batchId or use first order's ID
+    var bId = grp.reduce(function(b,o){ return b||(o.batchId&&o.batchId.length>0?o.batchId:null); }, null) || grp[0].id;
+    console.log('[fixTogether] group', key, '→ batchId=', bId, grp.map(function(o){return o.id;}));
+    grp.forEach(function(o){
+      if(o.batchId === bId) return; // already correct
+      batch.update(db2.collection('orders').doc(o.id), {batchId: bId});
+      updateCount++;
+    });
+  });
+
+  if(updateCount === 0){ toast('既に一緒に飲んだ設定済みか対象なし','info'); return; }
+  await batch.commit();
+  console.log('[fixTogether] updated', updateCount, 'orders');
+  toast(updateCount+'件の注文を「一緒に飲んだ」に設定しました', 'ok');
+
+  // Reload tree if member tree is active
+  if(_treeMemberFilterId) loadMemberTree(_treeMemberFilterId);
+  else if(typeof loadTree==='function') loadTree();
+};
+
 </script>
 </body>
 </html>
