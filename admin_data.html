@@ -2791,11 +2791,16 @@ function updateOrderKey(){
 function autoSetOrderSeq(date){
   if(!date||date.length!==6) return;
   var maxSeq=0;
+  // 自動採番IDのorderはorderDateフィールドで判定、旧形式IDは先頭6桁で判定
+  function isDateMatch(r){
+    if(r.orderDate) return r.orderDate===date;
+    return /^\d{9}$/.test(r.id||'')&&(r.id||'').slice(0,6)===date;
+  }
   cache.orders.forEach(function(r){
-    if((r.id||"").slice(0,6)===date){ var s=parseInt((r.id||"").slice(6))||0; if(s>maxSeq) maxSeq=s; }
+    if(isDateMatch(r)){ var s=parseInt((r.id||"").slice(6))||0; if(s>maxSeq) maxSeq=s; }
   });
   _treeCurrentOrders.forEach(function(r){
-    if((r.id||"").slice(0,6)===date){ var s=parseInt((r.id||"").slice(6))||0; if(s>maxSeq) maxSeq=s; }
+    if(isDateMatch(r)){ var s=parseInt((r.id||"").slice(6))||0; if(s>maxSeq) maxSeq=s; }
   });
   sv("ord-seq",String(maxSeq+1).padStart(3,"0"));
   updateOrderKey();
@@ -2807,7 +2812,10 @@ function openOrderModal(id){
   var dEl=g("ord-date"), sEl=g("ord-seq");
   if(id){
     var r=cache.orders.find(function(x){return x.id===id;})||_treeCurrentOrders.find(function(x){return x.id===id;});
-    sv("ord-date",(r&&r.id)?r.id.slice(0,6):""); sv("ord-seq",id?id.slice(6):"");
+    // orderDateフィールドを優先、なければ旧形式IDの先頭6桁
+    var _isOldId=/^\d{9}$/.test(id||'');
+    sv("ord-date",r?r.orderDate||(_isOldId?id.slice(0,6):""):"");
+    sv("ord-seq",_isOldId?id.slice(6):"(自動採番)");
     sv("ord-time",r?r.orderTime||"":"");
     sv("ord-customer",r?r.customerId||"":""); sv("ord-visit",r?r.visitKey||"":"");
     sv("ord-type",r?r.productType||"tequila":"tequila");
@@ -2854,9 +2862,10 @@ var _bsoBtn=g("btn-save-order");
 if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
   var date=gv("ord-date"), seq=gv("ord-seq"), qty=gv("ord-qty");
   if(!date||date.length!==6){ toast("注文日（6桁）は必須です","err"); return; }
-  if(!seq||seq.length!==3){ toast("連番（3桁）は必須です","err"); return; }
+  // 新規登録は連番3桁必須、既存編集（自動採番ID）はeditId.orderをそのまま使う
+  if(!editId.order&&(!seq||seq.length!==3)){ toast("連番（3桁）は必須です","err"); return; }
   if(!qty){ toast("数量は必須です","err"); return; }
-  var id=date+seq;
+  var id=editId.order||date+seq;
   if(!editId.order&&(cache.orders.some(function(r){return r.id===id;})||_treeCurrentOrders.some(function(r){return r.id===id;}))){toast("注文ID「"+id+"」は既に存在します","err");return;}
   var ordDateVal=gv("ord-date");
   db.collection("orders").doc(id).set({
