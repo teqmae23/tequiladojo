@@ -255,7 +255,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
     <div class="mbody">
       <div class="keybox" id="kb-member">—<span class="klabel">会員番号</span></div>
       <div class="frow c3">
-        <div class="fg"><label class="fl">会員番号（6桁）<span class="req">*</span></label><input class="fi mono" id="mem-id" placeholder="250001" maxlength="6" readonly style="background:var(--cream2)"></div>
+        <div class="fg"><label class="fl">会員番号（6桁）<span class="req">*</span></label><input class="fi mono" id="mem-id" placeholder="250001" maxlength="6" readonly style="background:var(--cream2)"><input type="hidden" id="mem-real-id"></div>
         <div class="fg"><label class="fl">登録日</label><div class="date-group"><input class="fi dy" id="mem-reg-y" maxlength="4" placeholder="YYYY" style="width:52px;text-align:center"><span class="date-sep">/</span><input class="fi dm" id="mem-reg-m" maxlength="2" placeholder="MM" style="width:34px;text-align:center"><span class="date-sep">/</span><input class="fi dd" id="mem-reg-d" maxlength="2" placeholder="DD" style="width:34px;text-align:center"></div><input type="hidden" id="mem-reg"></div>
         <div class="fg"><label class="fl">性別</label><select class="fs" id="mem-gender"><option value="男">男</option><option value="女">女</option><option value="他">他</option></select></div>
       </div>
@@ -774,7 +774,7 @@ function renderMembers(){
   var list=cache.members.slice();
   var q=(g("s-mem")||{value:""}).value.toLowerCase(), gen=gv("f-mem-gender"), pref=gv("f-mem-pref");
   list=list.filter(function(r){
-    if(q&&(r.name||"").toLowerCase().indexOf(q)<0&&(r.nameKana||"").toLowerCase().indexOf(q)<0&&(r.nickname||"").toLowerCase().indexOf(q)<0&&(r.email||"").toLowerCase().indexOf(q)<0) return false;
+    if(q&&(r.name||"").toLowerCase().indexOf(q)<0&&(r.nameKana||"").toLowerCase().indexOf(q)<0&&(r.nickname||"").toLowerCase().indexOf(q)<0&&(r.email||"").toLowerCase().indexOf(q)<0&&(r.displayId||r.id||"").indexOf(q)<0&&(r.id||"").indexOf(q)<0) return false;
     if(gen&&r.gender!==gen) return false;
     if(pref&&r.prefecture!==pref) return false;
     return true;
@@ -804,7 +804,7 @@ function renderMembers(){
     else if(r.pendingEmail) typeBadge='<span class="badge" style="font-size:10px;background:var(--orange);color:#fff">認証待ち</span>';
     else if(emailVal) typeBadge='<span class="badge bg-teal" style="font-size:10px">本会員</span>';
     else typeBadge='<span class="badge" style="font-size:10px;background:#b8860b;color:#fff">仮登録</span>';
-    return '<tr style="'+deletedStyle+'"><td class="mono">'+r.id+'</td><td style="font-size:12px;color:var(--teal)">'+(r.nickname||"—")+'</td><td>'+(r.name||"—")+'</td><td class="dim" style="font-size:12px">'+(r.nameKana||"—")+'</td><td>'+gBadge+'</td><td class="dim" style="font-size:11px">'+(r.prefecture||"—")+'</td><td style="padding-right:6px">'+emailCell+'</td><td style="padding-left:6px;padding-right:6px">'+typeBadge+'</td><td class="mono dim" style="font-size:11px;padding-left:6px;padding-right:6px">'+(normDateStr(r.registeredAt)||r.registeredAt||"—")+'</td><td style="padding-left:6px"><div class="acts" style="justify-content:flex-start"><button class="btn bs sm" data-edit-member="'+r.id+'">編集</button><button class="btn bs sm" data-copy-member="'+r.id+'">コピー</button>'+transferBtn+'<button class="btn bd sm" onclick="openMemberDelModal(\''+r.id+'\',\''+escHtml(r.name||r.nickname||r.id)+'\','+!!r.deleted+')">削除</button></div></td></tr>';
+    return '<tr style="'+deletedStyle+'"><td class="mono">'+(r.displayId||r.id)+'</td><td style="font-size:12px;color:var(--teal)">'+(r.nickname||"—")+'</td><td>'+(r.name||"—")+'</td><td class="dim" style="font-size:12px">'+(r.nameKana||"—")+'</td><td>'+gBadge+'</td><td class="dim" style="font-size:11px">'+(r.prefecture||"—")+'</td><td style="padding-right:6px">'+emailCell+'</td><td style="padding-left:6px;padding-right:6px">'+typeBadge+'</td><td class="mono dim" style="font-size:11px;padding-left:6px;padding-right:6px">'+(normDateStr(r.registeredAt)||r.registeredAt||"—")+'</td><td style="padding-left:6px"><div class="acts" style="justify-content:flex-start"><button class="btn bs sm" data-edit-member="'+r.id+'">編集</button><button class="btn bs sm" data-copy-member="'+r.id+'">コピー</button>'+transferBtn+'<button class="btn bs sm" onclick="window.open('/admin_data.html?member='+r.id+'','_blank')" title="データツリー（営業データで開く）">ツリー</button><button class="btn bs sm" onclick="window.open(\'/mypage.html?preview='+r.id+'\',\'_blank\')" title="マイページを閲覧">MP</button><button class="btn bd sm" onclick="openMemberDelModal(\''+r.id+'\',\''+escHtml(r.name||r.nickname||r.id)+'\','+!!r.deleted+')">削除</button></div></td></tr>';
   }).join("");
 }
 
@@ -883,11 +883,24 @@ function initDateGroupListeners(prefix){
 initDateGroupListeners('mem-reg');
 initDateGroupListeners('mem-birth');
 
-function genMemberId(){
+async function genMemberIds(){
   var yy=new Date().getFullYear().toString().slice(2);
-  var maxSeq=0;
-  cache.members.forEach(function(m){ if(m.id&&m.id.slice(0,2)===yy){ var s=parseInt(m.id.slice(2))||0; if(s>maxSeq) maxSeq=s; } });
-  return yy+String(maxSeq+1).padStart(4,"0");
+  var ref=db.collection('settings').doc('memberCounter');
+  return db.runTransaction(function(tx){
+    return tx.get(ref).then(function(doc){
+      var d=doc.exists?doc.data():{};
+      var realSeq=d.realSeq||101;
+      var seqMap=d.memberSeq||{};
+      var last=seqMap[yy]||0;
+      var nextMemberSeq=last+1;
+      seqMap[yy]=nextMemberSeq;
+      tx.set(ref,{realSeq:realSeq+1, memberSeq:seqMap},{merge:true});
+      return {
+        realId: String(realSeq).padStart(6,'0'),
+        displayId: yy+String(nextMemberSeq).padStart(4,'0')
+      };
+    });
+  });
 }
 
 function setMemberFields(r){
@@ -913,16 +926,18 @@ g("btn-open-member").addEventListener("click",function(){ openMemberModal(null);
 
 var _editOrigEmail="";
 
-function openMemberModal(id){
+async function openMemberModal(id){
   editId.member=id; g("mt-member").textContent=id?"会員編集":"会員登録";
   var idEl=g("mem-id");
   var emailEl=g("mem-email");
   var emailHint=g("mem-email-hint");
   if(id){
-    sv("mem-id",id); idEl.readOnly=true; idEl.style.background="var(--cream2)";
-    var r=cache.members.find(function(m){return m.id===id;}); setMemberFields(r);
+    var r=cache.members.find(function(m){return m.id===id;});
+    var dispId=r?(r.displayId||r.id):id;
+    sv("mem-id",dispId); sv("mem-real-id",id);
+    idEl.readOnly=true; idEl.style.background="var(--cream2)";
+    setMemberFields(r);
     _editOrigEmail=gv("mem-email");
-    // ownerのみメール編集可
     if(emailEl){
       if(_currentRole==="owner"){
         emailEl.readOnly=false; emailEl.style.background="";
@@ -932,11 +947,12 @@ function openMemberModal(id){
         if(emailHint) emailHint.style.display="none";
       }
     }
-    // photo section
     var photoSec=g("m-photo-section"); if(photoSec) photoSec.style.display=_currentRole==="owner"?"block":"none";
   } else {
     _editOrigEmail="";
-    var newId=genMemberId(); sv("mem-id",newId); idEl.readOnly=false; idEl.style.background=""; setMemberFields(null);
+    var ids=await genMemberIds();
+    sv("mem-id",ids.displayId); sv("mem-real-id",ids.realId);
+    idEl.readOnly=true; idEl.style.background="var(--cream2)"; setMemberFields(null);
     if(emailEl){ emailEl.readOnly=false; emailEl.style.background=""; }
     if(emailHint) emailHint.style.display="none";
     var photoSec=g("m-photo-section"); if(photoSec) photoSec.style.display=_currentRole==="owner"?"block":"none";
@@ -945,22 +961,17 @@ function openMemberModal(id){
   openM("m-member");
 }
 
-var memIdEl=g("mem-id"); if(memIdEl) memIdEl.addEventListener("input",function(){
-  var v=this.value.replace(/[^0-9]/g,"").slice(0,6); this.value=v;
-  this.style.borderColor=""; this.style.boxShadow=""; var err=g("err-mem-id"); if(err) err.remove();
-  g("kb-member").innerHTML=v?'<span class="keypart kp-nom">'+v+'</span><span class="klabel">会員番号</span>':'—<span class="klabel">会員番号</span>';
-});
-
-function copyMemberModal(id){
+async function copyMemberModal(id){
   var r=cache.members.find(function(m){return m.id===id;});
   editId.member=null; g("mt-member").textContent="会員登録（コピー）";
-  var newId=genMemberId(); sv("mem-id",newId);
+  var ids=await genMemberIds();
+  sv("mem-id",ids.displayId); sv("mem-real-id",ids.realId);
   var idEl=g("mem-id"); idEl.readOnly=true; idEl.style.background="var(--cream2)";
   setMemberFields(r); setDateGroup("mem-reg",todayDate()); sv("mem-email","");
   _editOrigEmail="";
   var emailEl=g("mem-email"); if(emailEl){ emailEl.readOnly=false; emailEl.style.background=""; }
   var photoSec=g("m-photo-section"); if(photoSec) photoSec.style.display=_currentRole==="owner"?"block":"none";
-  g("kb-member").innerHTML='<span class="keypart kp-nom">'+newId+'</span><span class="klabel">会員番号</span>';
+  g("kb-member").innerHTML='<span class="keypart kp-nom">'+ids.displayId+'</span><span class="klabel">会員番号</span>';
   openM("m-member");
 }
 
@@ -975,7 +986,7 @@ function findNextMemberId(conflictId){
 }
 
 g("btn-save-member").addEventListener("click",async function(){
-  var id=gv("mem-id"), name=gv("mem-name");
+  var displayId=gv("mem-id"), realDocId=gv("mem-real-id")||displayId, id=displayId, name=gv("mem-name");
   // 必須チェック関数
   function requireField(elId, label){
     var el=g(elId);
@@ -1003,18 +1014,12 @@ g("btn-save-member").addEventListener("click",async function(){
   clearFieldError("mem-id"); clearFieldError("mem-name");
   if(!id||id.length!==6){ requireField("mem-id","会員番号"); toast("会員番号が不正です","err"); return; }
   if(!name){ requireField("mem-name","会員名"); return; }
-  if(!editId.member && cache.members.some(function(m){return m.id===id;})){
-    var suggest=findNextMemberId(id);
-    if(suggest && confirm("会員番号「"+id+"」は既に存在します。\n\n代わりに「"+suggest+"」を使いますか？")){
-      sv("mem-id",suggest); g("kb-member").innerHTML='<span class="keypart kp-nom">'+suggest+'</span><span class="klabel">会員番号</span>'; id=suggest;
-    } else { return; }
-  }
   var noteEl=g("mem-note");
   var newEmail=gv("mem-email");
   // ownerかつ既存会員かつメール変更あり → adminUpdateEmail を呼ぶ
   if(editId.member && _currentRole==="owner" && newEmail && newEmail!==_editOrigEmail){
     try{
-      await functions.httpsCallable("adminUpdateEmail")({memberId:id,newEmail:newEmail});
+      await functions.httpsCallable("adminUpdateEmail")({memberId:realDocId,newEmail:newEmail});
     }catch(e){
       // authUidなし等の場合は警告のみ（Firestoreには保存続行）
       toast("メールAuth更新スキップ: "+e.message,"err");
@@ -1023,17 +1028,17 @@ g("btn-save-member").addEventListener("click",async function(){
   // 画像アップロード（保存前）
   if(_memberIconFile){
     var iExt=_memberIconFile.ext||'jpg';
-    var iUrl=await uploadMemberImage(_memberIconFile.blob,'members/'+id+'/icon.'+iExt);
+    var iUrl=await uploadMemberImage(_memberIconFile.blob,'members/'+realDocId+'/icon.'+iExt);
     _memberIconFile=null;
   }
   if(_memberPhotoFile&&_currentRole==='owner'){
     var pExt=_memberPhotoFile.ext||'jpg';
-    var pUrl=await uploadMemberImage(_memberPhotoFile.blob,'members/'+id+'/photo.'+pExt);
+    var pUrl=await uploadMemberImage(_memberPhotoFile.blob,'members/'+realDocId+'/photo.'+pExt);
     _memberPhotoFile=null;
   }
-  var r=cache.members.find(function(m){return m.id===id;});
-  db.collection("members").doc(id).set({
-    memberId:id,
+  var r=cache.members.find(function(m){return m.id===realDocId;});
+  db.collection("members").doc(realDocId).set({
+    memberId:displayId, realId:realDocId, displayId:displayId,
     iconUrl:(typeof iUrl!=="undefined"?iUrl:(r?r.iconUrl||null:null)),
     photoUrl:(_currentRole==="owner"&&typeof pUrl!=="undefined"?pUrl:(r?r.photoUrl||null:null)),
     name:name, nameKana:gv("mem-kana")||null, nickname:gv("mem-nick")||null,

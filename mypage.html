@@ -459,6 +459,26 @@ auth.onAuthStateChanged(async user=>{
 // ─── マイページ初期化 ───
 async function initMyPage(user){
   document.getElementById('visit-list').innerHTML='<div class="loading">データを読み込み中...</div>';
+  // 管理者プレビューモード: ?preview=REALID
+  const _previewId=new URLSearchParams(window.location.search).get('preview');
+  let _previewMemberDoc=null, _previewMemberId=null;
+  if(_previewId){
+    try{
+      const _tok=await user.getIdTokenResult();
+      const _role=_tok.claims.role||'';
+      if(_role==='owner'||_role==='staff'){
+        const _pSnap=await db.collection('members').doc(_previewId).get();
+        if(_pSnap.exists){
+          _previewMemberDoc={id:_pSnap.id,..._pSnap.data()};
+          _previewMemberId=_previewMemberDoc.memberId||_previewMemberDoc.displayId||_previewMemberDoc.id;
+          const _pBanner=document.createElement('div');
+          _pBanner.style.cssText='background:#1a3a6e;color:#fff;font-size:12px;text-align:center;padding:6px;letter-spacing:.04em';
+          _pBanner.textContent='管理者プレビュー: '+(_previewMemberDoc.nickname||_previewMemberDoc.name||_previewId)+' ('+_previewId+')';
+          document.body.prepend(_pBanner);
+        }
+      }
+    }catch(e){console.warn('preview mode error:',e);}
+  }
   try{
     // 1. 会員情報取得（Auth UIDからmembersを検索）
     // Auth emailからmemberIdを取得
@@ -495,6 +515,7 @@ async function initMyPage(user){
         memberId=memberDoc.memberId||snap.docs[0].id;
       }
     }
+    if(_previewMemberDoc){ memberDoc=_previewMemberDoc; memberId=_previewMemberId; }
     currentMember=memberDoc;
 
     // 2. 表示名・プロフィール設定

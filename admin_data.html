@@ -1267,6 +1267,9 @@ function loadAll(){
   loadMembers(function(){
     loadLayouts();
     loadSessions();
+    // ?member=REALID からの遷移: ツリータブで会員フィルタ表示
+    var _urlMember=new URLSearchParams(window.location.search).get('member');
+    if(_urlMember) navigateToMemberTree(_urlMember);
   });
   loadNewsTypeConfig(loadNews);
 }
@@ -4885,6 +4888,82 @@ function navigateToTree(yymmdd){
   if(fromEl) fromEl.value=dateStr;
   if(toEl)   toEl.value=dateStr;
   loadTree();
+}
+
+function navigateToMemberTree(realId){
+  switchToPage('tree');
+  var m=cache.members.find(function(x){return x.id===realId;});
+  var dispName=m?(m.nickname||m.name||m.displayId||m.id):realId;
+  var dispId=m?(m.displayId||m.id):realId;
+  // ツリーヘッダに会員フィルタバナーを表示
+  var cont=document.getElementById('tree-container');
+  cont.innerHTML='<div style="text-align:center;color:var(--ink3);padding:32px">読み込み中...</div>';
+  var phead=document.querySelector('#page-tree .phead');
+  if(phead&&!document.getElementById('member-tree-banner')){
+    var banner=document.createElement('div');
+    banner.id='member-tree-banner';
+    banner.style.cssText='background:rgba(200,146,30,.1);border:1px solid rgba(200,146,30,.3);border-radius:6px;padding:8px 14px;font-size:13px;display:flex;align-items:center;gap:12px';
+    banner.innerHTML='👤 会員フィルタ: <strong>'+escHtml(dispName)+'</strong><span class="mono" style="font-size:11px;color:var(--ink3)">'+escHtml(dispId)+'</span>'
+      +'<button class="btn bs sm" style="margin-left:auto;font-size:11px" onclick="clearMemberTreeFilter()">✕ フィルタ解除</button>';
+    phead.appendChild(banner);
+  }
+  loadMemberTree(realId);
+}
+
+function clearMemberTreeFilter(){
+  var b=document.getElementById('member-tree-banner'); if(b) b.remove();
+  document.getElementById('tree-container').innerHTML='<div class="ec">日付を選択して「表示」を押してください。</div>';
+}
+
+async function loadMemberTree(realId){
+  var cont=document.getElementById('tree-container');
+  cont.innerHTML='<div class="ec">読み込み中...</div>';
+  try{
+    if(!cache.members.length) await new Promise(function(res){loadMembers(res);});
+    // 会員の全来場を取得
+    var visSnap=await db.collection('visits').where('memberId','==',realId)
+      .orderBy('visitTime','desc').limit(100).get()
+      .catch(function(){
+        return db.collection('visits').where('memberId','==',realId).get();
+      });
+    var visits=visSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    visits.sort(function(a,b){return (b.visitTime||b.id).localeCompare(a.visitTime||a.id);});
+    var visitKeys=visits.map(function(v){return v.id;});
+    var orders=[];
+    if(visitKeys.length){
+      for(var i=0;i<visitKeys.length;i+=30){
+        var chunk=visitKeys.slice(i,i+30);
+        var snap=await db.collection('orders').where('visitKey','in',chunk).get();
+        snap.docs.forEach(function(d){orders.push(Object.assign({id:d.id},d.data()));});
+      }
+    }
+    _treeCurrentVisits=visits;
+    _treeCurrentOrders=orders;
+    orders.forEach(function(o){var idx=cache.orders.findIndex(function(c){return c.id===o.id;});if(idx>=0)cache.orders[idx]=o;else cache.orders.push(o);});
+    visits.forEach(function(v){var idx=cache.visits.findIndex(function(c){return c.id===v.id;});if(idx>=0)cache.visits[idx]=v;else cache.visits.push(v);});
+
+    if(!visits.length){
+      cont.innerHTML='<div class="ec">来場データがありません</div>';
+      return;
+    }
+    // 日付ごとにグループ化して既存の renderTree を再利用
+    var byDate={};
+    visits.forEach(function(v){
+      var d=v.visitDate||(v.id?v.id.slice(0,6):null);
+      if(!d) return;
+      if(!byDate[d]) byDate[d]=[];
+      byDate[d].push(v);
+    });
+    var dates=Object.keys(byDate).sort(function(a,b){return b.localeCompare(a);});
+    cont.innerHTML='';
+    dates.forEach(function(yymmdd){
+      var dayVisits=byDate[yymmdd];
+      var dayOrders=orders.filter(function(o){
+        return dayVisits.some(function(v){return (o.visitKey||o.visitId)===v.id;});
+      });
+      renderTree(yymmdd,[],dayVisits,dayOrders,cont);
+    });
+  }catch(e){cont.innerHTML='<div class="ec">読込エラー: '+e.message+'</div>';}
 }
 
 function navigateToPerfCal(){
