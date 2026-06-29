@@ -808,15 +808,32 @@ function nickByteLen(s) {
   return n;
 }
 
-function fetchNextMemberId() {
+// displayId（年2桁+4桁連番）を採番する
+function fetchNextDisplayMemberId() {
   var year = String(new Date().getFullYear()).slice(2);
-  var ref = db.collection('counters').doc('members');
+  var ref = db.collection('settings').doc('memberCounter');
   return db.runTransaction(function(tx) {
     return tx.get(ref).then(function(doc) {
-      var last = doc.exists ? (doc.data().lastId || 0) : 2;
+      var d = doc.exists ? doc.data() : {};
+      var seqMap = d.memberSeq || {};
+      var last = seqMap[year] || 0;
       var next = last + 1;
-      tx.set(ref, {lastId: next}, {merge: true});
+      seqMap[year] = next;
+      tx.set(ref, {memberSeq: seqMap}, {merge: true});
       return year + String(next).padStart(4, '0');
+    });
+  });
+}
+
+// realId（000101〜）を採番する
+function fetchNextRealId() {
+  var ref = db.collection('settings').doc('memberCounter');
+  return db.runTransaction(function(tx) {
+    return tx.get(ref).then(function(doc) {
+      var d = doc.exists ? doc.data() : {};
+      var realSeq = d.realSeq || 101;
+      tx.set(ref, {realSeq: realSeq + 1}, {merge: true});
+      return String(realSeq).padStart(6, '0');
     });
   });
 }
@@ -849,17 +866,20 @@ function doRegister() {
   if(pass !== pass2) { errEl.textContent = 'パスワードが一致しません'; return; }
   var btn = g('btn-register'); if(btn) { btn.disabled=true; btn.textContent='登録中...'; }
   var btn2 = g('btn-register2'); if(btn2) { btn2.disabled=true; btn2.textContent='登録中...'; }
-  fetchNextMemberId().then(function(memberId) {
-    var authEmail = emailInput ? emailInput : (memberId + VIRTUAL_DOMAIN);
-      return auth.createUserWithEmailAndPassword(authEmail, pass)
+  Promise.all([fetchNextRealId(), fetchNextDisplayMemberId()]).then(function(ids) {
+    var realId = ids[0], displayId = ids[1];
+    var authEmail = emailInput ? emailInput : (displayId + VIRTUAL_DOMAIN);
+    return auth.createUserWithEmailAndPassword(authEmail, pass)
       .then(function(cred) {
         var uid = cred.user.uid;
         var now = new Date().toISOString().slice(0,10);
         var batch = db.batch();
-        batch.set(db.collection('memberIndex').doc(memberId), {email: authEmail});
-        batch.set(db.collection('members').doc(memberId), {
+        batch.set(db.collection('memberIndex').doc(realId), {email: authEmail});
+        batch.set(db.collection('members').doc(realId), {
           authUid: uid,
-          memberId: memberId,
+          realId: realId,
+          displayId: displayId,
+          memberId: displayId,  // 旧互換フィールド
           email: emailInput || null,
           status: 'active',
           nickname: nick,
@@ -870,7 +890,7 @@ function doRegister() {
           phone: gv('reg-tel') || null,
           registeredAt: now
         });
-        return batch.commit().then(function(){ return memberId; });
+        return batch.commit().then(function(){ return displayId; });
       });
   }).then(function(memberId) {
     var infoEl = g('reg-info-msg'); if(infoEl) infoEl.textContent = '登録完了！会員番号: ' + memberId;
