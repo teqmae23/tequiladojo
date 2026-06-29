@@ -309,7 +309,13 @@ function onBasemapChange(val){
   _baseLayers[val].addTo(map);
 }
 
-function makeIcon(color, visited){
+function makeIcon(color, visited, dimmed){
+  if(dimmed){
+    return L.divIcon({
+      html:'<div style="width:9px;height:9px;border-radius:50%;background:#fff;border:2px solid #ccc;opacity:.5;box-shadow:0 1px 3px rgba(0,0,0,.3)"></div>',
+      iconSize:[13,13],iconAnchor:[6,6],className:''
+    });
+  }
   if(visited){
     return L.divIcon({
       html:'<div style="width:13px;height:13px;border-radius:50%;background:'+color+';border:3px solid #c8860a;box-shadow:0 0 0 2px rgba(200,134,10,.35),0 1px 4px rgba(0,0,0,.45)"></div>',
@@ -529,15 +535,25 @@ function applyFilters(){
   var visible=0;
   allMarkers.forEach(function(m){
     var nom=parseInt(m.dis.nom||m.dis.id||0);
+    var nomKey=String(m.dis.nom||m.dis.id);
+    var visited=memberNoms.has(nomKey);
     var show=!distFilter||(distFilter==='__other__'?!DISTRICT_COLORS[m.dis.districtId]:m.dis.districtId===distFilter);
-    if(_visitedOnly) show=show&&memberNoms.has(String(m.dis.nom||m.dis.id));
-    if(salesFilter==='1') show=show&&nomHasBottle.has(String(m.dis.nom||m.dis.id));
-    if(salesFilter==='3') show=show&&nomHasJapanBottle.has(String(m.dis.nom||m.dis.id));
+    var visitedMatch=!_visitedOnly||visited;
+    if(salesFilter==='1') show=show&&nomHasBottle.has(nomKey);
+    if(salesFilter==='3') show=show&&nomHasJapanBottle.has(nomKey);
     if(salesFilter==='2') show=show&&m.dis.salesCategory===0;
     if(salesFilter==='3') show=show&&m.dis.introduced===1&&m.dis.salesCategory===0;
     show=show&&nom>=nomFrom&&nom<=nomTo;
-    if(show){ m.marker.addTo(map); visible++; }
-    else { map.removeLayer(m.marker); }
+    if(show){
+      // 既飲フィルター中かつ未飲は白ピンで表示
+      var dimmed=_visitedOnly&&!visited;
+      m.marker.setIcon(makeIcon(getMarkerColor(m.dis), visited, dimmed));
+      m.marker.setZIndexOffset(visited?100:(dimmed?-100:0));
+      m.marker.addTo(map);
+      if(visitedMatch) visible++;
+    } else {
+      map.removeLayer(m.marker);
+    }
   });
   document.getElementById('map-count').textContent='表示中: '+visible+' / '+allMarkers.length+' 蒸留所';
 }
@@ -744,35 +760,56 @@ async function loadMemberNoms(user){
     if(_previewMemberId){
       memberId=_previewMemberId;
     } else {
-      // membersコレクションからauthUidでdocIdを取得
-      var msnap=await db.collection('members').where('authUid','==',user.uid).limit(1).get();
-      memberId=msnap.empty?user.uid:msnap.docs[0].id;
+      var email=user.email||'';
+      if(email.indexOf('@tequiladojo.member')>=0){
+        memberId=email.replace('@tequiladojo.member','');
+      } else {
+        try{
+          var s=await db.collection('memberIndex').where('email','==',email).limit(1).get();
+          if(!s.empty) memberId=s.docs[0].id;
+        }catch(e){}
+        if(!memberId){
+          var msnap=await db.collection('members').where('authUid','==',user.uid).limit(1).get();
+          if(!msnap.empty) memberId=msnap.docs[0].id;
+        }
+      }
     }
-    // visits/{memberId}/orders を取得
-    var vsnap=await db.collection('visits').doc(memberId).collection('orders').get();
-    vsnap.docs.forEach(function(doc){
-      var d=doc.data();
-      // bottleData配列 or オブジェクトからbrandIdを抽出
-      var bottles=d.bottleData;
-      if(Array.isArray(bottles)){
-        bottles.forEach(function(b){ if(b.brandId) memberNoms.add(String(b.brandId).slice(0,4)); });
-      } else if(bottles&&typeof bottles==='object'){
-        Object.values(bottles).forEach(function(b){ if(b&&b.brandId) memberNoms.add(String(b.brandId).slice(0,4)); });
-      }
-      // orderItems等も確認
-      var items=d.orderItems||d.items;
-      if(Array.isArray(items)){
-        items.forEach(function(it){ if(it.brandId) memberNoms.add(String(it.brandId).slice(0,4)); });
-      }
-    });
+    if(!memberId) return;
+
+    // visits -> orders -> bottleData のNOM抽出
+    var vsnap=await db.collection('visits').where('memberId','==',memberId).get();
+    var vids=vsnap.docs.map(function(d){return d.id;});
+    if(!vids.length) return;
+
+    var productCodes=new Set();
+    for(var i=0;i<vids.length;i+=10){
+      var chunk=vids.slice(i,i+10);
+      try{
+        var os=await db.collection('orders').where('visitKey','in',chunk).get();
+        os.forEach(function(d){
+          var o=d.data();
+          if(o.productCode||o.productId) productCodes.add(o.productCode||o.productId);
+        });
+      }catch(e){}
+    }
+
+    var pcArr=Array.from(productCodes);
+    for(var j=0;j<pcArr.length;j+=10){
+      var pchunk=pcArr.slice(j,j+10);
+      try{
+        var bdsnap=await db.collection('bottleData').where(firebase.firestore.FieldPath.documentId(),'in',pchunk).get();
+        bdsnap.forEach(function(d){
+          var bd=d.data();
+          if(bd.brandId) memberNoms.add(String(bd.brandId).slice(0,4));
+        });
+      }catch(e){}
+    }
   }catch(e){ console.warn('loadMemberNoms error:',e); }
 }
 
 // ── 会員認証 ──────────────────────────────────────────────────────
 AuthRole.requireMember(auth, async function(user){
   _currentUser=user;
-  var lbl=document.getElementById('member-label');
-  if(lbl) lbl.textContent=user.email||'';
 
   // 管理者プレビューモード: ?preview=REALID
   var _urlPreviewId=new URLSearchParams(window.location.search).get('preview');
@@ -785,13 +822,32 @@ AuthRole.requireMember(auth, async function(user){
         if(_pSnap.exists){
           var _pData=_pSnap.data();
           _previewMemberId=_urlPreviewId;
-          var _pBanner=document.createElement('div');
-          _pBanner.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;background:#1a3a6e;color:#fff;font-size:12px;text-align:center;padding:6px;letter-spacing:.04em';
-          _pBanner.textContent='管理者プレビュー: '+(_pData.nickname||_pData.name||_urlPreviewId)+' ('+_urlPreviewId+')';
-          document.body.prepend(_pBanner);
+          var lbl=document.getElementById('member-label');
+          if(lbl) lbl.textContent='管理者プレビュー: '+(_pData.nickname||_pData.name||_urlPreviewId)+' ('+_urlPreviewId+')';
         }
       }
     }catch(e){ console.warn('preview mode error:',e); }
+  } else {
+    // 通常ログイン: ニックネームとIDを表示
+    try{
+      var email=user.email||'';
+      var mid=null;
+      if(email.indexOf('@tequiladojo.member')>=0){
+        mid=email.replace('@tequiladojo.member','');
+      } else {
+        var s=await db.collection('memberIndex').where('email','==',email).limit(1).get();
+        if(!s.empty) mid=s.docs[0].id;
+      }
+      if(mid){
+        var mDoc=await db.collection('members').doc(mid).get();
+        if(mDoc.exists){
+          var mData=mDoc.data();
+          var lbl=document.getElementById('member-label');
+          var dispId=mData.displayId||mData.memberId||mid;
+          if(lbl) lbl.textContent=(mData.nickname||mData.name||'')+(dispId?' ('+dispId+')':'');
+        }
+      }
+    }catch(e){ var lbl=document.getElementById('member-label'); if(lbl) lbl.textContent=user.email||''; }
   }
 
   document.getElementById('login-screen').style.display='none';
