@@ -25,6 +25,8 @@ var FIREBASE_CONFIG = {
 };
 </script>
 <script src="/auth-role.js?v=20260527"></script>
+<script>window.JOURNAL_PAGE='admin_customer';</script>
+<script src="/journal.js?v=20260629"></script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
@@ -829,7 +831,7 @@ document.addEventListener("click",function(e){
   if(btn.dataset.del){
     var col=btn.dataset.del, id=btn.dataset.delId, label=btn.dataset.delLabel;
     confirmDel("「"+id+"」の"+label+"データを削除しますか？",function(){
-      db.collection(col).doc(id).delete()
+      journaledDelete(col, id)
         .then(function(){ toast(label+"を削除しました"); bumpAndRender(col); if(col==="members") loadMembers(); else loadLayouts(); })
         .catch(function(e){ toast("削除失敗: "+e.message,"err"); });
     });
@@ -1037,19 +1039,22 @@ g("btn-save-member").addEventListener("click",async function(){
     _memberPhotoFile=null;
   }
   var r=cache.members.find(function(m){return m.id===realDocId;});
-  db.collection("members").doc(realDocId).set({
-    memberId:displayId, realId:realDocId, displayId:displayId,
+  var _isEdit=!!editId.member;
+  var _memberAfter={memberId:displayId,realId:realDocId,displayId:displayId,
     iconUrl:(typeof iUrl!=="undefined"?iUrl:(r?r.iconUrl||null:null)),
     photoUrl:(_currentRole==="owner"&&typeof pUrl!=="undefined"?pUrl:(r?r.photoUrl||null:null)),
-    name:name, nameKana:gv("mem-kana")||null, nickname:gv("mem-nick")||null,
-    gender:gv("mem-gender")||"男", registeredAt:normDateStr(gv("mem-reg"))||todayDate(), birthday:normDateStr(gv("mem-birth"))||null,
-    prefecture:gv("mem-pref")||null, address:gv("mem-addr")||null, phone:gv("mem-tel")||null,
+    name:name,nameKana:gv("mem-kana")||null,nickname:gv("mem-nick")||null,
+    gender:gv("mem-gender")||"男",registeredAt:normDateStr(gv("mem-reg"))||todayDate(),birthday:normDateStr(gv("mem-birth"))||null,
+    prefecture:gv("mem-pref")||null,address:gv("mem-addr")||null,phone:gv("mem-tel")||null,
     email:newEmail||null,
-    twitterId:gv("mem-tw")||null, instagramId:gv("mem-ig")||null, facebookId:gv("mem-fb")||null,
-    visitCount:parseInt(gv("mem-visits"))||0, rank:gv("mem-rank")||null,
-    note:noteEl?noteEl.value||null:null
-  },{merge:true})
-  .then(function(){ toast(editId.member?"会員を更新しました":"会員を登録しました"); closeM("m-member"); bumpAndRender("members"); loadMembers(); })
+    twitterId:gv("mem-tw")||null,instagramId:gv("mem-ig")||null,facebookId:gv("mem-fb")||null,
+    visitCount:parseInt(gv("mem-visits"))||0,rank:gv("mem-rank")||null,
+    note:noteEl?noteEl.value||null:null};
+  db.collection("members").doc(realDocId).set(_memberAfter,{merge:true})
+  .then(function(){
+    writeJournal(_isEdit?'update':'create','members',realDocId,_isEdit?(r||null):null,_memberAfter);
+    toast(_isEdit?"会員を更新しました":"会員を登録しました"); closeM("m-member"); bumpAndRender("members"); loadMembers();
+  })
   .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
