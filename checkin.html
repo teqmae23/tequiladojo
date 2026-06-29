@@ -1043,18 +1043,27 @@ function refreshSingleVisit(visitKey, btn){
 var _nextSeq = 1;
 var _checkinGroup = { id: null, total: 1, current: 1 };
 
-function calcNextSeq(today){
+async function calcNextSeq(today){
   var maxSeq=0;
+  // まずローカルキャッシュから最大値を取得
   cache.visits.forEach(function(v){
     if((v.visitDate||v.id.slice(0,6))===today){
       var s=parseInt(v.id.slice(6,8))||0;
       if(s>maxSeq) maxSeq=s;
     }
   });
+  // Firestoreから実際の最大値を取得（キャッシュが古い場合の安全策）
+  try{
+    var snap=await db.collection('visits').where('visitDate','==',today).get();
+    snap.docs.forEach(function(d){
+      var s=parseInt(d.id.slice(6,8))||0;
+      if(s>maxSeq) maxSeq=s;
+    });
+  }catch(e){ console.warn('[seq] Firestore query failed:',e.message); }
   return maxSeq+1;
 }
 
-function calcNextGroupId(today){
+async function calcNextGroupId(today){
   // 当日の最大グループ通番+1（3桁）
   var maxG=0;
   cache.visits.forEach(function(v){
@@ -1063,6 +1072,16 @@ function calcNextGroupId(today){
       if(n>maxG) maxG=n;
     }
   });
+  try{
+    var snap=await db.collection('visits').where('visitDate','==',today).get();
+    snap.docs.forEach(function(d){
+      var gid=d.data().checkinGroupId||'';
+      if(gid.slice(0,6)===today){
+        var n=parseInt(gid.slice(6))||0;
+        if(n>maxG) maxG=n;
+      }
+    });
+  }catch(e){ console.warn('[groupid] Firestore query failed:',e.message); }
   return today+pad(maxG+1,3);
 }
 
@@ -1356,10 +1375,10 @@ function generateRegCode(){
   return code;
 }
 
-g('btn-checkin').addEventListener('click',function(){
+g('btn-checkin').addEventListener('click',async function(){
   var today=todayStr6();
-  _nextSeq=calcNextSeq(today);
-  _checkinGroup={ id: calcNextGroupId(today), total:1, current:1 };
+  _nextSeq=await calcNextSeq(today);
+  _checkinGroup={ id: await calcNextGroupId(today), total:1, current:1 };
   g('kb-date').textContent=today;
   g('kb-seq').textContent=pad(_nextSeq,2);
   g('kb-group-id').textContent=_checkinGroup.id;
@@ -1417,8 +1436,8 @@ g('m-checkin-save').addEventListener('click', async function(){
   try{
     if(_checkinGroup.current===1){
       _checkinGroup.total=total;
-      _checkinGroup.id=calcNextGroupId(today);
-      _nextSeq=calcNextSeq(today);
+      _checkinGroup.id=await calcNextGroupId(today);
+      _nextSeq=await calcNextSeq(today);
       g('kb-group-id').textContent=_checkinGroup.id;
     }
 
@@ -1440,6 +1459,9 @@ g('m-checkin-save').addEventListener('click', async function(){
         }
       }
       var visitKey=today+pad(_nextSeq,2);
+      // 上書き防止: 同一キーが既存の場合はシーケンスを繰り上げる
+      { var _ckSnap=await db.collection('visits').doc(visitKey).get();
+        while(_ckSnap.exists){ _nextSeq++; if(_nextSeq>99) _nextSeq=1; visitKey=today+pad(_nextSeq,2); _ckSnap=await db.collection('visits').doc(visitKey).get(); } }
       var refSelEl=document.getElementById('ci-referrer-'+mi);
       var referredBy=(refSelEl&&refSelEl.value)||null;
       // memberId には realId（doc ID）を記録
@@ -1454,6 +1476,7 @@ g('m-checkin-save').addEventListener('click', async function(){
         if(memSnap.exists){
           var curCount=memSnap.data().visitCount||0;
           batch.update(db.collection('members').doc(mid),{visitCount:curCount+1});
+          writeJournal('update','members',mid,{visitCount:curCount},{visitCount:curCount+1});
         }
       }
       registeredVisitKeys.push(visitKey);
@@ -1482,12 +1505,13 @@ g('m-checkin-save').addEventListener('click', async function(){
         createdAt:new Date().toISOString(), expiresAt:expiresAt.toISOString(), used:false
       });
       var visitKey=today+pad(_nextSeq,2);
+      // 上書き防止: 同一キーが既存の場合はシーケンスを繰り上げる
+      { var _ckSnap2=await db.collection('visits').doc(visitKey).get();
+        while(_ckSnap2.exists){ _nextSeq++; if(_nextSeq>99) _nextSeq=1; visitKey=today+pad(_nextSeq,2); _ckSnap2=await db.collection('visits').doc(visitKey).get(); } }
+      var guestVisitData={visitDate:today,visitTime:time,seq:_nextSeq,memberId:gRealId,checkinGroupId:groupId,tequilaAmount:0,amount:0,payment:payment,receiptIssued:'0',checkoutTime:null};
       // visits.memberId には realId を記録
-      batch.set(db.collection('visits').doc(visitKey),{
-        visitDate:today, visitTime:time, seq:_nextSeq,
-        memberId:gRealId, checkinGroupId:groupId,
-        tequilaAmount:0, amount:0, payment:payment, receiptIssued:'0', checkoutTime:null
-      });
+      batch.set(db.collection('visits').doc(visitKey), guestVisitData);
+      writeJournal('create','members',gRealId,null,{realId:gRealId,displayId:gDisplayId,nickname:newNicks[j],status:'guest',isGuest:true});
       registeredVisitKeys.push(visitKey);
       tempMemberIds.push({tempId:gRealId, displayId:gDisplayId, nickname:newNicks[j], regCode:regCode});
       _nextSeq++;
@@ -1846,27 +1870,17 @@ function doCheckoutSave(){
     var perDisc=totalDiscountSave>0&&rawGrandTotal>0?Math.round(rawAmt/rawGrandTotal*totalDiscountSave):0;
     if(perDisc!==0){
       var dName=discTypeStr2==='percent'?'値引('+discInputVal2+'%)':'割引額';
-      fbBatch.set(db.collection('orders').doc(),{
-        visitKey:visitKey,visitId:visitKey,
-        productName:dName,productType:'adjustment',
-        unitPrice:-perDisc,qty:1,unit:'円',served:2,
-        orderTime:nowTime,
-        orderGroupId:now+'_d_'+visitKey.slice(-4),
-        isAdjustment:true
-      });
+      var _discData={visitKey:visitKey,visitId:visitKey,productName:dName,productType:'adjustment',unitPrice:-perDisc,qty:1,unit:'円',served:2,orderTime:nowTime,orderGroupId:now+'_d_'+visitKey.slice(-4),isAdjustment:true};
+      fbBatch.set(db.collection('orders').doc(), _discData);
+      writeJournal('create','orders','discount_'+visitKey+'_'+nowTime,null,_discData);
     }
     // 2. 案分調整レコード（割引後の個別按分と実際の支払額の差）
     var postDiscAmt=rawAmt-perDisc;
     var wkAdj=finalAmt-postDiscAmt;
     if(Math.abs(wkAdj)>=1){
-      fbBatch.set(db.collection('orders').doc(),{
-        visitKey:visitKey,visitId:visitKey,
-        productName:'案分調整',productType:'adjustment',
-        unitPrice:wkAdj,qty:1,unit:'円',served:2,
-        orderTime:nowTime,
-        orderGroupId:now+'_w_'+visitKey.slice(-4),
-        isAdjustment:true
-      });
+      var _adjData={visitKey:visitKey,visitId:visitKey,productName:'案分調整',productType:'adjustment',unitPrice:wkAdj,qty:1,unit:'円',served:2,orderTime:nowTime,orderGroupId:now+'_w_'+visitKey.slice(-4),isAdjustment:true};
+      fbBatch.set(db.collection('orders').doc(), _adjData);
+      writeJournal('create','orders','warikan_'+visitKey+'_'+nowTime,null,_adjData);
     }
   });
 
