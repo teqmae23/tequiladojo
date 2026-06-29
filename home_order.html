@@ -1939,11 +1939,16 @@ async function confirmOrder(){
       return Math.max(m,parseInt(bid.slice(6))||0);
     },0);
   }else{
-    const todayOrders=allGroups.flatMap(g=>g.orders);
-    maxSeq=todayOrders.reduce((m,o)=>{const s=parseInt(o.id.slice(6))||0;return Math.max(m,s);},0);
-    maxBatch=allGroups.reduce((m,g)=>{
-      const bid=g.batchId||'';
-      if(bid.slice(0,6)!==todayStr)return m;
+    // チェックアウト済み来場者の注文はallGroupsから除外されるため、
+    // IDの上書き防止のためFirestoreから当日全注文を直接取得してmaxSeqを確定する
+    const todaySnap=await db.collection('orders')
+      .orderBy(firebase.firestore.FieldPath.documentId())
+      .startAt(useDate).endAt(useDate+'~')
+      .get().catch(()=>({docs:[]}));
+    maxSeq=todaySnap.docs.reduce((m,d)=>{const s=parseInt(d.id.slice(6))||0;return Math.max(m,s);},0);
+    maxBatch=todaySnap.docs.reduce((m,d)=>{
+      const bid=(d.data().batchId||'');
+      if(bid.slice(0,6)!==useDate)return m;
       return Math.max(m,parseInt(bid.slice(6))||0);
     },0);
   }
