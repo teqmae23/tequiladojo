@@ -3369,6 +3369,7 @@ var BACKUP_COLLECTIONS=[
 ];
 
 // ── ツリー期間検索 ──────────────────────────────
+var _treeMemberFilterId=null; // 会員フィルタ中の realId（null = フィルタなし）
 var DOW_JA=['日','月','火','水','木','金','土'];
 function yymmddToDate(s){
   if(!s||s.length!==6)return null;
@@ -3389,28 +3390,38 @@ async function searchTreeRange(){
   var toYmd=dateInputToYymmdd(toV);
   if(fromYmd>toYmd){resultsEl.innerHTML='<span style="font-size:12px;color:var(--red)">開始日が終了日より後です</span>';return;}
   resultsEl.innerHTML='<span style="font-size:12px;color:var(--ink3)">検索中...</span>';
-  try{
-    var snap=await db.collection('sessions')
-      .where('date','>=',fromYmd).where('date','<=',toYmd)
-      .orderBy('date').get();
-    if(snap.empty){resultsEl.innerHTML='<span style="font-size:12px;color:var(--ink3)">この期間に営業日がありません</span>';return;}
-    // 日付ごとにセッション数を集計
-    var dayMap={};
-    snap.docs.forEach(function(d){
-      var dt=d.data().date||'';
-      if(!dt)return;
-      dayMap[dt]=(dayMap[dt]||0)+1;
-    });
-    var html=Object.keys(dayMap).sort().map(function(ymd){
+  function _renderChips(dates){
+    if(!dates.length){resultsEl.innerHTML='<span style="font-size:12px;color:var(--ink3)">この期間に該当する日がありません</span>';return;}
+    var curVal=document.getElementById('tree-date-input').value;
+    var html=dates.map(function(ymd){
       var dt=yymmddToDate(ymd);
       var dow=dt?DOW_JA[dt.getDay()]:'';
-      var cnt=dayMap[ymd];
-      var label=(dt?(dt.getMonth()+1)+'/'+dt.getDate()+'('+dow+')':ymd)+(cnt>1?' ×'+cnt:'');
-      var isSelected=document.getElementById('tree-date-input').value===
-        (dt?(dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0')):'');
+      var label=dt?(dt.getMonth()+1)+'/'+dt.getDate()+'('+dow+')':ymd;
+      var isoVal=dt?(dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0')):'';
+      var isSelected=curVal===isoVal;
       return '<button class="btn '+(isSelected?'bp':'bs')+' sm" style="font-size:12px" onclick="treeRangeSelect(\''+ymd+'\')">'+label+'</button>';
     }).join('');
     resultsEl.innerHTML=html;
+  }
+  try{
+    // 会員フィルタ有効時は会員の来店日のみ表示
+    if(_treeMemberFilterId){
+      var vSnap=await db.collection('visits').where('memberId','==',_treeMemberFilterId).get();
+      var memberDates={};
+      vSnap.docs.forEach(function(d){
+        var vd=d.data().visitDate||(d.id.length>=6?d.id.slice(0,6):'');
+        if(vd&&vd>=fromYmd&&vd<=toYmd) memberDates[vd]=true;
+      });
+      _renderChips(Object.keys(memberDates).sort());
+      return;
+    }
+    // 通常: セッションがある日を表示
+    var snap=await db.collection('sessions')
+      .where('date','>=',fromYmd).where('date','<=',toYmd)
+      .orderBy('date').get();
+    var daySet={};
+    snap.docs.forEach(function(d){var dt=d.data().date||'';if(dt)daySet[dt]=true;});
+    _renderChips(Object.keys(daySet).sort());
   }catch(e){resultsEl.innerHTML='<span style="font-size:12px;color:var(--red)">検索失敗: '+e.message+'</span>';}
 }
 
@@ -4908,26 +4919,34 @@ function navigateToTree(yymmdd){
 
 function navigateToMemberTree(realId){
   switchToPage('tree');
+  _treeMemberFilterId=realId;
   var m=cache.members.find(function(x){return x.id===realId;});
   var dispName=m?(m.nickname||m.name||m.displayId||m.id):realId;
   var dispId=m?(m.displayId||m.id):realId;
-  // ツリーヘッダに会員フィルタバナーを表示
+  // ツリーヘッダに会員フィルタバナーを表示（期間検索の上）
   var cont=document.getElementById('tree-container');
   cont.innerHTML='<div style="text-align:center;color:var(--ink3);padding:32px">読み込み中...</div>';
   var phead=document.querySelector('#page-tree .phead');
-  if(phead&&!document.getElementById('member-tree-banner')){
+  var existBanner=document.getElementById('member-tree-banner');
+  if(existBanner) existBanner.remove();
+  if(phead){
     var banner=document.createElement('div');
     banner.id='member-tree-banner';
-    banner.style.cssText='background:rgba(200,146,30,.1);border:1px solid rgba(200,146,30,.3);border-radius:6px;padding:8px 14px;font-size:13px;display:flex;align-items:center;gap:12px';
+    banner.style.cssText='background:rgba(200,146,30,.1);border:1px solid rgba(200,146,30,.3);border-radius:6px;padding:8px 14px;font-size:13px;display:flex;align-items:center;gap:12px;margin-bottom:2px';
     banner.innerHTML='👤 会員フィルタ: <strong>'+escHtml(dispName)+'</strong><span class="mono" style="font-size:11px;color:var(--ink3)">'+escHtml(dispId)+'</span>'
       +'<button class="btn bs sm" style="margin-left:auto;font-size:11px" onclick="clearMemberTreeFilter()">✕ フィルタ解除</button>';
-    phead.appendChild(banner);
+    // 期間検索行（border-top のある div）の前に挿入
+    var periodRow=phead.querySelector('[style*="border-top"]');
+    if(periodRow) phead.insertBefore(banner,periodRow);
+    else phead.appendChild(banner);
   }
   loadMemberTree(realId);
 }
 
 function clearMemberTreeFilter(){
+  _treeMemberFilterId=null;
   var b=document.getElementById('member-tree-banner'); if(b) b.remove();
+  document.getElementById('tree-range-results').innerHTML='';
   document.getElementById('tree-container').innerHTML='<div class="ec">日付を選択して「表示」を押してください。</div>';
 }
 
