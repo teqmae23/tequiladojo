@@ -1939,13 +1939,12 @@ async function confirmOrder(){
       return Math.max(m,parseInt(bid.slice(6))||0);
     },0);
   }else{
-    // チェックアウト済み来場者の注文はallGroupsから除外されるため、
-    // IDの上書き防止のためFirestoreから当日全注文を直接取得してmaxSeqを確定する
+    // batchId採番のみFirestoreから確認（maxSeqは自動採番IDに移行したため不要）
     const todaySnap=await db.collection('orders')
       .orderBy(firebase.firestore.FieldPath.documentId())
       .startAt(useDate).endAt(useDate+'~')
       .get().catch(()=>({docs:[]}));
-    maxSeq=todaySnap.docs.reduce((m,d)=>{const s=parseInt(d.id.slice(6))||0;return Math.max(m,s);},0);
+    maxSeq=0; // 不使用（後方互換のため残す）
     maxBatch=todaySnap.docs.reduce((m,d)=>{
       const bid=(d.data().batchId||'');
       if(bid.slice(0,6)!==useDate)return m;
@@ -1983,11 +1982,13 @@ async function confirmOrder(){
     for(const visit of flow.visits){
       const orderGroupId=orderGroupIdMap[visit.id];
       flow.cart.forEach((item,i)=>{
-        maxSeq++;
         const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
         const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):p&&p.type==='other'?(p.bottleEn||p.bottleName||p.name||item.productName):item.productName;
-        const docId=useDate+String(maxSeq).padStart(3,'0');
-        fsBatch.set(db.collection('orders').doc(docId),{
+        // 自動採番IDを使用して上書きを防止、orderDateを明示保存
+        const orderRef=db.collection('orders').doc();
+        const docId=orderRef.id;
+        fsBatch.set(orderRef,{
+          orderDate:useDate,
           orderTime,customerId:visit.memberId||null,visitKey:visit.id,orderGroupId,batchId,
           itemSeq:i+1,productCode:item.productId,productName:saveName,productType:item.productType,
           qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,
@@ -2004,10 +2005,11 @@ async function confirmOrder(){
         }
         // 奢り受取人レコード（visitKeyある人のみ）
         for(const recipient of giftRecipients){
-          maxSeq++;
-          const recDocId=useDate+String(maxSeq).padStart(3,'0');
+          const recRef=db.collection('orders').doc();
+          const recDocId=recRef.id;
           const recVisit=allVisits.find(v=>v.id===recipient.visitKey);
-          fsBatch.set(db.collection('orders').doc(recDocId),{
+          fsBatch.set(recRef,{
+            orderDate:useDate,
             orderTime,customerId:recVisit?.memberId||null,
             visitKey:recipient.visitKey,
             orderGroupId:orderGroupIdMap[recipient.visitKey],
@@ -2021,14 +2023,13 @@ async function confirmOrder(){
       });
     }
     await fsBatch.commit();
-    // ジャーナル: 作成した注文をまとめて記録
+    // ジャーナル: 作成した注文をまとめて記録（自動採番IDのためbatchIdで代表記録）
     for(const visit of flow.visits){
       const ogId=orderGroupIdMap[visit.id];
       flow.cart.forEach((item,i)=>{
         const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
         const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):item.productName;
-        const s=String(maxSeq-flow.visits.length*flow.cart.length+(flow.visits.indexOf(visit)*flow.cart.length)+i+1).padStart(3,'0');
-        writeJournal('create','orders',useDate+s,null,{orderTime,visitKey:visit.id,customerId:visit.memberId||null,
+        writeJournal('create','orders',batchId+'_'+(flow.visits.indexOf(visit))+'_'+i,null,{orderDate:useDate,orderTime,visitKey:visit.id,customerId:visit.memberId||null,
           productName:saveName,productType:item.productType,qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,batchId,orderGroupId:ogId,served:isPopupMode?3:1});
       });
     }
