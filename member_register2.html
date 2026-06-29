@@ -136,15 +136,32 @@ function nickByteLen(s){
   return n;
 }
 
-function fetchNextMemberId(){
+// displayId（年2桁+4桁連番）を採番する
+function fetchNextDisplayMemberId(){
   var year=String(new Date().getFullYear()).slice(2);
-  var ref=db.collection('counters').doc('members');
+  var ref=db.collection('settings').doc('memberCounter');
   return db.runTransaction(function(tx){
     return tx.get(ref).then(function(doc){
-      var last=doc.exists?(doc.data().lastId||0):2;
+      var d=doc.exists?doc.data():{};
+      var seqMap=d.memberSeq||{};
+      var last=seqMap[year]||0;
       var next=last+1;
-      tx.set(ref,{lastId:next},{merge:true});
+      seqMap[year]=next;
+      tx.set(ref,{memberSeq:seqMap},{merge:true});
       return year+String(next).padStart(4,'0');
+    });
+  });
+}
+
+// realId（000101〜）を採番する
+function fetchNextRealId(){
+  var ref=db.collection('settings').doc('memberCounter');
+  return db.runTransaction(function(tx){
+    return tx.get(ref).then(function(doc){
+      var d=doc.exists?doc.data():{};
+      var realSeq=d.realSeq||101;
+      tx.set(ref,{realSeq:realSeq+1},{merge:true});
+      return String(realSeq).padStart(6,'0');
     });
   });
 }
@@ -185,21 +202,27 @@ function doRegisterWithTransfer(transferCode, pass, email, nick, err, btn){
       var d=doc.data();
       if(d.used){ throw new Error('引継コードは既に使用済みです'); }
       if(new Date(d.expiresAt)<new Date()){ throw new Error('引継コードの有効期限が切れています'); }
-      var tempId=d.tempId;
+      // tempId = realId（新方式）または旧displayId（既存アカウント）
+      var realId=d.tempId;
       var guestNick=nick||d.nickname;
       return auth.createUserWithEmailAndPassword(email, pass)
         .then(function(cred){
           var uid=cred.user.uid;
           var as={url:'https://tequiladojo.com/member_register.html',handleCodeInApp:false};
           cred.user.sendEmailVerification(as).catch(function(){});
-          var batch=db.batch();
-          batch.update(db.collection('members').doc(tempId),{
-            authUid:uid, email:email, nickname:guestNick,
-            status:'pending', registeredAt:now, isGuest:false
+          // 新しい displayId（年2桁+4桁連番）を採番
+          return fetchNextDisplayMemberId().then(function(newDisplayId){
+            var batch=db.batch();
+            batch.update(db.collection('members').doc(realId),{
+              authUid:uid, email:email, nickname:guestNick,
+              status:'pending', registeredAt:now, isGuest:false,
+              displayId:newDisplayId,
+              memberId:newDisplayId  // 旧互換フィールドも更新
+            });
+            batch.set(db.collection('memberIndex').doc(realId),{email:email});
+            batch.update(db.collection('tempRegistrations').doc(transferCode),{used:true});
+            return batch.commit().then(function(){ return {memberId:newDisplayId}; });
           });
-          batch.set(db.collection('memberIndex').doc(tempId),{email:email});
-          batch.update(db.collection('tempRegistrations').doc(transferCode),{used:true});
-          return batch.commit().then(function(){ return {memberId:tempId}; });
         });
     })
     .then(function(result){
@@ -222,15 +245,21 @@ function doRegisterNew(pass, email, nick, err, btn){
       var uid=cred.user.uid;
       var as2={url:'https://tequiladojo.com/member_register.html',handleCodeInApp:false};
       cred.user.sendEmailVerification(as2).catch(function(){});
-      return fetchNextMemberId().then(function(memberId){
-        var batch=db.batch();
-        batch.set(db.collection('memberIndex').doc(memberId),{email:email});
-        batch.set(db.collection('members').doc(memberId),{
-          authUid:uid, memberId:memberId, email:email,
-          status:'pending', nickname:nick, registeredAt:now
+      return Promise.all([fetchNextRealId(), fetchNextDisplayMemberId()])
+        .then(function(ids){
+          var realId=ids[0], displayId=ids[1];
+          var batch=db.batch();
+          batch.set(db.collection('memberIndex').doc(realId),{email:email});
+          batch.set(db.collection('members').doc(realId),{
+            authUid:uid,
+            realId:realId,
+            displayId:displayId,
+            memberId:displayId,  // 旧互換フィールド
+            email:email,
+            status:'pending', nickname:nick, registeredAt:now
+          });
+          return batch.commit().then(function(){ return {memberId:displayId}; });
         });
-        return batch.commit().then(function(){ return {memberId:memberId}; });
-      });
     })
     .then(function(result){
       document.getElementById('form-area').style.display='none';
