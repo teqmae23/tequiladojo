@@ -736,12 +736,18 @@ document.getElementById('l-pass').addEventListener('keydown',function(e){
 document.getElementById('btn-logout').addEventListener('click',function(){ auth.signOut(); });
 
 // ── 会員NOMs読み込み ──────────────────────────────────────────────
+var _previewMemberId=null; // 管理者プレビュー時のmemberId
 async function loadMemberNoms(user){
   memberNoms=new Set();
   try{
-    // membersコレクションからauthUidでdocIdを取得
-    var msnap=await db.collection('members').where('authUid','==',user.uid).limit(1).get();
-    var memberId=msnap.empty?user.uid:msnap.docs[0].id;
+    var memberId;
+    if(_previewMemberId){
+      memberId=_previewMemberId;
+    } else {
+      // membersコレクションからauthUidでdocIdを取得
+      var msnap=await db.collection('members').where('authUid','==',user.uid).limit(1).get();
+      memberId=msnap.empty?user.uid:msnap.docs[0].id;
+    }
     // visits/{memberId}/orders を取得
     var vsnap=await db.collection('visits').doc(memberId).collection('orders').get();
     vsnap.docs.forEach(function(doc){
@@ -767,6 +773,27 @@ AuthRole.requireMember(auth, async function(user){
   _currentUser=user;
   var lbl=document.getElementById('member-label');
   if(lbl) lbl.textContent=user.email||'';
+
+  // 管理者プレビューモード: ?preview=REALID
+  var _urlPreviewId=new URLSearchParams(window.location.search).get('preview');
+  if(_urlPreviewId){
+    try{
+      var _tok=await user.getIdTokenResult();
+      var _role=_tok.claims.role||'';
+      if(_role==='owner'||_role==='staff'){
+        var _pSnap=await db.collection('members').doc(_urlPreviewId).get();
+        if(_pSnap.exists){
+          var _pData=_pSnap.data();
+          _previewMemberId=_urlPreviewId;
+          var _pBanner=document.createElement('div');
+          _pBanner.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;background:#1a3a6e;color:#fff;font-size:12px;text-align:center;padding:6px;letter-spacing:.04em';
+          _pBanner.textContent='管理者プレビュー: '+(_pData.nickname||_pData.name||_urlPreviewId)+' ('+_urlPreviewId+')';
+          document.body.prepend(_pBanner);
+        }
+      }
+    }catch(e){ console.warn('preview mode error:',e); }
+  }
+
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').style.display='flex';
   requestAnimationFrame(function(){
