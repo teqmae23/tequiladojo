@@ -1973,16 +1973,9 @@ async function confirmOrder(){
     const orderGroupIdMap={};
     const allParticipants=[...flow.visits.map(v=>v.id),...giftRecipients.map(r=>r.visitKey)];
     for(const vk of allParticipants){
-      let usedSeqs;
-      if(isHistorical){
-        // 過去visitはallGroupsに既存注文が含まれないのでFirestoreから確認
-        const vkSnap=await db.collection('orders').where('visitKey','==',vk).get().catch(()=>({docs:[]}));
-        usedSeqs=vkSnap.docs.map(d=>parseInt((d.data().orderGroupId||'').slice(vk.length))||0);
-      }else{
-        usedSeqs=allGroups.flatMap(g=>g.orders||[])
-          .filter(o=>o.visitKey===vk)
-          .map(o=>parseInt((o.orderGroupId||'').slice(vk.length))||0);
-      }
+      // 常にFirestoreから確認（allGroupsはセッションフィルター外の来店を含まないため）
+      const vkSnap=await db.collection('orders').where('visitKey','==',vk).get().catch(()=>({docs:[]}));
+      const usedSeqs=vkSnap.docs.map(d=>parseInt((d.data().orderGroupId||'').slice(vk.length))||0);
       const maxGSeq=usedSeqs.length?Math.max(...usedSeqs):0;
       orderGroupIdMap[vk]=vk+String(maxGSeq+1).padStart(2,'0');
     }
