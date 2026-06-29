@@ -854,18 +854,22 @@ async function loadTodayData(){
   ]);
   currentSessionBT=session; // 営業時刻計算用に保存
 
-  // 本日の来店を対象（openTime制限は外し、日付一致のみでフィルタ）
+  // セッション日付
   const sessionDate=session?(session.openDate||session.date||AuthRole.businessDate(session.openTime,null)):null;
   const filterDate=sessionDate||todayStr;
+  // allVisits: 来場者選択UI用（isVisitInSessionで絞り込み）
   allVisits=[];
+  // todayVisitKeys: 注文フィルター用（本日日付に一致する来店すべて）
+  const todayVisitKeys=new Set();
   visitsSnap.forEach(d=>{
     const v={id:d.id,...d.data()};
     const visitDate=v.visitDate||(v.id?v.id.slice(0,6):'');
-    if(!v.checkoutTime && visitDate===filterDate) allVisits.push(v);
+    if(visitDate===filterDate) todayVisitKeys.add(v.id);
+    if(!v.checkoutTime && AuthRole.isVisitInSession(v, session)) allVisits.push(v);
   });
   allVisits.sort((a,b)=>(a.seq||0)-(b.seq||0));
 
-  // 来場中のvisitKeyセット
+  // activeVisitKeys: 来場者選択UI用
   const activeVisitKeys=new Set(allVisits.map(v=>v.id));
 
   blindResultsSet=new Set();
@@ -876,7 +880,7 @@ async function loadTodayData(){
   ordersSnap.forEach(d=>{
     const o={id:d.id,...d.data()};
     if(!o.orderGroupId)return;
-    if(!o.visitKey||!activeVisitKeys.has(o.visitKey))return;
+    if(!o.visitKey||!todayVisitKeys.has(o.visitKey))return;
     if(!gmap[o.orderGroupId])gmap[o.orderGroupId]=[];
     gmap[o.orderGroupId].push(o);
   });
