@@ -4239,11 +4239,12 @@ function renderTogetherModal(){
   if(!ord) return;
   var myVisitId=ord.visitKey||ord.visitId;
 
-  // current companions
+  // current companions — must share same productCode AND orderTime as base order
   var companions=[];
   if(batchId){
     _treeCurrentOrders.forEach(function(o){
-      if(o.batchId===batchId&&(o.visitKey||o.visitId)!==myVisitId&&!o.deleted&&o.served!==0){
+      if(o.batchId===batchId&&(o.visitKey||o.visitId)!==myVisitId&&!o.deleted&&o.served!==0
+          &&o.productCode===ord.productCode&&o.orderTime===ord.orderTime){
         var bvk=o.visitKey||o.visitId;
         if(!companions.some(function(c){return c.visitId===bvk;})){
           var bvis=_treeCurrentVisits.find(function(v){return v.id===bvk;});
@@ -4305,15 +4306,22 @@ function renderTogetherModal(){
   }
 }
 
-function togetherRemove(ordId){
-  // Find the order being removed and its batchId
-  var ord=_treeCurrentOrders.find(function(o){return o.id===ordId;});
-  if(!ord){toast("注文データが見つかりません","err");return;}
-  var batchId=ord.batchId;
-  // Find partner orders that share the same batchId (excluding self)
-  var partners=batchId?_treeCurrentOrders.filter(function(o){
-    return o.id!==ordId && o.batchId===batchId && o.served!==0 && !o.deleted;
+function togetherRemove(companionOrdId){
+  var companionOrd=_treeCurrentOrders.find(function(o){return o.id===companionOrdId;});
+  if(!companionOrd){toast("注文データが見つかりません","err");return;}
+  var batchId=companionOrd.batchId;
+  // Look up companion's display name from their visit
+  var bvk=companionOrd.visitKey||companionOrd.visitId;
+  var bvis=_treeCurrentVisits.find(function(v){return v.id===bvk;});
+  var companionName=treeMemName(bvis?bvis.memberId:null)||companionOrdId;
+
+  // Active orders in this batchId group with same productCode + orderTime
+  var groupOrds=batchId?_treeCurrentOrders.filter(function(o){
+    return o.batchId===batchId && o.served!==0 && !o.deleted
+      && o.productCode===companionOrd.productCode && o.orderTime===companionOrd.orderTime;
   }):[];
+  // Orders remaining after removing this companion
+  var remaining=groupOrds.filter(function(o){return o.id!==companionOrdId;});
 
   function doUnlink(targetIds){
     var fvDelete=firebase.firestore.FieldValue.delete();
@@ -4336,15 +4344,15 @@ function togetherRemove(ordId){
     }).catch(function(e){toast("解除失敗: "+e.message,"err");});
   }
 
-  if(partners.length>0){
-    confirmDel("「"+ordId+"」の一緒に飲んだを解除します。相手側（"+partners.map(function(p){return p.id;}).join("、")+"）も同時に解除されます。よろしいですか？",function(){
-      doUnlink([ordId].concat(partners.map(function(p){return p.id;})));
-    });
-  } else {
-    confirmDel("相手側に該当する注文がありませんが、「"+ordId+"」の一緒に飲んだの解除だけ行いますか？",function(){
-      doUnlink([ordId]);
-    });
-  }
+  var label=companionName||companionOrdId;
+  var toUnlink=[companionOrdId];
+  // If only 1 order would remain after removal, it's now solo → unlink it too
+  if(remaining.length===1) toUnlink.push(remaining[0].id);
+
+  var msg=remaining.length===1
+    ? "「"+label+"」をグループから外すと1人だけになります。「"+label+"」と「"+remaining[0].id+"」の一緒に飲んだを解除しますか？"
+    : "「"+label+"」を一緒に飲んだグループから外しますか？";
+  confirmDel(msg, function(){ doUnlink(toUnlink); });
 }
 
 // 3択確認ダイアログ（追加・スキップ・キャンセル）
