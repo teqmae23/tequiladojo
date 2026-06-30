@@ -1187,6 +1187,20 @@ function todayStr6(){
 function fmtTime(t){ if(!t||t.length<4) return t||"—"; return t.slice(0,2)+":"+t.slice(2,4)+(t.length>=6?":"+t.slice(4,6):""); }
 function fmtDate(d){ if(!d||d.length<6) return d||"—"; return d.slice(0,2)+"/"+d.slice(2,4)+"/"+d.slice(4,6); }
 function fmtHHMM(t){ if(!t||t.length<4) return t||"—"; return t.slice(0,2)+":"+t.slice(2,4); }
+// セッション日またぎ考慮版: 深夜0〜11時台の時刻を24〜35時に変換して表示
+function fmtHHMMsession(t, ses){
+  if(!t||t.length<4) return t||"—";
+  if(!ses||!ses.openTime) return fmtHHMM(t);
+  var openInt=parseInt(ses.openTime.slice(0,4))||0;
+  var closeInt=ses.closeTime?parseInt(ses.closeTime.slice(0,4))||0:0;
+  var overnight=closeInt>=2400||(closeInt>0&&closeInt<openInt&&openInt>=1200&&closeInt<600);
+  if(!overnight) return fmtHHMM(t);
+  var tInt=parseInt(t.slice(0,4))||0;
+  if(tInt<1200&&tInt<openInt){
+    return String(parseInt(t.slice(0,2))+24)+":"+t.slice(2,4);
+  }
+  return fmtHHMM(t);
+}
 
 // ── 認証 ─────────────────────────────────────────────────────
 try {
@@ -3138,8 +3152,8 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
         var visOrders=orders.filter(function(o){return (o.visitKey||o.visitId)===vis.id;});
         var name=treeMemName(vis.memberId)||'ゲスト ('+vis.id+')';
         var visDet=[];
-        if(vis.visitTime) visDet.push('来場 '+fmtHHMM(vis.visitTime));
-        if(vis.checkoutTime) visDet.push('退場 '+fmtHHMM(vis.checkoutTime));
+        if(vis.visitTime) visDet.push('来場 '+fmtHHMMsession(vis.visitTime,ses));
+        if(vis.checkoutTime) visDet.push('退場 '+fmtHHMMsession(vis.checkoutTime,ses));
         if(vis.amount!=null){
           var ordCalc=visOrders.filter(function(o){return o.served!==0;}).reduce(function(s,o){
             if(o.unitPrice==null)return s;
@@ -3176,7 +3190,7 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
             var cancelled=ord.served===0;
             var isBlind=ord.blindId===1||ord.blindId==='1';
             var ordDet=[];
-            if(ord.orderTime) ordDet.push(fmtHHMM(ord.orderTime));
+            if(ord.orderTime) ordDet.push(fmtHHMMsession(ord.orderTime,ses));
             ordDet.push(escHtml(ord.productName||ord.productCode||'—'));
             if(ord.qty) ordDet.push(ord.qty+(ord.unit||''));
             if(ord.unitPrice){
@@ -5336,8 +5350,9 @@ function renderMemberTree(realId, visits, orders, cont){
     var dow=dt?DOW_JA[dt.getDay()]:'';
     var dateLabel=dt?('20'+yymmdd.slice(0,2)+'/'+yymmdd.slice(2,4)+'/'+yymmdd.slice(4,6)+'('+dow+')'):yymmdd;
     var visDet=[];
-    if(vis.visitTime) visDet.push('来場 '+fmtHHMM(vis.visitTime));
-    if(vis.checkoutTime) visDet.push('退場 '+fmtHHMM(vis.checkoutTime));
+    var visSes=_treeSessions.find(function(s){return s.date===yymmdd&&getSessionVisits(s,[vis]).length>0;})||_treeSessions.find(function(s){return s.date===yymmdd;})||null;
+    if(vis.visitTime) visDet.push('来場 '+fmtHHMMsession(vis.visitTime,visSes));
+    if(vis.checkoutTime) visDet.push('退場 '+fmtHHMMsession(vis.checkoutTime,visSes));
     if(vis.amount!=null){
       var ordCalc=visOrders.filter(function(o){return o.served!==0;}).reduce(function(s,o){
         if(o.unitPrice==null)return s;
@@ -5376,7 +5391,7 @@ function renderMemberTree(realId, visits, orders, cont){
         var cancelled=ord.served===0;
         var isBlind=ord.blindId===1||ord.blindId==='1';
         var ordDet=[];
-        if(ord.orderTime) ordDet.push(fmtHHMM(ord.orderTime));
+        if(ord.orderTime) ordDet.push(fmtHHMMsession(ord.orderTime,visSes));
         ordDet.push(escHtml(ord.productName||ord.productCode||'—'));
         if(ord.qty) ordDet.push(ord.qty+(ord.unit||''));
         if(ord.unitPrice!=null){
