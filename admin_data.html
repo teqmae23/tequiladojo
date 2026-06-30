@@ -220,6 +220,8 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 .tree-tag{font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;letter-spacing:.07em;white-space:nowrap;flex-shrink:0}
 .tag-session{background:rgba(200,146,30,.18);color:var(--gold-d)}
 .tag-visit{background:rgba(40,120,80,.14);color:#1a5e3a}
+.tag-staff{background:rgba(180,140,0,.25);color:#7a5e00}
+.vnode-staff{background:rgba(0,0,0,.045)}
 .tag-order{background:rgba(30,60,180,.09);color:#1a3090}
 .tree-label{flex:1;font-size:12px;color:var(--ink2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tree-acts{display:flex;gap:4px;flex-shrink:0;margin-left:auto}
@@ -888,8 +890,8 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         </select></div>
       </div>
       <div class="frow">
-        <div class="fg"><label class="fl">退店時間（HHMM） <span class="db-field">checkoutTime</span></label><input class="fi mono" id="vis-out" placeholder="HHMM" maxlength="4"></div>
-        <div class="fg"><label class="fl">お会計確定時間（HHMM） <span class="db-field">checkoutPayTime</span></label><input class="fi mono" id="vis-pay-time" placeholder="HHMM" maxlength="4"></div>
+        <div class="fg"><label class="fl">退店時間（HHMMSS） <span class="db-field">checkoutTime</span></label><input class="fi mono" id="vis-out" placeholder="HHMMSS" maxlength="6"></div>
+        <div class="fg"><label class="fl">お会計確定時間（HHMMSS） <span class="db-field">checkoutPayTime</span></label><input class="fi mono" id="vis-pay-time" placeholder="HHMMSS" maxlength="6"></div>
       </div>
     </div>
     <div class="mfoot" id="visit-modal-foot"><button class="btn bg2" id="btn-cancel-visit">キャンセル</button><button class="btn bp" id="btn-save-visit">登録</button></div>
@@ -1185,6 +1187,20 @@ function todayStr6(){
 function fmtTime(t){ if(!t||t.length<4) return t||"—"; return t.slice(0,2)+":"+t.slice(2,4)+(t.length>=6?":"+t.slice(4,6):""); }
 function fmtDate(d){ if(!d||d.length<6) return d||"—"; return d.slice(0,2)+"/"+d.slice(2,4)+"/"+d.slice(4,6); }
 function fmtHHMM(t){ if(!t||t.length<4) return t||"—"; return t.slice(0,2)+":"+t.slice(2,4); }
+// セッション日またぎ考慮版: 深夜0〜11時台の時刻を24〜35時に変換して表示
+function fmtHHMMsession(t, ses){
+  if(!t||t.length<4) return t||"—";
+  if(!ses||!ses.openTime) return fmtHHMM(t);
+  var openInt=parseInt(ses.openTime.slice(0,4))||0;
+  var closeInt=ses.closeTime?parseInt(ses.closeTime.slice(0,4))||0:0;
+  var overnight=closeInt>=2400||(closeInt>0&&closeInt<openInt&&openInt>=1200&&closeInt<600);
+  if(!overnight) return fmtHHMM(t);
+  var tInt=parseInt(t.slice(0,4))||0;
+  if(tInt<1200&&tInt<openInt){
+    return String(parseInt(t.slice(0,2))+24)+":"+t.slice(2,4);
+  }
+  return fmtHHMM(t);
+}
 
 // ── 認証 ─────────────────────────────────────────────────────
 try {
@@ -3136,8 +3152,8 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
         var visOrders=orders.filter(function(o){return (o.visitKey||o.visitId)===vis.id;});
         var name=treeMemName(vis.memberId)||'ゲスト ('+vis.id+')';
         var visDet=[];
-        if(vis.visitTime) visDet.push('来場 '+fmtHHMM(vis.visitTime));
-        if(vis.checkoutTime) visDet.push('退場 '+fmtHHMM(vis.checkoutTime));
+        if(vis.visitTime) visDet.push('来場 '+fmtHHMMsession(vis.visitTime,ses));
+        if(vis.checkoutTime) visDet.push('退場 '+fmtHHMMsession(vis.checkoutTime,ses));
         if(vis.amount!=null){
           var ordCalc=visOrders.filter(function(o){return o.served!==0;}).reduce(function(s,o){
             if(o.unitPrice==null)return s;
@@ -3150,11 +3166,12 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
           visDet.push(amtDisp);
         }
         var visId='tree-vis-'+vis.id;
+        var isStaffVis=!!vis.isStaff;
 
         html+='<div class="tree-child-visit">';
-        html+='<div class="tree-node vnode">'
+        html+='<div class="tree-node vnode'+(isStaffVis?' vnode-staff':'')+'">'
           +'<span class="tree-toggle" style="margin-left:20px" onclick="treeToggle(\''+visId+'\',this)">▼</span>'
-          +'<span class="tree-tag tag-visit">来場</span>'
+          +'<span class="tree-tag '+(isStaffVis?'tag-staff':'tag-visit')+'">'+(isStaffVis?'店員':'来場')+'</span>'
           +'<span class="tree-label"><strong>'+escHtml(name)+'</strong>'+(visDet.length?' &nbsp;'+visDet.join(' / '):'')
           +' <button class="btn bs sm" style="font-size:11px;margin-left:4px;vertical-align:middle" data-tree-add-order="'+escHtml(vis.id)+'" data-tree-add-order-member="'+escHtml(vis.memberId||'')+'" title="注文追加">＋注文</button>'
           +' <span style="font-size:10px;color:var(--ink3)">'+escHtml(vis.id)+'</span></span>'
@@ -3173,7 +3190,7 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
             var cancelled=ord.served===0;
             var isBlind=ord.blindId===1||ord.blindId==='1';
             var ordDet=[];
-            if(ord.orderTime) ordDet.push(fmtHHMM(ord.orderTime));
+            if(ord.orderTime) ordDet.push(fmtHHMMsession(ord.orderTime,ses));
             ordDet.push(escHtml(ord.productName||ord.productCode||'—'));
             if(ord.qty) ordDet.push(ord.qty+(ord.unit||''));
             if(ord.unitPrice){
@@ -3235,10 +3252,11 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
       var ovOrders=orders.filter(function(o){return (o.visitKey||o.visitId)===vis.id;});
       ovOrders.forEach(function(o){shownOrderIds[o.id]=true;});
       var ovId='tree-ov-'+vis.id;
+      var isStaffOv=!!vis.isStaff;
       html+='<div class="tree-child-visit">'
-        +'<div class="tree-node vnode">'
+        +'<div class="tree-node vnode'+(isStaffOv?' vnode-staff':'')+'">'
         +'<span class="tree-toggle" style="margin-left:20px" onclick="treeToggle(\''+ovId+'\',this)">▼</span>'
-        +'<span class="tree-tag tag-visit">来場</span>'
+        +'<span class="tree-tag '+(isStaffOv?'tag-staff':'tag-visit')+'">'+(isStaffOv?'店員':'来場')+'</span>'
         +'<span class="tree-label"><strong>'+escHtml(name)+'</strong> &nbsp;来場時間: '+timeDisp
         +' <button class="btn bs sm" style="font-size:11px;margin-left:4px;vertical-align:middle" data-tree-add-order="'+escHtml(vis.id)+'" data-tree-add-order-member="'+escHtml(vis.memberId||'')+'">＋注文</button>'
         +' <span style="font-size:10px;color:var(--ink3)">'+escHtml(vis.id)+'</span></span>'
@@ -5332,8 +5350,9 @@ function renderMemberTree(realId, visits, orders, cont){
     var dow=dt?DOW_JA[dt.getDay()]:'';
     var dateLabel=dt?('20'+yymmdd.slice(0,2)+'/'+yymmdd.slice(2,4)+'/'+yymmdd.slice(4,6)+'('+dow+')'):yymmdd;
     var visDet=[];
-    if(vis.visitTime) visDet.push('来場 '+fmtHHMM(vis.visitTime));
-    if(vis.checkoutTime) visDet.push('退場 '+fmtHHMM(vis.checkoutTime));
+    var visSes=_treeSessions.find(function(s){return s.date===yymmdd&&getSessionVisits(s,[vis]).length>0;})||_treeSessions.find(function(s){return s.date===yymmdd;})||null;
+    if(vis.visitTime) visDet.push('来場 '+fmtHHMMsession(vis.visitTime,visSes));
+    if(vis.checkoutTime) visDet.push('退場 '+fmtHHMMsession(vis.checkoutTime,visSes));
     if(vis.amount!=null){
       var ordCalc=visOrders.filter(function(o){return o.served!==0;}).reduce(function(s,o){
         if(o.unitPrice==null)return s;
@@ -5348,11 +5367,12 @@ function renderMemberTree(realId, visits, orders, cont){
     var PAY_LBL_MAP={'0':'未','1':'現金','2':'カード','3':'スマホ','4':'立替','5':'スタッフ'};
     if(vis.payment&&vis.payment!=='0') visDet.push(PAY_LBL_MAP[vis.payment]||vis.payment);
     var visId='mtree-vis-'+vis.id;
+    var isStaffMv=!!vis.isStaff;
 
     html+='<div class="tree-child-visit">';
-    html+='<div class="tree-node vnode">'
+    html+='<div class="tree-node vnode'+(isStaffMv?' vnode-staff':'')+'">'
       +'<span class="tree-toggle" style="margin-left:20px" onclick="treeToggle(\''+visId+'\',this)">▼</span>'
-      +'<span class="tree-tag tag-visit">来場</span>'
+      +'<span class="tree-tag '+(isStaffMv?'tag-staff':'tag-visit')+'">'+(isStaffMv?'店員':'来場')+'</span>'
       +'<span class="tree-label"><strong>'+escHtml(dateLabel)+'</strong>'
       +(visDet.length?' &nbsp;'+visDet.join(' / '):'')
       +' <button class="btn bs sm" style="font-size:11px;margin-left:4px;vertical-align:middle" data-tree-add-order="'+escHtml(vis.id)+'" data-tree-add-order-member="'+escHtml(vis.memberId||'')+'" title="注文追加">＋注文</button>'
@@ -5371,7 +5391,7 @@ function renderMemberTree(realId, visits, orders, cont){
         var cancelled=ord.served===0;
         var isBlind=ord.blindId===1||ord.blindId==='1';
         var ordDet=[];
-        if(ord.orderTime) ordDet.push(fmtHHMM(ord.orderTime));
+        if(ord.orderTime) ordDet.push(fmtHHMMsession(ord.orderTime,visSes));
         ordDet.push(escHtml(ord.productName||ord.productCode||'—'));
         if(ord.qty) ordDet.push(ord.qty+(ord.unit||''));
         if(ord.unitPrice!=null){
