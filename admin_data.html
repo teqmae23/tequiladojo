@@ -4196,37 +4196,47 @@ async function openTogetherModal(ordId){
   _togetherCurrentOrdId=ordId;
   _togetherCurrentBatchId=ord.batchId||null;
 
-  // 会員ツリーモードでは当日の全来場・注文データが不足しているため補完ロード
-  if(_treeMemberFilterId){
-    var _visitDate=ord.orderDate||(ord.visitKey||ord.visitId||'').slice(0,6)||'';
-    if(_visitDate){
-      try{
+  try{
+    // batchIdがある場合は常にFirestoreから仲間注文を補完（モードを問わず）
+    if(_togetherCurrentBatchId){
+      var _bSnap=await db.collection('orders').where('batchId','==',_togetherCurrentBatchId).get();
+      _bSnap.docs.forEach(function(d){
+        if(!_treeCurrentOrders.find(function(x){return x.id===d.id;}))
+          _treeCurrentOrders.push(Object.assign({id:d.id},d.data()));
+      });
+      // 仲間の来場データも補完
+      var _compVids=[...new Set(_bSnap.docs.map(function(d){return d.data().visitKey||d.data().visitId;}).filter(Boolean))];
+      for(var _ci=0;_ci<_compVids.length;_ci+=30){
+        var _vchunk=_compVids.slice(_ci,_ci+30);
+        var _vSnap=await db.collection('visits').where(firebase.firestore.FieldPath.documentId(),'in',_vchunk).get().catch(function(){return{docs:[]};});
+        _vSnap.docs.forEach(function(d){
+          if(!_treeCurrentVisits.find(function(x){return x.id===d.id;}))
+            _treeCurrentVisits.push(Object.assign({id:d.id},d.data()));
+        });
+      }
+    }
+
+    // 会員ツリーモードでは当日の全来場・注文も補完
+    if(_treeMemberFilterId){
+      var _visitDate=ord.orderDate||(ord.visitKey||ord.visitId||'').slice(0,6)||'';
+      if(_visitDate){
         var _vsSnap=await db.collection('visits').where('visitDate','==',_visitDate).get();
         _vsSnap.docs.forEach(function(d){
           if(!_treeCurrentVisits.find(function(x){return x.id===d.id;}))
             _treeCurrentVisits.push(Object.assign({id:d.id},d.data()));
         });
-        // batchId が既にある場合はそのbatch仲間の注文も取得
-        if(_togetherCurrentBatchId){
-          var _bSnap=await db.collection('orders').where('batchId','==',_togetherCurrentBatchId).get();
-          _bSnap.docs.forEach(function(d){
-            if(!_treeCurrentOrders.find(function(x){return x.id===d.id;}))
-              _treeCurrentOrders.push(Object.assign({id:d.id},d.data()));
-          });
-        }
-        // visitKey で当日の全注文も補完
         var _dayVids=_vsSnap.docs.map(function(d){return d.id;});
-        for(var _ci=0;_ci<_dayVids.length;_ci+=30){
-          var _chunk=_dayVids.slice(_ci,_ci+30);
+        for(var _ci2=0;_ci2<_dayVids.length;_ci2+=30){
+          var _chunk=_dayVids.slice(_ci2,_ci2+30);
           var _oSnap=await db.collection('orders').where('visitKey','in',_chunk).get().catch(function(){return{docs:[]};});
           _oSnap.docs.forEach(function(d){
             if(!_treeCurrentOrders.find(function(x){return x.id===d.id;}))
               _treeCurrentOrders.push(Object.assign({id:d.id},d.data()));
           });
         }
-      }catch(e){ console.warn('[together] supplement load failed:',e); }
+      }
     }
-  }
+  }catch(e){ console.warn('[together] supplement load failed:',e); }
 
   renderTogetherModal();
   openM("m-together");
