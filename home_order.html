@@ -2048,14 +2048,15 @@ async function confirmOrder(){
     let _seqCounter=maxSeq;
     function nextOrderId(){ return useDate+String(++_seqCounter).padStart(3,'0'); }
 
+    // ジャーナル用に保存するデータを蓄積してからcommit後に書き込む
+    const journalEntries=[];
     for(const visit of flow.visits){
       const orderGroupId=orderGroupIdMap[visit.id];
       flow.cart.forEach((item,i)=>{
         const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
         const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):p&&p.type==='other'?(p.bottleEn||p.bottleName||p.name||item.productName):item.productName;
         const docId=nextOrderId();
-        const orderRef=db.collection('orders').doc(docId);
-        fsBatch.set(orderRef,{
+        const data={
           orderDate:useDate,
           orderTime,customerId:visit.memberId||null,visitKey:visit.id,orderGroupId,batchId,
           itemSeq:i+1,productCode:item.productId,productName:saveName,productType:item.productType,
@@ -2063,7 +2064,9 @@ async function confirmOrder(){
           blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:isPopupMode?3:1,
           ...(isGift?{isGiftPayer:true,giftCount,giftTo:flow.giftTo}:{}),
           ...(item.setGroupId?{setGroupId:item.setGroupId,setName:item.setName,setId:item.setId}:{})
-        });
+        };
+        fsBatch.set(db.collection('orders').doc(docId),data);
+        journalEntries.push({docId,data});
         if(item.productType==='cocktail'&&item._cocktailId){
           fsBatch.set(db.collection('cocktailOrders').doc(docId),{
             orderId:docId,cocktailId:item._cocktailId,
@@ -2076,7 +2079,7 @@ async function confirmOrder(){
         for(const recipient of giftRecipients){
           const recDocId=nextOrderId();
           const recVisit=allVisits.find(v=>v.id===recipient.visitKey);
-          fsBatch.set(db.collection('orders').doc(recDocId),{
+          const recData={
             orderDate:useDate,
             orderTime,customerId:recVisit?.memberId||null,
             visitKey:recipient.visitKey,
@@ -2086,21 +2089,17 @@ async function confirmOrder(){
             qty:item.qty,unit:item.unit,unitPrice:0,
             blindId:0,blindMarkId:null,served:isPopupMode?3:1,
             isGiftRecipient:true,giftFromVisitKey:visit.id
-          });
+          };
+          fsBatch.set(db.collection('orders').doc(recDocId),recData);
+          journalEntries.push({docId:recDocId,data:recData});
         }
       });
     }
     await fsBatch.commit();
-    // ジャーナル: 作成した注文をまとめて記録（batchIdで代表記録）
-    for(const visit of flow.visits){
-      const ogId=orderGroupIdMap[visit.id];
-      flow.cart.forEach((item,i)=>{
-        const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
-        const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):item.productName;
-        writeJournal('create','orders',batchId+'_'+(flow.visits.indexOf(visit))+'_'+i,null,{orderDate:useDate,orderTime,visitKey:visit.id,customerId:visit.memberId||null,
-          productName:saveName,productType:item.productType,qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,batchId,orderGroupId:ogId,served:isPopupMode?3:1});
-      });
-    }
+    // ジャーナル: commit成功後に実際のdocIdで記録
+    journalEntries.forEach(function(e){
+      writeJournal('create','orders',e.docId,null,e.data);
+    });
     showStep(3);
     const giftSuffix=isGift?` (+奢り${giftCount}人)`:'';
     document.getElementById('complete-sub').textContent=
