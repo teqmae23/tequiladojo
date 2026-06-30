@@ -2871,7 +2871,7 @@ if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
   var id=editId.order||date+seq;
   if(!editId.order&&(cache.orders.some(function(r){return r.id===id;})||_treeCurrentOrders.some(function(r){return r.id===id;}))){toast("注文ID「"+id+"」は既に存在します","err");return;}
   var ordDateVal=gv("ord-date");
-  db.collection("orders").doc(id).set({
+  var _saveData={
     orderDate:ordDateVal||null,
     orderTime:gv("ord-time")||null,
     customerId:gv("ord-customer")||null,
@@ -2890,20 +2890,24 @@ if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
     blindMarkId:gv("ord-blind-mark")||null,
     setId:gv("ord-set-id")||null,
     deleted:0
-  },editId.order?{merge:true}:{})
-  .then(function(){
-    var _odata={orderDate:gv("ord-date"),orderTime:gv("ord-time")||null,
-      customerId:gv("ord-customer")||null,visitKey:gv("ord-visit")||null,
-      productType:gv("ord-type")||"tequila",productName:gv("ord-product-name")||null,
-      qty:parseFloat(gv("ord-qty"))||null,unit:gv("ord-unit")||"ml",
-      unitPrice:gv("ord-unit-price")!==""?parseInt(gv("ord-unit-price")):null,
-      served:parseInt(gv("ord-served")||"1"),deleted:0};
-    writeJournal(editId.order?'update':'create','orders',id,null,_odata);
+  };
+  function _onSaveSuccess(){
+    writeJournal(editId.order?'update':'create','orders',id,null,_saveData);
     toast(editId.order?"注文データを更新しました":"注文データを登録しました");
     closeM("m-order");
     if(_treeAfterSave){var _cb=_treeAfterSave;_treeAfterSave=null;_cb();}else{loadOrders();}
-  })
-  .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
+  }
+  function _onSaveError(e){ if(e.message!=='duplicate') toast("保存失敗: "+e.message,"err"); }
+  // 新規登録時はFirestoreで存在確認してから保存（サイレント上書き防止）
+  if(!editId.order){
+    db.collection("orders").doc(id).get()
+      .then(function(snap){
+        if(snap.exists){toast("注文ID「"+id+"」は既に存在します","err");return;}
+        db.collection("orders").doc(id).set(_saveData).then(_onSaveSuccess).catch(_onSaveError);
+      }).catch(_onSaveError);
+  }else{
+    db.collection("orders").doc(id).set(_saveData,{merge:true}).then(_onSaveSuccess).catch(_onSaveError);
+  }
 });
 
 // ─── データツリー ─────────────────────────────────────────────
