@@ -4293,20 +4293,72 @@ function renderTogetherModal(){
 }
 
 function togetherRemove(ordId){
-  confirmDel("仲間の注文「"+ordId+"」をキャンセル（非表示）にしますか？",function(){
-    var ref=db.collection("orders").doc(ordId);
-    ref.get().then(function(snap){
-      var before=snap.exists?snap.data():null;
-      return ref.update({served:0}).then(function(){
-        writeJournal('update','orders',ordId,before,Object.assign({},before,{served:0}));
-        toast("仲間の注文をキャンセルしました");
-        var idx=_treeCurrentOrders.findIndex(function(o){return o.id===ordId;});
-        if(idx>=0) _treeCurrentOrders[idx].served=0;
-        renderTogetherModal();
-        if(_treeMemberFilterId) loadMemberTree(_treeMemberFilterId); else loadTree();
+  // Find the order being removed and its batchId
+  var ord=_treeCurrentOrders.find(function(o){return o.id===ordId;});
+  if(!ord){toast("注文データが見つかりません","err");return;}
+  var batchId=ord.batchId;
+  // Find partner orders that share the same batchId (excluding self)
+  var partners=batchId?_treeCurrentOrders.filter(function(o){
+    return o.id!==ordId && o.batchId===batchId && o.served!==0 && !o.deleted;
+  }):[];
+
+  function doUnlink(targetIds){
+    var fvDelete=firebase.firestore.FieldValue.delete();
+    var promises=targetIds.map(function(tid){
+      var ref=db.collection("orders").doc(tid);
+      return ref.get().then(function(snap){
+        var before=snap.exists?snap.data():null;
+        return ref.update({batchId:fvDelete}).then(function(){
+          var after=Object.assign({},before); delete after.batchId;
+          writeJournal('update','orders',tid,before,after);
+          var idx=_treeCurrentOrders.findIndex(function(o){return o.id===tid;});
+          if(idx>=0) delete _treeCurrentOrders[idx].batchId;
+        });
       });
-    }).catch(function(e){toast("キャンセル失敗: "+e.message,"err");});
-  });
+    });
+    Promise.all(promises).then(function(){
+      toast("一緒に飲んだを解除しました");
+      renderTogetherModal();
+      if(_treeMemberFilterId) loadMemberTree(_treeMemberFilterId); else loadTree();
+    }).catch(function(e){toast("解除失敗: "+e.message,"err");});
+  }
+
+  if(partners.length>0){
+    confirmDel("「"+ordId+"」の一緒に飲んだを解除します。相手側（"+partners.map(function(p){return p.id;}).join("、")+"）も同時に解除されます。よろしいですか？",function(){
+      doUnlink([ordId].concat(partners.map(function(p){return p.id;})));
+    });
+  } else {
+    confirmDel("相手側に該当する注文がありませんが、「"+ordId+"」の一緒に飲んだの解除だけ行いますか？",function(){
+      doUnlink([ordId]);
+    });
+  }
+}
+
+// 3択確認ダイアログ（追加・スキップ・キャンセル）
+function confirm3(msg, label1, label2, cb1, cb2){
+  var bg=document.createElement('div');
+  bg.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:3000;display:flex;align-items:center;justify-content:center;';
+  var box=document.createElement('div');
+  box.style.cssText='background:#1e1e2e;border:1px solid #444;border-radius:10px;padding:24px 28px;max-width:360px;width:90%;color:#e0e0e0;';
+  var p=document.createElement('p');
+  p.style.cssText='margin:0 0 20px;line-height:1.6;white-space:pre-wrap;';
+  p.textContent=msg;
+  box.appendChild(p);
+  var acts=document.createElement('div');
+  acts.style.cssText='display:flex;flex-direction:column;gap:8px;';
+  function mkBtn(label,cls,cb){
+    var b=document.createElement('button');
+    b.className='btn '+cls; b.textContent=label;
+    b.style.cssText='width:100%;padding:10px;font-size:.95em;';
+    b.addEventListener('click',function(){ document.body.removeChild(bg); if(cb) cb(); });
+    return b;
+  }
+  acts.appendChild(mkBtn(label1,'bp',cb1));
+  acts.appendChild(mkBtn(label2,'bg2',cb2));
+  acts.appendChild(mkBtn('キャンセル','bg2',null));
+  box.appendChild(acts);
+  bg.appendChild(box);
+  document.body.appendChild(bg);
 }
 
 (function(){
@@ -4319,23 +4371,61 @@ function togetherRemove(ordId){
     var ord=_treeCurrentOrders.find(function(o){return o.id===_togetherCurrentOrdId;});
     if(!ord){toast("注文データが見つかりません","err");return;}
     var batchId=_togetherCurrentBatchId||_togetherCurrentOrdId;
-    function doAdd(){
-      treeDoAddCompanion(batchId, ord, vis).then(function(){
-        _togetherCurrentBatchId=batchId;
-        var updated=_treeCurrentOrders.find(function(o){return o.id===_togetherCurrentOrdId;});
-        if(updated) updated.batchId=batchId;
-        renderTogetherModal();
-      }).catch(function(e){toast("追加失敗: "+e.message,"err");});
+
+    function afterBatchIdSet(resolvedBatchId){
+      // Check if partner visit already has a matching order (same productCode + orderTime)
+      var partnerOrd=_treeCurrentOrders.find(function(o){
+        return o.visitKey===vis.id && !o.deleted && o.served!==0
+          && o.productCode===ord.productCode && o.orderTime===ord.orderTime;
+      });
+      if(partnerOrd){
+        // Link existing order
+        var beforeP=Object.assign({},partnerOrd);
+        db.collection("orders").doc(partnerOrd.id).update({batchId:resolvedBatchId}).then(function(){
+          writeJournal('update','orders',partnerOrd.id,beforeP,Object.assign({},beforeP,{batchId:resolvedBatchId}));
+          partnerOrd.batchId=resolvedBatchId;
+          _togetherCurrentBatchId=resolvedBatchId;
+          toast("一緒に飲んだを追加しました（既存注文をリンク）");
+          renderTogetherModal();
+          if(_treeMemberFilterId) loadMemberTree(_treeMemberFilterId); else loadTree();
+        }).catch(function(e){toast("追加失敗: "+e.message,"err");});
+      } else {
+        // No matching order — show 3-option dialog
+        confirm3(
+          "相手の来場に同じ商品・時間の注文が見つかりません。\n相手に注文を追加しますか？",
+          "相手に注文追加する",
+          "相手に注文追加しない",
+          function(){
+            // cb1: create new order for partner
+            treeDoAddCompanion(resolvedBatchId, ord, vis).then(function(){
+              _togetherCurrentBatchId=resolvedBatchId;
+              var updated=_treeCurrentOrders.find(function(o){return o.id===_togetherCurrentOrdId;});
+              if(updated) updated.batchId=resolvedBatchId;
+              renderTogetherModal();
+            }).catch(function(e){toast("追加失敗: "+e.message,"err");});
+          },
+          function(){
+            // cb2: just proceed without creating partner order
+            _togetherCurrentBatchId=resolvedBatchId;
+            toast("一緒に飲んだを追加しました（相手側注文なし）");
+            renderTogetherModal();
+            if(_treeMemberFilterId) loadMemberTree(_treeMemberFilterId); else loadTree();
+          }
+        );
+      }
     }
+
     if(!_togetherCurrentBatchId){
       var _beforeOrd=Object.assign({},ord);
       db.collection("orders").doc(_togetherCurrentOrdId).update({batchId:batchId})
         .then(function(){
           writeJournal('update','orders',_togetherCurrentOrdId,_beforeOrd,Object.assign({},_beforeOrd,{batchId:batchId}));
           if(ord) ord.batchId=batchId;
-          doAdd();
+          afterBatchIdSet(batchId);
         }).catch(function(e){toast("追加失敗: "+e.message,"err");});
-    } else { doAdd(); }
+    } else {
+      afterBatchIdSet(batchId);
+    }
   });
 })();
 
@@ -4364,7 +4454,7 @@ async function treeDoAddCompanion(batchId, templateOrd, vis){
   };
   await db.collection("orders").doc(newId).set(newOrd);
   writeJournal('create','orders',newId,null,newOrd);
-  toast("仲間を追加しました");
+  toast("仲間を追加しました（新規注文を作成）");
   _treeCurrentOrders.push(Object.assign({id:newId},newOrd));
   loadTree();
 }
