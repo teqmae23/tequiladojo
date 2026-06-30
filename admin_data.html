@@ -1487,6 +1487,10 @@ async function recalcSession(sesId){
     await batch.commit();
 
     writeJournal('update','sessions',sesId,null,{guestCount:guestCount,sales:sales});
+    sesVisits.forEach(function(vis){
+      var newAmt=visitAmounts[vis.id];
+      if(vis.amount!==newAmt) writeJournal('update','visits',vis.id,{amount:vis.amount},{amount:newAmt});
+    });
     ses.guestCount=guestCount; ses.sales=sales;
     sesVisits.forEach(function(vis){vis.amount=visitAmounts[vis.id];});
     renderSessions();
@@ -1934,14 +1938,16 @@ if(_bsr2) _bsr2.addEventListener("click",function(){
       if(cache.reservations.some(function(r){return r.id===id;})){ toast("予約ID「"+id+"」は既に存在します","err"); return; }
       rsvSeqCounter++;
     }
-    db.collection("reservations").doc(id).set({
+    var _rsvData={
       reservationId:id,reservationDate:date,startTime:start,endTime:end,
       customerCode:cust.padStart(6,"0"),guests:parseInt(guests),
       charterType:parseInt(gv("rsv-charter")||"0"),
       memo:gv("rsv-memo")||null,
       createdAt:firebase.firestore.FieldValue.serverTimestamp()
-    },{merge:true})
+    };
+    db.collection("reservations").doc(id).set(_rsvData,{merge:true})
     .then(function(){
+      writeJournal(editId.reservation?'update':'create','reservations',id,null,_rsvData);
       toast(editId.reservation?"予約を更新しました":"予約を登録しました（ID: "+id+"）");
       closeM("m-reservation"); loadReservations();
       autoPublishCalForMonth(date,"予約");
@@ -3619,6 +3625,7 @@ async function cleanupStep3(){
       allRefs.slice(i, i+500).forEach(function(ref){ batch.delete(ref); });
       await batch.commit();
     }
+    writeJournal('bulk-delete','sessions/visits/orders','cleanup',{sessions:sesSnap.size,visits:visSnap.size,orders:ordSnap.size},null);
     cleanupStatus(3, '✅ 削除完了 — sessions:'+sesSnap.size+'件 / visits:'+visSnap.size+'件 / orders:'+ordSnap.size+'件', 'var(--teal)');
     toast('削除完了（'+total+'件）','success');
     // Step4を自動提案
@@ -3717,6 +3724,7 @@ async function cleanupStep5(){
       });
       await batch.commit();
     }
+    writeJournal('bulk-restore','sessions/visits/orders','cleanup-rollback',null,{count:allItems.length});
     cleanupStatus(5, '✅ 巻き戻し完了 — '+allItems.length+'件を再インポートしました', 'var(--teal)');
     toast('巻き戻し完了（'+allItems.length+'件）','success');
     _cleanupMissing = null;
@@ -3773,6 +3781,7 @@ async function runFieldMigration(){
     if(bc>0)await b.commit();
 
     var msg='完了: セッション'+total.sessions+'件 / 来場'+total.visits+'件 / 注文'+total.orders+'件から廃止フィールドを削除しました';
+    writeJournal('migration','sessions/visits/orders','field-migration',null,{sessions:total.sessions,visits:total.visits,orders:total.orders});
     prog.textContent=msg;
     toast(msg);
   }catch(e){
@@ -4076,6 +4085,7 @@ async function batchHideVisits(yymmdd){
       if(cnt%500===0){ batch.commit(); batch=db.batch(); }
     });
     await batch.commit();
+    toHide.forEach(function(d){ writeJournal('update','visits',d.id,d.data(),Object.assign({},d.data(),{hidden:true})); });
     toast(label+'の来場 '+cnt+'件を非表示にしました');
     loadTree();
   }catch(e){ toast('非表示処理失敗: '+e.message,'err'); }
@@ -4167,13 +4177,15 @@ function openBlindEditModal(ordId){
   var btn=g("btn-save-blind"); if(!btn) return;
   btn.addEventListener("click",function(){
     var ordId=gv("blind-ord-id"); if(!ordId) return;
-    db.collection("orders").doc(ordId).update({
-      blindMarkId:gv("blind-mark")||null,
-      productCode:gv("blind-product-code")||null,
-      productName:gv("blind-product-name")||null
-    })
-    .then(function(){ toast("ブラインドデータを更新しました"); closeM("m-blind-edit"); loadTree(); })
-    .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
+    var _blindAfter={blindMarkId:gv("blind-mark")||null,productCode:gv("blind-product-code")||null,productName:gv("blind-product-name")||null};
+    var _ref=db.collection("orders").doc(ordId);
+    _ref.get().then(function(snap){
+      var _before=snap.exists?snap.data():null;
+      return _ref.update(_blindAfter).then(function(){
+        writeJournal('update','orders',ordId,_before,Object.assign({},_before,_blindAfter));
+        toast("ブラインドデータを更新しました"); closeM("m-blind-edit"); loadTree();
+      });
+    }).catch(function(e){ toast("保存失敗: "+e.message,"err"); });
   });
 })();
 
@@ -4293,20 +4305,39 @@ function renderTogetherModal(){
 }
 
 function togetherRemove(ordId){
-  confirmDel("仲間の注文「"+ordId+"」をキャンセル（非表示）にしますか？",function(){
-    var ref=db.collection("orders").doc(ordId);
-    ref.get().then(function(snap){
-      var before=snap.exists?snap.data():null;
-      return ref.update({served:0}).then(function(){
-        writeJournal('update','orders',ordId,before,Object.assign({},before,{served:0}));
-        toast("仲間の注文をキャンセルしました");
-        var idx=_treeCurrentOrders.findIndex(function(o){return o.id===ordId;});
-        if(idx>=0) _treeCurrentOrders[idx].served=0;
-        renderTogetherModal();
-        if(_treeMemberFilterId) loadMemberTree(_treeMemberFilterId); else loadTree();
-      });
-    }).catch(function(e){toast("キャンセル失敗: "+e.message,"err");});
-  });
+  var _inMem=_treeCurrentOrders.find(function(o){return o.id===ordId;});
+  var _isComp=!!(_inMem&&_inMem.isCompanionOrder);
+  if(_isComp){
+    confirmDel("仲間の注文「"+ordId+"」をキャンセル（非表示）にしますか？",function(){
+      _doTogetherRemove(ordId,true);
+    });
+  } else {
+    if(!confirm("仲間の注文「"+ordId+"」を「一緒に飲んだ」グループから外しますか？\n（注文はキャンセルされません。batchIDリンクのみ解除されます）")) return;
+    _doTogetherRemove(ordId,false);
+  }
+}
+
+function _doTogetherRemove(ordId,isComp){
+  var ref=db.collection("orders").doc(ordId);
+  ref.get().then(function(snap){
+    var before=snap.exists?snap.data():null;
+    if(!before){toast("注文が見つかりません","err");return;}
+    var actualIsComp=before.isCompanionOrder===true||isComp;
+    var updateData=actualIsComp?{served:0}:{batchId:firebase.firestore.FieldValue.delete()};
+    var after=Object.assign({},before);
+    if(actualIsComp) after.served=0; else delete after.batchId;
+    return ref.update(updateData).then(function(){
+      writeJournal('update','orders',ordId,before,after);
+      toast(actualIsComp?"仲間の注文をキャンセルしました":"仲間グループから外しました");
+      var idx=_treeCurrentOrders.findIndex(function(o){return o.id===ordId;});
+      if(idx>=0){
+        if(actualIsComp) _treeCurrentOrders[idx].served=0;
+        else delete _treeCurrentOrders[idx].batchId;
+      }
+      renderTogetherModal();
+      if(_treeMemberFilterId) loadMemberTree(_treeMemberFilterId); else loadTree();
+    });
+  }).catch(function(e){toast("処理失敗: "+e.message,"err");});
 }
 
 (function(){
@@ -4342,6 +4373,34 @@ function togetherRemove(ordId){
 async function treeDoAddCompanion(batchId, templateOrd, vis){
   if(!vis) return;
   var date=(templateOrd.id||"").slice(0,6);
+
+  // 相手の来場に同じ商品・同じ時刻の既存注文があるか確認
+  var tCode=templateOrd.productCode||null;
+  var tName=templateOrd.productName||null;
+  var tTime=templateOrd.orderTime||null;
+  var partnerOrd=_treeCurrentOrders.find(function(o){
+    if((o.visitKey||o.visitId)!==vis.id) return false;
+    if(o.served===0||o.batchId) return false;
+    var codeMatch=tCode?o.productCode===tCode:o.productName===tName;
+    return codeMatch&&o.orderTime===tTime;
+  });
+
+  if(partnerOrd){
+    // 既存注文をbatchにリンク
+    var _before=Object.assign({},partnerOrd);
+    await db.collection('orders').doc(partnerOrd.id).update({batchId:batchId});
+    writeJournal('update','orders',partnerOrd.id,_before,Object.assign({},_before,{batchId:batchId}));
+    var _pidx=_treeCurrentOrders.findIndex(function(o){return o.id===partnerOrd.id;});
+    if(_pidx>=0) _treeCurrentOrders[_pidx].batchId=batchId;
+    toast("仲間を追加しました（既存の注文にリンクしました）");
+    loadTree();
+    return;
+  }
+
+  // 相手に同じ注文がない → 確認して新規作成
+  var partnerName=treeMemName(vis.memberId)||vis.id;
+  if(!confirm(partnerName+"には同じ商品・同じ時刻の注文が見つかりません。\n新しく注文を作成して追加しますか？")) return;
+
   var seqSnap=await db.collection('orders')
     .orderBy(firebase.firestore.FieldPath.documentId())
     .startAt(date).endAt(date+'~').get().catch(function(){return{docs:[]};});
@@ -4360,11 +4419,12 @@ async function treeDoAddCompanion(batchId, templateOrd, vis){
     unitPrice:templateOrd.unitPrice||null,
     orderGroupId:templateOrd.orderGroupId||null, batchId:batchId,
     itemSeq:templateOrd.itemSeq||1, served:templateOrd.served||1,
-    blindId:0, blindMarkId:null, setId:templateOrd.setId||null, deleted:0
+    blindId:0, blindMarkId:null, setId:templateOrd.setId||null, deleted:0,
+    isCompanionOrder:true
   };
   await db.collection("orders").doc(newId).set(newOrd);
   writeJournal('create','orders',newId,null,newOrd);
-  toast("仲間を追加しました");
+  toast("仲間を追加しました（新規注文を作成）");
   _treeCurrentOrders.push(Object.assign({id:newId},newOrd));
   loadTree();
 }
@@ -4376,16 +4436,26 @@ document.addEventListener("click",function(e){
   if(btn.dataset.softdelOrder){
     var id=btn.dataset.softdelOrder;
     confirmDel("「"+id+"」を削除済みにしますか？（レコードは残ります）",function(){
-      db.collection("orders").doc(id).update({deleted:1})
-        .then(function(){ toast("削除フラグを設定しました","inf"); loadOrders(); })
-        .catch(function(e){ toast("失敗: "+e.message,"err"); });
+      var _ref2=db.collection("orders").doc(id);
+      _ref2.get().then(function(snap){
+        var _b=snap.exists?snap.data():null;
+        return _ref2.update({deleted:1}).then(function(){
+          writeJournal('update','orders',id,_b,Object.assign({},_b,{deleted:1}));
+          toast("削除フラグを設定しました","inf"); loadOrders();
+        });
+      }).catch(function(e){ toast("失敗: "+e.message,"err"); });
     });
   }
   if(btn.dataset.restoreOrder){
     var id=btn.dataset.restoreOrder;
-    db.collection("orders").doc(id).update({deleted:0})
-      .then(function(){ toast("削除フラグを解除しました"); loadOrders(); })
-      .catch(function(e){ toast("失敗: "+e.message,"err"); });
+    var _ref3=db.collection("orders").doc(id);
+    _ref3.get().then(function(snap){
+      var _b=snap.exists?snap.data():null;
+      return _ref3.update({deleted:0}).then(function(){
+        writeJournal('update','orders',id,_b,Object.assign({},_b,{deleted:0}));
+        toast("削除フラグを解除しました"); loadOrders();
+      });
+    }).catch(function(e){ toast("失敗: "+e.message,"err"); });
   }
 });
 
@@ -4602,9 +4672,14 @@ function openNewsModal(id){
 
 function delNews(id){
   confirmDel('このニュースを削除しますか？',function(){
-    db.collection('news').doc(id).delete()
-    .then(function(){toast('削除しました');loadNews();})
-    .catch(function(e){toast('削除失敗: '+e.message,'err');});
+    var _nref=db.collection('news').doc(id);
+    _nref.get().then(function(snap){
+      var _nb=snap.exists?snap.data():null;
+      return _nref.delete().then(function(){
+        writeJournal('delete','news',id,_nb,null);
+        toast('削除しました'); loadNews();
+      });
+    }).catch(function(e){toast('削除失敗: '+e.message,'err');});
   });
 }
 
@@ -4631,7 +4706,9 @@ function delNews(id){
       };
       if(!newsEditId) data.createdAt=new Date().toISOString();
       var ref=newsEditId?db.collection('news').doc(newsEditId):db.collection('news').doc();
+      var _newsId=newsEditId||ref.id;
       await ref.set(data,{merge:!!newsEditId});
+      writeJournal(newsEditId?'update':'create','news',_newsId,null,data);
       toast(newsEditId?'更新しました':'登録しました');
       closeM('m-news'); loadNews();
     }catch(e){
@@ -4911,6 +4988,7 @@ async function brSave(){
       });
     });
     await batch.commit();
+    writeJournal('create','blindResults',groupId,null,{count:_brParts.length,isRetro:true,date:date});
     toast('ブラインド結果を保存しました（'+_brParts.length+'件）');
     _brParts=[];
     brRenderParts();
@@ -5536,6 +5614,7 @@ window.fixTogetherData = async function(displayIds, visitDate){
 
   if(updateCount === 0){ toast('既に一緒に飲んだ設定済みか対象なし','info'); return; }
   await batch.commit();
+  writeJournal('bulk-update','orders','fixTogetherData',null,{count:updateCount});
   console.log('[fixTogether] updated', updateCount, 'orders');
   toast(updateCount+'件の注文を「一緒に飲んだ」に設定しました', 'ok');
 
