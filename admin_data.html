@@ -4323,20 +4323,26 @@ function renderTogetherModal(){
 }
 
 function togetherRemove(companionOrdId){
+  // companionOrdId = チップに表示された相手の注文ID（productCode+orderTime一致済み）
   var companionOrd=_treeCurrentOrders.find(function(o){return o.id===companionOrdId;});
   if(!companionOrd){toast("注文データが見つかりません","err");return;}
-  var batchId=companionOrd.batchId;
-  // Look up companion's display name from their visit
   var bvk=companionOrd.visitKey||companionOrd.visitId;
   var bvis=_treeCurrentVisits.find(function(v){return v.id===bvk;});
   var companionName=treeMemName(bvis?bvis.memberId:null)||companionOrdId;
 
-  // All active orders in this batchId group
-  var groupOrds=batchId?_treeCurrentOrders.filter(function(o){
-    return o.batchId===batchId && o.served!==0 && !o.deleted;
+  // ベース注文を取得
+  var baseOrdId=_togetherCurrentOrdId;
+  var baseOrd=_treeCurrentOrders.find(function(o){return o.id===baseOrdId;});
+
+  // ベース注文の残り仲間（この相手を除いた、productCode+orderTime一致の他の仲間）
+  var batchId=_togetherCurrentBatchId;
+  var myVisitId=baseOrd?baseOrd.visitKey||baseOrd.visitId:null;
+  var otherCompanions=batchId&&baseOrd?_treeCurrentOrders.filter(function(o){
+    return o.batchId===batchId && o.served!==0 && !o.deleted
+      && o.id!==companionOrdId && o.id!==baseOrdId
+      && (o.visitKey||o.visitId)!==myVisitId
+      && o.productCode===baseOrd.productCode && o.orderTime===baseOrd.orderTime;
   }):[];
-  // Orders remaining after removing this companion
-  var remaining=groupOrds.filter(function(o){return o.id!==companionOrdId;});
 
   function doUnlink(targetIds){
     var fvDelete=firebase.firestore.FieldValue.delete();
@@ -4359,21 +4365,13 @@ function togetherRemove(companionOrdId){
     }).catch(function(e){toast("解除失敗: "+e.message,"err");});
   }
 
-  var label=companionName||companionOrdId;
+  // この相手を外した後にベース注文が孤立する場合はベースも一緒に解除
   var toUnlink=[companionOrdId];
-  // If only 1 order would remain after removal, it's now solo → unlink it too
-  if(remaining.length===1) toUnlink.push(remaining[0].id);
+  if(otherCompanions.length===0 && baseOrdId) toUnlink.push(baseOrdId);
 
-  var soloLabel='';
-  if(remaining.length===1){
-    var rOrd=remaining[0];
-    var rVk=rOrd.visitKey||rOrd.visitId;
-    var rVis=_treeCurrentVisits.find(function(v){return v.id===rVk;});
-    soloLabel=treeMemName(rVis?rVis.memberId:null)||rOrd.id;
-  }
-  var msg=remaining.length===1
-    ? "「"+label+"」をグループから外すと「"+soloLabel+"」が1人だけになります。両方の一緒に飲んだを解除しますか？"
-    : "「"+label+"」を一緒に飲んだグループから外しますか？";
+  var msg=otherCompanions.length===0 && baseOrdId
+    ? "「"+companionName+"」を一緒に飲んだから外します。他に仲間がいないためこちら側の記録も同時に解除されます。よろしいですか？"
+    : "「"+companionName+"」を一緒に飲んだから外しますか？";
   confirmDel(msg, function(){ doUnlink(toUnlink); });
 }
 
