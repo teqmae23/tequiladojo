@@ -854,15 +854,22 @@ async function loadTodayData(){
   ]);
   currentSessionBT=session; // 営業時刻計算用に保存
 
-  // 現セッションのopenTime以降のvisitのみ対象
+  // セッション日付
+  const sessionDate=session?(session.openDate||session.date||AuthRole.businessDate(session.openTime,null)):null;
+  const filterDate=sessionDate||todayStr;
+  // allVisits: 来場者選択UI用（isVisitInSessionで絞り込み）
   allVisits=[];
+  // todayVisitKeys: 注文フィルター用（本日日付に一致する来店すべて）
+  const todayVisitKeys=new Set();
   visitsSnap.forEach(d=>{
     const v={id:d.id,...d.data()};
+    const visitDate=v.visitDate||(v.id?v.id.slice(0,6):'');
+    if(visitDate===filterDate) todayVisitKeys.add(v.id);
     if(!v.checkoutTime && AuthRole.isVisitInSession(v, session)) allVisits.push(v);
   });
   allVisits.sort((a,b)=>(a.seq||0)-(b.seq||0));
 
-  // 来場中のvisitKeyセット
+  // activeVisitKeys: 来場者選択UI用
   const activeVisitKeys=new Set(allVisits.map(v=>v.id));
 
   blindResultsSet=new Set();
@@ -873,7 +880,7 @@ async function loadTodayData(){
   ordersSnap.forEach(d=>{
     const o={id:d.id,...d.data()};
     if(!o.orderGroupId)return;
-    if(!o.visitKey||!activeVisitKeys.has(o.visitKey))return;
+    if(!o.visitKey||!todayVisitKeys.has(o.visitKey))return;
     if(!gmap[o.orderGroupId])gmap[o.orderGroupId]=[];
     gmap[o.orderGroupId].push(o);
   });
@@ -1934,31 +1941,19 @@ async function confirmOrder(){
     orderTime=AuthRole.nowBusinessTime(currentSessionBT&&currentSessionBT.openTime);
   }
 
-  let maxSeq,maxBatch;
-  if(isHistorical){
-    const pastSnap=await db.collection('orders')
-      .orderBy(firebase.firestore.FieldPath.documentId())
-      .startAt(useDate).endAt(useDate+'~')
-      .get().catch(()=>({docs:[]}));
-    maxSeq=pastSnap.docs.reduce((m,d)=>{const s=parseInt(d.id.slice(6))||0;return Math.max(m,s);},0);
-    maxBatch=pastSnap.docs.reduce((m,d)=>{
-      const bid=(d.data().batchId||'');
-      if(bid.slice(0,6)!==useDate)return m;
-      return Math.max(m,parseInt(bid.slice(6))||0);
-    },0);
-  }else{
-    // batchId採番のみFirestoreから確認（maxSeqは自動採番IDに移行したため不要）
-    const todaySnap=await db.collection('orders')
-      .orderBy(firebase.firestore.FieldPath.documentId())
-      .startAt(useDate).endAt(useDate+'~')
-      .get().catch(()=>({docs:[]}));
-    maxSeq=0; // 不使用（後方互換のため残す）
-    maxBatch=todaySnap.docs.reduce((m,d)=>{
-      const bid=(d.data().batchId||'');
-      if(bid.slice(0,6)!==useDate)return m;
-      return Math.max(m,parseInt(bid.slice(6))||0);
-    },0);
-  }
+  // orderDate フィールドで当日注文を全取得（旧形式・自動採番IDどちらも含む）
+  const ordDateSnap=await db.collection('orders').where('orderDate','==',useDate).get().catch(()=>({docs:[]}));
+  // maxSeq: 連番形式IDの最大値（日付6桁+3桁数字）
+  const maxSeq=ordDateSnap.docs.reduce((m,d)=>{
+    const s=/^\d{9}$/.test(d.id)?parseInt(d.id.slice(6))||0:0;
+    return Math.max(m,s);
+  },0);
+  // maxBatch: batchIdの最大連番
+  const maxBatch=ordDateSnap.docs.reduce((m,d)=>{
+    const bid=(d.data().batchId||'');
+    if(bid.slice(0,6)!==useDate)return m;
+    return Math.max(m,parseInt(bid.slice(6))||0);
+  },0);
   const batchId=useDate+String(maxBatch+1).padStart(3,'0');
 
   const isGift=flow.isGift&&flow.giftTo.length>0;
@@ -1973,28 +1968,24 @@ async function confirmOrder(){
     const orderGroupIdMap={};
     const allParticipants=[...flow.visits.map(v=>v.id),...giftRecipients.map(r=>r.visitKey)];
     for(const vk of allParticipants){
-      let usedSeqs;
-      if(isHistorical){
-        // 過去visitはallGroupsに既存注文が含まれないのでFirestoreから確認
-        const vkSnap=await db.collection('orders').where('visitKey','==',vk).get().catch(()=>({docs:[]}));
-        usedSeqs=vkSnap.docs.map(d=>parseInt((d.data().orderGroupId||'').slice(vk.length))||0);
-      }else{
-        usedSeqs=allGroups.flatMap(g=>g.orders||[])
-          .filter(o=>o.visitKey===vk)
-          .map(o=>parseInt((o.orderGroupId||'').slice(vk.length))||0);
-      }
+      // 常にFirestoreから確認（allGroupsはセッションフィルター外の来店を含まないため）
+      const vkSnap=await db.collection('orders').where('visitKey','==',vk).get().catch(()=>({docs:[]}));
+      const usedSeqs=vkSnap.docs.map(d=>parseInt((d.data().orderGroupId||'').slice(vk.length))||0);
       const maxGSeq=usedSeqs.length?Math.max(...usedSeqs):0;
       orderGroupIdMap[vk]=vk+String(maxGSeq+1).padStart(2,'0');
     }
+
+    // 日付+連番形式のID採番カウンター（書き込み前に全アイテム数を確定）
+    let _seqCounter=maxSeq;
+    function nextOrderId(){ return useDate+String(++_seqCounter).padStart(3,'0'); }
 
     for(const visit of flow.visits){
       const orderGroupId=orderGroupIdMap[visit.id];
       flow.cart.forEach((item,i)=>{
         const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
         const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):p&&p.type==='other'?(p.bottleEn||p.bottleName||p.name||item.productName):item.productName;
-        // 自動採番IDを使用して上書きを防止、orderDateを明示保存
-        const orderRef=db.collection('orders').doc();
-        const docId=orderRef.id;
+        const docId=nextOrderId();
+        const orderRef=db.collection('orders').doc(docId);
         fsBatch.set(orderRef,{
           orderDate:useDate,
           orderTime,customerId:visit.memberId||null,visitKey:visit.id,orderGroupId,batchId,
@@ -2013,10 +2004,9 @@ async function confirmOrder(){
         }
         // 奢り受取人レコード（visitKeyある人のみ）
         for(const recipient of giftRecipients){
-          const recRef=db.collection('orders').doc();
-          const recDocId=recRef.id;
+          const recDocId=nextOrderId();
           const recVisit=allVisits.find(v=>v.id===recipient.visitKey);
-          fsBatch.set(recRef,{
+          fsBatch.set(db.collection('orders').doc(recDocId),{
             orderDate:useDate,
             orderTime,customerId:recVisit?.memberId||null,
             visitKey:recipient.visitKey,
@@ -2031,7 +2021,7 @@ async function confirmOrder(){
       });
     }
     await fsBatch.commit();
-    // ジャーナル: 作成した注文をまとめて記録（自動採番IDのためbatchIdで代表記録）
+    // ジャーナル: 作成した注文をまとめて記録（batchIdで代表記録）
     for(const visit of flow.visits){
       const ogId=orderGroupIdMap[visit.id];
       flow.cart.forEach((item,i)=>{

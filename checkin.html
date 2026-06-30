@@ -1621,7 +1621,10 @@ g('m-checkin-save').addEventListener('click', async function(){
 
     // ── 会員の登録（複数人対応） ──
     for(var mi=0;mi<cntMem;mi++){
-      var mid=memberIds[mi]||null;  // mid = doc ID = realId
+      // 入力値はdisplayId/realId/nicknameどれかの可能性があるため、getMemberInfoで解決してdoc ID（realId）に統一
+      var _rawMid=memberIds[mi]||null;
+      var _resolvedMem=_rawMid?getMemberInfo(_rawMid):null;
+      var mid=_resolvedMem?_resolvedMem.id:_rawMid;
       if(mid){
         var alreadyIn=cache.visits.find(function(v){ return v.memberId===mid && !v.checkoutTime; });
         if(alreadyIn){
@@ -1692,8 +1695,14 @@ g('m-checkin-save').addEventListener('click', async function(){
 
     await batch.commit();
 
+    // 解決済みrealId配列を作成（上の保存ループと同じ解決処理）
+    var resolvedMemberIds=memberIds.map(function(raw){
+      if(!raw) return null;
+      var mem=getMemberInfo(raw);
+      return mem?mem.id:raw;
+    });
     registeredVisitKeys.forEach(function(vk, idx){
-      var mid=idx<cntMem?(memberIds[idx]||null):(tempMemberIds[idx-cntMem]?tempMemberIds[idx-cntMem].tempId:null);
+      var mid=idx<cntMem?(resolvedMemberIds[idx]||null):(tempMemberIds[idx-cntMem]?tempMemberIds[idx-cntMem].tempId:null);
       var vdata={visitDate:today,visitTime:time,seq:parseInt(vk.slice(6,8))||0,memberId:mid,checkinGroupId:groupId,tequilaAmount:0,amount:0,payment:payment,receiptIssued:'0',checkoutTime:null};
       writeJournal('create','visits',vk,null,vdata);
       var newVEntry=Object.assign({id:vk},vdata);
