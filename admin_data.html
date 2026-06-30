@@ -3995,10 +3995,16 @@ async function treeCascadeDelVisit(visitId){
 }
 
 function treeDelOrder(orderId){
-  confirmDel('注文「'+orderId+'」を削除します。',function(){
-    journaledDelete('orders',orderId)
-      .then(function(){toast('注文を削除しました');loadTree();})
-      .catch(function(e){toast('削除失敗: '+e.message,'err');});
+  confirmDel('注文「'+orderId+'」をキャンセル（非表示）にします。',function(){
+    var ref=db.collection('orders').doc(orderId);
+    ref.get().then(function(snap){
+      var before=snap.exists?snap.data():null;
+      return ref.update({served:0}).then(function(){
+        writeJournal('update','orders',orderId,before,Object.assign({},before,{served:0}));
+        toast('注文をキャンセルしました');
+        loadTree();
+      });
+    }).catch(function(e){toast('キャンセル失敗: '+e.message,'err');});
   });
 }
 
@@ -4193,7 +4199,7 @@ function renderTogetherModal(){
   var companions=[];
   if(batchId){
     _treeCurrentOrders.forEach(function(o){
-      if(o.batchId===batchId&&(o.visitKey||o.visitId)!==myVisitId&&!o.deleted){
+      if(o.batchId===batchId&&(o.visitKey||o.visitId)!==myVisitId&&!o.deleted&&o.served!==0){
         var bvk=o.visitKey||o.visitId;
         if(!companions.some(function(c){return c.visitId===bvk;})){
           var bvis=_treeCurrentVisits.find(function(v){return v.id===bvk;});
@@ -4216,7 +4222,7 @@ function renderTogetherModal(){
   var usedVids=[myVisitId];
   if(batchId){
     _treeCurrentOrders.forEach(function(o){
-      if(o.batchId===batchId&&!o.deleted){
+      if(o.batchId===batchId&&!o.deleted&&o.served!==0){
         var vk=o.visitKey||o.visitId; if(usedVids.indexOf(vk)<0) usedVids.push(vk);
       }
     });
@@ -4256,16 +4262,19 @@ function renderTogetherModal(){
 }
 
 function togetherRemove(ordId){
-  confirmDel("仲間の注文「"+ordId+"」を削除しますか？",function(){
-    db.collection("orders").doc(ordId).delete()
-      .then(function(){
-        toast("仲間の注文を削除しました");
+  confirmDel("仲間の注文「"+ordId+"」をキャンセル（非表示）にしますか？",function(){
+    var ref=db.collection("orders").doc(ordId);
+    ref.get().then(function(snap){
+      var before=snap.exists?snap.data():null;
+      return ref.update({served:0}).then(function(){
+        writeJournal('update','orders',ordId,before,Object.assign({},before,{served:0}));
+        toast("仲間の注文をキャンセルしました");
         var idx=_treeCurrentOrders.findIndex(function(o){return o.id===ordId;});
-        if(idx>=0) _treeCurrentOrders.splice(idx,1);
+        if(idx>=0) _treeCurrentOrders[idx].served=0;
         renderTogetherModal();
         if(_treeMemberFilterId) loadMemberTree(_treeMemberFilterId); else loadTree();
-      })
-      .catch(function(e){toast("削除失敗: "+e.message,"err");});
+      });
+    }).catch(function(e){toast("キャンセル失敗: "+e.message,"err");});
   });
 }
 
