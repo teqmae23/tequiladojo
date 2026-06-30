@@ -321,15 +321,6 @@ body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-
   </div>
 
   <div class="content">
-    <!-- 来場者クイック選択 -->
-    <div id="vis-quick-bar" style="display:none;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:12px 14px;margin-bottom:14px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <div style="font-size:11px;font-weight:600;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase">来場者一覧</div>
-        <button class="btn bp sm" id="btn-quick-order" onclick="openOrderWithSelected()">＋ 新規注文</button>
-      </div>
-      <div id="vis-quick-list"></div>
-    </div>
-
     <div class="page-title">注文一覧</div>
     <div id="loading"><div class="spinner"></div><div>読み込み中...</div></div>
 
@@ -384,6 +375,15 @@ body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-
           </div>
           <div id="list-done"><div class="empty">なし</div></div>
         </div>
+      </div>
+
+      <!-- 来場者一覧 -->
+      <div id="vis-quick-bar" style="display:none;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:12px 14px;margin-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-size:11px;font-weight:600;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase">来場者一覧</div>
+          <a href="checkin.html" class="btn bs sm">来場者一覧へ →</a>
+        </div>
+        <div id="vis-quick-list"></div>
       </div>
     </div>
   </div>
@@ -1001,6 +1001,33 @@ function renderBatchSec(containerId,batches,mode){
   el.innerHTML=batches.map(b=>buildBatchCard(b,mode)).join('');
 }
 
+function buildItemRowsHtml(orders,showActions){
+  const rendered=new Set();
+  let html='';
+  orders.forEach(o=>{
+    if(o.setGroupId){
+      if(rendered.has(o.setGroupId))return;
+      rendered.add(o.setGroupId);
+      const group=orders.filter(x=>x.setGroupId===o.setGroupId&&x.served!==0);
+      if(!group.length)return;
+      const groupTotal=group.reduce((s,x)=>s+calcAmt(x),0);
+      const children=group.map(x=>{
+        const mk=x.blindId===1&&x.blindMarkId?`<span style="font-size:14px;margin-right:4px">${markDisplay(x.blindMarkId)}</span>`:'';
+        return`<div class="item-row" style="padding-left:16px;color:var(--ink2)">${mk}<span class="item-name" style="font-size:12px">${esc(x.productName)}</span><span class="item-qty">${x.qty}${x.unit}</span><span class="item-price"></span></div>`;
+      }).join('');
+      const cancelBtn=showActions?`<button class="srv-cancel-btn" onclick="event.stopPropagation();cancelSetGroupItems('${esc(o.setGroupId)}')">✕</button>`:'';
+      html+=`<div style="border:1px solid var(--border);border-radius:4px;margin-bottom:2px"><div class="item-row" style="background:var(--cream2);font-weight:600"><span class="item-name">${esc(o.setName||'セット')}</span><span class="item-qty"></span><span class="item-price">¥${groupTotal.toLocaleString()}</span>${cancelBtn}</div>${children}</div>`;
+    }else{
+      if(o.served===0)return;
+      const mk=o.blindId===1&&o.blindMarkId?`<span style="font-size:14px;margin-right:4px">${markDisplay(o.blindMarkId)}</span>`:'';
+      const giftBadge=o.isGiftPayer?`<span class="gift-badge">奢</span>`:o.isGiftRecipient?`<span class="gift-recv-badge">奢られ</span>`:'';
+      const editBtn=showActions?(o.isGiftPayer||o.isGiftRecipient?`<button class="srv-edit-btn" disabled style="opacity:.3" title="奢り注文は編集不可">編集</button>`:`<button class="srv-edit-btn" onclick="event.stopPropagation();editOrderItem('${esc(o.id)}')">編集</button>`):'';
+      const cancelBtn=showActions?`<button class="srv-cancel-btn" onclick="event.stopPropagation();cancelOrderItem('${esc(o.id)}')">✕</button>`:'';
+      html+=`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}${giftBadge}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span>${editBtn}${cancelBtn}</div>`;
+    }
+  });
+  return html;
+}
 function buildBatchCard(b,mode){
   const isDone=mode==='done';
   const isPending=mode==='pending';
@@ -1029,14 +1056,7 @@ function buildBatchCard(b,mode){
   if(isBatch){
     // 代表グループ（1人目）の商品を表示
     const rep=b.groups[0];
-    const valid=rep.orders.filter(o=>o.served!==0);
-    const itemsHtml=valid.map(o=>{
-      const mk=o.blindId===1&&o.blindMarkId?`<span style="font-size:14px;margin-right:4px">${markDisplay(o.blindMarkId)}</span>`:'';
-      const giftBadge=o.isGiftPayer?`<span class="gift-badge">奢</span>`:o.isGiftRecipient?`<span class="gift-recv-badge">奢られ</span>`:'';
-      const editBtn=showActions?(o.isGiftPayer||o.isGiftRecipient?`<button class="srv-edit-btn" disabled style="opacity:.3" title="奢り注文は編集不可">編集</button>`:`<button class="srv-edit-btn" onclick="event.stopPropagation();editOrderItem('${esc(o.id)}')">編集</button>`):'';
-      const cancelBtn=showActions?`<button class="srv-cancel-btn" onclick="event.stopPropagation();cancelOrderItem('${esc(o.id)}')">✕</button>`:'';
-      return`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}${giftBadge}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span>${editBtn}${cancelBtn}</div>`;
-    }).join('');
+    const itemsHtml=buildItemRowsHtml(rep.orders,showActions);
     memberRows=`<div class="batch-member-items open" id="bmi-${rep.gid}">${itemsHtml}</div>`;
   }else{
     // 単独注文は従来通り名前＋詳細
@@ -1044,13 +1064,7 @@ function buildBatchCard(b,mode){
       const name=vLabel(g.visitKey);
       const valid=g.orders.filter(o=>o.served!==0);
       const gTotal=g.total;
-      const itemsHtml=valid.map(o=>{
-        const mk=o.blindId===1&&o.blindMarkId?`<span style="font-size:14px;margin-right:4px">${markDisplay(o.blindMarkId)}</span>`:'';
-        const giftBadge=o.isGiftPayer?`<span class="gift-badge">奢</span>`:o.isGiftRecipient?`<span class="gift-recv-badge">奢られ</span>`:'';
-        const editBtn=showActions?(o.isGiftPayer||o.isGiftRecipient?`<button class="srv-edit-btn" disabled style="opacity:.3" title="奢り注文は編集不可">編集</button>`:`<button class="srv-edit-btn" onclick="event.stopPropagation();editOrderItem('${esc(o.id)}')">編集</button>`):'';
-        const cancelBtn=showActions?`<button class="srv-cancel-btn" onclick="event.stopPropagation();cancelOrderItem('${esc(o.id)}')">✕</button>`:'';
-        return`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}${giftBadge}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span>${editBtn}${cancelBtn}</div>`;
-      }).join('');
+      const itemsHtml=buildItemRowsHtml(g.orders,showActions);
       return`<div class="batch-member">
         <div class="batch-member-header" onclick="toggleMemberItems('bmi-${g.gid}')">
           <span class="batch-member-name">${esc(name)}</span>
@@ -1203,6 +1217,20 @@ function _batchEquivOrders(order,batch){
   return result.length?result:[order];
 }
 
+async function cancelSetGroupItems(setGroupId){
+  if(!confirm('このセット内の全アイテムをキャンセルしますか？'))return;
+  try{
+    const allOrders=allBatches.flatMap(b=>b.groups.flatMap(g=>g.orders));
+    const targets=allOrders.filter(o=>o.setGroupId===setGroupId&&o.served!==0);
+    if(!targets.length)return;
+    const fb=db.batch();
+    for(const o of targets){fb.update(db.collection('orders').doc(o.id),{served:0});o.served=0;}
+    await fb.commit();
+    for(const o of targets) writeJournal('update','orders',o.id,{served:1},{served:0});
+    await loadTodayData();renderOrderList();
+    showToast(`セット${targets.length}件キャンセルしました`,'info');
+  }catch(e){showToast('キャンセル失敗: '+e.message,'error');}
+}
 async function cancelOrderItem(orderId){
   const found=_findOrderById(orderId);
   if(!found)return;
@@ -1557,17 +1585,27 @@ function _doAddSet(setId){
   const s=masterData.set.find(x=>x.id===setId);if(!s)return;
   const isBlind=document.getElementById('blind-check').checked;
   const currentMl=getCartMl();
+  const setGroupId='sg_'+Date.now()+'_'+Math.random().toString(36).slice(2,5);
   for(let i=1;i<=8;i++){
     const id=s[`item0${i}`];if(!id)continue;
     const t=s[`itemType0${i}`]||'misc';
     const isMl=t==='tequila'||t==='other';
     flow.cart.push({productId:id,productName:s[`itemName0${i}`]||id,productType:t,
-      qty:isMl?currentMl:1,unit:isMl?'ml':'個',unitPrice:s[`itemPrice0${i}`]||0,blindMarkId:null});
+      qty:isMl?currentMl:1,unit:isMl?'ml':'個',unitPrice:s[`itemPrice0${i}`]||0,blindMarkId:null,
+      setGroupId,setName:s.setName||s.id,setId});
   }
   if(isBlind)assignBlindMarks();
   renderCart();
   document.getElementById('btn-to-step2').disabled=flow.cart.length===0;
   showToast('セット商品を追加しました','info');
+}
+
+function removeSetGroup(setGroupId){
+  flow.cart=flow.cart.filter(o=>o.setGroupId!==setGroupId);
+  renderCart();
+  const b=document.getElementById('btn-to-step2');if(b)b.disabled=flow.cart.length===0;
+  const bch=document.getElementById('blind-check');
+  if(flow.cart.length===0&&bch){bch.checked=false;flow.isBlind=false;}
 }
 
 // ━━━ カクテル ━━━
@@ -1800,18 +1838,49 @@ function renderCart(){
   const presetBtns=['5','10','20','30','45','60'].map(v=>'<div class="qty-preset" style="padding:3px 7px;font-size:11px" onclick="setAllMl(\''+v+'\')">'+v+'</div>').join('');
   const mlBar=hasMl?'<div style="display:flex;align-items:center;gap:8px;padding:6px 0 8px;border-bottom:1px solid var(--border);margin-bottom:4px"><span style="font-size:11px;color:var(--ink3)">次の追加容量:</span><input class="cart-qty-input" type="number" min="1" value="'+currentMl+'" onchange="setAllMl(this.value)" style="width:56px"><span style="font-size:11px;color:var(--ink3)">ml</span><div style="display:flex;gap:4px">'+presetBtns+'</div></div>':'';
 
-  el.innerHTML=mlBar+items.map((o,idx)=>{
-    const isMl=o.productType==='tequila'||o.productType==='other';
-    let markPicker='';
-    if(isBlind&&isMl) markPicker=buildMarkPicker(idx,o.blindMarkId);
-    return`<div class="cart-item">
-      ${markPicker}
-      <span class="cart-item-name">${esc(o.productName)}</span>
-      <span class="cart-item-qty" id="cart-qty-${idx}" onclick="editCartQty(${idx})" title="クリックで容量変更" style="cursor:pointer;font-size:12px;color:var(--ink3)">${o.qty}${o.unit}</span>
-      <span class="cart-item-price" id="cart-price-${idx}" onclick="editCartPrice(${idx})" title="クリックで価格変更" style="cursor:pointer;">¥${cartAmt(o).toLocaleString()}</span>
-      <button class="cart-item-del" onclick="removeCartItem(${idx})">✕</button>
-    </div>`;
-  }).join('');
+  // セットグループを処理してから描画
+  const rendered=new Set();
+  let html='';
+  items.forEach((o,idx)=>{
+    if(o.setGroupId){
+      if(rendered.has(o.setGroupId))return; // 既にグループ描画済み
+      rendered.add(o.setGroupId);
+      const groupItems=items.filter(x=>x.setGroupId===o.setGroupId);
+      const groupTotal=groupItems.reduce((s,x)=>s+cartAmt(x),0);
+      const children=groupItems.map(x=>{
+        const isMl=x.productType==='tequila'||x.productType==='other';
+        let markPicker='';
+        const xi=items.indexOf(x);
+        if(isBlind&&isMl) markPicker=buildMarkPicker(xi,x.blindMarkId);
+        return`<div class="cart-item" style="padding-left:16px;border-bottom:none;font-size:12px;color:var(--ink2)">
+          ${markPicker}
+          <span class="cart-item-name" style="color:var(--ink2)">${esc(x.productName)}</span>
+          <span style="font-size:11px;color:var(--ink3);white-space:nowrap">${x.qty}${x.unit}</span>
+        </div>`;
+      }).join('');
+      const sgId=esc(o.setGroupId);
+      html+=`<div style="border:1px solid var(--border2);border-radius:var(--r);margin-bottom:4px;overflow:hidden">
+        <div class="cart-item" style="background:var(--cream2);font-weight:600">
+          <span class="cart-item-name">${esc(o.setName||'セット')}</span>
+          <span class="cart-item-price">¥${groupTotal.toLocaleString()}</span>
+          <button class="cart-item-del" onclick="removeSetGroup('${sgId}')">✕</button>
+        </div>
+        ${children}
+      </div>`;
+    } else {
+      const isMl=o.productType==='tequila'||o.productType==='other';
+      let markPicker='';
+      if(isBlind&&isMl) markPicker=buildMarkPicker(idx,o.blindMarkId);
+      html+=`<div class="cart-item">
+        ${markPicker}
+        <span class="cart-item-name">${esc(o.productName)}</span>
+        <span class="cart-item-qty" id="cart-qty-${idx}" onclick="editCartQty(${idx})" title="クリックで容量変更" style="cursor:pointer;font-size:12px;color:var(--ink3)">${o.qty}${o.unit}</span>
+        <span class="cart-item-price" id="cart-price-${idx}" onclick="editCartPrice(${idx})" title="クリックで価格変更" style="cursor:pointer;">¥${cartAmt(o).toLocaleString()}</span>
+        <button class="cart-item-del" onclick="removeCartItem(${idx})">✕</button>
+      </div>`;
+    }
+  });
+  el.innerHTML=mlBar+html;
 }
 
 function editCartPrice(idx){
@@ -1992,7 +2061,8 @@ async function confirmOrder(){
           itemSeq:i+1,productCode:item.productId,productName:saveName,productType:item.productType,
           qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,
           blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:isPopupMode?3:1,
-          ...(isGift?{isGiftPayer:true,giftCount,giftTo:flow.giftTo}:{})
+          ...(isGift?{isGiftPayer:true,giftCount,giftTo:flow.giftTo}:{}),
+          ...(item.setGroupId?{setGroupId:item.setGroupId,setName:item.setName,setId:item.setId}:{})
         });
         if(item.productType==='cocktail'&&item._cocktailId){
           fsBatch.set(db.collection('cocktailOrders').doc(docId),{
@@ -2049,11 +2119,10 @@ function renderQuickVisitorList(){
   el.innerHTML=active.map(function(v){
     var m=v.memberId&&allMembers[v.memberId];
     var name=m?(m.nickname||m.name||v.memberId):'ゲスト';
-    return '<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--cream);border:1px solid var(--border);border-radius:var(--r);margin-bottom:4px;cursor:pointer">'
-      +'<input type="checkbox" class="qv-cb" data-vid="'+v.id+'" style="width:16px;height:16px;accent-color:var(--gold-d);flex-shrink:0">'
+    return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--cream);border:1px solid var(--border);border-radius:var(--r);margin-bottom:4px">'
       +'<span style="font-size:13px;font-weight:500;flex:1">'+esc(name)+'</span>'
       +'<span style="font-size:11px;color:var(--ink3)">'+(v.visitTime?v.visitTime.slice(0,2)+':'+v.visitTime.slice(2,4):'')+'</span>'
-      +'</label>';
+      +'</div>';
   }).join('');
 }
 
