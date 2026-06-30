@@ -2048,12 +2048,15 @@ async function confirmOrder(){
     let _seqCounter=maxSeq;
     function nextOrderId(){ return useDate+String(++_seqCounter).padStart(3,'0'); }
 
+    const savedDocIds={}; // visitId -> [docId, ...]
     for(const visit of flow.visits){
       const orderGroupId=orderGroupIdMap[visit.id];
+      savedDocIds[visit.id]=[];
       flow.cart.forEach((item,i)=>{
         const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
         const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):p&&p.type==='other'?(p.bottleEn||p.bottleName||p.name||item.productName):item.productName;
         const docId=nextOrderId();
+        savedDocIds[visit.id].push(docId);
         const orderRef=db.collection('orders').doc(docId);
         fsBatch.set(orderRef,{
           orderDate:useDate,
@@ -2091,13 +2094,14 @@ async function confirmOrder(){
       });
     }
     await fsBatch.commit();
-    // ジャーナル: 作成した注文をまとめて記録（batchIdで代表記録）
+    // ジャーナル: 作成した注文をまとめて記録（実際のdocIdを使用）
     for(const visit of flow.visits){
       const ogId=orderGroupIdMap[visit.id];
       flow.cart.forEach((item,i)=>{
         const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
         const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):item.productName;
-        writeJournal('create','orders',batchId+'_'+(flow.visits.indexOf(visit))+'_'+i,null,{orderDate:useDate,orderTime,visitKey:visit.id,customerId:visit.memberId||null,
+        const jDocId=savedDocIds[visit.id]?.[i]||batchId+'_'+(flow.visits.indexOf(visit))+'_'+i;
+        writeJournal('create','orders',jDocId,null,{orderDate:useDate,orderTime,visitKey:visit.id,customerId:visit.memberId||null,
           productName:saveName,productType:item.productType,qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,batchId,orderGroupId:ogId,served:isPopupMode?3:1});
       });
     }
