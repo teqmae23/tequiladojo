@@ -13,21 +13,37 @@ h2{color:#7a5610;}
 input{padding:8px;border:1px solid #ccc;border-radius:4px;font-size:14px;}
 label{font-size:13px;color:#555;}
 .warn{background:#fff3cd;border:1px solid #ffc107;padding:10px;border-radius:4px;margin-bottom:12px;}
+#login-area{max-width:320px;margin:60px auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:28px;}
+#login-area h3{margin:0 0 16px;color:#7a5610;}
+#login-area input{width:100%;box-sizing:border-box;margin-bottom:10px;display:block;}
+#login-err{color:#c0392b;font-size:13px;margin-top:8px;}
+#main-area{display:none;}
 </style>
 </head>
 <body>
-<h2>注文ID移行ツール（自動採番ID → 日付+連番形式）</h2>
-<div class="warn">⚠ このツールは注文ドキュメントIDを書き直します。実行前に必ずバックアップを確認してください。</div>
 
-<div style="margin-bottom:12px;">
-  <label>対象日付（YYMMDD）：</label>
-  <input id="target-date" maxlength="6" placeholder="260629" style="width:100px;">
-  &nbsp;
-  <button class="btn" onclick="previewMigration()">プレビュー</button>
-  <button class="btn btn-danger" id="btn-exec" onclick="executeMigration()" disabled>実行（書き換え）</button>
+<div id="login-area">
+  <h3>ログイン</h3>
+  <input id="l-email" type="email" placeholder="メールアドレス">
+  <input id="l-pass" type="password" placeholder="パスワード">
+  <button class="btn" onclick="doLogin()">ログイン</button>
+  <div id="login-err"></div>
 </div>
 
-<div class="log" id="log">ログがここに表示されます</div>
+<div id="main-area">
+  <h2>注文ID移行ツール（自動採番ID → 日付+連番形式）</h2>
+  <div class="warn">⚠ このツールは注文ドキュメントIDを書き直します。実行前に内容をプレビューで確認してください。</div>
+
+  <div style="margin-bottom:12px;">
+    <label>対象日付（YYMMDD）：</label>
+    <input id="target-date" maxlength="6" placeholder="260629" style="width:100px;">
+    &nbsp;
+    <button class="btn" onclick="previewMigration()">プレビュー</button>
+    <button class="btn btn-danger" id="btn-exec" onclick="executeMigration()" disabled>実行（書き換え）</button>
+  </div>
+
+  <div class="log" id="log">ログがここに表示されます</div>
+</div>
 
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
@@ -39,18 +55,37 @@ firebase.initializeApp({
   projectId: "tequiladojo",
   appId: "1:56663296233:web:c8cac2fcbeb4faa09e0878"
 });
+var auth = firebase.auth();
 var db = firebase.firestore();
 var _plan = [];
+
+auth.onAuthStateChanged(function(user){
+  if(user){
+    document.getElementById('login-area').style.display='none';
+    document.getElementById('main-area').style.display='block';
+  }else{
+    document.getElementById('login-area').style.display='block';
+    document.getElementById('main-area').style.display='none';
+  }
+});
+
+async function doLogin(){
+  var email=document.getElementById('l-email').value;
+  var pass=document.getElementById('l-pass').value;
+  try{
+    await auth.signInWithEmailAndPassword(email,pass);
+  }catch(e){
+    document.getElementById('login-err').textContent='ログイン失敗: '+e.message;
+  }
+}
 
 function log(msg){ var el=document.getElementById('log'); el.textContent+=msg+'\n'; el.scrollTop=el.scrollHeight; }
 function clearLog(){ document.getElementById('log').textContent=''; }
 
 async function fetchOrdersForDate(date){
-  // 1. 旧形式: doc ID が date で始まる9桁
   var snap1 = await db.collection('orders')
     .orderBy(firebase.firestore.FieldPath.documentId())
     .startAt(date).endAt(date+'~').get().catch(()=>({docs:[]}));
-  // 2. 自動採番形式: orderDate フィールドで検索
   var snap2 = await db.collection('orders').where('orderDate','==',date).get().catch(()=>({docs:[]}));
 
   var seen = new Set();
@@ -71,7 +106,6 @@ async function previewMigration(){
   var orders = await fetchOrdersForDate(date);
   log('取得件数: '+orders.length+'件');
 
-  // 自動採番IDのものを抽出
   var autoIdOrders = orders.filter(function(o){ return !isSequentialId(o.id, date); });
   var seqIdOrders  = orders.filter(function(o){ return  isSequentialId(o.id, date); });
 
@@ -80,14 +114,12 @@ async function previewMigration(){
 
   if(!autoIdOrders.length){ log('\n移行対象なし。終了します。'); _plan=[]; document.getElementById('btn-exec').disabled=true; return; }
 
-  // 時系列ソート（orderTime昇順、同じならorderGroupId昇順）
   autoIdOrders.sort(function(a,b){
     var ta=a.orderTime||'9999', tb=b.orderTime||'9999';
     if(ta!==tb) return ta.localeCompare(tb);
     return (a.orderGroupId||'').localeCompare(b.orderGroupId||'');
   });
 
-  // 既存連番の最大値を確認
   var maxExistingSeq = seqIdOrders.reduce(function(m,o){
     return Math.max(m, parseInt(o.id.slice(6))||0);
   }, 0);
@@ -118,13 +150,11 @@ async function executeMigration(){
   for(var i=0; i<_plan.length; i++){
     var p=_plan[i];
     try{
-      // 1. 新IDでdocを作成
       var newData = Object.assign({}, p.data);
-      delete newData.id; // id はdocのkey、フィールドには不要
+      delete newData.id;
       await db.collection('orders').doc(p.newId).set(newData);
-      log('['+( i+1)+'/'+_plan.length+'] 作成: '+p.newId+' ✓');
+      log('['+(i+1)+'/'+_plan.length+'] 作成: '+p.newId+' ✓');
 
-      // 2. cocktailOrders があれば更新
       var cSnap = await db.collection('cocktailOrders').where('orderId','==',p.oldId).get().catch(()=>({docs:[]}));
       if(!cSnap.empty){
         for(var j=0; j<cSnap.docs.length; j++){
@@ -133,7 +163,6 @@ async function executeMigration(){
         }
       }
 
-      // 3. 旧docを削除
       await db.collection('orders').doc(p.oldId).delete();
       log('   削除: '+p.oldId+' ✓');
     }catch(e){
