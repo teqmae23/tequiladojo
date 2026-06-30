@@ -2012,13 +2012,18 @@ async function confirmOrder(){
 
   // orderDate フィールドで当日注文を全取得（旧形式・自動採番IDどちらも含む）
   const ordDateSnap=await db.collection('orders').where('orderDate','==',useDate).get().catch(()=>({docs:[]}));
-  // maxSeq: 連番形式IDの最大値（日付6桁+3桁数字）
-  const maxSeq=ordDateSnap.docs.reduce((m,d)=>{
+  // ドキュメントIDのrange queryで連番形式IDを確実に取得（フィールド欠損対策）
+  const seqIdSnap=await db.collection('orders')
+    .orderBy(firebase.firestore.FieldPath.documentId())
+    .startAt(useDate).endAt(useDate+'~').get().catch(()=>({docs:[]}));
+  const existingSeqIds=new Set(seqIdSnap.docs.map(d=>d.id));
+  // maxSeq: 両方のスナップショットから最大値を取得
+  const maxSeq=[...ordDateSnap.docs,...seqIdSnap.docs].reduce((m,d)=>{
     const s=/^\d{9}$/.test(d.id)?parseInt(d.id.slice(6))||0:0;
     return Math.max(m,s);
   },0);
-  // maxBatch: batchIdの最大連番
-  const maxBatch=ordDateSnap.docs.reduce((m,d)=>{
+  // maxBatch: batchIdの最大連番（フィールドとdocId両方から）
+  const maxBatch=[...ordDateSnap.docs,...seqIdSnap.docs].reduce((m,d)=>{
     const bid=(d.data().batchId||'');
     if(bid.slice(0,6)!==useDate)return m;
     return Math.max(m,parseInt(bid.slice(6))||0);
@@ -2094,6 +2099,12 @@ async function confirmOrder(){
           journalEntries.push({docId:recDocId,data:recData});
         }
       });
+    }
+    // commit前に全docIdの重複チェック
+    const newDocIds=journalEntries.map(e=>e.docId);
+    const conflicts=newDocIds.filter(id=>existingSeqIds.has(id));
+    if(conflicts.length>0){
+      throw new Error('注文IDが既に存在します（重複防止）: '+conflicts.join(', ')+'\n再度お試しください。');
     }
     await fsBatch.commit();
     // ジャーナル: commit成功後に実際のdocIdで記録
