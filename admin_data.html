@@ -4196,37 +4196,47 @@ async function openTogetherModal(ordId){
   _togetherCurrentOrdId=ordId;
   _togetherCurrentBatchId=ord.batchId||null;
 
-  // 会員ツリーモードでは当日の全来場・注文データが不足しているため補完ロード
-  if(_treeMemberFilterId){
-    var _visitDate=ord.orderDate||(ord.visitKey||ord.visitId||'').slice(0,6)||'';
-    if(_visitDate){
-      try{
+  try{
+    // batchIdがある場合は常にFirestoreから仲間注文を補完（モードを問わず）
+    if(_togetherCurrentBatchId){
+      var _bSnap=await db.collection('orders').where('batchId','==',_togetherCurrentBatchId).get();
+      _bSnap.docs.forEach(function(d){
+        if(!_treeCurrentOrders.find(function(x){return x.id===d.id;}))
+          _treeCurrentOrders.push(Object.assign({id:d.id},d.data()));
+      });
+      // 仲間の来場データも補完
+      var _compVids=[...new Set(_bSnap.docs.map(function(d){return d.data().visitKey||d.data().visitId;}).filter(Boolean))];
+      for(var _ci=0;_ci<_compVids.length;_ci+=30){
+        var _vchunk=_compVids.slice(_ci,_ci+30);
+        var _vSnap=await db.collection('visits').where(firebase.firestore.FieldPath.documentId(),'in',_vchunk).get().catch(function(){return{docs:[]};});
+        _vSnap.docs.forEach(function(d){
+          if(!_treeCurrentVisits.find(function(x){return x.id===d.id;}))
+            _treeCurrentVisits.push(Object.assign({id:d.id},d.data()));
+        });
+      }
+    }
+
+    // 会員ツリーモードでは当日の全来場・注文も補完
+    if(_treeMemberFilterId){
+      var _visitDate=ord.orderDate||(ord.visitKey||ord.visitId||'').slice(0,6)||'';
+      if(_visitDate){
         var _vsSnap=await db.collection('visits').where('visitDate','==',_visitDate).get();
         _vsSnap.docs.forEach(function(d){
           if(!_treeCurrentVisits.find(function(x){return x.id===d.id;}))
             _treeCurrentVisits.push(Object.assign({id:d.id},d.data()));
         });
-        // batchId が既にある場合はそのbatch仲間の注文も取得
-        if(_togetherCurrentBatchId){
-          var _bSnap=await db.collection('orders').where('batchId','==',_togetherCurrentBatchId).get();
-          _bSnap.docs.forEach(function(d){
-            if(!_treeCurrentOrders.find(function(x){return x.id===d.id;}))
-              _treeCurrentOrders.push(Object.assign({id:d.id},d.data()));
-          });
-        }
-        // visitKey で当日の全注文も補完
         var _dayVids=_vsSnap.docs.map(function(d){return d.id;});
-        for(var _ci=0;_ci<_dayVids.length;_ci+=30){
-          var _chunk=_dayVids.slice(_ci,_ci+30);
+        for(var _ci2=0;_ci2<_dayVids.length;_ci2+=30){
+          var _chunk=_dayVids.slice(_ci2,_ci2+30);
           var _oSnap=await db.collection('orders').where('visitKey','in',_chunk).get().catch(function(){return{docs:[]};});
           _oSnap.docs.forEach(function(d){
             if(!_treeCurrentOrders.find(function(x){return x.id===d.id;}))
               _treeCurrentOrders.push(Object.assign({id:d.id},d.data()));
           });
         }
-      }catch(e){ console.warn('[together] supplement load failed:',e); }
+      }
     }
-  }
+  }catch(e){ console.warn('[together] supplement load failed:',e); }
 
   renderTogetherModal();
   openM("m-together");
@@ -4239,7 +4249,7 @@ function renderTogetherModal(){
   if(!ord) return;
   var myVisitId=ord.visitKey||ord.visitId;
 
-  // current companions — must share same productCode AND orderTime as base order
+  // current companions — same batchId + same productCode + same orderTime
   var companions=[];
   if(batchId){
     _treeCurrentOrders.forEach(function(o){
@@ -4255,12 +4265,18 @@ function renderTogetherModal(){
   }
   var compDiv=g("together-companions");
   if(compDiv){
-    compDiv.innerHTML=companions.length
-      ?companions.map(function(c){
-          return '<span class="tree-together-chip">'+escHtml(c.name)
-            +'<button onclick="togetherRemove(\''+escHtml(c.ordId)+'\')" style="background:none;border:none;cursor:pointer;color:var(--ink3);padding:0 0 0 3px;font-size:11px;line-height:1">×</button></span>';
-        }).join("")
-      :'<span style="color:var(--ink3);font-size:12px">まだ一緒に飲んだ人はいません</span>';
+    if(companions.length){
+      compDiv.innerHTML=companions.map(function(c){
+        return '<span class="tree-together-chip">'+escHtml(c.name)
+          +'<button onclick="togetherRemove(\''+escHtml(c.ordId)+'\')" style="background:none;border:none;cursor:pointer;color:var(--ink3);padding:0 0 0 3px;font-size:11px;line-height:1">×</button></span>';
+      }).join("");
+    } else if(batchId){
+      // batchIdはあるが相手の注文が見つからない → 自動で確認ダイアログ
+      compDiv.innerHTML='<span style="color:var(--ink3);font-size:12px">一緒に飲んだ相手の注文が見つかりません</span>';
+      setTimeout(function(){ togetherUnlinkSelf(ordId); }, 100);
+    } else {
+      compDiv.innerHTML='<span style="color:var(--ink3);font-size:12px">まだ一緒に飲んだ人はいません</span>';
+    }
   }
 
   // available to add
@@ -4307,21 +4323,26 @@ function renderTogetherModal(){
 }
 
 function togetherRemove(companionOrdId){
+  // companionOrdId = チップに表示された相手の注文ID（productCode+orderTime一致済み）
   var companionOrd=_treeCurrentOrders.find(function(o){return o.id===companionOrdId;});
   if(!companionOrd){toast("注文データが見つかりません","err");return;}
-  var batchId=companionOrd.batchId;
-  // Look up companion's display name from their visit
   var bvk=companionOrd.visitKey||companionOrd.visitId;
   var bvis=_treeCurrentVisits.find(function(v){return v.id===bvk;});
   var companionName=treeMemName(bvis?bvis.memberId:null)||companionOrdId;
 
-  // Active orders in this batchId group with same productCode + orderTime
-  var groupOrds=batchId?_treeCurrentOrders.filter(function(o){
+  // ベース注文を取得
+  var baseOrdId=_togetherCurrentOrdId;
+  var baseOrd=_treeCurrentOrders.find(function(o){return o.id===baseOrdId;});
+
+  // ベース注文の残り仲間（この相手を除いた、productCode+orderTime一致の他の仲間）
+  var batchId=_togetherCurrentBatchId;
+  var myVisitId=baseOrd?baseOrd.visitKey||baseOrd.visitId:null;
+  var otherCompanions=batchId&&baseOrd?_treeCurrentOrders.filter(function(o){
     return o.batchId===batchId && o.served!==0 && !o.deleted
-      && o.productCode===companionOrd.productCode && o.orderTime===companionOrd.orderTime;
+      && o.id!==companionOrdId && o.id!==baseOrdId
+      && (o.visitKey||o.visitId)!==myVisitId
+      && o.productCode===baseOrd.productCode && o.orderTime===baseOrd.orderTime;
   }):[];
-  // Orders remaining after removing this companion
-  var remaining=groupOrds.filter(function(o){return o.id!==companionOrdId;});
 
   function doUnlink(targetIds){
     var fvDelete=firebase.firestore.FieldValue.delete();
@@ -4344,15 +4365,34 @@ function togetherRemove(companionOrdId){
     }).catch(function(e){toast("解除失敗: "+e.message,"err");});
   }
 
-  var label=companionName||companionOrdId;
+  // この相手を外した後にベース注文が孤立する場合はベースも一緒に解除
   var toUnlink=[companionOrdId];
-  // If only 1 order would remain after removal, it's now solo → unlink it too
-  if(remaining.length===1) toUnlink.push(remaining[0].id);
+  if(otherCompanions.length===0 && baseOrdId) toUnlink.push(baseOrdId);
 
-  var msg=remaining.length===1
-    ? "「"+label+"」をグループから外すと1人だけになります。「"+label+"」と「"+remaining[0].id+"」の一緒に飲んだを解除しますか？"
-    : "「"+label+"」を一緒に飲んだグループから外しますか？";
+  var msg=otherCompanions.length===0 && baseOrdId
+    ? "「"+companionName+"」を一緒に飲んだから外します。他に仲間がいないためこちら側の記録も同時に解除されます。よろしいですか？"
+    : "「"+companionName+"」を一緒に飲んだから外しますか？";
   confirmDel(msg, function(){ doUnlink(toUnlink); });
+}
+
+// 仲間が0人だが自分にbatchIdが残っている場合の解除
+function togetherUnlinkSelf(ordId){
+  confirmDel("相手側に該当する注文がありませんが、一緒に飲んだの削除だけ行いますか？",function(){
+    var ref=db.collection("orders").doc(ordId);
+    ref.get().then(function(snap){
+      var before=snap.exists?snap.data():null;
+      return ref.update({batchId:firebase.firestore.FieldValue.delete()}).then(function(){
+        var after=Object.assign({},before); delete after.batchId;
+        writeJournal('update','orders',ordId,before,after);
+        var idx=_treeCurrentOrders.findIndex(function(o){return o.id===ordId;});
+        if(idx>=0) delete _treeCurrentOrders[idx].batchId;
+        _togetherCurrentBatchId=null;
+        toast("一緒に飲んだを解除しました");
+        renderTogetherModal();
+        if(_treeMemberFilterId) loadMemberTree(_treeMemberFilterId); else loadTree();
+      });
+    }).catch(function(e){toast("解除失敗: "+e.message,"err");});
+  });
 }
 
 // 3択確認ダイアログ（追加・スキップ・キャンセル）
