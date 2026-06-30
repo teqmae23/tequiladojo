@@ -221,11 +221,6 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       <a href="home_order.html" class="btn bs" style="flex:1;justify-content:center">注文一覧</a>
       <button class="btn bs" style="flex:1" onclick="goOrderPage()">新規注文</button>
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:12px">
-      <button class="btn bt" id="btn-bulk-checkout" style="flex:1" onclick="openBulkCheckout()" disabled>💳 会計（<span id="selected-count">0</span>名）</button>
-      <button class="btn bs" id="btn-bulk-checkouttime" style="flex:1" onclick="bulkCheckoutTime()" disabled>🚪 退場（<span id="selected-count2">0</span>名）</button>
-    </div>
-
     <div id="today-date" style="font-size:12px;color:var(--ink3);margin-bottom:12px;text-align:right"></div>
 
     <div class="visitor-list" id="visitor-list">
@@ -260,13 +255,17 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       <!-- 人数入力：会員・新規来場者に分割 -->
       <div style="display:flex;gap:10px;margin-bottom:10px">
         <div style="flex:1">
-          <label class="fl">会員人数</label>
+          <label class="fl">会員</label>
           <select class="fi" id="ci-count-member" style="width:100%" onchange="onCountChange()"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option><option value="11">11</option><option value="12">12</option><option value="13">13</option><option value="14">14</option><option value="15">15</option><option value="16">16</option></select>
         </div>
         <div style="flex:1">
-          <label class="fl">新規来場者人数</label>
+          <label class="fl">新規</label>
           <select class="fi" id="ci-count-new" style="width:100%" onchange="onCountChange()"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option><option value="11">11</option><option value="12">12</option><option value="13">13</option><option value="14">14</option><option value="15">15</option><option value="16">16</option></select>
         </div>
+      </div>
+      <div style="margin-bottom:10px">
+        <label class="fl">ゲスト（新規）</label>
+        <select class="fi" id="ci-count-guest" style="width:80px" onchange="onCountChange()"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select>
       </div>
 
       <!-- 進捗表示 -->
@@ -278,6 +277,13 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       <div id="ci-new-visitors-area" style="display:none;background:var(--cream2);border-radius:var(--r);padding:10px 12px;margin-bottom:10px">
         <div style="font-size:12px;font-weight:600;color:var(--ink2);margin-bottom:8px">新規来場者のニックネーム</div>
         <div id="ci-new-visitors-inputs"></div>
+      </div>
+
+      <!-- ゲスト来場者エリア -->
+      <div id="ci-guest-area" style="display:none;background:var(--cream2);border-radius:var(--r);padding:10px 12px;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:600;color:var(--ink2);margin-bottom:8px">ゲスト</div>
+        <div id="ci-guest-inputs"></div>
+        <div id="ci-guest-list" style="display:none;max-height:150px;overflow-y:auto;border:1px solid var(--border2);border-radius:var(--r);margin-top:6px;background:var(--white)"></div>
       </div>
 
       <!-- 会員検索エリア -->
@@ -358,7 +364,8 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn bs btn-full" id="m-orders-close2">閉じる</button>
+      <button class="btn bs" style="flex:1" id="m-orders-close2">閉じる</button>
+      <button class="btn bp" style="flex:1" id="btn-orders-checkout" onclick="checkoutFromOrdersModal()">💳 会計</button>
     </div>
   </div>
 </div>
@@ -529,7 +536,7 @@ function calcTequila(orders){
 }
 
 // ── キャッシュ ──────────────────────────────────────────────────
-var cache = { visits:[], members:[], orders:[], blindMarks:[] };
+var cache = { visits:[], allVisits:[], members:[], orders:[], blindMarks:[], sessions:[] };
 var currentSession = null; // 現在のセッション（openTime, date）
 var currentCheckoutVisitKey = null;
 
@@ -578,12 +585,16 @@ function loadAll(){
     db.collection('orders').get().then(function(s){
       cache.orders=s.docs.map(function(d){return Object.assign({id:d.id},d.data());});
     }),
-    AuthRole.getActiveSession(db)
+    AuthRole.getActiveSession(db),
+    db.collection('sessions').get().catch(function(){ return {docs:[]}; })
   ]).then(function(results){
-    var visitsSnap=results[2];   // 0:members 1:blindMarks 2:visits 3:orders 4:session
+    var visitsSnap=results[2];   // 0:members 1:blindMarks 2:visits 3:orders 4:session 5:sessions
     var session=results[4];
-    cache.visits=visitsSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());})
-      .filter(function(v){ return AuthRole.isVisitInSession(v, session); });
+    var sessionsSnap=results[5];
+    currentSession=session;
+    cache.sessions=sessionsSnap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    cache.allVisits=visitsSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    cache.visits=cache.allVisits.filter(function(v){ return AuthRole.isVisitInSession(v, session); });
     var sessionIds=new Set(cache.visits.map(function(v){return v.id;}));
     cache.orders=cache.orders.filter(function(o){
       return sessionIds.has(o.visitKey||o.visitId);
@@ -600,13 +611,15 @@ g('btn-refresh').addEventListener('click',function(){
     db.collection('orders').get().then(function(s){
       cache.orders=s.docs.map(function(d){return Object.assign({id:d.id},d.data());});
     }),
-    AuthRole.getActiveSession(db)
+    AuthRole.getActiveSession(db),
+    db.collection('sessions').get().catch(function(){ return {docs:[]}; })
   ]).then(function(results){
     var visitsSnap2=results[0];
     var session2=results[2];
     currentSession=session2; // グローバルに保存
-    cache.visits=visitsSnap2.docs.map(function(d){return Object.assign({id:d.id},d.data());})
-      .filter(function(v){ return AuthRole.isVisitInSession(v, session2); });
+    cache.sessions=results[3].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    cache.allVisits=visitsSnap2.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    cache.visits=cache.allVisits.filter(function(v){ return AuthRole.isVisitInSession(v, session2); });
     var sessionIds2=new Set(cache.visits.map(function(v){return v.id;}));
     cache.orders=cache.orders.filter(function(o){
       return sessionIds2.has(o.visitKey||o.visitId);
@@ -665,28 +678,29 @@ function toggleRetired(el){
 function renderVisitorList(){
   var el=g('visitor-list');
 
-  // グループIDに色クラスを割り当て
   window._groupColorMap={};
   var colorIdx=0;
   cache.visits.forEach(function(v){
     if(v.checkinGroupId && !window._groupColorMap[v.checkinGroupId]){
-      colorIdx++;
-      if(colorIdx>6) colorIdx=1;
+      colorIdx++; if(colorIdx>6) colorIdx=1;
       window._groupColorMap[v.checkinGroupId]='gc-'+colorIdx;
     }
   });
 
-  // 来場中: 会計時間も退場時間も未セット（スタッフ自動visit除く）
   var active=cache.visits.filter(function(v){ return !v.checkoutPayTime && !v.checkoutTime && !v.isStaff; });
-  // 会計済: 会計時間がセット・退場時間は未セット
   var paid=cache.visits.filter(function(v){ return !!v.checkoutPayTime && !v.checkoutTime && !v.isStaff; });
-  // 退場済: 退場時間がセット
-  var done=cache.visits.filter(function(v){ return !!v.checkoutTime && !v.isStaff; });
-  active.sort(function(a,b){ return (a.visitTime||a.id).localeCompare(b.visitTime||b.id); });
-  paid.sort(function(a,b){ return (a.visitTime||a.id).localeCompare(b.visitTime||b.id); });
-  done.sort(function(a,b){ return (b.checkoutTime||'').localeCompare(a.checkoutTime||''); });
+  var done=cache.allVisits.filter(function(v){ return !!v.checkoutTime && !v.isStaff; });
 
-  if(!cache.visits.length){
+  // Sort: active/paid by visitTime DESC, done by date+checkoutTime DESC
+  active.sort(function(a,b){ return (b.visitTime||b.id).localeCompare(a.visitTime||a.id); });
+  paid.sort(function(a,b){ return (b.visitTime||b.id).localeCompare(a.visitTime||a.id); });
+  done.sort(function(a,b){
+    var dA=a.visitDate||a.id.slice(0,6)||''; var dB=b.visitDate||b.id.slice(0,6)||'';
+    if(dA!==dB) return dB.localeCompare(dA);
+    return (b.checkoutTime||'').localeCompare(a.checkoutTime||'');
+  });
+
+  if(!cache.visits.length && !done.length){
     el.innerHTML='<div class="empty">本日の来場者はいません</div>';
     return;
   }
@@ -701,80 +715,98 @@ function renderVisitorList(){
     paid.forEach(function(v){ html+=renderVisCard(v,'paid'); });
   }
   if(done.length){
+    // Group done by date
+    var doneGroups=[]; var doneGroupMap={};
+    done.forEach(function(v){
+      var d=v.visitDate||v.id.slice(0,6)||'unknown';
+      if(!doneGroupMap[d]){ doneGroupMap[d]=[]; doneGroups.push({date:d,visits:doneGroupMap[d]}); }
+      doneGroupMap[d].push(v);
+    });
     html+='<div style="font-size:11px;font-weight:500;color:var(--ink3);letter-spacing:.1em;text-transform:uppercase;margin:16px 0 8px;padding-left:4px;cursor:pointer;user-select:none" onclick="toggleRetired(this)">退場済（'+done.length+'名）<span id="retired-toggle-icon" style="margin-left:6px">▶</span></div>';
     html+='<div id="retired-list" style="display:none">';
-    done.forEach(function(v){ html+=renderVisCard(v,'done'); });
+    doneGroups.forEach(function(group){
+      var d=group.date;
+      var mo=d.length>=6?parseInt(d.slice(2,4)):0;
+      var dy=d.length>=6?parseInt(d.slice(4,6)):0;
+      var sess=cache.sessions.find(function(s){ return (s.date||s.id)===d; });
+      var openT=sess&&sess.openTime?fmtHHMM(sess.openTime.slice(0,4)):'';
+      var closeT=sess&&sess.closeTime?fmtHHMM(sess.closeTime.slice(0,4)):'';
+      var timeRange=openT?(openT+(closeT?'～'+closeT:'')):'';
+      var headerLabel=(mo&&dy?mo+'/'+dy:d)+(timeRange?' '+timeRange:'');
+      html+='<div style="padding:4px 10px;background:var(--cream3);font-size:11px;font-weight:600;color:var(--ink2);border-radius:4px;margin:8px 0 4px">'+escHtml(headerLabel)+'（'+group.visits.length+'名）</div>';
+      group.visits.forEach(function(v){ html+=renderVisCard(v,'done'); });
+    });
     html+='</div>';
   }
   el.innerHTML=html;
 
-  // イベントバインド
-  el.querySelectorAll('[data-checkout]').forEach(function(btn){
-    btn.addEventListener('click',function(){ openCheckoutModal(btn.dataset.checkout); });
-  });
-  el.querySelectorAll('[data-refresh-visit]').forEach(function(btn){
-    btn.addEventListener('click',function(){ refreshSingleVisit(btn.dataset.refreshVisit, btn); });
-  });
   el.querySelectorAll('[data-orders-visit]').forEach(function(btn){
     btn.addEventListener('click',function(){ openOrdersModal(btn.dataset.ordersVisit, btn.dataset.ordersName); });
   });
   el.querySelectorAll('[data-transfer-mid]').forEach(function(btn){
     btn.addEventListener('click',function(){ printTransferReceipt(btn.dataset.transferMid, btn.dataset.transferName); });
   });
-
+  el.querySelectorAll('[data-checkout-time]').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var vk=btn.dataset.checkoutTime;
+      if(!confirm('退場処理しますか？')) return;
+      var time=nowHHMM();
+      db.collection('visits').doc(vk).update({checkoutTime:time}).then(function(){
+        var v=cache.visits.find(function(x){return x.id===vk;}); if(v) v.checkoutTime=time;
+        var av=cache.allVisits.find(function(x){return x.id===vk;}); if(av) av.checkoutTime=time;
+        toast('退場処理しました（'+fmtHHMM(time)+'）');
+        renderVisitorList();
+      }).catch(function(e){ toast('退場失敗: '+e.message,'err'); });
+    });
+  });
+  el.querySelectorAll('[data-checkout-visit]').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var vk=btn.dataset.checkoutVisit;
+      openBulkCheckout([vk]);
+    });
+  });
 }
 
 function renderVisCard(v, status){
   var isDone=(status==='done');
   var isPaid=(status==='paid');
   var mem=getMemberInfo(v.memberId);
-  var dispId=mem?(mem.displayId||mem.memberId||mem.id):v.memberId;
-  var name=mem?(mem.nickname||mem.name||dispId):(dispId?'ID: '+dispId:'非会員');
-  var orders=getVisitOrders(v.id);
-  var totalAmt=calcAmount(orders);
-  var totalTq=calcTequila(orders);
-  var orderCount=orders.length;
+  var name=mem?(mem.nickname||mem.name||(mem.displayId||mem.memberId||mem.id)):(v.memberId?'非会員':'非会員');
+  var totalAmt=v.amount||calcAmount(getVisitOrders(v.id));
 
-  // 会員区分バッジ
-  var st=mem?mem.status:'';
-  var gradeBadge='';
-  if(st==='active') gradeBadge='<span class="badge bg-teal" style="font-size:9px;padding:1px 5px">本会員</span>';
-  else if(st==='guest') gradeBadge='<span class="badge bg-gray" style="font-size:9px;padding:1px 5px">ゲスト</span>';
-  else if(st==='temp') gradeBadge='<span class="badge bg-gray" style="font-size:9px;padding:1px 5px">仮登録</span>';
-  else if(st==='pending') gradeBadge='<span class="badge bg-gold" style="font-size:9px;padding:1px 5px">認証待</span>';
+  if(isDone){
+    var timeStr=fmtHHMM(v.checkoutTime||'');
+    return '<div class="vis-card" style="padding:0">'
+      +'<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;min-width:0">'
+      +'<span style="font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0">退'+timeStr+'</span>'
+      +'<span style="font-size:13px;font-weight:500;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+'</span>'
+      +'<span style="font-size:12px;font-family:var(--mono);color:var(--ink);white-space:nowrap;flex-shrink:0">¥'+totalAmt.toLocaleString()+'</span>'
+      +'<button class="btn bs sm" data-orders-visit="'+v.id+'" data-orders-name="'+escHtml(name)+'" style="padding:3px 7px;font-size:10px;flex-shrink:0">詳細</button>'
+      +'</div>'
+      +'</div>';
+  }
 
-  // チェックボックス
-  var chk=!isDone
-    ?'<input type="checkbox" class="vis-select-chk" data-visit-id="'+v.id+'" data-status="'+(isPaid?'paid':'active')+'" style="width:16px;height:16px;cursor:pointer;flex-shrink:0" onchange="onVisitCheckChange()">'
-    :'<span style="width:16px;flex-shrink:0;display:inline-block"></span>';
-
-  // 退場時刻
-  var timeBadge=isDone
-    ?'<span class="badge bg-gray" style="font-size:9px">退場'+fmtHHMM(v.checkoutTime)+'</span>'
-    :isPaid
-      ?'<span class="badge" style="background:#e8b84b;color:#5a3800;font-size:9px">会計済</span>'
-      :'';
-
-  // 引継ボタン（ゲスト・来場中のみ）
-  var transferBtn=(st==='guest'&&!isDone)
-    ?'<button class="btn bs sm" data-transfer-mid="'+v.memberId+'" data-transfer-name="'+escHtml(name)+'" style="padding:4px 8px;font-size:11px;white-space:nowrap;color:var(--teal);border-color:var(--teal)">引継</button>'
-    :'';
-
-  // 1行レイアウト: 名前 会員区分 注文X品 テキーラXml 合計¥X [注文詳細]
-  var row='<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;flex-wrap:nowrap;min-width:0">'
-    +chk
-    +'<span style="font-size:14px;font-weight:500;color:var(--ink);white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis;max-width:100px">'+escHtml(name)+'</span>'
-    +gradeBadge
-    +timeBadge
-    +'<span style="margin-left:auto;font-size:11px;color:var(--ink3);white-space:nowrap">注文 '+orderCount+'品</span>'
-    +'<span style="font-size:11px;color:var(--ink3);white-space:nowrap">テキーラ '+totalTq+' ml</span>'
-    +'<span style="font-size:12px;font-weight:500;color:var(--ink);white-space:nowrap">合計 ¥'+totalAmt.toLocaleString()+'</span>'
-    +transferBtn
-    +'<button class="btn bs sm" data-orders-visit="'+v.id+'" data-orders-name="'+escHtml(name)+'" style="padding:4px 8px;font-size:11px;white-space:nowrap">詳細</button>'
-    +'</div>';
-
+  var timeStr2=fmtHHMM(v.visitTime||'');
   var gcClass=v.checkinGroupId&&(window._groupColorMap||{})[v.checkinGroupId]?' '+(window._groupColorMap||{})[v.checkinGroupId]:'';
-  return '<div class="vis-card'+gcClass+'" style="padding:0">'+row+'</div>';
+  var mem2st=mem?mem.status:'';
+  var transferBtn=(mem2st==='guest'&&!isDone)
+    ?'<button class="btn bs sm" data-transfer-mid="'+(v.memberId||'')+'" data-transfer-name="'+escHtml(name)+'" style="padding:3px 7px;font-size:10px;color:var(--teal);border-color:var(--teal);flex-shrink:0">引継</button>'
+    :'';
+  var actionBtn=isPaid
+    ?'<button class="btn bs sm" data-checkout-time="'+v.id+'" style="padding:3px 7px;font-size:10px;color:var(--teal);border-color:var(--teal);flex-shrink:0">🚪退場</button>'
+    :'<button class="btn bs sm" data-checkout-visit="'+v.id+'" style="padding:3px 7px;font-size:10px;flex-shrink:0">💳会計</button>';
+
+  return '<div class="vis-card'+gcClass+'" style="padding:0">'
+    +'<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;min-width:0">'
+    +'<span style="font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0">'+timeStr2+'</span>'
+    +'<span style="font-size:14px;font-weight:500;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+'</span>'
+    +(isPaid?'<span class="badge" style="background:#e8b84b;color:#5a3800;font-size:9px;flex-shrink:0">会計済</span>':'')
+    +'<span style="font-size:12px;font-family:var(--mono);color:var(--ink);white-space:nowrap;flex-shrink:0">¥'+totalAmt.toLocaleString()+'</span>'
+    +transferBtn
+    +actionBtn
+    +'<button class="btn bs sm" data-orders-visit="'+v.id+'" data-orders-name="'+escHtml(name)+'" style="padding:3px 7px;font-size:10px;flex-shrink:0">詳細</button>'
+    +'</div>'
+    +'</div>';
 }
 
 // ── 注文一覧モーダル ───────────────────────────────────────────
@@ -782,6 +814,7 @@ g('m-orders-close').addEventListener('click',function(){ closeM('m-orders'); });
 g('m-orders-close2').addEventListener('click',function(){ closeM('m-orders'); });
 
 function openOrdersModal(visitKey, visitorName){
+  currentCheckoutVisitKey=visitKey;
   g('mt-orders').textContent='注文一覧 — '+(visitorName||visitKey);
   g('orders-list').innerHTML='<div class="loading">読み込み中...</div>';
   g('orders-total').textContent='¥0';
@@ -886,6 +919,14 @@ function openOrdersModal(visitKey, visitorName){
   }
   g('orders-total').textContent='¥'+totalAmt.toLocaleString();
   g('orders-tequila').textContent=totalTq+' ml';
+}
+
+function checkoutFromOrdersModal(){
+  if(!currentCheckoutVisitKey) return;
+  var v=cache.visits.find(function(x){ return x.id===currentCheckoutVisitKey; });
+  if(!v||v.checkoutPayTime){ toast('この来場者は既に会計済です','inf'); return; }
+  closeM('m-orders');
+  openBulkCheckout([currentCheckoutVisitKey]);
 }
 
 // ── ブラインド結果ポップアップ ───────────────────────────────────
@@ -1114,6 +1155,59 @@ function onCountChange(){
     inputs.innerHTML='';
   }
 
+  // ゲストエリア
+  var cntGuest=parseInt(gv('ci-count-guest'))||0;
+  var guestArea=g('ci-guest-area');
+  if(guestArea){
+    guestArea.style.display=cntGuest>0?'block':'none';
+    var guestInputs=g('ci-guest-inputs');
+    if(guestInputs){
+      var existingGVals=[];
+      for(var gi=0;gi<20;gi++){
+        var ge=document.getElementById('ci-guest-'+gi);
+        if(ge) existingGVals.push(ge.value||''); else break;
+      }
+      var ghtml='';
+      for(var gi=0;gi<cntGuest;gi++){
+        var gval=existingGVals[gi]||'';
+        ghtml+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">'
+          +'<input class="fi" type="text" id="ci-guest-'+gi+'" placeholder="'+(gi+1)+'人目（ID or ニックネーム）" oninput="onGuestInput('+gi+')" style="flex:1" value="'+escHtml(gval)+'">'
+          +'<div id="ci-guest-status-'+gi+'" style="font-size:11px;color:var(--teal);flex:0 0 auto"></div>'
+          +'</div>';
+      }
+      guestInputs.innerHTML=ghtml;
+      // Show guest member list
+      var guestList=g('ci-guest-list');
+      if(guestList){
+        var guests=cache.members.filter(function(m){ return m.status==='guest'; });
+        guests.sort(function(a,b){
+          var da=parseInt(a.displayId||a.memberId||'0')||0;
+          var db2=parseInt(b.displayId||b.memberId||'0')||0;
+          return db2-da;
+        });
+        if(guests.length){
+          guestList.innerHTML=guests.slice(0,30).map(function(m){
+            var mDispId=m.displayId||m.memberId||m.id;
+            var mName=m.nickname||m.name||mDispId;
+            return '<div data-gmid="'+escHtml(m.id)+'" data-gdispid="'+escHtml(mDispId)+'" class="ci-guest-item" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border2);font-size:13px">'
+              +'<span style="font-family:var(--mono);font-size:11px;color:var(--ink3);margin-right:8px">'+mDispId+'</span>'
+              +escHtml(mName)+'</div>';
+          }).join('');
+          guestList.style.display='block';
+          guestList.onclick=function(e){
+            var item=e.target.closest('.ci-guest-item');
+            if(item) selectGuest(item.dataset.gmid, item.dataset.gdispid);
+          };
+        } else {
+          guestList.style.display='none';
+        }
+      }
+      for(var gi=0;gi<cntGuest;gi++){
+        if(existingGVals[gi]) onGuestInput(gi);
+      }
+    }
+  }
+
   // 登録ボタンの有効無効を更新
   updateCheckinSaveBtn();
 
@@ -1170,6 +1264,14 @@ function updateCheckinSaveBtn(){
       if(!ne||!ne.value.trim()){ ok=false; break; }
     }
   }
+  // ゲスト入力が人数分入っているか
+  if(ok){
+    var cntGuest2=parseInt(gv('ci-count-guest'))||0;
+    for(var i=0;i<cntGuest2;i++){
+      var ge=document.getElementById('ci-guest-'+i);
+      if(!ge||!ge.value.trim()){ ok=false; break; }
+    }
+  }
   var btn=g('m-checkin-save');
   if(btn){ btn.disabled=!ok; btn.style.opacity=ok?'1':'0.4'; }
 }
@@ -1180,8 +1282,9 @@ function filterMembers(){
   var visits=gv('ci-filter-visits');
   var status=gv('ci-filter-status');
   var hasFilter=pref||rank||visits||status;
+  var cntMem3=parseInt(gv('ci-count-member'))||0;
   var list=g('ci-member-list');
-  if(!hasFilter){ list.style.display='none'; return; }
+  if(!hasFilter && cntMem3<1){ list.style.display='none'; return; }
 
   var filtered=cache.members.filter(function(m){
     if(pref && m.prefecture!==pref) return false;
@@ -1195,6 +1298,7 @@ function filterMembers(){
       if(visits==='21-' && vc<21) return false;
     }
     if(status && m.status!==status) return false;
+    if(!status && m.status==='guest') return false;
     // 現在来場中（未退場）の会員は除外
     var inStore=cache.visits.some(function(v){
       return v.memberId===m.id && !v.checkoutTime;
@@ -1214,6 +1318,12 @@ function filterMembers(){
     list.innerHTML='<div style="padding:10px;font-size:12px;color:var(--ink3)">該当する会員がいません</div>';
     return;
   }
+
+  filtered.sort(function(a,b){
+    var da=parseInt(a.displayId||a.memberId||'0')||0;
+    var db2=parseInt(b.displayId||b.memberId||'0')||0;
+    return db2-da;
+  });
 
   var html=filtered.slice(0,50).map(function(m){
     var name=m.nickname||m.name||m.id;
@@ -1248,7 +1358,8 @@ function selectMember(id){
   for(var i=0;i<cntMem;i++){
     var el=document.getElementById('ci-member-'+i);
     if(el && !el.value){
-      el.value=id;
+      var selMem=cache.members.find(function(m){ return m.id===id; });
+      el.value=selMem?(selMem.displayId||selMem.memberId||id):id;
       onMemberInput(i);
       placed=true;
       break;
@@ -1256,7 +1367,11 @@ function selectMember(id){
   }
   if(!placed && cntMem>0){
     var el=document.getElementById('ci-member-'+(cntMem-1));
-    if(el){ el.value=id; onMemberInput(cntMem-1); }
+    if(el){
+      var selMem2=cache.members.find(function(m){ return m.id===id; });
+      el.value=selMem2?(selMem2.displayId||selMem2.memberId||id):id;
+      onMemberInput(cntMem-1);
+    }
   }
   // 全枠埋まったらリストを閉じる、そうでなければフィルター更新
   var allFilled=true;
@@ -1294,7 +1409,12 @@ function onMemberInput(idx){
         var refSel=document.getElementById('ci-referrer-'+idx);
         if(refSel){
           var opts=['<option value="">（紹介なし）</option>'];
-          cache.members.forEach(function(m){
+          var sortedMembers=cache.members.slice().sort(function(a,b){
+            var da=parseInt(a.displayId||a.memberId||'0')||0;
+            var db2=parseInt(b.displayId||b.memberId||'0')||0;
+            return db2-da;
+          });
+          sortedMembers.forEach(function(m){
             var mid=m.id;
             var mDisp=m.displayId||m.memberId||m.id;
             if(mid===val) return;
@@ -1321,6 +1441,43 @@ function onMemberInput(idx){
     status.textContent='✕ 会員ID「'+val+'」は登録されていません';
     status.style.color='var(--ink3)';
     if(refRow) refRow.style.display='none';
+  }
+}
+
+function onGuestInput(idx){
+  var el=document.getElementById('ci-guest-'+idx);
+  var status=document.getElementById('ci-guest-status-'+idx);
+  if(!el||!status) return;
+  var val=el.value.trim();
+  if(!val){ status.textContent=''; updateCheckinSaveBtn(); return; }
+  var mem=getMemberInfo(val);
+  if(mem && mem.status==='guest'){
+    status.textContent=(mem.nickname||mem.name||val)+' (ゲスト)';
+    status.style.color='var(--teal)';
+  } else if(mem){
+    status.textContent=(mem.nickname||mem.name||val);
+    status.style.color='var(--teal)';
+  } else {
+    status.textContent='新規ゲストとして登録: '+val;
+    status.style.color='var(--ink3)';
+  }
+  updateCheckinSaveBtn();
+}
+
+function selectGuest(realId, dispId){
+  var cntGuest=parseInt(gv('ci-count-guest'))||0;
+  for(var i=0;i<cntGuest;i++){
+    var el=document.getElementById('ci-guest-'+i);
+    if(el && !el.value){
+      el.value=dispId;
+      onGuestInput(i);
+      return;
+    }
+  }
+  // if all filled, set last
+  if(cntGuest>0){
+    var el=document.getElementById('ci-guest-'+(cntGuest-1));
+    if(el){ el.value=dispId; onGuestInput(cntGuest-1); }
   }
 }
 
@@ -1385,6 +1542,10 @@ g('btn-checkin').addEventListener('click',async function(){
   sv('ci-time',nowHHMM());
   sv('ci-count-member','0');
   sv('ci-count-new','0');
+  sv('ci-count-guest','0');
+  var ga=g('ci-guest-area'); if(ga) ga.style.display='none';
+  var gi2=g('ci-guest-inputs'); if(gi2) gi2.innerHTML='';
+  var gl=g('ci-guest-list'); if(gl) gl.style.display='none';
   var cms=g('ci-member-status'); if(cms) cms.textContent='';
   g('ci-progress').style.display='none';
   g('ci-new-visitors-area').style.display='none';
@@ -1428,6 +1589,17 @@ g('m-checkin-save').addEventListener('click', async function(){
     var nick=(document.getElementById('ci-nick-'+i)||{}).value||'';
     if(!nick){ toast((i+1)+'人目のニックネームを入力してください','err'); return; }
     newNicks.push(nick.trim());
+  }
+
+  // ゲスト入力を処理（既存ゲスト→memberIds、新規→newNicks）
+  var cntGuest=parseInt(gv('ci-count-guest'))||0;
+  for(var gi=0;gi<cntGuest;gi++){
+    var gInputEl=document.getElementById('ci-guest-'+gi);
+    var gVal=gInputEl?gInputEl.value.trim():'';
+    if(!gVal){ toast((gi+1)+'人目のゲスト情報を入力してください','err'); return; }
+    var gMem=getMemberInfo(gVal);
+    if(gMem){ memberIds.push(gMem.id); }
+    else { newNicks.push(gVal); }
   }
 
   var saveBtn=g('m-checkin-save');
@@ -1533,7 +1705,9 @@ g('m-checkin-save').addEventListener('click', async function(){
       var mid=idx<cntMem?(resolvedMemberIds[idx]||null):(tempMemberIds[idx-cntMem]?tempMemberIds[idx-cntMem].tempId:null);
       var vdata={visitDate:today,visitTime:time,seq:parseInt(vk.slice(6,8))||0,memberId:mid,checkinGroupId:groupId,tequilaAmount:0,amount:0,payment:payment,receiptIssued:'0',checkoutTime:null};
       writeJournal('create','visits',vk,null,vdata);
-      cache.visits.push(Object.assign({id:vk},vdata));
+      var newVEntry=Object.assign({id:vk},vdata);
+      cache.visits.push(newVEntry);
+      cache.allVisits.push(newVEntry);
     });
 
     window._lastTempMembers=tempMemberIds;
@@ -1550,15 +1724,7 @@ g('m-checkin-save').addEventListener('click', async function(){
 });
 // ── 新規注文ボタン ────────────────────────────────────────────
 function goOrderPage(){
-  var chks=document.querySelectorAll('.vis-select-chk:checked[data-status="active"]');
-  if(chks.length===0){
-    // チェックなし → STEP0（来場者選択画面）
-    window.location.href='home_order.html';
-    return;
-  }
-  // チェックあり → visitKeyをクエリパラメータで渡してSTEP1へ
-  var visitKeys=Array.prototype.map.call(chks,function(c){ return c.dataset.visitId; });
-  window.location.href='home_order.html?visits='+encodeURIComponent(visitKeys.join(','));
+  window.location.href='home_order.html';
 }
 
 // ── チェックボックス管理 ───────────────────────────────────────
@@ -1629,8 +1795,8 @@ function recalcDiscount(){
   }
 }
 
-function openBulkCheckout(){
-  bulkCheckoutVisitKeys=getSelectedVisitIds();
+function openBulkCheckout(directKeys){
+  bulkCheckoutVisitKeys=directKeys||getSelectedVisitIds();
   if(!bulkCheckoutVisitKeys.length) return;
 
   // Firestoreから最新注文を取得して表示
