@@ -119,6 +119,12 @@ select[multiple]{height:96px;}
 .cmap-table input:focus{border-color:var(--gold);outline:none;}
 .cmap-es{font-family:var(--mono);font-size:11px;color:var(--ink3);padding:5px 8px;}
 .save-status{font-size:11px;color:var(--teal);margin-left:10px;display:none;}
+
+.comp-country-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--cream3);font-size:12px;cursor:pointer;}
+.comp-country-item:last-child{border-bottom:none;}
+.comp-country-item:hover{background:rgba(200,146,30,.05);}
+.comp-country-item input[type=checkbox]{accent-color:var(--gold);width:14px;height:14px;flex-shrink:0;cursor:pointer;}
+.comp-country-vol{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink3);}
 </style>
 </head>
 <body>
@@ -221,6 +227,7 @@ select[multiple]{height:96px;}
     <button class="tab-btn active" onclick="switchTab('chart')">グラフ</button>
     <button class="tab-btn" onclick="switchTab('table')">テーブル</button>
     <button class="tab-btn" onclick="switchTab('rank')">国別ランキング</button>
+    <button class="tab-btn" onclick="switchTab('comp')">国別クラス構成比</button>
     <button class="tab-btn" onclick="switchTab('cmap')">国名設定</button>
   </div>
 
@@ -329,6 +336,32 @@ select[multiple]{height:96px;}
           <tbody id="rank-body"></tbody>
         </table>
       </div>
+    </div>
+  </div>
+
+  <!-- Composition tab -->
+  <div class="tab-panel" id="tab-comp">
+    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
+
+      <!-- Country list with checkboxes -->
+      <div style="flex:0 0 260px;min-width:200px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <div style="font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;flex:1;">対象国</div>
+          <button class="btn btn-ghost btn-sm" onclick="compSelectAll(true)">全選択</button>
+          <button class="btn btn-ghost btn-sm" onclick="compSelectAll(false)">解除</button>
+        </div>
+        <div id="comp-placeholder" class="placeholder" style="padding:20px;">絞り込みを実行すると国リストが表示されます</div>
+        <div id="comp-country-list" style="display:none;max-height:480px;overflow-y:auto;border:1px solid var(--cream3);border-radius:var(--r);background:var(--cream);"></div>
+      </div>
+
+      <!-- Chart area -->
+      <div style="flex:1;min-width:300px;">
+        <div id="comp-chart-placeholder" class="placeholder">国を選択するとグラフが表示されます</div>
+        <div id="comp-chart-wrap" style="display:none;">
+          <div class="chart-wrap" style="height:400px;"><canvas id="comp-chart"></canvas></div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -611,6 +644,7 @@ function saveCountryMap() {
     renderTable();
     renderChart();
     renderRank();
+    renderCompCountryList();
     renderCmapEditor();
   }).catch(function(e) { alert('保存エラー: ' + e.message); });
 }
@@ -741,6 +775,7 @@ function applyFilter() {
   renderTable();
   renderChart();
   renderRank();
+  renderCompCountryList();
 
   document.getElementById('btn-csv').disabled = allRows.length === 0;
 }
@@ -1006,16 +1041,174 @@ function exportCSV() {
 }
 
 // ─────────────────────────────────────────────────────────
+// Composition tab (国別クラス構成比)
+// ─────────────────────────────────────────────────────────
+var compChartInst = null;
+
+function renderCompCountryList() {
+  var placeholder = document.getElementById('comp-placeholder');
+  var listEl = document.getElementById('comp-country-list');
+  if (!allRows.length) {
+    placeholder.style.display = '';
+    listEl.style.display = 'none';
+    return;
+  }
+
+  // Aggregate by country
+  var countryVol = {};
+  allRows.forEach(function(r) {
+    var k = r.Pais || '(不明)';
+    countryVol[k] = (countryVol[k] || 0) + (r.Litros_40 || 0);
+  });
+  var countries = Object.keys(countryVol).sort(function(a, b) { return countryVol[b] - countryVol[a]; });
+
+  // Preserve existing checked state
+  var prevChecked = {};
+  listEl.querySelectorAll('input[type=checkbox]').forEach(function(cb) {
+    prevChecked[cb.value] = cb.checked;
+  });
+
+  placeholder.style.display = 'none';
+  listEl.style.display = '';
+  listEl.innerHTML = countries.map(function(pais) {
+    var checked = (pais in prevChecked) ? prevChecked[pais] : true;
+    return '<label class="comp-country-item">'
+      + '<input type="checkbox" value="' + esc(pais) + '"' + (checked ? ' checked' : '') + ' onchange="renderCompChart()">'
+      + '<span>' + esc(nameOf(pais)) + '</span>'
+      + '<span class="comp-country-vol">' + fmtK(Math.round(countryVol[pais])) + 'L</span>'
+      + '</label>';
+  }).join('');
+
+  renderCompChart();
+}
+
+function compSelectAll(checked) {
+  document.getElementById('comp-country-list').querySelectorAll('input[type=checkbox]').forEach(function(cb) {
+    cb.checked = checked;
+  });
+  renderCompChart();
+}
+
+function renderCompChart() {
+  var placeholder = document.getElementById('comp-chart-placeholder');
+  var wrap = document.getElementById('comp-chart-wrap');
+  var canvas = document.getElementById('comp-chart');
+
+  var selectedPais = [];
+  document.getElementById('comp-country-list').querySelectorAll('input[type=checkbox]:checked').forEach(function(cb) {
+    selectedPais.push(cb.value);
+  });
+
+  if (!selectedPais.length) {
+    placeholder.style.display = '';
+    wrap.style.display = 'none';
+    if (compChartInst) { compChartInst.destroy(); compChartInst = null; }
+    return;
+  }
+
+  // Aggregate: country × clase → volume
+  var agg = {};
+  allRows.forEach(function(r) {
+    var pais = r.Pais || '(不明)';
+    if (selectedPais.indexOf(pais) < 0) return;
+    var cl = r.Clase || '(不明)';
+    if (!agg[pais]) agg[pais] = {};
+    agg[pais][cl] = (agg[pais][cl] || 0) + (r.Litros_40 || 0);
+  });
+
+  // Collect all Clase keys in order
+  var allClases = new Set();
+  Object.values(agg).forEach(function(byClase) { Object.keys(byClase).forEach(function(c) { allClases.add(c); }); });
+  var claseKeys = claseSort(Array.from(allClases));
+
+  // X labels: selected countries sorted by total volume desc
+  var xLabels = selectedPais.slice().sort(function(a, b) {
+    var va = Object.values(agg[a] || {}).reduce(function(s,v){return s+v;},0);
+    var vb = Object.values(agg[b] || {}).reduce(function(s,v){return s+v;},0);
+    return vb - va;
+  });
+
+  // Build 100% stacked datasets
+  var totals = {};
+  xLabels.forEach(function(p) {
+    totals[p] = Object.values(agg[p] || {}).reduce(function(s,v){return s+v;},0);
+  });
+
+  var datasets = claseKeys.map(function(cl, i) {
+    var col = getSeriesColor(cl, i);
+    return {
+      label: cl,
+      data: xLabels.map(function(p) {
+        var tot = totals[p];
+        var v = (agg[p] && agg[p][cl]) || 0;
+        return tot > 0 ? Math.round(v / tot * 1000) / 10 : 0;
+      }),
+      backgroundColor: col,
+      borderColor: col,
+      borderWidth: 0,
+    };
+  });
+
+  var displayLabels = xLabels.map(function(p) { return nameOf(p); });
+
+  if (compChartInst) { compChartInst.destroy(); compChartInst = null; }
+  placeholder.style.display = 'none';
+  wrap.style.display = '';
+
+  compChartInst = new Chart(canvas, {
+    type: 'bar',
+    data: { labels: displayLabels, datasets: datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: { font: { family: "'DM Mono', monospace", size: 11 }, color: '#4a3820',
+            generateLabels: function(chart) {
+              return chart.data.datasets.map(function(ds, i) {
+                return { text: ds.label, fillStyle: ds.backgroundColor, strokeStyle: ds.backgroundColor,
+                  hidden: !chart.isDatasetVisible(i), datasetIndex: i };
+              });
+            }
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) { return ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(1) + '%'; }
+          }
+        }
+      },
+      scales: {
+        x: {
+          stacked: true,
+          ticks: { font: { family: "'DM Mono', monospace", size: 10 }, maxRotation: 45 }
+        },
+        y: {
+          stacked: true,
+          min: 0, max: 100,
+          ticks: {
+            font: { family: "'DM Mono', monospace", size: 10 },
+            callback: function(v) { return v + '%'; }
+          }
+        }
+      }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────
 // Tab switching
 // ─────────────────────────────────────────────────────────
 function switchTab(name) {
-  var names = ['chart','table','rank','cmap'];
+  var names = ['chart','table','rank','comp','cmap'];
   document.querySelectorAll('.tab-btn').forEach(function(b, i) {
     b.classList.toggle('active', names[i] === name);
   });
   document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
   document.getElementById('tab-' + name).classList.add('active');
   if (name === 'cmap') { renderCmapEditor(); autoSaveDefaults(); }
+  if (name === 'comp') { renderCompCountryList(); }
 }
 
 // ─────────────────────────────────────────────────────────
