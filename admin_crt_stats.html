@@ -872,7 +872,7 @@ function renderChart() {
     });
     var labels = sortKeys(Object.keys(agg), groupBy);
     var data = labels.map(function(k) { return Math.round(agg[k]); });
-    drawChart(canvas, chartType, labels, [{label:'Litros 40°', data:data, backgroundColor:PALETTE[0], borderColor:PALETTE[0], fill:false}]);
+    drawChart(canvas, chartType, labels, [{label:'Litros 40°', data:data, backgroundColor:PALETTE[0], borderColor:PALETTE[0], fill:false}], groupBy);
   } else {
     var splitKeys = [], splitSeen = {}, xKeys = [], xSeen = {};
     allRows.forEach(function(r) {
@@ -899,12 +899,25 @@ function renderChart() {
         fill: false
       };
     });
-    drawChart(canvas, chartType, xKeys, datasets);
+    drawChart(canvas, chartType, xKeys, datasets, groupBy);
   }
 }
 
-function drawChart(canvas, type, labels, datasets) {
+function drawChart(canvas, type, labels, datasets, groupBy) {
   if (chartInst) { chartInst.destroy(); chartInst = null; }
+  var isPeriod = groupBy === 'half' || groupBy === 'quarter';
+  var xTickOpts = isPeriod
+    ? { font: { family: "'DM Mono', monospace", size: 9 }, maxRotation: 90, autoSkip: false,
+        callback: function(val, idx) {
+          var lbl = labels[idx] || '';
+          // Show year only on first H1/Q1 of each year, then show just period suffix
+          var m = lbl.match(/^(\d{4})-([HQ]\d)$/);
+          if (!m) return lbl;
+          var prevLbl = idx > 0 ? (labels[idx-1]||'') : '';
+          var prevYear = (prevLbl.match(/^(\d{4})-/) || [])[1];
+          return m[1] !== prevYear ? m[1]+'\n'+m[2] : m[2];
+        }}
+    : { font: { family: "'DM Mono', monospace", size: 10 }, maxRotation: 45 };
   chartInst = new Chart(canvas, {
     type: type,
     data: { labels: labels, datasets: datasets },
@@ -912,7 +925,7 @@ function drawChart(canvas, type, labels, datasets) {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { labels: { font: { family: "'DM Mono', monospace", size: 11 }, boxWidth: 14 } } },
       scales: {
-        x: { ticks: { font: { family: "'DM Mono', monospace", size: 10 }, maxRotation: 45 } },
+        x: { ticks: xTickOpts },
         y: { ticks: { font: { family: "'DM Mono', monospace", size: 10 }, callback: function(v) { return fmtK(v); } } }
       }
     }
