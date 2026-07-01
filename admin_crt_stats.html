@@ -243,6 +243,7 @@ select[multiple]{height:96px;}
         <div class="filter-label">グラフ種別</div>
         <select id="chart-type" onchange="renderChart()">
           <option value="bar">棒グラフ</option>
+          <option value="bar-stacked">積み重ね棒</option>
           <option value="line">折れ線</option>
         </select>
       </div>
@@ -682,14 +683,13 @@ function populateFilters() {
 // ─────────────────────────────────────────────────────────
 function buildWhere() {
   var clauses = [];
-  var yf = document.getElementById('f-year-from').value.trim();
-  var yt = document.getElementById('f-year-to').value.trim();
-  var mf = document.getElementById('f-month-from').value;
-  var mt = document.getElementById('f-month-to').value;
-  if (yf) clauses.push('Año >= ' + parseInt(yf));
-  if (yt) clauses.push('Año <= ' + parseInt(yt));
-  if (mf) clauses.push('Mes >= ' + parseInt(mf));
-  if (mt) clauses.push('Mes <= ' + parseInt(mt));
+  var yf = parseInt(document.getElementById('f-year-from').value.trim()) || 0;
+  var yt = parseInt(document.getElementById('f-year-to').value.trim()) || 0;
+  var mf = parseInt(document.getElementById('f-month-from').value) || 1;
+  var mt = parseInt(document.getElementById('f-month-to').value) || 12;
+  // Date range: FROM year+month TO year+month (年月を6桁整数で比較)
+  if (yf) clauses.push('(Año * 100 + Mes) >= ' + (yf * 100 + mf));
+  if (yt) clauses.push('(Año * 100 + Mes) <= ' + (yt * 100 + mt));
 
   ['Pais','Clase','Categoria','Grupo'].forEach(function(col) {
     var sel = document.getElementById('f-' + col.toLowerCase());
@@ -845,7 +845,9 @@ function renderChart() {
   canvas.style.display = '';
 
   var groupBy = document.getElementById('chart-group').value;
-  var chartType = document.getElementById('chart-type').value;
+  var chartTypeVal = document.getElementById('chart-type').value;
+  var stacked = chartTypeVal === 'bar-stacked';
+  var chartType = stacked ? 'bar' : chartTypeVal;
   var splitBy = document.getElementById('chart-split').value;
 
   function keyOf(r, axis) {
@@ -872,7 +874,7 @@ function renderChart() {
     });
     var labels = sortKeys(Object.keys(agg), groupBy);
     var data = labels.map(function(k) { return Math.round(agg[k]); });
-    drawChart(canvas, chartType, labels, [{label:'Litros 40°', data:data, backgroundColor:PALETTE[0], borderColor:PALETTE[0], fill:false}], groupBy);
+    drawChart(canvas, chartType, labels, [{label:'Litros 40°', data:data, backgroundColor:PALETTE[0], borderColor:PALETTE[0], fill:false}], groupBy, stacked);
   } else {
     var splitKeys = [], splitSeen = {}, xKeys = [], xSeen = {};
     allRows.forEach(function(r) {
@@ -899,11 +901,11 @@ function renderChart() {
         fill: false
       };
     });
-    drawChart(canvas, chartType, xKeys, datasets, groupBy);
+    drawChart(canvas, chartType, xKeys, datasets, groupBy, stacked);
   }
 }
 
-function drawChart(canvas, type, labels, datasets, groupBy) {
+function drawChart(canvas, type, labels, datasets, groupBy, stacked) {
   if (chartInst) { chartInst.destroy(); chartInst = null; }
   var isPeriod = groupBy === 'half' || groupBy === 'quarter';
   var xTickOpts = isPeriod
@@ -925,8 +927,8 @@ function drawChart(canvas, type, labels, datasets, groupBy) {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { labels: { font: { family: "'DM Mono', monospace", size: 11 }, boxWidth: 14 } } },
       scales: {
-        x: { ticks: xTickOpts },
-        y: { ticks: { font: { family: "'DM Mono', monospace", size: 10 }, callback: function(v) { return fmtK(v); } } }
+        x: { stacked: !!stacked, ticks: xTickOpts },
+        y: { stacked: !!stacked, ticks: { font: { family: "'DM Mono', monospace", size: 10 }, callback: function(v) { return fmtK(v); } } }
       }
     }
   });
