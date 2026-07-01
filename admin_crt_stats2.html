@@ -193,6 +193,8 @@ select[multiple]{height:80px;}
         <div class="filter-label">グループ軸</div>
         <select id="chart-group" onchange="renderChart()">
           <option value="year">年別</option>
+          <option value="half">半期別</option>
+          <option value="quarter">四半期別</option>
           <option value="dim">カテゴリ別</option>
         </select>
       </div>
@@ -400,8 +402,10 @@ function applyFilter() {
   var tbl = cfg.table;
   var dim = cfg.dimCol;
   var where = buildWhere();
-  var sql = 'SELECT "Año", "' + dim + '", CAST("Total" AS REAL) as Total FROM "' + tbl + '" ' + where + ' ORDER BY CAST("Año" AS INT), "' + dim + '"';
-  var res = db.exec(sql);
+  var sqlWithMes = 'SELECT "Año", "Mes", "' + dim + '", CAST("Total" AS REAL) as Total FROM "' + tbl + '" ' + where + ' ORDER BY CAST("Año" AS INT), CAST("Mes" AS INT), "' + dim + '"';
+  var sqlFallback = 'SELECT "Año", "' + dim + '", CAST("Total" AS REAL) as Total FROM "' + tbl + '" ' + where + ' ORDER BY CAST("Año" AS INT), "' + dim + '"';
+  var res;
+  try { res = db.exec(sqlWithMes); } catch(e) { res = db.exec(sqlFallback); }
   allRows = [];
   if (res.length) {
     var cols = res[0].columns;
@@ -515,12 +519,20 @@ function renderChart() {
 
   var cfg = DATASETS[currentDs];
   var dim = cfg.dimCol;
-  var groupBy = document.getElementById('chart-group').value; // 'year' | 'dim'
+  var groupBy = document.getElementById('chart-group').value; // 'year'|'half'|'quarter'|'dim'
   var chartType = document.getElementById('chart-type').value;
   var splitBy = document.getElementById('chart-split').value; // '' | 'dim' | 'year'
   var stacked = !!document.getElementById('chart-stack').value;
 
-  function xKey(r) { return groupBy === 'year' ? String(r['Año']) : String(r[dim]); }
+  function periodKey(r, mode) {
+    var año = String(r['Año']||'');
+    var mes = parseInt(r['Mes'])||0;
+    if (mode === 'half')    return año + '-H' + (mes <= 6 ? '1' : '2');
+    if (mode === 'quarter') return año + '-Q' + Math.ceil(mes / 3);
+    if (mode === 'year')    return año;
+    return String(r[dim]);
+  }
+  function xKey(r) { return periodKey(r, groupBy); }
   function sKey(r) { return splitBy === 'year' ? String(r['Año']) : String(r[dim]); }
 
   if (!splitBy) {
@@ -536,7 +548,7 @@ function renderChart() {
       if (!xSeen[xk]) { xSeen[xk]=true; xKeys.push(xk); }
       if (!sSeen[sk]) { sSeen[sk]=true; sKeys.push(sk); }
     });
-    xKeys.sort(smartSort); sKeys.sort(smartSort);
+    xKeys.sort(smartSort); sKeys = claseSort(sKeys);
     var agg2 = {};
     allRows.forEach(function(r) {
       var xk = xKey(r), sk = sKey(r);
@@ -544,14 +556,48 @@ function renderChart() {
       agg2[sk][xk] = (agg2[sk][xk]||0)+(r.Total||0);
     });
     var datasets = sKeys.map(function(sk, i) {
+      var col = getSeriesColor(sk, i);
       return { label:sk, data:xKeys.map(function(xk){return Math.round((agg2[sk]&&agg2[sk][xk])||0);}),
-        backgroundColor:PALETTE[i%PALETTE.length], borderColor:PALETTE[i%PALETTE.length], fill:false };
+        backgroundColor:col, borderColor:col, fill:false };
     });
     draw(canvas, chartType, xKeys, datasets, stacked);
   }
 }
 
+// Clase category order and colors
+var CLASE_ORDER = ['Blanco','Joven','Reposado','Añejo','Extra Añejo'];
+var CLASE_COLORS = {
+  'Blanco':      '#3a7abf',
+  'Joven':       '#d4c020',
+  'Reposado':    '#d4781a',
+  'Añejo':       '#7a4a20',
+  'Extra Añejo': '#3a2010'
+};
+
+function getSeriesColor(label, index) {
+  if (CLASE_COLORS[label]) return CLASE_COLORS[label];
+  return PALETTE[index % PALETTE.length];
+}
+
+function claseSort(keys) {
+  return keys.slice().sort(function(a, b) {
+    var ai = CLASE_ORDER.indexOf(a), bi = CLASE_ORDER.indexOf(b);
+    if (ai >= 0 && bi >= 0) return ai - bi;
+    if (ai >= 0) return -1;
+    if (bi >= 0) return 1;
+    return String(a).localeCompare(String(b));
+  });
+}
+
 function smartSort(a, b) {
+  // Period keys like 2024-H1, 2024-Q3
+  var pm = /^(\d{4})-([HQ])(\d)$/, am = pm.exec(a), bm = pm.exec(b);
+  if (am && bm) {
+    var yd = parseInt(am[1]) - parseInt(bm[1]);
+    if (yd !== 0) return yd;
+    if (am[2] !== bm[2]) return am[2].localeCompare(bm[2]);
+    return parseInt(am[3]) - parseInt(bm[3]);
+  }
   var ai = parseInt(a), bi = parseInt(b);
   if (!isNaN(ai) && !isNaN(bi)) return ai - bi;
   return String(a).localeCompare(String(b));
