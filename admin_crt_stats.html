@@ -232,6 +232,8 @@ select[multiple]{height:96px;}
         <select id="chart-group" onchange="renderChart()">
           <option value="ym">年月別</option>
           <option value="year">年別</option>
+          <option value="half">半期別</option>
+          <option value="quarter">四半期別</option>
           <option value="pais">国別</option>
           <option value="clase">Clase別</option>
           <option value="categoria">Categoria別</option>
@@ -814,6 +816,22 @@ function changePage(d) { currentPage += d; renderTable(); }
 // Chart
 // ─────────────────────────────────────────────────────────
 var PALETTE = ['#c8921e','#1a6e58','#4a3820','#b03020','#2c5f8a','#6b4c9a','#d4882e','#3a8a6a','#8a5a30','#d44a30','#4a7ab0','#8a6aaa'];
+var CLASE_ORDER = ['Blanco','Joven','Reposado','Añejo','Extra Añejo'];
+var CLASE_COLORS = {'Blanco':'#3a7abf','Joven':'#d4c020','Reposado':'#d4781a','Añejo':'#7a4a20','Extra Añejo':'#3a2010'};
+function getSeriesColor(label, index) { return CLASE_COLORS[label] || PALETTE[index % PALETTE.length]; }
+function claseSort(keys) {
+  return keys.slice().sort(function(a,b){
+    var ai=CLASE_ORDER.indexOf(a), bi=CLASE_ORDER.indexOf(b);
+    if(ai>=0&&bi>=0) return ai-bi;
+    if(ai>=0) return -1; if(bi>=0) return 1;
+    return String(a).localeCompare(String(b));
+  });
+}
+function periodSort(a, b) {
+  var pm=/^(\d{4})[\/\-]([HQ])(\d)$/, am=pm.exec(a), bm=pm.exec(b);
+  if(am&&bm){ var yd=parseInt(am[1])-parseInt(bm[1]); if(yd) return yd; return parseInt(am[3])-parseInt(bm[3]); }
+  return String(a).localeCompare(String(b));
+}
 
 function renderChart() {
   var placeholder = document.getElementById('chart-placeholder');
@@ -831,12 +849,19 @@ function renderChart() {
   var splitBy = document.getElementById('chart-split').value;
 
   function keyOf(r, axis) {
-    if (axis === 'ym') return r.Año + '/' + pad(r.Mes);
-    if (axis === 'year') return String(r.Año);
-    if (axis === 'pais') return nameOf(r.Pais);
-    if (axis === 'clase') return r.Clase;
+    if (axis === 'ym')      return r.Año + '/' + pad(r.Mes);
+    if (axis === 'year')    return String(r.Año);
+    if (axis === 'half')    return r.Año + '-H' + (parseInt(r.Mes||0)<=6?'1':'2');
+    if (axis === 'quarter') return r.Año + '-Q' + Math.ceil(parseInt(r.Mes||0)/3);
+    if (axis === 'pais')    return nameOf(r.Pais);
+    if (axis === 'clase')   return r.Clase;
     if (axis === 'categoria') return r.Categoria;
     return String(r.Año);
+  }
+
+  function sortKeys(keys, axis) {
+    if (axis === 'half' || axis === 'quarter') return keys.slice().sort(periodSort);
+    return keys.slice().sort();
   }
 
   if (!splitBy) {
@@ -845,7 +870,7 @@ function renderChart() {
       var k = keyOf(r, groupBy);
       agg[k] = (agg[k] || 0) + (r.Litros_40 || 0);
     });
-    var labels = Object.keys(agg).sort();
+    var labels = sortKeys(Object.keys(agg), groupBy);
     var data = labels.map(function(k) { return Math.round(agg[k]); });
     drawChart(canvas, chartType, labels, [{label:'Litros 40°', data:data, backgroundColor:PALETTE[0], borderColor:PALETTE[0], fill:false}]);
   } else {
@@ -855,7 +880,8 @@ function renderChart() {
       if (!splitSeen[sk]) { splitSeen[sk] = true; splitKeys.push(sk); }
       if (!xSeen[xk]) { xSeen[xk] = true; xKeys.push(xk); }
     });
-    xKeys.sort(); splitKeys.sort();
+    xKeys = sortKeys(xKeys, groupBy);
+    splitKeys = (splitBy === 'clase') ? claseSort(splitKeys) : sortKeys(splitKeys, splitBy);
     if (splitKeys.length > 12) splitKeys = splitKeys.slice(0, 12);
     var agg2 = {};
     allRows.forEach(function(r) {
@@ -864,11 +890,12 @@ function renderChart() {
       agg2[sk][xk] = (agg2[sk][xk] || 0) + (r.Litros_40 || 0);
     });
     var datasets = splitKeys.map(function(sk, i) {
+      var col = getSeriesColor(sk, i);
       return {
         label: sk,
         data: xKeys.map(function(xk) { return Math.round((agg2[sk] && agg2[sk][xk]) ? agg2[sk][xk] : 0); }),
-        backgroundColor: PALETTE[i % PALETTE.length],
-        borderColor: PALETTE[i % PALETTE.length],
+        backgroundColor: col,
+        borderColor: col,
         fill: false
       };
     });
