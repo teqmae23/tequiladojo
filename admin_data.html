@@ -221,7 +221,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 .tag-session{background:rgba(200,146,30,.18);color:var(--gold-d)}
 .tag-visit{background:rgba(40,120,80,.14);color:#1a5e3a}
 .tag-staff{background:rgba(180,140,0,.25);color:#7a5e00}
-.vnode-staff{background:rgba(0,0,0,.045)}
+.vnode-staff{background:rgba(0,0,0,.09)}
 .tag-order{background:rgba(30,60,180,.09);color:#1a3090}
 .tree-label{flex:1;font-size:12px;color:var(--ink2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tree-acts{display:flex;gap:4px;flex-shrink:0;margin-left:auto}
@@ -3050,12 +3050,13 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
   html+='<div class="card" style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">'
     +'<div style="font-size:13px;color:var(--ink2)">📅 <strong>'+fmtDate(yymmdd)+'</strong>'
     +' &nbsp;セッション: <strong>'+sessions.length+'</strong>'
-    +' &nbsp;来場: <strong>'+visits.length+'</strong>'
+    +' &nbsp;来場: <strong>'+visits.filter(function(v){return !v.isStaff;}).length+'</strong>'
     +' &nbsp;注文: <strong>'+totalOrders+'</strong>'
     +' &nbsp;売上合計: <strong>¥'+totalAmt.toLocaleString()+'</strong>'+hiddenNote+'</div>'
     +'<div style="display:flex;gap:6px">'
     +'<button class="btn bs sm" onclick="batchHideVisits(\''+yymmdd+'\')" title="この日の来場データを全件 hidden:true にする" style="font-size:10px">⚠ 異常来場を非表示</button>'
     +'<button class="btn bs sm" onclick="exportTreeCSV(\''+yymmdd+'\')" title="セッション・来場・注文をCSVでダウンロード">CSVバックアップ</button>'
+    +'<button class="btn bs sm" onclick="printDayReport(\''+yymmdd+'\')" title="営業レポートを印刷">🖨 営業レポート</button>'
     +'<button class="btn bd sm" data-tree-del-date="'+yymmdd+'" title="この日のセッション・来場・注文を全削除">この日のデータを全削除</button>'
     +'</div>';
 
@@ -3099,7 +3100,7 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
     var sesOrders = orders.filter(function(o){
       return sesVisits.some(function(v){return v.id===(o.visitKey||o.visitId);});
     });
-    var sesGuestCalc = sesVisits.length;
+    var sesGuestCalc = sesVisits.filter(function(v){return !v.isStaff;}).length;
     var sesSalesCalc = sesVisits.reduce(function(s,v){return s+(v.amount||0);},0);
     var sesOrdCalc   = sesOrders.filter(function(o){return o.served!==0;}).length;
 
@@ -3350,6 +3351,147 @@ function csvDownload(filename,rows){
   a.href=url; a.download=filename; a.click();
   setTimeout(function(){URL.revokeObjectURL(url);},1000);
 }
+function printDayReport(yymmdd){
+  var sessions=_treeSessions.filter(function(s){return s.date===yymmdd;});
+  var visits=_treeCurrentVisits.filter(function(v){return (v.visitDate||v.id.slice(0,6))===yymmdd;});
+  var orders=_treeCurrentOrders.filter(function(o){return (o.orderDate||o.id.slice(0,6))===yymmdd;});
+  var memName=function(mid){
+    if(!mid) return 'ゲスト';
+    var m=cache.members.find(function(x){return x.id===mid||x.memberId===mid;});
+    return (m&&(m.nickname||m.name))||mid;
+  };
+  var fmt=function(t){ if(!t||t.length<4) return '—'; return t.slice(0,2)+':'+t.slice(2,4); };
+  var fmtS=function(t,ses){ return fmtHHMMsession(t,ses); };
+  var yen=function(v){ return v!=null?'¥'+Number(v).toLocaleString():'—'; };
+
+  var totalVisits=visits.filter(function(v){return !v.isStaff;}).length;
+  var totalOrders=orders.filter(function(o){return o.served!==0&&!o.deleted;}).length;
+  var totalSales=visits.filter(function(v){return !v.isStaff;}).reduce(function(s,v){return s+(v.amount||0);},0);
+
+  var dt=yymmddToDate(yymmdd);
+  var DOW=['日','月','火','水','木','金','土'];
+  var dateDisp='20'+yymmdd.slice(0,2)+'/'+yymmdd.slice(2,4)+'/'+yymmdd.slice(4,6)+(dt?'('+DOW[dt.getDay()]+')':'');
+
+  var html='<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">'
+    +'<title>営業レポート '+dateDisp+'</title>'
+    +'<style>'
+    +'*{box-sizing:border-box;margin:0;padding:0}'
+    +'body{font-family:"Hiragino Sans","Yu Gothic",sans-serif;font-size:11px;color:#111;background:#fff;padding:16px}'
+    +'h1{font-size:16px;font-weight:700;margin-bottom:4px}'
+    +'.summary{font-size:12px;color:#444;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #111}'
+    +'.session{margin-bottom:20px;break-inside:avoid-page}'
+    +'.ses-head{background:#222;color:#fff;padding:5px 10px;font-size:12px;font-weight:600;display:flex;justify-content:space-between}'
+    +'.visit{border-left:3px solid #2d7a4f;margin:6px 0 6px 8px;padding:4px 8px;background:#f6fbf8}'
+    +'.visit.staff{border-left-color:#b8860b;background:#fdfbf0}'
+    +'.vis-head{font-weight:600;font-size:11px;display:flex;gap:12px;align-items:baseline}'
+    +'.vis-name{font-size:12px}'
+    +'.vis-meta{color:#555;font-size:10px}'
+    +'.orders{margin-top:4px;padding-left:8px}'
+    +'.order{display:flex;gap:6px;align-items:baseline;padding:2px 0;border-bottom:1px solid #e8e8e8;font-size:10px}'
+    +'.order:last-child{border-bottom:none}'
+    +'.order.cancelled{color:#aaa;text-decoration:line-through}'
+    +'.o-time{color:#555;min-width:38px;flex-shrink:0}'
+    +'.o-name{flex:1}'
+    +'.o-qty{color:#333;min-width:40px;text-align:right;flex-shrink:0}'
+    +'.o-price{color:#333;min-width:55px;text-align:right;flex-shrink:0}'
+    +'.o-badge{font-size:9px;padding:1px 4px;border-radius:3px;flex-shrink:0}'
+    +'.badge-blind{background:#fee2e2;color:#b91c1c}'
+    +'.badge-together{background:#fff3e0;color:#c2410c}'
+    +'.badge-staff{font-size:9px;background:#fde68a;color:#78350f;padding:1px 5px;border-radius:3px;margin-left:4px}'
+    +'.vis-total{font-size:10px;color:#555;margin-top:2px}'
+    +'.no-orders{font-size:10px;color:#aaa;padding:2px 0}'
+    +'.staff-section{margin-top:8px;padding:4px 8px;background:#fdfbf0;border-left:3px solid #b8860b;font-size:10px;color:#555}'
+    +'@media print{'
+    +'body{padding:8px}'
+    +'.session{break-inside:avoid}'
+    +'}'
+    +'</style></head><body>'
+    +'<h1>営業レポート　'+dateDisp+'</h1>'
+    +'<div class="summary">'
+    +'セッション <strong>'+sessions.length+'</strong>　'
+    +'来場 <strong>'+totalVisits+'</strong>名　'
+    +'注文 <strong>'+totalOrders+'</strong>件　'
+    +'売上合計 <strong>'+yen(totalSales)+'</strong>'
+    +'</div>';
+
+  sessions.forEach(function(ses){
+    var sesVisits=(sessions.length>1)?getSessionVisits(ses,visits):visits;
+    var guestVisits=sesVisits.filter(function(v){return !v.isStaff;});
+    var staffVisits=sesVisits.filter(function(v){return v.isStaff;});
+    var sesSales=guestVisits.reduce(function(s,v){return s+(v.amount||0);},0);
+    var openDisp=ses.openTime?fmtTime(ses.openTime):'—';
+    var closeDisp=ses.closeTime?fmtTime(ses.closeTime):'—';
+
+    html+='<div class="session">'
+      +'<div class="ses-head">'
+      +'<span>セッション '+escHtml(ses.id)+'　'+openDisp+' 〜 '+closeDisp+'</span>'
+      +'<span>来場 '+guestVisits.length+'名　売上 '+yen(sesSales)+'</span>'
+      +'</div>';
+
+    guestVisits.sort(function(a,b){return (a.visitTime||a.id).localeCompare(b.visitTime||b.id);});
+    guestVisits.forEach(function(vis){
+      var visOrds=orders.filter(function(o){return (o.visitKey||o.visitId)===vis.id;});
+      visOrds.sort(function(a,b){return (a.orderTime||'').localeCompare(b.orderTime||'');});
+      var visAmt=vis.amount!=null?yen(vis.amount):'—';
+
+      html+='<div class="visit">'
+        +'<div class="vis-head">'
+        +'<span class="vis-name">'+escHtml(memName(vis.memberId))+'</span>'
+        +'<span class="vis-meta">来場 '+fmtS(vis.visitTime,ses)+'　退場 '+fmtS(vis.checkoutTime,ses)+'　'+visAmt+'</span>'
+        +'</div>'
+        +'<div class="orders">';
+
+      if(!visOrds.length){
+        html+='<div class="no-orders">注文なし</div>';
+      } else {
+        visOrds.forEach(function(ord){
+          var cancelled=ord.served===0||ord.deleted;
+          var isBlind=ord.blindId===1||ord.blindId==='1';
+          var isMl=ord.productType==='tequila'||ord.productType==='other';
+          var amt=ord.unitPrice!=null?(isMl?Math.round(ord.unitPrice*ord.qty/10):ord.unitPrice*ord.qty):null;
+          var companions=ord.batchId?orders.filter(function(o){
+            return o.batchId===ord.batchId&&(o.visitKey||o.visitId)!==vis.id&&o.served!==0&&!o.deleted
+              &&o.productCode===ord.productCode&&o.orderTime===ord.orderTime;
+          }).map(function(o){return memName(visits.find(function(v){return v.id===(o.visitKey||o.visitId);})&&visits.find(function(v){return v.id===(o.visitKey||o.visitId);}).memberId);})
+          .filter(function(n,i,a){return a.indexOf(n)===i;}):[];
+
+          html+='<div class="order'+(cancelled?' cancelled':'')+'">'
+            +'<span class="o-time">'+fmtS(ord.orderTime,ses)+'</span>'
+            +'<span class="o-name">'+escHtml(ord.productName||ord.productCode||'—')+'</span>'
+            +'<span class="o-qty">'+(ord.qty?ord.qty+(ord.unit||''):'')+'</span>'
+            +'<span class="o-price">'+(amt!=null?yen(amt):'')+'</span>'
+            +(isBlind?'<span class="o-badge badge-blind">盲'+(ord.blindMarkId?' '+ord.blindMarkId:'')+'</span>':'')
+            +(companions.length?'<span class="o-badge badge-together">👥 '+companions.map(escHtml).join('・')+'</span>':'')
+            +(cancelled?'<span style="font-size:9px;color:#aaa">キャンセル</span>':'')
+            +'</div>';
+        });
+      }
+      html+='</div></div>';
+    });
+
+    if(staffVisits.length){
+      html+='<div class="staff-section">店員: '
+        +staffVisits.map(function(v){
+          return '<strong>'+escHtml(memName(v.memberId))+'</strong>'
+            +' (来場 '+fmtS(v.visitTime,ses)+'　退場 '+fmtS(v.checkoutTime,ses)+')';
+        }).join('　')
+        +'</div>';
+    }
+    html+='</div>';
+  });
+
+  html+='<div style="margin-top:24px;font-size:9px;color:#aaa;border-top:1px solid #ddd;padding-top:6px">'
+    +'印刷: '+new Date().toLocaleString('ja-JP')+'　Tequila Dojo 営業管理システム'
+    +'</div>';
+  html+='</body></html>';
+
+  var w=window.open('','_blank','width=900,height=700');
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  setTimeout(function(){w.print();},400);
+}
+
 function exportTreeCSV(yymmdd){
   var dateLabel=fmtDate(yymmdd).replace(/\//g,'');
   var memName=function(mid){
