@@ -1,4 +1,5 @@
-const functions = require('firebase-functions');
+// firebase-functions v6ではトップレベルがv2 APIのため、v1 APIを明示的に読み込む
+const functions = require('firebase-functions/v1');
 const admin = require('firebase-admin');
 admin.initializeApp();
 
