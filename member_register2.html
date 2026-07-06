@@ -7,6 +7,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <script>
 var FIREBASE_CONFIG = {
   apiKey:            "AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -106,6 +107,7 @@ input[readonly]{background:#f0ebe0;color:#6a5840;cursor:default;}
 if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
 var auth = firebase.auth();
 var db   = firebase.firestore();
+var fbFunctions = firebase.app().functions('asia-northeast1');
 var VIRTUAL_DOMAIN = '@tequiladojo.member';
 
 // URL パラメータからニックネーム・引継コードをセット
@@ -136,35 +138,8 @@ function nickByteLen(s){
   return n;
 }
 
-// displayId（年2桁+4桁連番）を採番する
-function fetchNextDisplayMemberId(){
-  var year=String(new Date().getFullYear()).slice(2);
-  var ref=db.collection('settings').doc('memberCounter');
-  return db.runTransaction(function(tx){
-    return tx.get(ref).then(function(doc){
-      var d=doc.exists?doc.data():{};
-      var seqMap=d.memberSeq||{};
-      var last=seqMap[year]||0;
-      var next=last+1;
-      seqMap[year]=next;
-      tx.set(ref,{memberSeq:seqMap},{merge:true});
-      return year+String(next).padStart(4,'0');
-    });
-  });
-}
-
-// realId（000101〜）を採番する
-function fetchNextRealId(){
-  var ref=db.collection('settings').doc('memberCounter');
-  return db.runTransaction(function(tx){
-    return tx.get(ref).then(function(doc){
-      var d=doc.exists?doc.data():{};
-      var realSeq=d.realSeq||101;
-      tx.set(ref,{realSeq:realSeq+1},{merge:true});
-      return String(realSeq).padStart(6,'0');
-    });
-  });
-}
+// 採番・アカウント作成・会員ドキュメント作成は
+// Cloud Functions（registerMember）がサーバー側で行う
 
 function doRegister(){
   var pass     = document.getElementById('reg-pass').value;
@@ -194,43 +169,28 @@ function doRegister(){
   }
 }
 
-function doRegisterWithTransfer(transferCode, pass, email, nick, err, btn){
-  var now=new Date().toISOString().slice(0,10);
-  db.collection('tempRegistrations').doc(transferCode).get()
-    .then(function(doc){
-      if(!doc.exists){ throw new Error('引継コードが見つかりません'); }
-      var d=doc.data();
-      if(d.used){ throw new Error('引継コードは既に使用済みです'); }
-      if(new Date(d.expiresAt)<new Date()){ throw new Error('引継コードの有効期限が切れています'); }
-      // tempId = realId（新方式）または旧displayId（既存アカウント）
-      var realId=d.tempId;
-      var guestNick=nick||d.nickname;
-      return auth.createUserWithEmailAndPassword(email, pass)
-        .then(function(cred){
-          var uid=cred.user.uid;
-          var as={url:'https://tequiladojo.com/member_register.html',handleCodeInApp:false};
-          cred.user.sendEmailVerification(as).catch(function(){});
-          // 新しい displayId（年2桁+4桁連番）を採番
-          return fetchNextDisplayMemberId().then(function(newDisplayId){
-            var batch=db.batch();
-            batch.update(db.collection('members').doc(realId),{
-              authUid:uid, email:email, nickname:guestNick,
-              status:'pending', registeredAt:now, isGuest:false,
-              displayId:newDisplayId,
-              memberId:newDisplayId  // 旧互換フィールドも更新
-            });
-            batch.set(db.collection('memberIndex').doc(realId),{email:email});
-            batch.update(db.collection('tempRegistrations').doc(transferCode),{used:true});
-            return batch.commit().then(function(){ return {memberId:newDisplayId}; });
-          });
-        });
-    })
-    .then(function(result){
+// 登録完了後: 作成されたアカウントでサインインし、認証メールを送る
+function finishRegistration(result, doneNoteHtml, pass){
+  return auth.signInWithEmailAndPassword(result.authEmail, pass)
+    .then(function(cred){
+      var as={url:'https://tequiladojo.com/member_register.html',handleCodeInApp:false};
+      if(result.authEmail.indexOf(VIRTUAL_DOMAIN)<0) cred.user.sendEmailVerification(as).catch(function(){});
       document.getElementById('form-area').style.display='none';
       document.getElementById('done-area').style.display='block';
       document.getElementById('done-id').textContent=result.memberId;
       var noteEl=document.getElementById('done-note');
-      if(noteEl) noteEl.innerHTML='認証メールを送信しました。<br>メールのリンクをクリックして認証を完了してください。<br><br>認証後、マイページにログインできます。<br>来場履歴が引き継がれました。';
+      if(noteEl) noteEl.innerHTML=doneNoteHtml;
+    });
+}
+
+function doRegisterWithTransfer(transferCode, pass, email, nick, err, btn){
+  fbFunctions.httpsCallable('registerMember')({
+    transferCode:transferCode, password:pass, email:email, nickname:nick
+  })
+    .then(function(res){
+      return finishRegistration(res.data,
+        '認証メールを送信しました。<br>メールのリンクをクリックして認証を完了してください。<br><br>認証後、マイページにログインできます。<br>来場履歴が引き継がれました。',
+        pass);
     })
     .catch(function(e){
       err.textContent='登録失敗: '+e.message;
@@ -239,34 +199,13 @@ function doRegisterWithTransfer(transferCode, pass, email, nick, err, btn){
 }
 
 function doRegisterNew(pass, email, nick, err, btn){
-  var now=new Date().toISOString().slice(0,10);
-  auth.createUserWithEmailAndPassword(email, pass)
-    .then(function(cred){
-      var uid=cred.user.uid;
-      var as2={url:'https://tequiladojo.com/member_register.html',handleCodeInApp:false};
-      cred.user.sendEmailVerification(as2).catch(function(){});
-      return Promise.all([fetchNextRealId(), fetchNextDisplayMemberId()])
-        .then(function(ids){
-          var realId=ids[0], displayId=ids[1];
-          var batch=db.batch();
-          batch.set(db.collection('memberIndex').doc(realId),{email:email});
-          batch.set(db.collection('members').doc(realId),{
-            authUid:uid,
-            realId:realId,
-            displayId:displayId,
-            memberId:displayId,  // 旧互換フィールド
-            email:email,
-            status:'pending', nickname:nick, registeredAt:now
-          });
-          return batch.commit().then(function(){ return {memberId:displayId}; });
-        });
-    })
-    .then(function(result){
-      document.getElementById('form-area').style.display='none';
-      document.getElementById('done-area').style.display='block';
-      document.getElementById('done-id').textContent=result.memberId;
-      var note=document.getElementById('done-note');
-      if(note) note.innerHTML='認証メールを送信しました。<br>メールのリンクをクリックして認証を完了してください。<br><br>認証後、マイページにログインできます。';
+  fbFunctions.httpsCallable('registerMember')({
+    password:pass, email:email, nickname:nick, status:'pending'
+  })
+    .then(function(res){
+      return finishRegistration(res.data,
+        '認証メールを送信しました。<br>メールのリンクをクリックして認証を完了してください。<br><br>認証後、マイページにログインできます。',
+        pass);
     })
     .catch(function(e){
       err.textContent='登録失敗: '+e.message;

@@ -28,7 +28,7 @@ var FIREBASE_CONFIG = {
 </script>
 <script src="/auth-role.js?v=20260521"></script>
 <script>window.JOURNAL_PAGE='checkin';</script>
-<script src="/journal.js?v=20260601"></script>
+<script src="/journal.js?v=20260706"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -627,6 +627,7 @@ g('btn-refresh').addEventListener('click',function(){
     // 各来場者の注文集計を更新してFirestoreに書き込む
     var batch=db.batch();
     var updated=0;
+    var _aggJournal=[];
     cache.visits.forEach(function(v){
       if(v.checkoutTime || v.checkoutPayTime) return; // 会計済・退場済はスキップ
       var vOrders=cache.orders.filter(function(o){ return o.visitKey===v.id||o.visitId===v.id; });
@@ -638,12 +639,14 @@ g('btn-refresh').addEventListener('click',function(){
           amount: totalAmt,
           tequilaAmount: totalTq
         });
+        _aggJournal.push({id:v.id,before:{amount:v.amount!==undefined?v.amount:null,tequilaAmount:v.tequilaAmount!==undefined?v.tequilaAmount:null},after:{amount:totalAmt,tequilaAmount:totalTq}});
         v.amount=totalAmt;
         v.tequilaAmount=totalTq;
         updated++;
       }
     });
     batch.commit().then(function(){
+      _aggJournal.forEach(function(j){ writeJournal('update','visits',j.id,j.before,j.after); });
       renderVisitorList();
       toast(updated?updated+'件の飲酒量・金額を更新しました':'最新の状態です（更新なし）', updated?'ok':'inf');
     });
@@ -751,7 +754,10 @@ function renderVisitorList(){
       var vk=btn.dataset.checkoutTime;
       if(!confirm('退場処理しますか？')) return;
       var time=nowHHMM();
+      var _v0=cache.visits.find(function(x){return x.id===vk;})||cache.allVisits.find(function(x){return x.id===vk;});
+      var _coBefore={checkoutTime:(_v0&&_v0.checkoutTime)||null};
       db.collection('visits').doc(vk).update({checkoutTime:time}).then(function(){
+        writeJournal('update','visits',vk,_coBefore,{checkoutTime:time});
         var v=cache.visits.find(function(x){return x.id===vk;}); if(v) v.checkoutTime=time;
         var av=cache.allVisits.find(function(x){return x.id===vk;}); if(av) av.checkoutTime=time;
         toast('退場処理しました（'+fmtHHMM(time)+'）');
@@ -1064,10 +1070,13 @@ function refreshSingleVisit(visitKey, btn){
     var orders=getVisitOrders(visitKey);
     var totalAmt=calcAmount(orders);
     var totalTq=calcTequila(orders);
+    var _v1=cache.visits.find(function(x){ return x.id===visitKey; });
+    var _rcBefore={amount:(_v1&&_v1.amount!==undefined)?_v1.amount:null,tequilaAmount:(_v1&&_v1.tequilaAmount!==undefined)?_v1.tequilaAmount:null};
     return db.collection('visits').doc(visitKey).update({
       amount: totalAmt,
       tequilaAmount: totalTq
     }).then(function(){
+      writeJournal('update','visits',visitKey,_rcBefore,{amount:totalAmt,tequilaAmount:totalTq});
       var v=cache.visits.find(function(x){ return x.id===visitKey; });
       if(v){ v.amount=totalAmt; v.tequilaAmount=totalTq; }
       renderVisitorList();
@@ -1519,6 +1528,7 @@ async function getOrCreate72hCode(memberId, nickname){
       createdAt:now.toISOString(), expiresAt:expiresAt.toISOString(),
       used:false, issuedBy:'receipt'
     });
+    writeJournal('create','tempRegistrations',code,null,{tempId:memberId,nickname:nickname,issuedBy:'receipt'});
   }
   return code;
 }
@@ -1693,6 +1703,8 @@ g('m-checkin-save').addEventListener('click', async function(){
     }
 
     await batch.commit();
+
+    tempMemberIds.forEach(function(t){ writeJournal('create','tempRegistrations',t.regCode,null,{tempId:t.tempId,nickname:t.nickname}); });
 
     // 解決済みrealId配列を作成（上の保存ループと同じ解決処理）
     var resolvedMemberIds=memberIds.map(function(raw){
@@ -2007,6 +2019,7 @@ function doCheckoutSave(){
   var alsoCheckout=g('co-also-checkout')&&g('co-also-checkout').checked;
 
   var fbBatch=db.batch();
+  var _coJournal={}; // visitKey → {before, after}（ジャーナル用・上書き前の状態を保存）
   bulkCheckoutVisitKeys.forEach(function(visitKey){
     var orders=cache.orders.filter(function(o){ return o.visitKey===visitKey||o.visitId===visitKey; });
     var wkEl=g('wk-'+visitKey);
@@ -2022,6 +2035,12 @@ function doCheckoutSave(){
     if(alsoCheckout) updateData.checkoutTime=now;
     fbBatch.update(db.collection('visits').doc(visitKey), updateData);
     var v=cache.visits.find(function(x){ return x.id===visitKey; });
+    _coJournal[visitKey]={
+      before: v?{amount:v.amount!==undefined?v.amount:null,tequilaAmount:v.tequilaAmount!==undefined?v.tequilaAmount:null,
+                 payment:v.payment||null,receiptIssued:v.receiptIssued||null,
+                 checkoutPayTime:v.checkoutPayTime||null,checkoutTime:v.checkoutTime||null}:null,
+      after: updateData
+    };
     if(v){
       v.amount=totalAmt; v.tequilaAmount=totalTq;
       v.payment=payment; v.receiptIssued=receipt;
@@ -2037,6 +2056,7 @@ function doCheckoutSave(){
   var discountedGrandSave=parseInt((g('co-grand-total').textContent||'0').replace(/[^0-9]/g,''))||0;
   var totalDiscountSave=rawGrandTotal-discountedGrandSave;
   var nowTime=now.slice(0,4);
+  var _adjJournal=[]; // 割引・案分調整レコードのジャーナル（commit成功後に実docIDで記録）
   bulkCheckoutVisitKeys.forEach(function(visitKey){
     var rawAmt=warikanRawAmounts[visitKey]!=null?warikanRawAmounts[visitKey]:calcAmount(cache.orders.filter(function(o){return o.visitKey===visitKey||o.visitId===visitKey;}));
     var finalAmt=warikanAmounts[visitKey]!=null?warikanAmounts[visitKey]:rawAmt;
@@ -2045,22 +2065,26 @@ function doCheckoutSave(){
     if(perDisc!==0){
       var dName=discTypeStr2==='percent'?'値引('+discInputVal2+'%)':'割引額';
       var _discData={visitKey:visitKey,visitId:visitKey,productName:dName,productType:'adjustment',unitPrice:-perDisc,qty:1,unit:'円',served:2,orderTime:nowTime,orderGroupId:now+'_d_'+visitKey.slice(-4),isAdjustment:true};
-      fbBatch.set(db.collection('orders').doc(), _discData);
-      writeJournal('create','orders','discount_'+visitKey+'_'+nowTime,null,_discData);
+      var _discRef=db.collection('orders').doc();
+      fbBatch.set(_discRef, _discData);
+      _adjJournal.push({id:_discRef.id,data:_discData});
     }
     // 2. 案分調整レコード（割引後の個別按分と実際の支払額の差）
     var postDiscAmt=rawAmt-perDisc;
     var wkAdj=finalAmt-postDiscAmt;
     if(Math.abs(wkAdj)>=1){
       var _adjData={visitKey:visitKey,visitId:visitKey,productName:'案分調整',productType:'adjustment',unitPrice:wkAdj,qty:1,unit:'円',served:2,orderTime:nowTime,orderGroupId:now+'_w_'+visitKey.slice(-4),isAdjustment:true};
-      fbBatch.set(db.collection('orders').doc(), _adjData);
-      writeJournal('create','orders','warikan_'+visitKey+'_'+nowTime,null,_adjData);
+      var _adjRef=db.collection('orders').doc();
+      fbBatch.set(_adjRef, _adjData);
+      _adjJournal.push({id:_adjRef.id,data:_adjData});
     }
   });
 
   // お会計確定時にmembersのtotalAmount・totalTequilaを更新
+  // 再会計（checkoutPayTime設定済み）の場合は前回計上分を差し引いて二重加算を防ぐ
   var memberUpdateBatch=db.batch();
   var memberUpdatePromises=[];
+  var _memJournal=[];
   bulkCheckoutVisitKeys.forEach(function(visitKey){
     var v=cache.visits.find(function(x){ return x.id===visitKey; });
     if(!v||!v.memberId) return;
@@ -2068,27 +2092,37 @@ function doCheckoutSave(){
     var wkEl=g('wk-'+visitKey);
     var amt=wkEl?parseInt(wkEl.value)||0:(warikanAmounts[visitKey]!=null?warikanAmounts[visitKey]:calcAmount(cache.orders.filter(function(o){ return o.visitKey===visitKey||o.visitId===visitKey; })));
     var tq=calcTequila(cache.orders.filter(function(o){ return o.visitKey===visitKey||o.visitId===visitKey; }));
+    var _pv=_coJournal[visitKey]&&_coJournal[visitKey].before;
+    var _wasPaid=!!(_pv&&_pv.checkoutPayTime);
+    var _prevAmt=_wasPaid?(_pv.amount||0):0;
+    var _prevTq=_wasPaid?(_pv.tequilaAmount||0):0;
     memberUpdatePromises.push(
       db.collection('members').doc(mid).get().then(function(snap){
         if(!snap.exists) return;
         var d=snap.data();
-        memberUpdateBatch.update(db.collection('members').doc(mid),{
-          totalAmount:(d.totalAmount||0)+amt,
-          totalTequila:(d.totalTequila||0)+tq
-        });
+        var _mBefore={totalAmount:d.totalAmount||0,totalTequila:d.totalTequila||0};
+        var _mAfter={
+          totalAmount:(d.totalAmount||0)+amt-_prevAmt,
+          totalTequila:(d.totalTequila||0)+tq-_prevTq
+        };
+        memberUpdateBatch.update(db.collection('members').doc(mid),_mAfter);
+        _memJournal.push({mid:mid,before:_mBefore,after:_mAfter});
       })
     );
   });
 
   Promise.all(memberUpdatePromises).then(function(){
     return memberUpdateBatch.commit();
-  }).catch(function(){});
+  }).then(function(){
+    _memJournal.forEach(function(j){ writeJournal('update','members',j.mid,j.before,j.after); });
+  }).catch(function(e){ toast('会員累計の更新に失敗しました: '+e.message,'err'); });
 
   fbBatch.commit().then(function(){
     bulkCheckoutVisitKeys.forEach(function(vk){
-      var v=cache.visits.find(function(x){return x.id===vk;});
-      writeJournal('update','visits',vk,null,{amount:v?v.amount:null,tequilaAmount:v?v.tequilaAmount:null,payment:payment,checkoutPayTime:now,checkoutTime:alsoCheckout?now:undefined});
+      var j=_coJournal[vk]||{};
+      writeJournal('update','visits',vk,j.before||null,j.after||null);
     });
+    _adjJournal.forEach(function(a){ writeJournal('create','orders',a.id,null,a.data); });
     closeM('m-checkout');
     var msg=alsoCheckout
       ?'お会計・退場を確定しました（'+bulkCheckoutVisitKeys.length+'名）'
@@ -2114,12 +2148,15 @@ function bulkCheckoutTime(){
   if(!confirm(visitIds.length+'名を退場処理しますか？')) return;
   var time=nowHHMM();
   var fbBatch=db.batch();
+  var _btJournal=[];
   visitIds.forEach(function(visitKey){
     fbBatch.update(db.collection('visits').doc(visitKey),{ checkoutTime: time });
     var v=cache.visits.find(function(x){ return x.id===visitKey; });
+    _btJournal.push({id:visitKey,before:{checkoutTime:(v&&v.checkoutTime)||null},after:{checkoutTime:time}});
     if(v) v.checkoutTime=time;
   });
   fbBatch.commit().then(function(){
+    _btJournal.forEach(function(j){ writeJournal('update','visits',j.id,j.before,j.after); });
     toast(visitIds.length+'名を退場処理しました（'+fmtHHMM(time)+'）');
     renderVisitorList();
     document.querySelectorAll('.vis-check').forEach(function(cb){ cb.checked=false; });
@@ -2235,6 +2272,7 @@ async function printTransferReceipt(memberId, nickname){
         tempId:memberId, nickname:nickname,
         createdAt:new Date().toISOString(), expiresAt:expiresAt.toISOString(), used:false
       });
+      writeJournal('create','tempRegistrations',regCode,null,{tempId:memberId,nickname:nickname});
     }
     // プリンター接続
     if(!receiptDevice || !receiptDevice.gatt.connected){

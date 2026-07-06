@@ -9,7 +9,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="/auth-role.js?v=20260527"></script>
 <script>window.JOURNAL_PAGE='home_order';</script>
-<script src="/journal.js?v=20260601"></script>
+<script src="/journal.js?v=20260706"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -1156,7 +1156,7 @@ async function serveChecked(){
     await batch.commit();
     for(const bid of bids){
       const b=allBatchGroups.find(x=>x.bid===bid);if(!b)continue;
-      for(const g of b.groups) for(const o of g.orders) if(o.served!==0) writeJournal('update','orders',o.id,{served:1},{served:b.isBlind?2:3});
+      for(const g of b.groups) for(const o of g.orders) if(o.served!==0) writeJournal('update','orders',o.id,{served:o.served},{served:b.isBlind?2:3});
     }
     showToast(`${bids.length}グループを提供済みにしました`,'success');
     await loadTodayData();renderOrderList();
@@ -1171,11 +1171,13 @@ async function cancelChecked(section){
   if(!confirm(`${bids.length}グループをキャンセルしますか？`))return;
   try{
     const fsBatch=db.batch();
+    const _cxJournal=[];
     for(const bid of bids){
       const b=allBatchGroups.find(x=>x.bid===bid);if(!b)continue;
       for(const g of b.groups){
         for(const o of g.orders){
           fsBatch.update(db.collection('orders').doc(o.id),{served:0});
+          _cxJournal.push({id:o.id,before:{served:o.served}});
           o.served=0; // ローカル即時更新
         }
         // キャンセル後はグループ全体をserved=0に
@@ -1186,10 +1188,7 @@ async function cancelChecked(section){
       b.total=0;
     }
     await fsBatch.commit();
-    for(const bid of bids){
-      const b=allBatchGroups.find(x=>x.bid===bid);if(!b)continue;
-      for(const g of b.groups) for(const o of g.orders) writeJournal('update','orders',o.id,{served:o.served||1},{served:0});
-    }
+    _cxJournal.forEach(j=>writeJournal('update','orders',j.id,j.before,{served:0}));
     await loadTodayData();renderOrderList();
     showToast(`${bids.length}グループをキャンセルしました`,'info');
   }catch(e){showToast('キャンセル失敗: '+e.message,'error');}
@@ -1224,9 +1223,10 @@ async function cancelSetGroupItems(setGroupId){
     const targets=allOrders.filter(o=>o.setGroupId===setGroupId&&o.served!==0);
     if(!targets.length)return;
     const fb=db.batch();
-    for(const o of targets){fb.update(db.collection('orders').doc(o.id),{served:0});o.served=0;}
+    const _sgJournal=[];
+    for(const o of targets){fb.update(db.collection('orders').doc(o.id),{served:0});_sgJournal.push({id:o.id,before:{served:o.served}});o.served=0;}
     await fb.commit();
-    for(const o of targets) writeJournal('update','orders',o.id,{served:1},{served:0});
+    _sgJournal.forEach(j=>writeJournal('update','orders',j.id,j.before,{served:0}));
     await loadTodayData();renderOrderList();
     showToast(`セット${targets.length}件キャンセルしました`,'info');
   }catch(e){showToast('キャンセル失敗: '+e.message,'error');}
@@ -1243,9 +1243,10 @@ async function cancelOrderItem(orderId){
   if(!confirm(msg))return;
   try{
     const fb=db.batch();
-    for(const o of equivs){fb.update(db.collection('orders').doc(o.id),{served:0});o.served=0;}
+    const _ciJournal=[];
+    for(const o of equivs){fb.update(db.collection('orders').doc(o.id),{served:0});_ciJournal.push({id:o.id,before:{served:o.served}});o.served=0;}
     await fb.commit();
-    for(const o of equivs) writeJournal('update','orders',o.id,{served:1},{served:0});
+    _ciJournal.forEach(j=>writeJournal('update','orders',j.id,j.before,{served:0}));
     await loadTodayData();renderOrderList();
     showToast(`${n}件キャンセルしました`,'info');
   }catch(e){showToast('キャンセル失敗: '+e.message,'error');}
@@ -2010,12 +2011,20 @@ async function confirmOrder(){
     orderTime=AuthRole.nowBusinessTime(currentSessionBT&&currentSessionBT.openTime);
   }
 
-  // orderDate フィールドで当日注文を全取得（旧形式・自動採番IDどちらも含む）
-  const ordDateSnap=await db.collection('orders').where('orderDate','==',useDate).get().catch(()=>({docs:[]}));
-  // ドキュメントIDのrange queryで連番形式IDを確実に取得（フィールド欠損対策）
-  const seqIdSnap=await db.collection('orders')
-    .orderBy(firebase.firestore.FieldPath.documentId())
-    .startAt(useDate).endAt(useDate+'~').get().catch(()=>({docs:[]}));
+  // 既存注文の取得に失敗した場合はここで中断する
+  // （失敗を空扱いで続行すると連番が既存と重複し、batch.setが既存注文を上書き＝消失する）
+  let ordDateSnap, seqIdSnap;
+  try{
+    // orderDate フィールドで当日注文を全取得（旧形式・自動採番IDどちらも含む）
+    ordDateSnap=await db.collection('orders').where('orderDate','==',useDate).get();
+    // ドキュメントIDのrange queryで連番形式IDを確実に取得（フィールド欠損対策）
+    seqIdSnap=await db.collection('orders')
+      .orderBy(firebase.firestore.FieldPath.documentId())
+      .startAt(useDate).endAt(useDate+'~').get();
+  }catch(qe){
+    showToast('既存注文の確認に失敗したため中断しました。通信状態を確認して再度お試しください（'+qe.message+'）','error');
+    return;
+  }
   const existingSeqIds=new Set(seqIdSnap.docs.map(d=>d.id));
   // maxSeq: 両方のスナップショットから最大値を取得
   const maxSeq=[...ordDateSnap.docs,...seqIdSnap.docs].reduce((m,d)=>{
@@ -2043,14 +2052,27 @@ async function confirmOrder(){
     const allParticipants=[...flow.visits.map(v=>v.id),...giftRecipients.map(r=>r.visitKey)];
     for(const vk of allParticipants){
       // 常にFirestoreから確認（allGroupsはセッションフィルター外の来店を含まないため）
-      const vkSnap=await db.collection('orders').where('visitKey','==',vk).get().catch(()=>({docs:[]}));
+      // 取得失敗時はcatchに落として中断（空扱いだとorderGroupIdが重複する）
+      const vkSnap=await db.collection('orders').where('visitKey','==',vk).get();
       const usedSeqs=vkSnap.docs.map(d=>parseInt((d.data().orderGroupId||'').slice(vk.length))||0);
       const maxGSeq=usedSeqs.length?Math.max(...usedSeqs):0;
       orderGroupIdMap[vk]=vk+String(maxGSeq+1).padStart(2,'0');
     }
 
-    // 日付+連番形式のID採番カウンター（書き込み前に全アイテム数を確定）
-    let _seqCounter=maxSeq;
+    // 日付+連番形式のID採番: カウンタードキュメントのトランザクションで
+    // 必要数をまとめて確保する（複数端末の同時注文でも重複しない）。
+    // maxSeqとの大きい方を起点にすることでカウンター未導入期間のIDとも衝突しない。
+    const _needed=flow.visits.length*flow.cart.length*(1+giftRecipients.length);
+    const _counterRef=db.collection('counters').doc('orderSeq');
+    const _seqStart=await db.runTransaction(async tx=>{
+      const cs=await tx.get(_counterRef);
+      const cur=cs.exists?(cs.data()[useDate]||0):0;
+      const start=Math.max(cur,maxSeq);
+      const upd={}; upd[useDate]=start+_needed;
+      tx.set(_counterRef,upd,{merge:true});
+      return start;
+    });
+    let _seqCounter=_seqStart;
     function nextOrderId(){ return useDate+String(++_seqCounter).padStart(3,'0'); }
 
     // ジャーナル用に保存するデータを蓄積してからcommit後に書き込む
@@ -2073,12 +2095,14 @@ async function confirmOrder(){
         fsBatch.set(db.collection('orders').doc(docId),data);
         journalEntries.push({docId,data});
         if(item.productType==='cocktail'&&item._cocktailId){
-          fsBatch.set(db.collection('cocktailOrders').doc(docId),{
+          const _cktData={
             orderId:docId,cocktailId:item._cocktailId,
             baseProductCode:item._baseProductCode||null,
             baseUnitPrice10ml:item._baseUnitPrice10ml||0,
             totalAmount:item._totalAmount||0
-          });
+          };
+          fsBatch.set(db.collection('cocktailOrders').doc(docId),_cktData);
+          journalEntries.push({col:'cocktailOrders',docId,data:_cktData});
         }
         // 奢り受取人レコード（visitKeyある人のみ）
         for(const recipient of giftRecipients){
@@ -2101,7 +2125,7 @@ async function confirmOrder(){
       });
     }
     // commit前に全docIdの重複チェック
-    const newDocIds=journalEntries.map(e=>e.docId);
+    const newDocIds=journalEntries.filter(e=>!e.col||e.col==='orders').map(e=>e.docId);
     const conflicts=newDocIds.filter(id=>existingSeqIds.has(id));
     if(conflicts.length>0){
       throw new Error('注文IDが既に存在します（重複防止）: '+conflicts.join(', ')+'\n再度お試しください。');
@@ -2109,7 +2133,7 @@ async function confirmOrder(){
     await fsBatch.commit();
     // ジャーナル: commit成功後に実際のdocIdで記録
     journalEntries.forEach(function(e){
-      writeJournal('create','orders',e.docId,null,e.data);
+      writeJournal('create',e.col||'orders',e.docId,null,e.data);
     });
     showStep(3);
     const giftSuffix=isGift?` (+奢り${giftCount}人)`:'';

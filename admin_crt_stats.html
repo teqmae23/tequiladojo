@@ -7,6 +7,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="/auth-role.js?v=20260706"></script>
 <script>
 var FIREBASE_CONFIG={
   apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -393,7 +394,12 @@ select[multiple]{height:96px;}
 if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
 var fbAuth = firebase.auth();
 var fbDb = firebase.firestore();
-fbAuth.signInAnonymously().catch(function(){});
+// オーナーのみ利用可（未ログイン・権限なしは管理ハブへ）
+var _authReady = false;
+AuthRole.requireOwner(fbAuth,
+  function(user, role){ _authReady = true; if(window._pendingInit){ window._pendingInit(); window._pendingInit = null; } },
+  function(){ location.replace('admin.html'); }
+);
 
 var DB_URL = 'https://raw.githubusercontent.com/teqmae23/tequiladojo/main/data/crt_exports.db';
 var CMAP_COL = 'crtCountryMap';
@@ -566,6 +572,11 @@ var allPaises = [];   // all Spanish country names from DB
 // Init
 // ─────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', function() {
+  // 認証完了まで初期化を保留（crtCountryMapの読み書きにオーナー権限が必要）
+  if(!_authReady){ window._pendingInit = function(){ window.dispatchEvent(new Event('crt-stats-init')); }; }
+  window.addEventListener('crt-stats-init', startInit);
+  if(_authReady) startInit();
+  function startInit(){
   setStatus('loading', '⏳ データベース読み込み中...');
   Promise.all([
     loadCountryMap(),
@@ -595,6 +606,7 @@ window.addEventListener('DOMContentLoaded', function() {
       setStatus('err', '✗ ' + e.message);
     }
   });
+  }
 });
 
 function setStatus(cls, msg) {

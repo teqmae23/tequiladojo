@@ -10,6 +10,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
+<script src="/auth-role.js?v=20260706"></script>
 
 <!-- ★★★ ここだけ書き換えてください ★★★ -->
 <script>
@@ -1134,7 +1135,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 <script>
 window.JOURNAL_PAGE = 'admin_data';
 </script>
-<script src="/journal.js?v=20260601"></script>
+<script src="/journal.js?v=20260706"></script>
 <script>
 // Firebase初期化
 if (!firebase.apps.length) { firebase.initializeApp(FIREBASE_CONFIG); }
@@ -1202,19 +1203,20 @@ function fmtHHMMsession(t, ses){
   return fmtHHMM(t);
 }
 
-// ── 認証 ─────────────────────────────────────────────────────
+// ── 認証（staff/ownerのみ許可） ──────────────────────────────
 try {
-  auth.onAuthStateChanged(function(user){
-    if(user){
+  AuthRole.requireOwner(auth,
+    function(user, role){
       g("login-screen").style.display="none";
       g("app").style.display="block";
       g("temail").textContent=user.email;
       loadAll();
-    } else {
+    },
+    function(){
       g("login-screen").style.display="flex";
       g("app").style.display="none";
     }
-  });
+  );
 } catch(e){ g("lerr").textContent="Firebase接続エラー: "+e.message; }
 g("lbtn").addEventListener("click",function(){
   var email=gv("lemail"), pass=g("lpass").value;
@@ -1595,12 +1597,19 @@ var _bssBtn=g("btn-save-session"); if(_bssBtn) _bssBtn.addEventListener("click",
     // closeTime がセットされていれば closed、なければ open
     status: rawClose ? 'closed' : 'open'
   };
+  // ジャーナル用に編集前の状態をキャッシュから取得
+  var _sesBefore=null;
+  if(editId.session){
+    var _sb=cache.sessions.find(function(s){return s.id===editId.session;})||_treeSessions.find(function(s){return s.id===editId.session;});
+    if(_sb){ _sesBefore=Object.assign({},_sb); delete _sesBefore.id; }
+  }
   var doSave=function(){ return db.collection("sessions").doc(id).set(saveData,{merge:true}); };
   var promise;
-  if(keyChanged){ promise=db.collection("sessions").doc(editId.session).delete().then(doSave); }
+  if(keyChanged){ promise=journaledDelete("sessions",editId.session).then(doSave); }
   else { promise=doSave(); }
   promise.then(function(){
-    writeJournal(keyChanged?'delete+create':editId.session?'update':'create','sessions',id,null,saveData);
+    var _after=(!keyChanged&&_sesBefore)?Object.assign({},_sesBefore,saveData):saveData;
+    writeJournal(keyChanged?'create':editId.session?'update':'create','sessions',id,keyChanged?null:_sesBefore,_after);
     toast(editId.session?"営業データを更新しました":"営業データを登録しました");
     closeM("m-session");
     loadSessions();
@@ -1800,7 +1809,12 @@ function doSaveVisit(onSuccess){
       amount:gv("vis-amount")!==""?parseInt(gv("vis-amount")):null,
       payment:gv("vis-payment")||"0",receiptIssued:gv("vis-receipt")||"0",
       checkoutTime:gv("vis-out")||null,checkoutPayTime:gv("vis-pay-time")||null};
-    writeJournal(editId.visit?'update':'create','visits',id,null,_vdata);
+    var _visBefore=null;
+    if(editId.visit){
+      var _vb=cache.visits.find(function(v){return v.id===editId.visit;})||_treeCurrentVisits.find(function(v){return v.id===editId.visit;});
+      if(_vb){ _visBefore=Object.assign({},_vb); delete _visBefore.id; }
+    }
+    writeJournal(editId.visit?'update':'create','visits',id,_visBefore,_visBefore?Object.assign({},_visBefore,_vdata):_vdata);
     toast(editId.visit?"来店データを更新しました":"来店登録しました"); if(onSuccess) onSuccess();
   })
   .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
@@ -1971,9 +1985,14 @@ if(_bsr2) _bsr2.addEventListener("click",function(){
       memo:gv("rsv-memo")||null,
       createdAt:firebase.firestore.FieldValue.serverTimestamp()
     };
+    var _rsvBefore=null;
+    if(editId.reservation){
+      var _rb=cache.reservations.find(function(r){return r.id===editId.reservation;});
+      if(_rb){ _rsvBefore=Object.assign({},_rb); delete _rsvBefore.id; }
+    }
     db.collection("reservations").doc(id).set(_rsvData,{merge:true})
     .then(function(){
-      writeJournal(editId.reservation?'update':'create','reservations',id,null,_rsvData);
+      writeJournal(editId.reservation?'update':'create','reservations',id,_rsvBefore,_rsvBefore?Object.assign({},_rsvBefore,_rsvData):_rsvData);
       toast(editId.reservation?"予約を更新しました":"予約を登録しました（ID: "+id+"）");
       closeM("m-reservation"); loadReservations();
       autoPublishCalForMonth(date,"予約");
@@ -2077,15 +2096,26 @@ async function calExecuteCopy(){
   var srcData=calCopySrc.data;
   var batch=db.batch();
   var tv=srcData.businessType!==undefined?srcData.businessType:0;
+  var _pasteJournal=[];
+  // ジャーナル用: 上書き前の状態を事前に読み取る
+  var _dstKeys=Array.from(calPasteDsts);
+  var _beforeMap={};
+  try{
+    var _beforeSnaps=await Promise.all(_dstKeys.map(function(k){return db.collection('schedules').doc(k).get();}));
+    _beforeSnaps.forEach(function(s,i){ _beforeMap[_dstKeys[i]]=s.exists?s.data():null; });
+  }catch(e){ /* before取得失敗時はnullのまま記録 */ }
   calPasteDsts.forEach(function(key){
     var data={scheduleId:key,businessType:tv};
     if(srcData.openTime!==undefined) data.openTime=srcData.openTime;
     if(srcData.closeTime!==undefined) data.closeTime=srcData.closeTime;
     data.memo=srcData.memo||null;
     batch.set(db.collection('schedules').doc(key),data,{merge:true});
+    var _b=_beforeMap[key]||null;
+    _pasteJournal.push({key:key,before:_b,after:_b?Object.assign({},_b,data):data});
   });
   try{
     await batch.commit();
+    _pasteJournal.forEach(function(j){ writeJournal(j.before?'update':'create','schedules',j.key,j.before,j.after); });
     var n=calPasteDsts.size;
     var affectedYm=new Set();
     calPasteDsts.forEach(function(key){affectedYm.add(key.slice(0,6));});
@@ -2286,7 +2316,7 @@ function saveSchRow(key,container,cb){
   var data={scheduleId:key,businessType:parseInt(typeVal),memo:gv('sch-memo')||null};
   if(typeVal!=='4'&&typeVal!=='5'&&typeVal!=='8'){ data.openTime=gv('sch-open')||null; data.closeTime=gv('sch-close')||null; }
   else { data.openTime=null; data.closeTime=null; }
-  db.collection('schedules').doc(key).set(data,{merge:true}).then(function(){ if(cb)cb(); }).catch(function(e){ toast('保存失敗: '+e.message,'err'); });
+  journaledSet('schedules',key,data,{merge:true}).then(function(){ if(cb)cb(); }).catch(function(e){ toast('保存失敗: '+e.message,'err'); });
 }
 g('btn-save-schedule').addEventListener('click',function(){
   var key=g('m-schedule').__calKey; if(!key) return;
@@ -2336,7 +2366,7 @@ function renderSchFormList(y,m,schMap,container){
     saveBtn.addEventListener('click',(function(k,ts,oi,ci,r){ return function(){
       var tv=ts.value; if(tv===''){toast('営業タイプを選択してください','err');return;}
       var data={scheduleId:k,businessType:parseInt(tv),openTime:oi.value||null,closeTime:ci.value||null,memo:null};
-      db.collection('schedules').doc(k).set(data,{merge:true}).then(function(){ toast('保存しました（'+k+'）'); calSaveUpdateTime(k.slice(0,6)); calCheckUnpublished(calGetYm()); }).catch(function(e){toast('保存失敗: '+e.message,'err');});
+      journaledSet('schedules',k,data,{merge:true}).then(function(){ toast('保存しました（'+k+'）'); calSaveUpdateTime(k.slice(0,6)); calCheckUnpublished(calGetYm()); }).catch(function(e){toast('保存失敗: '+e.message,'err');});
     }; })(key,typeSel,openInp,closeInp,sch));
     row.appendChild(dayLabel); row.appendChild(typeSel); row.appendChild(openInp); row.appendChild(closeInp); row.appendChild(saveBtn);
     container.appendChild(row);
@@ -2852,7 +2882,7 @@ function openOrderModal(id){
     sv("ord-date",r?r.orderDate||(_isOldId?id.slice(0,6):""):"");
     sv("ord-seq",_isOldId?id.slice(6):"(自動採番)");
     sv("ord-time",r?r.orderTime||"":"");
-    sv("ord-customer",r?r.customerId||"":""); sv("ord-visit",r?r.visitKey||"":"");
+    sv("ord-customer",r?r.customerId||"":""); sv("ord-visit",r?r.visitKey||r.visitId||"":"");
     sv("ord-type",r?r.productType||"tequila":"tequila");
     sv("ord-product-code",r?r.productCode||"":"");
     sv("ord-product-name",r?r.productName||"":"");
@@ -2908,6 +2938,8 @@ if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
     orderTime:gv("ord-time")||null,
     customerId:gv("ord-customer")||null,
     visitKey:gv("ord-visit")||null,
+    // 旧フィールドvisitIdも同じ値に揃える（別visitを指したまま残ると両方の来店に紐付いてしまう）
+    visitId:gv("ord-visit")||null,
     productType:gv("ord-type")||"tequila",
     productCode:gv("ord-product-code")||null,
     productName:gv("ord-product-name")||null,
@@ -2923,8 +2955,13 @@ if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
     setId:gv("ord-set-id")||null,
     deleted:0
   };
+  var _ordBefore=null;
+  if(editId.order){
+    var _ob=cache.orders.find(function(x){return x.id===editId.order;})||_treeCurrentOrders.find(function(x){return x.id===editId.order;});
+    if(_ob){ _ordBefore=Object.assign({},_ob); delete _ordBefore.id; }
+  }
   function _onSaveSuccess(){
-    writeJournal(editId.order?'update':'create','orders',id,null,_saveData);
+    writeJournal(editId.order?'update':'create','orders',id,_ordBefore,_ordBefore?Object.assign({},_ordBefore,_saveData):_saveData);
     toast(editId.order?"注文データを更新しました":"注文データを登録しました");
     closeM("m-order");
     if(_treeAfterSave){var _cb=_treeAfterSave;_treeAfterSave=null;_cb();}else{loadOrders();}
@@ -4970,8 +5007,7 @@ function delNews(id){
       if(!newsEditId) data.createdAt=new Date().toISOString();
       var ref=newsEditId?db.collection('news').doc(newsEditId):db.collection('news').doc();
       var _newsId=newsEditId||ref.id;
-      await ref.set(data,{merge:!!newsEditId});
-      writeJournal(newsEditId?'update':'create','news',_newsId,null,data);
+      await journaledSet('news',_newsId,data,{merge:!!newsEditId});
       toast(newsEditId?'更新しました':'登録しました');
       closeM('m-news'); loadNews();
     }catch(e){

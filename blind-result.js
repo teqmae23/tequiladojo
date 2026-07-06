@@ -554,6 +554,7 @@ var BlindResult = (function(){
     }
     try {
       var fsBatch = _db.batch();
+      var _journalQueue = [];
       for(var mi = 0; mi < members.length; mi++){
         var g = members[mi];
         var visit = allVisits.find(function(v){ return v.id === g.visitKey; });
@@ -576,20 +577,28 @@ var BlindResult = (function(){
         var docId = g.gid + '_' + customerId;
         var bottleIds = marks.map(function(m){ return (markToOrder[m] && markToOrder[m].productCode) || m; }).filter(Boolean);
         var bottleComboKey = bottleIds.slice().sort().join('|');
-        fsBatch.set(_db.collection('blindResults').doc(docId), {
+        var _brData = {
           id: docId, groupId: g.gid, batchId: b.batchId || null,
           visitKey: g.visitKey, customerId: customerId,
           answeredAt: firebase.firestore.FieldValue.serverTimestamp(),
           answers: ans, winner: winners[mi],
           correctCount: correctCount, totalCount: marks.length,
           bottleComboKey: bottleComboKey
-        });
+        };
+        fsBatch.set(_db.collection('blindResults').doc(docId), _brData);
+        _journalQueue.push({op:'create', col:'blindResults', id:docId, before:null, after:_brData});
         for(var oi = 0; oi < g.orders.length; oi++){
           var o = g.orders[oi];
-          if(o.served !== 0) fsBatch.update(_db.collection('orders').doc(o.id), {served: 3});
+          if(o.served !== 0){
+            fsBatch.update(_db.collection('orders').doc(o.id), {served: 3});
+            _journalQueue.push({op:'update', col:'orders', id:o.id, before:{served:o.served}, after:{served:3}});
+          }
         }
       }
       await fsBatch.commit();
+      if(typeof writeJournal === 'function'){
+        _journalQueue.forEach(function(j){ writeJournal(j.op, j.col, j.id, j.before, j.after); });
+      }
       _showToast('結果を保存しました', 'success');
       close(true);
       if(_onSaved) _onSaved();
