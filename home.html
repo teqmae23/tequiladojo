@@ -9,6 +9,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
+<script src="/auth-role.js?v=20260706"></script>
 <script>
 var FIREBASE_CONFIG = {
   apiKey:            "AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -178,10 +179,9 @@ input{font-family:var(--sans)}
     <div id="staff-list-area" style="min-height:60px;color:var(--ink3);font-size:13px">読み込み中...</div>
     <div class="add-staff-form" style="margin-top:16px">
       <div style="font-size:11px;font-weight:600;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px">新しいスタッフを追加</div>
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">登録済みの本会員（active）のメールアドレスを指定してください</div>
       <label style="font-size:11px;color:var(--ink3);display:block;margin-bottom:4px">メールアドレス</label>
       <input type="email" class="fi-sm" id="new-staff-email" placeholder="staff@example.com" style="margin-bottom:8px">
-      <label style="font-size:11px;color:var(--ink3);display:block;margin-bottom:4px">パスワード（初期）</label>
-      <input type="password" class="fi-sm" id="new-staff-pass" placeholder="8文字以上" style="margin-bottom:8px">
       <label style="font-size:11px;color:var(--ink3);display:block;margin-bottom:4px">役割</label>
       <select class="fi-sm" id="new-staff-role" style="margin-bottom:12px">
         <option value="staff">staff（スタッフ）</option>
@@ -198,7 +198,7 @@ input{font-family:var(--sans)}
 <script>
 if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
 var auth      = firebase.auth();
-var functions = firebase.app().functions('us-central1');
+var functions = firebase.app().functions('asia-northeast1');
 var db        = firebase.firestore();
 
 // 今日の日付
@@ -208,31 +208,27 @@ var db        = firebase.firestore();
   if(el) el.textContent=d.getFullYear()+"年"+(d.getMonth()+1)+"月"+d.getDate()+"日（"+wdays[d.getDay()]+"）";
 })();
 
-// ── 認証 ─────────────────────────────────────────────────────
-auth.onAuthStateChanged(function(user){
-  if(user){
+// ── 認証（他の日常業務ページと同じ staff/owner ガード） ─────────
+AuthRole.requireStaff(auth,
+  function(user, role){
     document.getElementById("login-screen").style.display="none";
     document.getElementById("app").style.display="block";
     document.getElementById("user-email").textContent=user.email;
-    // roleをmembersから取得
-    db.collection("members").where("email","==",user.email).limit(1).get()
-      .then(function(snap){
-        var role=(!snap.empty&&snap.docs[0].data().role)||"staff";
-        var badge=document.getElementById("role-badge");
-        if(badge){
-          badge.style.display="inline-block";
-          badge.textContent=role==="owner"?"OWNER":"STAFF";
-          badge.className="role-badge "+(role==="owner"?"badge-owner":"badge-staff");
-        }
-        if(role==="owner"){
-          document.querySelectorAll(".owner-only").forEach(function(el){el.style.display="block";});
-        }
-      }).catch(function(){});
-  } else {
+    var badge=document.getElementById("role-badge");
+    if(badge){
+      badge.style.display="inline-block";
+      badge.textContent=role==="owner"?"OWNER":"STAFF";
+      badge.className="role-badge "+(role==="owner"?"badge-owner":"badge-staff");
+    }
+    if(role==="owner"){
+      document.querySelectorAll(".owner-only").forEach(function(el){el.style.display="block";});
+    }
+  },
+  function(){
     document.getElementById("login-screen").style.display="flex";
     document.getElementById("app").style.display="none";
   }
-});
+);
 
 // ログインボタン
 document.getElementById("lbtn").addEventListener("click", function(){
@@ -286,24 +282,28 @@ async function removeStaff(uid,email){
 }
 async function addStaff(){
   var email=document.getElementById("new-staff-email").value.trim();
-  var pass=document.getElementById("new-staff-pass").value;
   var role=document.getElementById("new-staff-role").value;
   var err=document.getElementById("add-staff-err");
   err.textContent="";
-  if(!email||!pass){ err.textContent="メールとパスワードを入力してください"; return; }
-  if(pass.length<8){ err.textContent="パスワードは8文字以上"; return; }
+  if(!email){ err.textContent="メールアドレスを入力してください"; return; }
   try{
-    var res=await functions.httpsCallable("adminAuthOperation")({operation:"create",email:email,password:pass});
-    var uid=res.data.uid;
     // 本登録アカウント（status:'active'）のみスタッフ設定可
-    var memSnap=await db.collection("members").where("authUid","==",uid).limit(1).get();
-    if(memSnap.empty||memSnap.docs[0].data().status!=="active"){
+    var memSnap=await db.collection("members").where("email","==",email).limit(1).get();
+    if(memSnap.empty){
+      err.textContent="このメールアドレスの会員が見つかりません。先に会員登録を完了してください。";
+      return;
+    }
+    var mem=memSnap.docs[0].data();
+    if(mem.status!=="active"){
       err.textContent="スタッフ登録は本会員（active）のみ可能です。先に会員登録を完了してください。";
       return;
     }
-    await functions.httpsCallable("setUserRole")({uid:uid,role:role});
+    if(!mem.authUid){
+      err.textContent="この会員にはログインアカウントが連携されていません。";
+      return;
+    }
+    await functions.httpsCallable("setUserRole")({uid:mem.authUid,role:role});
     document.getElementById("new-staff-email").value="";
-    document.getElementById("new-staff-pass").value="";
     showToast(email+" を "+role+" として追加しました");
     loadStaffList();
   }catch(e){ err.textContent="失敗: "+e.message; }
