@@ -7,6 +7,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <script>
 var FIREBASE_CONFIG={
   apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -802,22 +803,18 @@ async function loadMemberNoms(user){
     }
     if(!memberId) return;
 
-    // visits -> orders -> bottleData のNOM抽出
-    var vsnap=await db.collection('visits').where('memberId','==',memberId).get();
-    var vids=vsnap.docs.map(function(d){return d.id;});
-    if(!vids.length) return;
+    // visits/orders はスタッフ限定読み取りのため Cloud Functions 経由で本人分を取得
+    var _act={orders:[]};
+    try{
+      var _req=_previewMemberId?{previewMemberId:memberId}:{};
+      var _res=await firebase.app().functions('asia-northeast1').httpsCallable('getMemberActivity')(_req);
+      _act=_res.data||_act;
+    }catch(e){ console.warn('getMemberActivity error:',e); return; }
 
     var productCodes=new Set();
-    for(var i=0;i<vids.length;i+=10){
-      var chunk=vids.slice(i,i+10);
-      try{
-        var os=await db.collection('orders').where('visitKey','in',chunk).get();
-        os.forEach(function(d){
-          var o=d.data();
-          if(o.productCode||o.productId) productCodes.add(o.productCode||o.productId);
-        });
-      }catch(e){}
-    }
+    (_act.orders||[]).forEach(function(o){
+      if(o.productCode||o.productId) productCodes.add(o.productCode||o.productId);
+    });
 
     var pcArr=Array.from(productCodes);
     for(var j=0;j<pcArr.length;j+=10){

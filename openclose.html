@@ -9,6 +9,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <script>
 var FIREBASE_CONFIG = {
@@ -211,28 +212,19 @@ var members=[];
 
 var RTDB_BASE='https://tequiladojo-default-rtdb.firebaseio.com';
 
-// 公開用ステータスを書き込む（Firestore + RTDB両方）
+// 公開用ステータスを書き込む（Cloud Functions経由でFirestore + RTDB両方を更新）
+// RTDB側のルールは「.read: true / .write: false」にし、この関数経由のみとする
 function writePublicStatus(status, extra){
-  // Firestoreへの書き込み（ログインユーザー向け）
-  var fsData=Object.assign({status:status,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},extra||{});
-  journaledSet('storeStatus','current',fsData)
-    .catch(function(e){ console.error('storeStatus Firestore write failed:',e); });
-
-  // RTDBへの書き込み（未ログインユーザーも読み取り可能 → index.html用）
-  // RTDB側のルール: { "storeStatus": { ".read": true, ".write": "auth != null" } }
-  var rtdbData=Object.assign({status:status,updatedAt:Date.now()},extra||{});
-  if(!auth.currentUser){ return; }
-  auth.currentUser.getIdToken().then(function(token){
-    return fetch(RTDB_BASE+'/storeStatus.json?auth='+token,{
-      method:'PUT',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(rtdbData)
+  var fbFunctions=firebase.app().functions('asia-northeast1');
+  fbFunctions.httpsCallable('setStoreStatus')({status:status, extra:extra||{}})
+    .catch(function(e){
+      console.warn('setStoreStatus function failed, Firestoreへ直接書き込みます:', e.message||e);
+      // フォールバック: Firestoreのみ直接更新（RTDBは更新されない）
+      var fsData=Object.assign({status:status,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},extra||{});
+      journaledSet('storeStatus','current',fsData)
+        .catch(function(e2){ console.error('storeStatus Firestore write failed:',e2); });
+      toast('公開ステータスの更新に一部失敗しました（トップページの表示が古い可能性）','err');
     });
-  }).then(function(r){
-    if(!r.ok) throw new Error('HTTP '+r.status);
-  }).catch(function(e){
-    console.warn('RTDB write skipped (RTDBが未有効または未設定の可能性):',e.message||e);
-  });
 }
 
 var STATUS_LABEL={closed:"閉店中",open:"開店中",break:"休憩中"};

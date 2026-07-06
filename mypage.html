@@ -334,6 +334,7 @@ select.fi{min-width:80px}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <script>
 // ─── Firebase初期化 ───
 firebase.initializeApp({
@@ -346,6 +347,7 @@ firebase.initializeApp({
 });
 const auth=firebase.auth();
 const db=firebase.firestore();
+const fbFunctions=firebase.app().functions('asia-northeast1');
 
 // ─── 状態 ───
 let currentMember=null;   // Firestoreのmembersドキュメント
@@ -613,23 +615,35 @@ async function loadBlindMarks(){
   }catch(e){console.warn('blindMarks取得失敗:',e);}
 }
 
+// visits/orders はセキュリティルール上スタッフ限定読み取りのため、
+// Cloud Functions（getMemberActivity）経由で本人分のみ取得する（1回だけ実行して共有）
+let _activityPromise=null;
+function fetchActivity(memberId){
+  if(!_activityPromise){
+    const req=(typeof _previewMemberDoc!=='undefined'&&_previewMemberDoc)?{previewMemberId:memberId}:{};
+    _activityPromise=fbFunctions.httpsCallable('getMemberActivity')(req).then(r=>r.data||{});
+  }
+  return _activityPromise;
+}
+
 async function loadMyData(memberId){
   const issues=[];
   console.log('[loadMyData] called with memberId:', memberId, typeof memberId);
 
   // productsはinitMyPageで取得済み
 
-  // visits取得（memberId一致）
-  const vSnap=await db.collection('visits')
-    .where('memberId','==',memberId)
-    .orderBy('visitDate','desc')
-    .get().catch(async e=>{
-      // インデックスなしでもOKなようにフォールバック
-      console.warn('visits orderBy失敗、フォールバック:',e);
-      return db.collection('visits').where('memberId','==',memberId).get();
-    });
+  let act;
+  try{
+    act=await fetchActivity(memberId);
+  }catch(e){
+    console.error('getMemberActivity error:',e);
+    document.getElementById('visit-list').innerHTML='<div class="empty"><div class="empty-icon">⚠️</div>来場履歴の取得に失敗しました<br><span style="font-size:11px">'+(e.message||'')+'</span></div>';
+    updateSummary([]);
+    showDebugBanner(['来場データ取得エラー: '+(e.message||'')]);
+    return;
+  }
 
-  allVisits=vSnap.docs.map(d=>({id:d.id,...d.data()}));
+  allVisits=(act.visits||[]).slice();
 
   // visitDateがない古いデータのチェック
   const noDate=allVisits.filter(v=>!v.visitDate&&!v.visitTime);
@@ -652,18 +666,8 @@ async function loadMyData(memberId){
     return db2.localeCompare(da);
   });
 
-  // orders取得（visitKeyで各来場の注文を取得）
-  // 件数が多い場合はbatch取得
-  const visitIds=allVisits.map(v=>v.id);
-  allOrders=[];
-
-  // Firestoreのin句は最大30件なのでチャンク分割
-  const chunks=[];
-  for(let i=0;i<visitIds.length;i+=30)chunks.push(visitIds.slice(i,i+30));
-  for(const chunk of chunks){
-    const oSnap=await db.collection('orders').where('visitKey','in',chunk).get();
-    oSnap.forEach(d=>allOrders.push({id:d.id,...d.data()}));
-  }
+  // orders / blindResults / 同席情報はサーバー（getMemberActivity）が本人分をまとめて返す
+  allOrders=(act.orders||[]).slice();
 
   // ordersにvisitKeyがあるか確認
   const ordersNoVisit=allOrders.filter(o=>!o.visitKey&&!o.visitId);
@@ -671,66 +675,23 @@ async function loadMyData(memberId){
     issues.push(`${ordersNoVisit.length}件の注文データにvisitKeyがありません`);
   }
 
+  allBlindResults=(act.blindResults||[]).slice();
 
-  // blindResults取得（batchIdで全員分 + groupIdでも取得）
-  allBlindResults=[];
-  const batchIds=[];
-  allOrders.forEach(o=>{if(o.batchId&&!batchIds.includes(o.batchId))batchIds.push(o.batchId);});
-  if(batchIds.length){
-    const bChunks=[];
-    for(let i=0;i<batchIds.length;i+=30)bChunks.push(batchIds.slice(i,i+30));
-    for(const chunk of bChunks){
-      const bSnap=await db.collection('blindResults').where('batchId','in',chunk).get();
-      bSnap.forEach(d=>allBlindResults.push({id:d.id,...d.data()}));
-    }
-  }
+  // 会員名・visitKey→memberIdのキャッシュ（サーバーが解決済み）
+  Object.keys(act.memberNames||{}).forEach(mid=>{
+    if(!allMembersMap[mid]) allMembersMap[mid]={nickname:act.memberNames[mid]};
+  });
+  Object.keys(act.visitMemberMap||{}).forEach(vk=>{
+    const mid=act.visitMemberMap[vk];
+    allMembersMap['visit_'+vk]=mid;
+    if(mid&&!allMembersMap[mid]) allMembersMap[mid]={nickname:mid};
+  });
 
-  // blindResultsのcustomerIdから会員名をキャッシュ
-  const customerIds=[...new Set(allBlindResults.map(r=>r.customerId).filter(id=>id&&!allMembersMap[id]))];
-  for(const mid of customerIds){
-    try{
-      // publicProfiles優先、フォールバックはmembers
-      const ppSnap=await db.collection('publicProfiles').doc(mid).get();
-      if(ppSnap.exists&&ppSnap.data().nickname){
-        allMembersMap[mid]={nickname:ppSnap.data().nickname};
-      } else {
-        const mSnap=await db.collection('members').doc(mid).get();
-        if(mSnap.exists){const md=mSnap.data();allMembersMap[mid]={nickname:md.nickname||md.name||mid};}
-      }
-    }catch(e){}
-  }
-  // visitKey→memberIdのマッピング（blindResultsのvisitKeyから）
-  const myVisitKeys2=new Set(allVisits.map(v=>v.id));
-  const otherVisitKeys2=[...new Set(allBlindResults.map(r=>r.visitKey||r.visitId).filter(vk=>vk&&!myVisitKeys2.has(vk)))];
-  if(otherVisitKeys2.length){
-    const chunks3=[];
-    for(let i=0;i<otherVisitKeys2.length;i+=30)chunks3.push(otherVisitKeys2.slice(i,i+30));
-    for(const chunk of chunks3){
-      const vSnap3=await db.collection('visits').where(firebase.firestore.FieldPath.documentId(),'in',chunk).get();
-      vSnap3.docs.forEach(vd=>{
-        const mid=vd.data().memberId;
-        if(mid){
-          allMembersMap['visit_'+vd.id]=mid;
-          if(!allMembersMap[mid])allMembersMap[mid]={nickname:mid}; // 後でキャッシュ
-        }
-      });
-    }
-    // visitKeyで見つかったmemberIdの会員名も取得
-    const newMids=[...new Set(otherVisitKeys2.map(vk=>allMembersMap['visit_'+vk]).filter(m=>m&&allMembersMap[m]?.nickname===m))];
-    for(const mid of newMids){
-      try{
-        const mSnap=await db.collection('members').doc(mid).get();
-        if(mSnap.exists){const md=mSnap.data();allMembersMap[mid]={nickname:md.nickname||md.name||mid};}
-      }catch(e){}
-    }
-  }
-
-  // _togetherMapをFirestoreから直接構築（allOrdersは自分のvisitのみなので直接取得）
+  // _togetherMap構築
   const myMidFinal=currentMember?.memberId||currentMember?.id;
-  const myVisitKeysFinal=new Set(allVisits.map(v=>v.id));
   const batchToOtherNames={};
 
-  // まずblindResultsから補完（既にallMembersMapに情報あり）
+  // まずblindResultsから補完
   allBlindResults.forEach(r=>{
     if(!r.batchId||r.customerId===myMidFinal)return;
     const mid=r.customerId;
@@ -741,51 +702,15 @@ async function loadMyData(memberId){
     if(!batchToOtherNames[r.batchId].includes(name))batchToOtherNames[r.batchId].push(name);
   });
 
-  // batchIdでordersを取得して他visitKeyの名前を収集
-  const allBatchIds=[...new Set(allOrders.map(o=>o.batchId).filter(Boolean))];
-  if(allBatchIds.length){
-    const bChunksT=[];
-    for(let i=0;i<allBatchIds.length;i+=10)bChunksT.push(allBatchIds.slice(i,i+10));
-    for(const chunk of bChunksT){
-      const oSnap=await db.collection('orders').where('batchId','in',chunk).get();
-      // 他visitKeyを収集
-      const otherVkSet=new Set();
-      oSnap.docs.forEach(d=>{
-        const vk=d.data().visitKey||d.data().visitId;
-        if(vk&&!myVisitKeysFinal.has(vk))otherVkSet.add(vk);
-      });
-      // visitKey→memberIdが未登録なら取得
-      const unknownVks=[...otherVkSet].filter(vk=>!allMembersMap['visit_'+vk]);
-      if(unknownVks.length){
-        const vkChunks=[];
-        for(let i=0;i<unknownVks.length;i+=30)vkChunks.push(unknownVks.slice(i,i+30));
-        for(const vkChunk of vkChunks){
-          const vSnap=await db.collection('visits').where(firebase.firestore.FieldPath.documentId(),'in',vkChunk).get();
-          const newMids=[];
-          vSnap.docs.forEach(vd=>{
-            const mid=vd.data().memberId;
-            if(mid){allMembersMap['visit_'+vd.id]=mid;if(!allMembersMap[mid]){allMembersMap[mid]={nickname:mid};newMids.push(mid);}}
-          });
-          for(const mid of newMids){
-            try{const mSnap=await db.collection('members').doc(mid).get();if(mSnap.exists){const md=mSnap.data();allMembersMap[mid]={nickname:md.nickname||md.name||mid};}}catch(e){}
-          }
-        }
-      }
-      // batchToOtherNamesに登録
-      oSnap.docs.forEach(d=>{
-        const dat=d.data();
-        const vk=dat.visitKey||dat.visitId;
-        const bid=dat.batchId;
-        if(!vk||!bid||myVisitKeysFinal.has(vk))return;
-        const mid=allMembersMap['visit_'+vk];
-        const info=mid?allMembersMap[mid]:null;
-        const name=info?info.nickname:null;
-        if(!name||mid===myMidFinal)return;
-        if(!batchToOtherNames[bid])batchToOtherNames[bid]=[];
-        if(!batchToOtherNames[bid].includes(name))batchToOtherNames[bid].push(name);
-      });
-    }
-  }
+  // 同一バッチ内の他会員の注文（サーバーがvisitKey/batchIdに縮約済み）
+  (act.batchOrders||[]).forEach(b=>{
+    const mid=allMembersMap['visit_'+b.visitKey];
+    const info=mid?allMembersMap[mid]:null;
+    const name=info?info.nickname:null;
+    if(!name||mid===myMidFinal)return;
+    if(!batchToOtherNames[b.batchId])batchToOtherNames[b.batchId]=[];
+    if(!batchToOtherNames[b.batchId].includes(name))batchToOtherNames[b.batchId].push(name);
+  });
   window._togetherMap=batchToOtherNames;
 
   showDebugBanner(issues);
@@ -1210,8 +1135,8 @@ async function loadVisitStatus(memberId){
   var el=document.getElementById('visit-status-bar');
   if(!el||!memberId)return;
   try{
-    var snap=await db.collection('visits').where('memberId','==',memberId).get();
-    var vs=snap.docs.map(d=>d.data());
+    var act=await fetchActivity(memberId);
+    var vs=(act.visits||[]).slice();
     var active=vs.find(v=>!v.checkoutTime);
     if(active){
       var t=active.visitTime||'';

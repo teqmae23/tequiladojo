@@ -12,6 +12,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <script>
 var FIREBASE_CONFIG = {
@@ -783,6 +784,7 @@ var Cropper = (function(){
 if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
 var auth    = firebase.auth();
 var db      = firebase.firestore();
+var fbFunctions = firebase.app().functions('asia-northeast1');
 var storage = firebase.storage();
 Cropper.initEvents();
 var currentUser = null;
@@ -866,36 +868,28 @@ function doRegister() {
   if(pass !== pass2) { errEl.textContent = 'パスワードが一致しません'; return; }
   var btn = g('btn-register'); if(btn) { btn.disabled=true; btn.textContent='登録中...'; }
   var btn2 = g('btn-register2'); if(btn2) { btn2.disabled=true; btn2.textContent='登録中...'; }
-  // 採番トランザクションは認証必須のため、未ログインなら匿名サインインしてから実行
-  var _pre = auth.currentUser ? Promise.resolve() : auth.signInAnonymously();
-  _pre.then(function(){
-    return Promise.all([fetchNextRealId(), fetchNextDisplayMemberId()]);
-  }).then(function(ids) {
-    var realId = ids[0], displayId = ids[1];
-    var authEmail = emailInput ? emailInput : (displayId + VIRTUAL_DOMAIN);
-    return auth.createUserWithEmailAndPassword(authEmail, pass)
-      .then(function(cred) {
-        var uid = cred.user.uid;
-        var now = new Date().toISOString().slice(0,10);
-        var batch = db.batch();
-        batch.set(db.collection('memberIndex').doc(realId), {email: authEmail});
-        batch.set(db.collection('members').doc(realId), {
-          authUid: uid,
-          realId: realId,
-          displayId: displayId,
-          memberId: displayId,  // 旧互換フィールド
-          email: emailInput || null,
-          status: 'active',
-          nickname: nick,
-          name: gv('reg-name') || null,
-          nameKana: gv('reg-kana') || null,
-          gender: gv('reg-gender') || null,
-          birthday: gv('reg-birth') || null,
-          phone: gv('reg-tel') || null,
-          registeredAt: now
-        });
-        return batch.commit().then(function(){ return displayId; });
-      });
+  // 採番・アカウント作成・会員ドキュメント作成はCloud Functions（registerMember）で実行
+  fbFunctions.httpsCallable('registerMember')({
+    password: pass, email: emailInput || '', nickname: nick, status: 'active'
+  }).then(function(res) {
+    var r = res.data;
+    return auth.signInWithEmailAndPassword(r.authEmail, pass).then(function(cred) {
+      if(r.authEmail.indexOf(VIRTUAL_DOMAIN) < 0) {
+        var as = {url:'https://tequiladojo.com/member_register.html', handleCodeInApp:false};
+        cred.user.sendEmailVerification(as).catch(function(){});
+      }
+      // 追加プロフィール項目は本人権限で更新（自分のドキュメントのみ書き込み可）
+      var prof = {};
+      if(gv('reg-name'))   prof.name = gv('reg-name');
+      if(gv('reg-kana'))   prof.nameKana = gv('reg-kana');
+      if(gv('reg-gender')) prof.gender = gv('reg-gender');
+      if(gv('reg-birth'))  prof.birthday = gv('reg-birth');
+      if(gv('reg-tel'))    prof.phone = gv('reg-tel');
+      var p = Object.keys(prof).length
+        ? db.collection('members').doc(r.realId).update(prof).catch(function(){})
+        : Promise.resolve();
+      return p.then(function(){ return r.memberId; });
+    });
   }).then(function(memberId) {
     var infoEl = g('reg-info-msg'); if(infoEl) infoEl.textContent = '登録完了！会員番号: ' + memberId;
     toast('登録完了！会員番号: ' + memberId);

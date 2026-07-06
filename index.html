@@ -197,6 +197,7 @@ body::before{
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <script>
 
 var FIREBASE_CONFIG = {
@@ -741,114 +742,53 @@ function loadStoreStatus(){
     render(box('#999','閉店中',nextStr?'次回：'+nextStr:'次回未定'));
   }
 
-  function doFetch(){
-    db.collection('storeStatus').doc('current').get()
-    .then(function(statusDoc){
-      var p2=db.collection('schedules').get().catch(function(){return {docs:[]};});
-      p2.then(function(schSnap){
-        var schMap={};
-        (schSnap.docs||[]).forEach(function(d){
-          schMap[d.id]=d.data();
-          if(d.data().scheduleId) schMap[d.data().scheduleId]=d.data();
-        });
-        if(!statusDoc.exists){showClosed(schMap);return;}
-        var sd=statusDoc.data();
-        var status=sd.status||'closed';
-        if(status==='closed'){showClosed(schMap);return;}
-        if(status==='break'){
-          var resumeT=sd.breakResumeTime||'';
-          render(box('#9B59B6','休憩中',resumeT?fmtT(resumeT)+'再開予定':''));
-          return;
-        }
-        // open
-        var sessionDate=sd.sessionDate||'';
-        var layoutId=sd.layoutId||'';
-        var pv=sessionDate
-          ?db.collection('visits').where('visitDate','==',sessionDate).get().catch(function(){return {docs:[]};})
-          :Promise.resolve({docs:[]});
-        var pl=layoutId
-          ?db.collection('layouts').doc(layoutId).get().catch(function(){return null;})
-          :Promise.resolve(null);
-        Promise.all([pv,pl]).then(function(r2){
-          var visSnap=r2[0]||{docs:[]}, layoutDoc=r2[1];
-          var active=(visSnap.docs||[]).filter(function(vd){return !vd.data().checkoutTime&&!vd.data().isStaff;}).length;
-          var seats=layoutDoc&&layoutDoc.exists?layoutDoc.data().seats:'?';
-          render(box('#2CA44E','営業中','来店：'+active+'/'+seats+'人'));
-        });
-      });
-    })
-    .catch(function(){
-      db.collection('sessions').get()
-      .then(function(snap){
-        var schP=db.collection('schedules').get().catch(function(){return {docs:[]};});
-        schP.then(function(schSnap){
-          var schMap={};
-          (schSnap.docs||[]).forEach(function(d){ schMap[d.id]=d.data(); if(d.data().scheduleId) schMap[d.data().scheduleId]=d.data(); });
-          if(snap.empty){showClosed(schMap);return;}
-          var docs=snap.docs.map(function(d){return d.data();});
-          docs.sort(function(a,b){return((b.date||'')+(b.openTime||'')).localeCompare((a.date||'')+(a.openTime||''));});
-          var d=docs[0];
-          if(d.closeTime){showClosed(schMap);return;}
-          var fields=[d.breakStart1,d.breakEnd1,d.breakStart2,d.breakEnd2,d.breakStart3,d.breakEnd3];
-          var filled=fields.filter(function(f){return f;}).length;
-          if(filled%2===1){
-            var bIdx=filled<=2?1:filled<=4?2:3;
-            render(box('#9B59B6','休憩中',d['breakResumeTime'+bIdx]?fmtT(d['breakResumeTime'+bIdx])+'再開予定':''));
-            return;
-          }
-          var yymmdd=d.date||'';
-          var layoutId=d.layoutId||'';
-          var pv=yymmdd?db.collection('visits').where('visitDate','==',yymmdd).get().catch(function(){return {docs:[]};}) :Promise.resolve({docs:[]});
-          var pl=layoutId?db.collection('layouts').doc(layoutId).get().catch(function(){return null;}):Promise.resolve(null);
-          Promise.all([pv,pl]).then(function(r2){
-            var visSnap=r2[0]||{docs:[]},layoutDoc=r2[1];
-            var active=(visSnap.docs||[]).filter(function(vd){return !vd.data().checkoutTime&&!vd.data().isStaff;}).length;
-            var seats=layoutDoc&&layoutDoc.exists?layoutDoc.data().seats:'?';
-            render(box('#2CA44E','営業中','来店：'+active+'/'+seats+'人'));
-          });
-        });
-      })
-      .catch(function(){
-        db.collection('schedules').get().catch(function(){return {docs:[]};}).then(function(schSnap){
-          var schMap={};(schSnap.docs||[]).forEach(function(d){schMap[d.id]=d.data();if(d.data().scheduleId)schMap[d.data().scheduleId]=d.data();});
-          showClosed(schMap);
-        });
-      });
+  // 閉店中表示: schedules（公開読み取り）から次回営業を算出
+  function showClosedFromSchedules(){
+    db.collection('schedules').get().catch(function(){return {docs:[]};}).then(function(schSnap){
+      var schMap={};
+      (schSnap.docs||[]).forEach(function(d){schMap[d.id]=d.data();if(d.data().scheduleId)schMap[d.data().scheduleId]=d.data();});
+      showClosed(schMap);
     });
+  }
+
+  function renderStatus(d){
+    var status=(d&&d.status)||'closed';
+    if(status==='open'){
+      var detail=(d.active!=null)?('来店：'+d.active+'/'+(d.seats!=null?d.seats:'?')+'人'):'';
+      render(box('#2CA44E','営業中',detail));
+    } else if(status==='break'){
+      render(box('#9B59B6','休憩中',d.breakResumeTime?fmtT(d.breakResumeTime)+'再開予定':''));
+    } else {
+      showClosedFromSchedules();
+    }
+  }
+
+  // 来店数などの詳細はCloud Functions（getStoreStatus・認証不要）から取得する
+  // （visits はスタッフ限定読み取りのため直接は読まない）
+  function callGetStatus(){
+    try{
+      firebase.app().functions('asia-northeast1').httpsCallable('getStoreStatus')({})
+        .then(function(res){ renderStatus(res.data||{status:'closed'}); })
+        .catch(function(){ showClosedFromSchedules(); });
+    }catch(e){ showClosedFromSchedules(); }
   }
 
   render('<span style="color:#aaa;font-size:12px;letter-spacing:.02em;">確認中...</span>');
 
-  // まずFirebase RTDB（認証不要・公開読み取り）で状態を取得する
-  // RTDB側のルール設定例: { "rules": { "storeStatus": { ".read": true, ".write": "auth != null" } } }
+  // まずFirebase RTDB（認証不要・公開読み取り）で即時表示
+  // RTDB側のルール: { "storeStatus": { ".read": true, ".write": false } }（書き込みはFunctions経由のみ）
   var RTDB_URL='https://tequiladojo-default-rtdb.firebaseio.com/storeStatus.json';
   fetch(RTDB_URL)
   .then(function(r){ if(!r.ok) throw new Error('http '+r.status); return r.json(); })
   .then(function(d){
     if(!d||!d.status) throw new Error('empty');
-    if(d.status==='open'){
-      render(box('#2CA44E','営業中',''));
-    } else if(d.status==='break'){
-      var resumeT=d.breakResumeTime||'';
-      render(box('#9B59B6','休憩中',resumeT?fmtT(resumeT)+'再開予定':''));
-    } else {
-      render(box('#999','閉店中',''));
-    }
-    // ログイン済みなら来場者数などの詳細をFirestoreから上書き
-    if(auth.currentUser) doFetch();
+    renderStatus({status:d.status, breakResumeTime:d.breakResumeTime});
+    // 営業中なら来場者数をFunctionsで上書き表示
+    if(d.status==='open') callGetStatus();
   })
   .catch(function(){
-    // RTDB未設定またはエラー → Firestoreにフォールバック（認証が必要）
-    if(auth.currentUser){ doFetch(); return; }
-    var _fetchDone=false;
-    auth.onAuthStateChanged(function(user){
-      if(_fetchDone) return;
-      _fetchDone=true;
-      if(user){ doFetch(); return; }
-      auth.signInAnonymously()
-        .then(function(){ doFetch(); })
-        .catch(function(){ doFetch(); });
-    });
+    // RTDB未設定またはエラー → Functionsにフォールバック
+    callGetStatus();
   });
 }
 

@@ -28,32 +28,27 @@ service cloud.firestore {
     }
 
     // ── 会員情報（個人情報）: スタッフ全件 / 会員は自分のみ ─────
+    // 作成・引継はCloud Functions（registerMember）がサーバー権限で行う
     match /members/{id} {
       allow read: if isStaff()
         || (realUser() && resource.data.get('authUid', '') == request.auth.uid);
-      allow create: if isStaff()
-        || (realUser() && request.resource.data.get('authUid', '') == request.auth.uid);
+      allow create: if isStaff();
       allow update: if isStaff()
-        || (realUser() && resource.data.get('authUid', '') == request.auth.uid)
-        // 引継コードによる本登録: 未連携の会員ドキュメントに自分のauthUidを紐付ける
-        || (realUser()
-            && (resource.data.get('authUid', '') == '' || resource.data.get('authUid', '') == null)
-            && request.resource.data.get('authUid', '') == request.auth.uid);
+        || (realUser() && resource.data.get('authUid', '') == request.auth.uid);
       allow delete: if isOwner();
     }
 
     // memberIndex: 会員ID→メール解決（ログイン時に未認証で単一取得が必要）
+    // 書き込みはスタッフとFunctionsのみ
     match /memberIndex/{id} {
       allow get: if true;
       allow list: if isStaff();
-      allow write: if isStaff() || realUser(); // 会員登録時に自分のIDを作成
+      allow write: if isStaff();
     }
 
-    // tempRegistrations: 引継コード（ランダムなコードを知っている人だけが単一取得可）
+    // tempRegistrations: 引継コードの検証・消込はFunctions（registerMember）が行う
     match /tempRegistrations/{code} {
-      allow get: if true;
-      allow list: if isStaff();
-      allow write: if isStaff() || realUser(); // 本登録完了時に used:true を書く
+      allow read, write: if isStaff();
     }
 
     // ジャーナル（操作証跡）: スタッフのみ作成・閲覧、削除はオーナーのみ、改変不可
@@ -71,13 +66,15 @@ service cloud.firestore {
       allow write: if isOwner();
     }
 
-    // ── 日常業務（開店閉店・来場退場・注文・会計）: スタッフ書き込み ──
-    match /visits/{id}        { allow read: if signedIn(); allow write: if isStaff(); }
-    match /orders/{id}        { allow read: if signedIn(); allow write: if isStaff(); }
-    match /cocktailOrders/{id}{ allow read: if signedIn(); allow write: if isStaff(); }
-    match /blindResults/{id}  { allow read: if signedIn(); allow write: if isStaff(); }
+    // ── 日常業務（開店閉店・来場退場・注文・会計）: スタッフのみ ──
+    // 会員向けページはCloud Functions（getMemberActivity / getStoreStatus）経由で
+    // 本人分・公開情報のみ取得する
+    match /visits/{id}        { allow read, write: if isStaff(); }
+    match /orders/{id}        { allow read, write: if isStaff(); }
+    match /cocktailOrders/{id}{ allow read, write: if isStaff(); }
+    match /blindResults/{id}  { allow read, write: if isStaff(); }
     match /memberBadges/{id}  { allow read: if signedIn(); allow write: if isStaff(); }
-    match /counters/{id}      { allow read: if signedIn(); allow write: if isStaff(); }
+    match /counters/{id}      { allow read, write: if isStaff(); }
     match /sessions/{id}      { allow read: if true;       allow write: if isStaff(); }
     match /storeStatus/{id}   { allow read: if true;       allow write: if isStaff(); }
 
@@ -88,13 +85,12 @@ service cloud.firestore {
     match /layouts/{id}        { allow read: if true; allow write: if isOwner(); }
     match /publicProfiles/{id} { allow read: if true; allow write: if isStaff(); }
 
-    // ── 設定: memberCounter は会員登録トランザクションで必要 ──
-    // （登録ページは認証前に採番するため匿名サインインで書く。
-    //   realSeqの巻き戻しによるID衝突・上書きはルールで禁止）
+    // ── 設定: memberCounter の採番はスタッフ（checkinのゲスト採番）と
+    //    Functions（registerMember）のみ。realSeq巻き戻しは禁止 ──
     match /settings/memberCounter {
-      allow read: if signedIn();
-      allow create: if signedIn();
-      allow update: if signedIn()
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update: if isStaff()
         && request.resource.data.get('realSeq', 0) >= resource.data.get('realSeq', 0);
       allow delete: if isOwner();
     }
