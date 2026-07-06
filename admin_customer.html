@@ -26,7 +26,7 @@ var FIREBASE_CONFIG = {
 </script>
 <script src="/auth-role.js?v=20260527"></script>
 <script>window.JOURNAL_PAGE='admin_customer';</script>
-<script src="/journal.js?v=20260629"></script>
+<script src="/journal.js?v=20260706"></script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
@@ -1126,7 +1126,7 @@ g("btn-save-layout").addEventListener("click",function(){
   if(!id||id.length!==2){ toast("座席ID（2桁）は必須です","err"); return; }
   if(!name){ toast("名称は必須です","err"); return; }
   if(!seats){ toast("座席数は必須です","err"); return; }
-  db.collection("layouts").doc(id).set({layoutId:id,name:name,seats:seats,imageData:layImgData||null},{merge:true})
+  journaledSet("layouts",id,{layoutId:id,name:name,seats:seats,imageData:layImgData||null},{merge:true})
     .then(function(){ toast(editId.layout?"レイアウトを更新しました":"レイアウトを登録しました"); closeM("m-layout"); bumpAndRender("layouts"); loadLayouts(); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
@@ -1152,7 +1152,7 @@ g('confirm-member-del-ok').addEventListener('click',async function(){
   g('confirm-member-del-bg').classList.remove('open');
   var id=_delMemberId;
   if(mode==='soft'){
-    db.collection('members').doc(id).update({
+    journaledUpdate('members',id,{
       deleted:true, deletedAt:new Date().toISOString()
     })
     .then(function(){ toast('会員をソフトデリートしました'); loadMembers(); })
@@ -1169,20 +1169,33 @@ async function hardDeleteMember(memberId){
     var visitsSnap=await db.collection('visits').where('memberId','==',memberId).get();
     var visitIds=visitsSnap.docs.map(function(d){ return d.id; });
 
-    var orderRefs=[];
+    // 注文はvisitKey（新形式）とvisitId（旧形式）の両方で紐付いている可能性がある
+    var orderDocs=[]; var _seenOrd={};
+    function _pushOrd(d,colName){ if(_seenOrd[colName+'/'+d.id])return; _seenOrd[colName+'/'+d.id]=true; orderDocs.push({ref:d.ref,col:colName,id:d.id,data:d.data()}); }
     for(var i=0;i<visitIds.length;i+=10){
       var chunk=visitIds.slice(i,i+10);
       var ordSnap=await db.collection('orders').where('visitKey','in',chunk).get();
-      ordSnap.docs.forEach(function(d){ orderRefs.push(d.ref); });
+      ordSnap.docs.forEach(function(d){ _pushOrd(d,'orders'); });
+      var ordSnapOld=await db.collection('orders').where('visitId','in',chunk).get();
+      ordSnapOld.docs.forEach(function(d){ _pushOrd(d,'orders'); });
       var ordSnap2=await db.collection('cocktailOrders').where('visitKey','in',chunk).get();
-      ordSnap2.docs.forEach(function(d){ orderRefs.push(d.ref); });
+      ordSnap2.docs.forEach(function(d){ _pushOrd(d,'cocktailOrders'); });
     }
 
     var trSnap=await db.collection('tempRegistrations').where('tempId','==',memberId).get();
 
+    // ジャーナル: 削除前の全ドキュメントを記録（復元・原因調査用）
+    var memberSnap=await db.collection('members').doc(memberId).get();
+    visitsSnap.docs.forEach(function(d){ writeJournal('delete','visits',d.id,d.data(),null); });
+    orderDocs.forEach(function(o){ writeJournal('delete',o.col,o.id,o.data,null); });
+    trSnap.docs.forEach(function(d){ writeJournal('delete','tempRegistrations',d.id,d.data(),null); });
+    writeJournal('delete','members',memberId,memberSnap.exists?memberSnap.data():null,null);
+    writeJournal('bulk-delete','members/visits/orders',memberId,
+      {member:memberId,visits:visitsSnap.size,orders:orderDocs.length,tempRegistrations:trSnap.size},null);
+
     var allRefs=[];
     visitsSnap.docs.forEach(function(d){ allRefs.push(d.ref); });
-    orderRefs.forEach(function(r){ allRefs.push(r); });
+    orderDocs.forEach(function(o){ allRefs.push(o.ref); });
     trSnap.docs.forEach(function(d){ allRefs.push(d.ref); });
 
     for(var i=0;i<allRefs.length;i+=499){
@@ -1238,6 +1251,7 @@ async function issueTransferCode(memberId){
         createdAt:now.toISOString(), expiresAt:expiresAt.toISOString(),
         used:false, issuedBy:'admin'
       });
+      writeJournal('create','tempRegistrations',code,null,{tempId:memberId,nickname:nickname,issuedBy:'admin'});
     }
 
     var url='https://tequiladojo.com/member_register2.html?transfer='+code+'&nick='+encodeURIComponent(nickname);

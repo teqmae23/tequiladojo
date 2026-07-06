@@ -23,7 +23,7 @@ var FIREBASE_CONFIG = {
 </script>
 <script src="/auth-role.js?v=20260521"></script>
 <script>window.JOURNAL_PAGE='openclose';</script>
-<script src="/journal.js?v=20260601"></script>
+<script src="/journal.js?v=20260706"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -215,7 +215,7 @@ var RTDB_BASE='https://tequiladojo-default-rtdb.firebaseio.com';
 function writePublicStatus(status, extra){
   // Firestoreへの書き込み（ログインユーザー向け）
   var fsData=Object.assign({status:status,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},extra||{});
-  db.collection('storeStatus').doc('current').set(fsData)
+  journaledSet('storeStatus','current',fsData)
     .catch(function(e){ console.error('storeStatus Firestore write failed:',e); });
 
   // RTDBへの書き込み（未ログインユーザーも読み取り可能 → index.html用）
@@ -411,7 +411,7 @@ g("btn-break-store").addEventListener("click",function(){
         breakIndex=idx;
         var upd={};upd["breakStart"+idx]=t;
         if(resumeTime) upd["breakResumeTime"+idx]=resumeTime;
-        return db.collection("sessions").doc(currentSessionId).update(upd)
+        return journaledUpdate("sessions",currentSessionId,upd,d)
           .then(function(){
             applyStoreStatus("break");
             if(!currentTestMode) writePublicStatus('break',{breakResumeTime:resumeTime||null,sessionDate:currentSessionDate});
@@ -420,7 +420,7 @@ g("btn-break-store").addEventListener("click",function(){
       }).catch(function(e){toast("休憩処理失敗: "+e.message,"err");});
   } else if(storeStatus==="break"){
     var upd={};upd["breakEnd"+breakIndex]=t;
-    db.collection("sessions").doc(currentSessionId).update(upd)
+    journaledUpdate("sessions",currentSessionId,upd)
       .then(function(){
         applyStoreStatus("open");
         if(!currentTestMode) writePublicStatus('open',{layoutId:currentLayoutId,sessionDate:currentSessionDate});
@@ -436,9 +436,8 @@ g("btn-close-store").addEventListener("click",function(){
   var closeTime=nowStr();
   var closingSessionId=currentSessionId;
   var closingDate=currentSessionDate;
-  db.collection("sessions").doc(closingSessionId).update({closeTime:closeTime})
+  journaledUpdate("sessions",closingSessionId,{closeTime:closeTime})
     .then(function(){
-      writeJournal('update','sessions',closingSessionId,null,{closeTime:closeTime});
       toast("閉店しました（"+closeTime+"）");
       autoCheckoutStaff(closeTime);
       currentSessionId=null;
@@ -471,7 +470,7 @@ g("btn-close-store").addEventListener("click",function(){
           }
           var guestCount=sesVisits.filter(function(v){return !v.isStaff;}).length;
           var sales=sesVisits.reduce(function(s,v){return s+(v.amount||0);},0);
-          db.collection("sessions").doc(closingSessionId).update({guestCount:guestCount,sales:sales})
+          journaledUpdate("sessions",closingSessionId,{guestCount:guestCount,sales:sales})
             .catch(function(e){console.warn("セッション集計更新失敗:",e);});
           // バッジ自動判定（バックグラウンド実行）
           autoProcessBadges(db,sesVisits,closingSessionId);
@@ -482,7 +481,7 @@ g("btn-close-store").addEventListener("click",function(){
 
 g("btn-oc-save-memo").addEventListener("click",function(){
   if(!currentSessionId){toast("営業セッションがありません","err");return;}
-  db.collection("sessions").doc(currentSessionId).update({memo:gv("oc-memo")||null})
+  journaledUpdate("sessions",currentSessionId,{memo:gv("oc-memo")||null})
     .then(function(){toast("備考を保存しました");})
     .catch(function(e){toast("保存失敗: "+e.message,"err");});
 });
@@ -629,15 +628,18 @@ async function autoCheckoutStaff(closeTime){
       .where('visitDate','==',today).where('isStaff','==',true).get();
     var batch=db.batch();
     var cnt=0;
+    var _acJournal=[];
     snap.forEach(function(d){
       var v=d.data();
       if(!v.checkoutTime){
         batch.update(db.collection('visits').doc(d.id),{checkoutTime:closeTime});
+        _acJournal.push({id:d.id,before:{checkoutTime:v.checkoutTime||null},after:{checkoutTime:closeTime}});
         cnt++;
       }
     });
     if(cnt>0){
       await batch.commit();
+      _acJournal.forEach(function(j){ writeJournal('update','visits',j.id,j.before,j.after); });
       toast('スタッフ'+cnt+'名を自動退場','inf');
     }
   }catch(e){toast('スタッフ自動退場失敗: '+e.message,'err');}
@@ -712,7 +714,7 @@ async function autoProcessBadges(db,sesVisits,sessionId){
       }
 
       // バッジ判定・付与
-      var batch=db.batch();var cnt=0;
+      var batch=db.batch();var cnt=0;var _badgeJournal=[];
       for(var bi=0;bi<activeBadges.length;bi++){
         var badge=activeBadges[bi];
         if(existSet.has(mid+'|'+badge.id))continue;
@@ -725,12 +727,17 @@ async function autoProcessBadges(db,sesVisits,sessionId){
             earnedAt:firebase.firestore.FieldValue.serverTimestamp(),
             sessionId:sessionId,source:'auto'
           });
+          _badgeJournal.push({id:mid+'_'+badge.id,data:{memberId:mid,badgeId:badge.id,sessionId:sessionId,source:'auto'}});
           existSet.add(mid+'|'+badge.id);
           newBadgeNames.push(badge.icon+badge.name);
           cnt++;totalAwarded++;
         }
       }
-      if(cnt>0)await batch.commit();
+      if(cnt>0){
+        await batch.commit();
+        _badgeJournal.forEach(function(j){ writeJournal('create','memberBadges',j.id,null,j.data); });
+        _badgeJournal=[];
+      }
     }
     if(totalAwarded>0){
       toast('🎖️ バッジ付与: '+newBadgeNames.join(' / '),'inf');
@@ -793,7 +800,7 @@ async function regeneratePublicCollections(db, memberIds, activeBadges, threshol
     var ref=storage.ref('public/collections/'+mid+'.html');
     await ref.put(blob,{contentType:'text/html;charset=utf-8',cacheControl:'no-cache'});
     var url=await ref.getDownloadURL();
-    await db.collection('members').doc(mem.id).update({badgeCollectionUrl:url});
+    await journaledUpdate('members',mem.id,{badgeCollectionUrl:url},{badgeCollectionUrl:mem.badgeCollectionUrl||null});
   }
 }
 </script>

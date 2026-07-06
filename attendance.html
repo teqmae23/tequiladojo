@@ -20,6 +20,8 @@ var FIREBASE_CONFIG = {
 };
 </script>
 <script src="/auth-role.js?v=20260521"></script>
+<script>window.JOURNAL_PAGE='attendance';</script>
+<script src="/journal.js?v=20260706"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -339,7 +341,7 @@ async function checkIn(memberId){
   var docId=memberId+'_'+today;
   var staffVisitId=today+'S'+memberId;
   try{
-    await db.collection('attendance').doc(docId).set({
+    await journaledSet('attendance',docId,{
       memberId:memberId,
       date:today,
       checkInTime:now,
@@ -348,13 +350,15 @@ async function checkIn(memberId){
     // 来場者一覧に表示されない隠しセッションを作成（奢られ注文受け取り用）
     var existingVisit=await db.collection('visits').doc(staffVisitId).get();
     if(existingVisit.exists){
-      await db.collection('visits').doc(staffVisitId).update({visitTime:now,checkoutTime:null});
+      await journaledUpdate('visits',staffVisitId,{visitTime:now,checkoutTime:null},existingVisit.data());
     }else{
-      await db.collection('visits').doc(staffVisitId).set({
+      var _svData={
         visitDate:today,visitTime:now,seq:0,memberId:memberId,
         isStaff:true,tequilaAmount:0,amount:0,checkoutTime:null,
         checkoutPayTime:null,receiptIssued:'0'
-      });
+      };
+      await db.collection('visits').doc(staffVisitId).set(_svData);
+      writeJournal('create','visits',staffVisitId,null,_svData);
     }
     todayAtts[memberId]={id:docId,data:{memberId:memberId,date:today,checkInTime:now,checkOutTime:null}};
     renderSelfCard();
@@ -370,10 +374,10 @@ async function checkOut(memberId){
   var now=nowStr();
   var staffVisitId=today+'S'+memberId;
   try{
-    await db.collection('attendance').doc(att.id).update({checkOutTime:now});
+    await journaledUpdate('attendance',att.id,{checkOutTime:now},att.data);
     todayAtts[memberId].data.checkOutTime=now;
     // 隠しセッションをクローズ
-    await db.collection('visits').doc(staffVisitId).update({checkoutTime:now}).catch(function(){});
+    await journaledUpdate('visits',staffVisitId,{checkoutTime:now}).catch(function(){});
     renderSelfCard();
     renderList();
     toast('退勤しました（'+fmtTime(now)+'）');
@@ -387,19 +391,21 @@ async function reCheckIn(memberId){
   var now=nowStr();
   var staffVisitId=today+'S'+memberId;
   try{
-    await db.collection('attendance').doc(att.id).update({checkInTime:now,checkOutTime:null});
+    await journaledUpdate('attendance',att.id,{checkInTime:now,checkOutTime:null},att.data);
     todayAtts[memberId].data.checkInTime=now;
     todayAtts[memberId].data.checkOutTime=null;
     // 隠しセッションを再オープン
     var existingVisit=await db.collection('visits').doc(staffVisitId).get();
     if(existingVisit.exists){
-      await db.collection('visits').doc(staffVisitId).update({visitTime:now,checkoutTime:null});
+      await journaledUpdate('visits',staffVisitId,{visitTime:now,checkoutTime:null},existingVisit.data());
     }else{
-      await db.collection('visits').doc(staffVisitId).set({
+      var _svData2={
         visitDate:today,visitTime:now,seq:0,memberId:memberId,
         isStaff:true,tequilaAmount:0,amount:0,checkoutTime:null,
         checkoutPayTime:null,receiptIssued:'0'
-      });
+      };
+      await db.collection('visits').doc(staffVisitId).set(_svData2);
+      writeJournal('create','visits',staffVisitId,null,_svData2);
     }
     renderSelfCard();
     renderList();
