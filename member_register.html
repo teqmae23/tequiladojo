@@ -866,7 +866,11 @@ function doRegister() {
   if(pass !== pass2) { errEl.textContent = 'パスワードが一致しません'; return; }
   var btn = g('btn-register'); if(btn) { btn.disabled=true; btn.textContent='登録中...'; }
   var btn2 = g('btn-register2'); if(btn2) { btn2.disabled=true; btn2.textContent='登録中...'; }
-  Promise.all([fetchNextRealId(), fetchNextDisplayMemberId()]).then(function(ids) {
+  // 採番トランザクションは認証必須のため、未ログインなら匿名サインインしてから実行
+  var _pre = auth.currentUser ? Promise.resolve() : auth.signInAnonymously();
+  _pre.then(function(){
+    return Promise.all([fetchNextRealId(), fetchNextDisplayMemberId()]);
+  }).then(function(ids) {
     var realId = ids[0], displayId = ids[1];
     var authEmail = emailInput ? emailInput : (displayId + VIRTUAL_DOMAIN);
     return auth.createUserWithEmailAndPassword(authEmail, pass)
@@ -1283,7 +1287,8 @@ function loadProfile() {
             })
       .catch(function(e) {  });
   } else if(email) {
-      db.collection('memberIndex').where('email','==',email).limit(1).get()
+      // authUidで自分のmembersドキュメントを検索（自分のみ読み取り可のルールに適合）
+      db.collection('members').where('authUid','==',currentUser.uid).limit(1).get()
       .then(function(snap) {
               if(snap.empty) {  return; }
         memberId = snap.docs[0].id;

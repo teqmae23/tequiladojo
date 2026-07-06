@@ -494,9 +494,18 @@ async function initMyPage(user){
       // 仮想メール → 会員ID直接取得
       memberId=authEmail.replace('@tequiladojo.member','');
     } else if(authEmail){
-      // 実メール → memberIndexから逆引き
-      const idxSnap=await db.collection('memberIndex').where('email','==',authEmail).limit(1).get();
-      if(!idxSnap.empty) memberId=idxSnap.docs[0].id;
+      // 実メール → authUidでmembersを直接検索（自分のドキュメントのみ読めるルールに適合）
+      try{
+        const uidSnap=await db.collection('members').where('authUid','==',user.uid).limit(1).get();
+        if(!uidSnap.empty) memberId=uidSnap.docs[0].id;
+      }catch(e){console.warn('authUid lookup error:',e);}
+      // fallback: memberIndexから逆引き（一括検索はスタッフのみ許可のため一般会員では失敗し得る）
+      if(!memberId){
+        try{
+          const idxSnap=await db.collection('memberIndex').where('email','==',authEmail).limit(1).get();
+          if(!idxSnap.empty) memberId=idxSnap.docs[0].id;
+        }catch(e){console.warn('memberIndex lookup error:',e);}
+      }
     }
 
     // membersコレクションから取得
@@ -513,13 +522,15 @@ async function initMyPage(user){
         memberId=memberDoc.memberId||snap.docs[0].id;
       }
     }
-    // fallback2: emailで検索
+    // fallback2: emailで検索（所有を証明できないクエリのため一般会員では失敗し得る）
     if(!memberDoc && authEmail && !authEmail.endsWith('@tequiladojo.member')){
-      const snap=await db.collection('members').where('email','==',authEmail).limit(1).get();
-      if(!snap.empty){
-        memberDoc={id:snap.docs[0].id,...snap.docs[0].data()};
-        memberId=memberDoc.memberId||snap.docs[0].id;
-      }
+      try{
+        const snap=await db.collection('members').where('email','==',authEmail).limit(1).get();
+        if(!snap.empty){
+          memberDoc={id:snap.docs[0].id,...snap.docs[0].data()};
+          memberId=memberDoc.memberId||snap.docs[0].id;
+        }
+      }catch(e){console.warn('email lookup error:',e);}
     }
     // 自分のページ: emailVerified済みなのにpending → activeに自動修正
     if(!_previewMemberDoc && memberDoc && memberDoc.status==='pending' && user.emailVerified){

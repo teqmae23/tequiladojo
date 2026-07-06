@@ -2,16 +2,133 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // 管理者: Googleまたはメール/パスワードログイン（匿名除外）
-    function isAdmin() {
-      return request.auth != null
+    // ── ロール判定 ─────────────────────────────────────────────
+    // 1) Custom Claims（functions/setCustomClaims が members.role から同期）
+    // 2) フォールバック: staffRoles/{uid} ドキュメント
+    //    → どちらかで owner/staff なら許可（claims未反映でも締め出さない）
+    function signedIn() { return request.auth != null; }
+    function realUser() {
+      return signedIn()
         && request.auth.token.firebase.sign_in_provider != 'anonymous';
     }
+    function claimRole() {
+      return signedIn() ? request.auth.token.get('role', '') : '';
+    }
+    function docRole() {
+      return exists(/databases/$(database)/documents/staffRoles/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/staffRoles/$(request.auth.uid)).data.get('role', '')
+        : '';
+    }
+    function isOwner() {
+      return signedIn() && (claimRole() == 'owner' || docRole() == 'owner');
+    }
+    function isStaff() {
+      return signedIn()
+        && (claimRole() in ['owner', 'staff'] || docRole() in ['owner', 'staff']);
+    }
 
-    // 全コレクション: 公開読み取り・管理者書き込み
+    // ── 会員情報（個人情報）: スタッフ全件 / 会員は自分のみ ─────
+    match /members/{id} {
+      allow read: if isStaff()
+        || (realUser() && resource.data.get('authUid', '') == request.auth.uid);
+      allow create: if isStaff()
+        || (realUser() && request.resource.data.get('authUid', '') == request.auth.uid);
+      allow update: if isStaff()
+        || (realUser() && resource.data.get('authUid', '') == request.auth.uid)
+        // 引継コードによる本登録: 未連携の会員ドキュメントに自分のauthUidを紐付ける
+        || (realUser()
+            && (resource.data.get('authUid', '') == '' || resource.data.get('authUid', '') == null)
+            && request.resource.data.get('authUid', '') == request.auth.uid);
+      allow delete: if isOwner();
+    }
+
+    // memberIndex: 会員ID→メール解決（ログイン時に未認証で単一取得が必要）
+    match /memberIndex/{id} {
+      allow get: if true;
+      allow list: if isStaff();
+      allow write: if isStaff() || realUser(); // 会員登録時に自分のIDを作成
+    }
+
+    // tempRegistrations: 引継コード（ランダムなコードを知っている人だけが単一取得可）
+    match /tempRegistrations/{code} {
+      allow get: if true;
+      allow list: if isStaff();
+      allow write: if isStaff() || realUser(); // 本登録完了時に used:true を書く
+    }
+
+    // ジャーナル（操作証跡）: スタッフのみ作成・閲覧、削除はオーナーのみ、改変不可
+    match /journals/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update: if false;
+      allow delete: if isOwner();
+    }
+
+    match /attendance/{id} { allow read, write: if isStaff(); }
+    match /reservations/{id} { allow read, write: if isStaff(); }
+    match /staffRoles/{uid} {
+      allow read: if isStaff() || (signedIn() && request.auth.uid == uid);
+      allow write: if isOwner();
+    }
+
+    // ── 日常業務（開店閉店・来場退場・注文・会計）: スタッフ書き込み ──
+    match /visits/{id}        { allow read: if signedIn(); allow write: if isStaff(); }
+    match /orders/{id}        { allow read: if signedIn(); allow write: if isStaff(); }
+    match /cocktailOrders/{id}{ allow read: if signedIn(); allow write: if isStaff(); }
+    match /blindResults/{id}  { allow read: if signedIn(); allow write: if isStaff(); }
+    match /memberBadges/{id}  { allow read: if signedIn(); allow write: if isStaff(); }
+    match /counters/{id}      { allow read: if signedIn(); allow write: if isStaff(); }
+    match /sessions/{id}      { allow read: if true;       allow write: if isStaff(); }
+    match /storeStatus/{id}   { allow read: if true;       allow write: if isStaff(); }
+
+    // ── 公開ポータル（index.html / news.html が未認証で読む） ──
+    match /news/{id}           { allow read: if true; allow write: if isOwner(); }
+    match /newsConfig/{id}     { allow read: if true; allow write: if isOwner(); }
+    match /schedules/{id}      { allow read: if true; allow write: if isOwner(); }
+    match /layouts/{id}        { allow read: if true; allow write: if isOwner(); }
+    match /publicProfiles/{id} { allow read: if true; allow write: if isStaff(); }
+
+    // ── 設定: memberCounter は会員登録トランザクションで必要 ──
+    // （登録ページは認証前に採番するため匿名サインインで書く。
+    //   realSeqの巻き戻しによるID衝突・上書きはルールで禁止）
+    match /settings/memberCounter {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update: if signedIn()
+        && request.resource.data.get('realSeq', 0) >= resource.data.get('realSeq', 0);
+      allow delete: if isOwner();
+    }
+    match /settings/{id} {
+      allow read: if signedIn();
+      allow write: if isOwner();
+    }
+
+    // 地図の市町村ドットキャッシュ: 閲覧クライアントがオンデマンド生成する
+    match /dotMunicipios/{id} { allow read, write: if signedIn(); }
+
+    // ── マスタデータ: 認証済みなら読み取り可（匿名含む）・書き込みはオーナー ──
+    match /bottles/{id}        { allow read: if signedIn(); allow write: if isOwner(); }
+    match /bottleData/{id}     { allow read: if signedIn(); allow write: if isOwner(); }
+    match /brands/{id}         { allow read: if signedIn(); allow write: if isOwner(); }
+    match /classes/{id}        { allow read: if signedIn(); allow write: if isOwner(); }
+    match /distilleries/{id}   { allow read: if signedIn(); allow write: if isOwner(); }
+    match /districts/{id}      { allow read: if signedIn(); allow write: if isOwner(); }
+    match /locations/{id}      { allow read: if signedIn(); allow write: if isOwner(); }
+    match /mapOverlays/{id}    { allow read: if signedIn(); allow write: if isOwner(); }
+    match /cocktailMaster/{id} { allow read: if signedIn(); allow write: if isOwner(); }
+    match /subMaterials/{id}   { allow read: if signedIn(); allow write: if isOwner(); }
+    match /setProducts/{id}    { allow read: if signedIn(); allow write: if isOwner(); }
+    match /miscProducts/{id}   { allow read: if signedIn(); allow write: if isOwner(); }
+    match /otherBottles/{id}   { allow read: if signedIn(); allow write: if isOwner(); }
+    match /blindMarks/{id}     { allow read: if signedIn(); allow write: if isOwner(); }
+    match /badges/{id}         { allow read: if signedIn(); allow write: if isOwner(); }
+    match /products/{id}       { allow read: if signedIn(); allow write: if isOwner(); }
+    match /masterMeta/{id}     { allow read: if signedIn(); allow write: if isOwner(); }
+
+    // ── その他（miscKinds, otherCat*, badgeTypes, calMeta, amm*, crt*,
+    //    crtCountryMap, adminOps など管理ページ専用）: オーナーのみ ──
     match /{document=**} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow read, write: if isOwner();
     }
   }
 }

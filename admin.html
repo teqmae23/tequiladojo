@@ -400,13 +400,27 @@ var auth = firebase.auth();
 function g(id){ return document.getElementById(id); }
 function gv(id){ var el=g(id); return el?el.value.trim():""; }
 
-// 認証状態（staff/ownerのみ許可）
+// 認証状態（ownerのみ許可）
 try {
-  AuthRole.requireStaff(auth,
+  AuthRole.requireOwner(auth,
     function(user, role){
       g('login-screen').style.display='none';
       var hs=g('hub-screen'); hs.style.display='flex';
-      g('hub-email').textContent=user.email;
+      g('hub-email').textContent=user.email+'（'+(role||'?')+'）';
+      // Firestoreセキュリティルールはトークンのrole claimまたはstaffRoles/{uid}を参照する。
+      // どちらも無い場合はルール適用後に書き込み不能になるため警告する。
+      user.getIdTokenResult(true).then(function(r){
+        if(r.claims.role==='owner'||r.claims.role==='staff') return;
+        firebase.firestore().collection('staffRoles').doc(user.uid).get().then(function(s){
+          if(s.exists&&(s.data().role==='owner'||s.data().role==='staff')) return;
+          var w=document.createElement('div');
+          w.style.cssText='background:#8c2818;color:#fff;font-size:12px;text-align:center;padding:8px 12px;line-height:1.6';
+          w.innerHTML='⚠ このアカウントに権限クレイムが設定されていません。firestore.rules適用前に、'
+            +'管理画面で自分の会員情報（role: owner）を一度保存し直すか、Firebaseコンソールで '
+            +'staffRoles/'+user.uid+' に {role:"owner"} を作成してください。';
+          document.body.prepend(w);
+        }).catch(function(){});
+      }).catch(function(){});
     },
     function(){
       g('login-screen').style.display='flex';
