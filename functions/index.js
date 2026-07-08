@@ -341,6 +341,9 @@ exports.registerMember = functions.region('asia-northeast1')
 
 // ── 店頭ステータス（Firestore + RTDB）をスタッフ権限で更新 ──────
 // RTDB側は「.write: false」にしてこの関数経由のみとする
+// RTDBはデプロイ後に作成されてもよいようURLを明示し、失敗しても
+// Firestore更新が成功していればエラーにしない（index.htmlはgetStoreStatusにフォールバックする）
+const RTDB_URL = 'https://tequiladojo-default-rtdb.firebaseio.com';
 exports.setStoreStatus = functions.region('asia-northeast1')
   .https.onCall(async (data, context) => {
     await assertStaff(context);
@@ -356,10 +359,17 @@ exports.setStoreStatus = functions.region('asia-northeast1')
     const fsData = Object.assign({ status, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, extra);
     const prev = await db.collection('storeStatus').doc('current').get();
     await db.collection('storeStatus').doc('current').set(fsData);
-    await admin.database().ref('storeStatus').set(Object.assign({ status, updatedAt: Date.now() }, extra));
+    let rtdbOk = true;
+    try {
+      await admin.app().database(RTDB_URL).ref('storeStatus')
+        .set(Object.assign({ status, updatedAt: Date.now() }, extra));
+    } catch (e) {
+      rtdbOk = false;
+      console.warn('RTDB write failed (RTDB未作成の可能性。Firestore更新は成功):', e.message);
+    }
     await writeServerJournal('update', 'storeStatus', 'current',
       prev.exists ? prev.data() : null, Object.assign({ status }, extra), 'setStoreStatus');
-    return { ok: true };
+    return { ok: true, rtdb: rtdbOk };
   });
 
 // ── 公開: 店頭ステータス＋来店数を返す（index.html用・認証不要） ──
