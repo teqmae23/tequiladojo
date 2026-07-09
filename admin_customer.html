@@ -691,8 +691,10 @@ function handleMemberPhoto(file){
     var c=g('m-photo-clear-btn'); if(c) c.style.display='inline-flex';
   }});
 }
+var _memberPhotoCleared=false;
 function clearMemberPhoto(){
   _memberPhotoFile=null;
+  _memberPhotoCleared=true; // 保存時に既存写真を削除する
   var p=g('m-photo-preview'); if(p){p.src='';p.style.display='none';}
   var c=g('m-photo-clear-btn'); if(c) c.style.display='none';
 }
@@ -840,15 +842,55 @@ document.addEventListener("click",function(e){
 
 // ── 会員マスタ ───────────────────────────────────────────────────
 function loadMembers(cb){
-  db.collection("members").get()
-    .then(function(snap){
+  Promise.all([
+    db.collection("members").get(),
+    // スタッフ専用情報（写真・備考）は本人にも見せないため別コレクションに保管
+    db.collection("memberPrivate").get().catch(function(){ return {docs:[]}; })
+  ])
+    .then(function(results){
+      var snap=results[0];
+      cache.memberPrivate={};
+      (results[1].docs||[]).forEach(function(d){ cache.memberPrivate[d.id]=d.data(); });
       cache.members=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); })
         .filter(function(m){ return !m.deleted; });
       setCnt("members",cache.members.length);
       renderMembers();
+      migrateLegacyPrivateFields(snap.docs);
       if(cb) cb();
     })
     .catch(function(e){ toast("読込失敗(members): "+e.message,"err"); });
+}
+
+// 旧形式: membersドキュメント本体にphotoUrl/noteが残っている場合、
+// memberPrivateへ移動して本体から削除する（本人が自分のドキュメントを読むと
+// 写真URL・スタッフ備考が見えてしまうため）
+var _privMigrated=false;
+async function migrateLegacyPrivateFields(memberDocs){
+  if(_privMigrated) return;
+  _privMigrated=true;
+  var targets=memberDocs.filter(function(d){
+    var m=d.data();
+    return m.photoUrl!==undefined||m.note!==undefined;
+  });
+  if(!targets.length) return;
+  try{
+    var FD=firebase.firestore.FieldValue.delete();
+    for(var i=0;i<targets.length;i+=200){
+      var batch=db.batch();
+      targets.slice(i,i+200).forEach(function(d){
+        var m=d.data();
+        var priv={};
+        if(m.photoUrl!==undefined) priv.photoUrl=m.photoUrl||null;
+        if(m.note!==undefined) priv.note=m.note||null;
+        batch.set(db.collection("memberPrivate").doc(d.id),priv,{merge:true});
+        batch.update(db.collection("members").doc(d.id),{photoUrl:FD,note:FD});
+        cache.memberPrivate[d.id]=Object.assign({},cache.memberPrivate[d.id]||{},priv);
+      });
+      await batch.commit();
+    }
+    writeJournal('migration','members/memberPrivate','photoUrl-note-move',null,{count:targets.length});
+    console.log('memberPrivate移行: '+targets.length+'件のphotoUrl/noteをmembersから分離しました');
+  }catch(e){ console.warn('memberPrivate移行失敗:',e); }
 }
 
 function todayDate(){ return new Date().toISOString().slice(0,10); }
@@ -921,7 +963,14 @@ function setMemberFields(r){
   sv("mem-fb",     r?r.facebookId:"");
   sv("mem-visits", r?r.visitCount||0:0);
   sv("mem-rank",   r?r.rank||"":"");
-  var noteEl=g("mem-note"); if(noteEl) noteEl.value=r?r.note||"":"";
+  // 備考・写真はスタッフ専用のmemberPrivateから読む（旧データのnoteはフォールバック）
+  var priv=r?(cache.memberPrivate&&cache.memberPrivate[r.id])||{}:{};
+  var noteEl=g("mem-note"); if(noteEl) noteEl.value=r?(priv.note!==undefined&&priv.note!==null?priv.note:r.note||""):"";
+  var pPrev=g("m-photo-preview"), pClr=g("m-photo-clear-btn");
+  if(pPrev){
+    if(r&&(priv.photoUrl||r.photoUrl)){ pPrev.src=priv.photoUrl||r.photoUrl; pPrev.style.display="block"; if(pClr) pClr.style.display="inline-flex"; }
+    else { pPrev.src=""; pPrev.style.display="none"; if(pClr) pClr.style.display="none"; }
+  }
 }
 
 g("btn-open-member").addEventListener("click",function(){ openMemberModal(null); });
@@ -1040,19 +1089,36 @@ g("btn-save-member").addEventListener("click",async function(){
   }
   var r=cache.members.find(function(m){return m.id===realDocId;});
   var _isEdit=!!editId.member;
+  // 写真URL・スタッフ備考は本人にも見せないため memberPrivate に分離して保存する
+  // （members本体に残る旧フィールドは削除して掃除する）
+  var _FD=firebase.firestore.FieldValue.delete();
   var _memberAfter={memberId:displayId,realId:realDocId,displayId:displayId,
     iconUrl:(typeof iUrl!=="undefined"?iUrl:(r?r.iconUrl||null:null)),
-    photoUrl:(_currentRole==="owner"&&typeof pUrl!=="undefined"?pUrl:(r?r.photoUrl||null:null)),
+    photoUrl:_FD, note:_FD,
     name:name,nameKana:gv("mem-kana")||null,nickname:gv("mem-nick")||null,
     gender:gv("mem-gender")||"男",registeredAt:normDateStr(gv("mem-reg"))||todayDate(),birthday:normDateStr(gv("mem-birth"))||null,
     prefecture:gv("mem-pref")||null,address:gv("mem-addr")||null,phone:gv("mem-tel")||null,
     email:newEmail||null,
     twitterId:gv("mem-tw")||null,instagramId:gv("mem-ig")||null,facebookId:gv("mem-fb")||null,
-    visitCount:parseInt(gv("mem-visits"))||0,rank:gv("mem-rank")||null,
-    note:noteEl?noteEl.value||null:null};
+    visitCount:parseInt(gv("mem-visits"))||0,rank:gv("mem-rank")||null};
+  var _privPrev=(cache.memberPrivate&&cache.memberPrivate[realDocId])||{};
+  var _privAfter={note:noteEl?noteEl.value||null:null};
+  if(_currentRole==="owner"){
+    if(typeof pUrl!=="undefined") _privAfter.photoUrl=pUrl;
+    else if(_memberPhotoCleared) _privAfter.photoUrl=null;
+  }
+  _memberPhotoCleared=false;
   db.collection("members").doc(realDocId).set(_memberAfter,{merge:true})
   .then(function(){
+    return db.collection("memberPrivate").doc(realDocId).set(_privAfter,{merge:true});
+  })
+  .then(function(){
+    // 写真を削除した場合はStorageの実体も削除（残っているとURL所持者が閲覧できるため）
+    if(_privAfter.photoUrl===null&&_privPrev.photoUrl){
+      try{ storage.refFromURL(_privPrev.photoUrl).delete().catch(function(){}); }catch(e){}
+    }
     writeJournal(_isEdit?'update':'create','members',realDocId,_isEdit?(r||null):null,_memberAfter);
+    writeJournal('update','memberPrivate',realDocId,_privPrev,Object.assign({},_privPrev,_privAfter));
     toast(_isEdit?"会員を更新しました":"会員を登録しました"); closeM("m-member"); bumpAndRender("members"); loadMembers();
   })
   .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
@@ -1204,9 +1270,13 @@ async function hardDeleteMember(memberId){
       await b.commit();
     }
 
+    var _privSnap=await db.collection('memberPrivate').doc(memberId).get().catch(function(){return {exists:false};});
+    if(_privSnap.exists) writeJournal('delete','memberPrivate',memberId,_privSnap.data(),null);
+
     var finalBatch=db.batch();
     finalBatch.delete(db.collection('members').doc(memberId));
     finalBatch.delete(db.collection('memberIndex').doc(memberId));
+    finalBatch.delete(db.collection('memberPrivate').doc(memberId));
     await finalBatch.commit();
 
     toast('会員と関連データを完全削除しました');

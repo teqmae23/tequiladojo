@@ -414,24 +414,20 @@ async function doLogin(){
   if(!raw||!pw){err.textContent='IDとパスワードを入力してください';return;}
   btn.disabled=true;btn.textContent='ログイン中...';err.textContent='';
   try{
-    let email=raw;
     if(!raw.includes('@')){
-      try{
-        // memberIndexはpublic読み取り可なので未ログインでも使える
-        const snap=await db.collection('memberIndex').doc(raw).get();
-        email=(snap.exists && snap.data().email)
-          ? snap.data().email
-          : raw+'@tequiladojo.member';
-      }catch(e){
-        email=raw+'@tequiladojo.member';
-      }
+      // 会員IDログイン: ID→メール解決とパスワード検証はサーバー側で実施
+      // （メールアドレスを端末に渡さないことで列挙を防ぐ）
+      const res=await fbFunctions.httpsCallable('loginWithMemberId')({memberId:raw,password:pw});
+      await auth.signInWithCustomToken(res.data.token);
+    }else{
+      await auth.signInWithEmailAndPassword(raw,pw);
     }
-    await auth.signInWithEmailAndPassword(email,pw);
     // onAuthStateChangedが以降を処理
   }catch(e){
     let msg='ログインできませんでした';
-    if(e.code==='auth/invalid-credential'||e.code==='auth/wrong-password'||e.code==='auth/user-not-found')msg='IDまたはパスワードが正しくありません';
-    else if(e.code==='auth/too-many-requests')msg='しばらく時間をおいてお試しください';
+    if(e.code==='auth/invalid-credential'||e.code==='auth/wrong-password'||e.code==='auth/user-not-found'
+      ||e.code==='functions/unauthenticated'||e.code==='functions/invalid-argument')msg='IDまたはパスワードが正しくありません';
+    else if(e.code==='auth/too-many-requests'||e.code==='functions/resource-exhausted')msg='しばらく時間をおいてお試しください';
     err.textContent=msg;
     btn.disabled=false;btn.textContent='ログイン';
   }
