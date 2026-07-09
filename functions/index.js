@@ -339,6 +339,42 @@ exports.registerMember = functions.region('asia-northeast1')
     }
   });
 
+// ── 会員IDログイン: ID→メール解決とパスワード検証をサーバー側で行う ──
+// memberIndexを公開読み取りにするとID総当たりで全会員のメールが列挙できてしまうため、
+// メールアドレスを端末に返さずにログインを成立させる。
+// 検証はIdentity Toolkitに委譲し、成功時のみカスタムトークンを返す。
+exports.loginWithMemberId = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    const memberId = ((data && data.memberId) || '').trim();
+    const password = (data && data.password) || '';
+    if (!/^[A-Za-z0-9_-]{1,20}$/.test(memberId) || !password) {
+      throw new functions.https.HttpsError('invalid-argument', 'IDとパスワードを入力してください');
+    }
+    // ID→メール解決（memberIndexに登録がなければ仮想ドメイン）
+    let email = memberId + '@tequiladojo.member';
+    try {
+      const idx = await db.collection('memberIndex').doc(memberId).get();
+      if (idx.exists && idx.data().email) email = idx.data().email;
+    } catch (e) { /* noop */ }
+    // パスワード検証（Web APIキーは公開情報のため秘匿対象ではない）
+    const API_KEY = 'AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0';
+    const resp = await fetch(
+      'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + API_KEY,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, returnSecureToken: true }),
+      }
+    );
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok || !body.localId) {
+      // 存在しないID・誤パスワードを区別せず同一メッセージ（列挙対策）
+      throw new functions.https.HttpsError('unauthenticated', 'IDまたはパスワードが正しくありません');
+    }
+    const token = await auth.createCustomToken(body.localId);
+    return { token };
+  });
+
 // ── 店頭ステータス（Firestore + RTDB）をスタッフ権限で更新 ──────
 // RTDB側は「.write: false」にしてこの関数経由のみとする
 // RTDBはデプロイ後に作成されてもよいようURLを明示し、失敗しても

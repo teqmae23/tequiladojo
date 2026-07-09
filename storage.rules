@@ -1,0 +1,65 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isStaffRole() {
+      return request.auth != null
+        && request.auth.token.get('role', '') in ['staff', 'owner'];
+    }
+    function isOwnerRole() {
+      return request.auth != null
+        && request.auth.token.get('role', '') == 'owner';
+    }
+    // 会員本人か: 仮想メール一致、またはmembersドキュメントのauthUid一致
+    function isMemberOwner(mid) {
+      return request.auth != null
+        && (request.auth.token.email == mid + '@tequiladojo.member'
+            || (firestore.exists(/databases/(default)/documents/members/$(mid))
+                && firestore.get(/databases/(default)/documents/members/$(mid)).data.get('authUid', '') == request.auth.uid));
+    }
+
+    // 会員アイコン（実際のアップロード先: icons/{memberId}.{ext}）
+    // 本人（実メール会員含む）・staff・ownerが更新可
+    match /icons/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.resource.size < 5 * 1024 * 1024
+        && fileName.matches('[A-Za-z0-9_-]+\\.(jpg|jpeg|png|gif|webp)')
+        && (isStaffRole() || isMemberOwner(fileName.split('[.]')[0]));
+    }
+
+    // 会員アイコン・写真（members/{memberId}/ 配下）
+    match /members/{memberId}/{fileName} {
+      // アイコンは全員閲覧可。
+      // 写真はオーナーが目印として本人に知らせず付けるものなので、
+      // スタッフ・オーナーのみ閲覧可（本人・他会員からは見えない）
+      allow read: if
+        fileName.matches('icon\\.(jpg|jpeg|png|gif)') ? true :
+        isStaffRole();
+
+      // アイコン：本人（実メール会員含む）・staff・owner（5MB以内）
+      // 写真：ownerのみ
+      allow write: if request.auth != null &&
+        request.resource.size < 5 * 1024 * 1024 && (
+          fileName.matches('icon\\.(jpg|jpeg|png|gif)')
+            && (isStaffRole() || isMemberOwner(memberId)) ||
+          fileName.matches('photo\\.(jpg|jpeg|png|gif)')
+            && isOwnerRole()
+        );
+    }
+
+    // 旧パス（member-images）との互換
+    match /member-images/{memberId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null &&
+        request.resource.size < 5 * 1024 * 1024 &&
+        isStaffRole();
+    }
+
+    // その他（バッジコレクションHTML等）
+    match /{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if isStaffRole();
+    }
+  }
+}
