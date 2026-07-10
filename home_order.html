@@ -1757,7 +1757,7 @@ function commitCocktailToCart(){
     productName:cocktail.name+'（'+spiritName+'×'+(cocktail.spiritMl||'?')+'ml）',
     productType:'cocktail',
     qty:1,unit:'杯',unitPrice:total,blindMarkId:null,
-    _cocktailId:cocktail.id,_baseProductCode:spirit.id,
+    _cocktailId:cocktail.id,_baseProductCode:spirit.id,_baseProductType:spirit.type||null,_baseSpiritMl:cocktail.spiritMl||0,
     _baseUnitPrice10ml:spirit.price||spirit.unitPrice||spirit.price10||0,_totalAmount:total,_spiritName:spiritName
   });
   document.getElementById('cocktail-spirit-picker').style.display='none';
@@ -2083,12 +2083,16 @@ async function confirmOrder(){
         const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
         const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):p&&p.type==='other'?(p.bottleEn||p.bottleName||p.name||item.productName):item.productName;
         const docId=nextOrderId();
+        // カクテルはベースのお酒のボトルID（baseProductCode）と消費mlを注文本体にも保持し、
+        // ボトルID/ml集計でカクテルのベース消費も数えられるようにする
+        const isCocktail=item.productType==='cocktail'&&item._baseProductCode;
         const data={
           orderDate:useDate,
           orderTime,customerId:visit.memberId||null,visitKey:visit.id,orderGroupId,batchId,
           itemSeq:i+1,productCode:item.productId,productName:saveName,productType:item.productType,
           qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,
           blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:isPopupMode?3:1,
+          ...(isCocktail?{baseProductCode:item._baseProductCode,baseProductType:item._baseProductType||null,baseSpiritMl:(item._baseSpiritMl||0)*(item.qty||1)}:{}),
           ...(isGift?{isGiftPayer:true,giftCount,giftTo:flow.giftTo}:{}),
           ...(item.setGroupId?{setGroupId:item.setGroupId,setName:item.setName,setId:item.setId}:{})
         };
@@ -2117,6 +2121,8 @@ async function confirmOrder(){
             productCode:item.productId,productName:saveName,productType:item.productType,
             qty:item.qty,unit:item.unit,unitPrice:0,
             blindId:0,blindMarkId:null,served:isPopupMode?3:1,
+            // 奢り受取人が実際に飲むため、ベースのお酒の消費は受取人側に計上する
+            ...(isCocktail?{baseProductCode:item._baseProductCode,baseProductType:item._baseProductType||null,baseSpiritMl:(item._baseSpiritMl||0)*(item.qty||1)}:{}),
             isGiftRecipient:true,giftFromVisitKey:visit.id
           };
           fsBatch.set(db.collection('orders').doc(recDocId),recData);

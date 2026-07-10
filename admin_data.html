@@ -479,6 +479,16 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div id="migration-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
           </div>
 
+          <!-- カクテル注文のベースボトルID補完 -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
+              <strong>カクテルのベースボトルID補完</strong> — 既存のカクテル注文に、ベースのお酒のボトルID（baseProductCode）と消費ml（baseSpiritMl）を注文本体へ書き込みます。<br>
+              <span style="font-size:11px">cocktailOrders と cocktailMaster から復元します。一度実行すれば以降の新規注文は自動で保持されます。</span>
+            </div>
+            <button class="btn bp" style="width:fit-content" onclick="runCocktailBaseBackfill()">🍸 カクテルのベースボトルIDを補完</button>
+            <div id="cocktail-backfill-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+          </div>
+
           <!-- テストデータ一括クリーンアップ -->
           <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px" id="cleanup-tool-section">
             <div style="font-size:11px;color:var(--ink3);margin-bottom:6px;font-weight:500;letter-spacing:.06em;text-transform:uppercase">テストデータ一括クリーンアップ</div>
@@ -3997,6 +4007,60 @@ async function runFieldMigration(){
   }catch(e){
     prog.textContent='エラー: '+e.message;
     toast('マイグレーション失敗: '+e.message,'err');
+  }
+}
+
+// カクテル注文にベースのお酒のボトルID・消費mlを補完するマイグレーション
+async function runCocktailBaseBackfill(){
+  if(!confirm('既存のカクテル注文に、ベースのお酒のボトルID（baseProductCode）と消費ml（baseSpiritMl）を補完します。\ncocktailOrders と cocktailMaster から復元します。実行しますか？')) return;
+  var prog=document.getElementById('cocktail-backfill-progress');
+  try{
+    prog.textContent='マスタ読込中...';
+    var results=await Promise.all([
+      db.collection('cocktailMaster').get(),
+      db.collection('bottleData').get(),
+      db.collection('otherBottles').get(),
+      db.collection('orders').where('productType','==','cocktail').get()
+    ]);
+    var spiritMlMap={};
+    results[0].forEach(function(d){ spiritMlMap[d.id]=parseFloat(d.data().spiritMl)||0; });
+    var tequilaIds={}; results[1].forEach(function(d){ tequilaIds[d.id]=true; });
+    var otherIds={};   results[2].forEach(function(d){ otherIds[d.id]=true; });
+    var cocktailOrders=results[3].docs;
+
+    // baseProductCode 未設定のものだけ対象
+    var targets=cocktailOrders.filter(function(d){ return d.data().baseProductCode===undefined; });
+    if(!targets.length){ prog.textContent='補完対象のカクテル注文はありません（すべて設定済み）'; toast('補完対象なし'); return; }
+
+    prog.textContent=targets.length+'件のcocktailOrdersを取得中...';
+    var updates=[]; var skipped=0;
+    for(var i=0;i<targets.length;i++){
+      var od=targets[i], o=od.data();
+      var coSnap=await db.collection('cocktailOrders').doc(od.id).get().catch(function(){return {exists:false};});
+      if(!coSnap.exists){ skipped++; continue; }
+      var co=coSnap.data();
+      var baseCode=co.baseProductCode||null;
+      if(!baseCode){ skipped++; continue; }
+      var cid=co.cocktailId||o.productCode; // productCodeはカクテルID
+      var baseMl=(spiritMlMap[cid]||0)*(parseInt(o.qty)||1);
+      var baseType=tequilaIds[baseCode]?'tequila':(otherIds[baseCode]?'other':null);
+      updates.push({ref:od.ref,id:od.id,before:o,data:{baseProductCode:baseCode,baseProductType:baseType,baseSpiritMl:baseMl}});
+      if(i%25===0) prog.textContent='解析中 '+(i+1)+'/'+targets.length+'...';
+    }
+
+    prog.textContent=updates.length+'件を書き込み中...';
+    for(var j=0;j<updates.length;j+=400){
+      var batch=db.batch();
+      updates.slice(j,j+400).forEach(function(u){ batch.update(u.ref,u.data); });
+      await batch.commit();
+    }
+    updates.forEach(function(u){ writeJournal('update','orders',u.id,{baseProductCode:null},u.data); });
+    writeJournal('migration','orders','cocktail-base-backfill',null,{updated:updates.length,skipped:skipped});
+    var msg='完了: '+updates.length+'件を補完しました'+(skipped?'（cocktailOrders欠損などで'+skipped+'件スキップ）':'');
+    prog.textContent=msg; toast(msg);
+  }catch(e){
+    prog.textContent='エラー: '+e.message;
+    toast('補完失敗: '+e.message,'err');
   }
 }
 
