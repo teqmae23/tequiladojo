@@ -31,6 +31,26 @@ exports.setCustomClaims = functions.region('asia-northeast1')
     return null;
   });
 
+// ── members.email 変更を memberIndex に同期（会員IDログインの解決用） ──
+// memberIndexはスタッフ限定書き込みのため、会員本人のメール変更確定時は
+// このトリガーがサーバー権限で反映する
+exports.syncMemberIndex = functions.region('asia-northeast1')
+  .firestore.document('members/{memberId}')
+  .onWrite(async (change, context) => {
+    const after = change.after.exists ? change.after.data() : null;
+    if (!after) return null;
+    const before = change.before.exists ? change.before.data() : {};
+    const newEmail = after.email || '';
+    if (!newEmail || newEmail === (before.email || '')) return null;
+    try {
+      await db.collection('memberIndex').doc(context.params.memberId)
+        .set({ email: newEmail }, { merge: true });
+    } catch (e) {
+      console.error('syncMemberIndex error:', e);
+    }
+    return null;
+  });
+
 // ── 既存会員のClaims一括設定（初回セットアップ用） ─────────────
 exports.syncAllRoles = functions.region('asia-northeast1')
   .https.onCall(async (data, context) => {
