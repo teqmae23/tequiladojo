@@ -349,6 +349,8 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
     </div>
     <div class="modal-body">
       <div id="orders-visit-info" style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap"></div>
+      <!-- オーナー管理情報（写真・note・備考）: スタッフは閲覧のみ・編集はマスタ管理でオーナーのみ -->
+      <div id="orders-owner-info" style="display:none;margin-bottom:8px;border:1px solid var(--border2);border-radius:var(--r);padding:8px 10px;background:var(--cream2)"></div>
       <div class="checkout-order-list" id="orders-list">
         <div class="loading">読み込み中...</div>
       </div>
@@ -814,6 +816,32 @@ function renderVisCard(v, status){
 g('m-orders-close').addEventListener('click',function(){ closeM('m-orders'); });
 g('m-orders-close2').addEventListener('click',function(){ closeM('m-orders'); });
 
+// オーナー管理情報（写真・note・備考）を注文モーダルに読み取り専用表示
+// 編集はマスタ管理（admin_customer）でオーナーのみ。スタッフは閲覧のみ。
+function renderOwnerInfo(memberId){
+  var box=g('orders-owner-info');
+  if(!box) return;
+  box.style.display='none'; box.innerHTML='';
+  if(!memberId) return;
+  db.collection('memberPrivate').doc(memberId).get().then(function(snap){
+    if(!snap.exists) return;
+    var p=snap.data();
+    var photo=p.photoUrl||'', noteShort=(p.noteShort||'').trim(), note=(p.note||'').trim();
+    if(!photo && !noteShort && !note) return;
+    var html='<div style="font-size:10px;font-weight:700;color:var(--ink3);letter-spacing:.06em;margin-bottom:6px">管理情報（閲覧のみ）</div>'
+      +'<div style="display:flex;gap:10px;align-items:flex-start">';
+    if(photo){
+      html+='<img src="'+escHtml(photo)+'" style="width:72px;height:54px;object-fit:cover;border-radius:var(--r);border:1px solid var(--border2);flex-shrink:0;cursor:pointer" onclick="window.open(this.src,\'_blank\')">';
+    }
+    html+='<div style="flex:1;min-width:0">';
+    if(noteShort) html+='<div style="font-size:12px;font-weight:600;color:var(--ink);margin-bottom:2px">'+escHtml(noteShort)+'</div>';
+    if(note) html+='<div style="font-size:11px;color:var(--ink2);white-space:pre-wrap;word-break:break-word">'+escHtml(note)+'</div>';
+    html+='</div></div>';
+    box.innerHTML=html;
+    box.style.display='block';
+  }).catch(function(){});
+}
+
 function openOrdersModal(visitKey, visitorName){
   currentCheckoutVisitKey=visitKey;
   g('mt-orders').textContent='注文一覧 — '+(visitorName||visitKey);
@@ -835,6 +863,8 @@ function openOrdersModal(visitKey, visitorName){
       +(dispIdV?'<span style="font-family:var(--mono);font-size:11px;color:var(--ink3);margin-left:12px;display:inline-flex;align-items:center">会員ID: '+escHtml(dispIdV)+transferBtnHtml+'</span>':'')
       +(mem&&mem.name?'<span style="font-size:11px;color:var(--ink3);margin-left:12px">'+escHtml(mem.name)+'</span>':'');
   }
+  // オーナー管理情報（写真・note・備考）を読み取り専用で表示
+  renderOwnerInfo(v?v.memberId:null);
   openM('m-orders');
 
   // キャッシュから取得（セッション内のvisitに紐づくorderのみ）
