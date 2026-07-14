@@ -21,7 +21,8 @@ var FIREBASE_CONFIG={
 <script src="/auth-role.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/osmtogeojson@3.0.0-beta.5/osmtogeojson.js"></script>
+<!-- osmtogeojson は管理者のジオメトリ生成専用。会員表示（isAdmin=false）では未使用のため読み込まない -->
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -887,7 +888,9 @@ AuthRole.requireMember(auth, async function(user){
     requestAnimationFrame(function(){ map.invalidateSize(); });
   });
   await loadElevSettings();
-  loadDotStatusFromFirestore();
+  // dotMunicipios(境界ポリゴン)は onDotSelChange('all') 内で1回だけ取得する。
+  // 以前はここで loadDotStatusFromFirestore() が同じ全件を先読みし、二重取得で
+  // 回線の弱い環境で表示が遅かったため先読みを廃止（状態パネルはloadDotsが更新）。
   loadData(); loadOverlays(); onDotSelChange('all');
 }, function(){
   document.getElementById('login-screen').style.display='flex';
@@ -1263,7 +1266,11 @@ function _rebuildDotLayer(mode){
 
 // ── DOT境界ステータスパネル ──────────────────────────────────────
 function toggleDotStatus(){
-  document.getElementById('dot-sp').classList.toggle('open');
+  var el=document.getElementById('dot-sp');
+  var willOpen=!el.classList.contains('open');
+  el.classList.toggle('open');
+  // 開くたびに最新の取得状況で描画（起動時の先読みを廃止したため）
+  if(willOpen) buildStatusPanel();
 }
 
 function buildStatusPanel(){
