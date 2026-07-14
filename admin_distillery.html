@@ -10,6 +10,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://unpkg.com/osmtogeojson@3.0.0-beta.5/osmtogeojson.js"></script>
+<script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
 <script src="https://unpkg.com/polygon-clipping@0.15.7/dist/polygon-clipping.umd.min.js"></script>
 <script src="/auth-role.js?v=20260714"></script>
 
@@ -340,8 +341,10 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         <div style="font-size:11px;color:var(--ink3);margin-bottom:10px;">Firestore <code>dotMunicipios</code> コレクション管理。Overpass APIから境界ポリゴンを取得・保存します。</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
           <button class="btn bp" id="btn-dot-fetch-missing" style="font-size:12px;">未取得を一括取得・保存</button>
+          <button class="btn bs" id="btn-dot-gen-merged" style="font-size:12px;">DOT外形(merged)を生成</button>
           <span id="dot-admin-status" style="font-size:11px;color:var(--ink3);margin-left:4px;"></span>
         </div>
+        <div style="font-size:10px;color:var(--ink3);margin-bottom:8px;">「DOT外形(merged)」= 各州の自治区ポリゴンを結合した外形線。会員マップの既定表示（州・DOT外形）で使用。自治区を取得・更新した後に実行してください。</div>
         <div id="dot-master-list" style="font-size:12px;"></div>
       </div>
     </div>
@@ -1715,6 +1718,56 @@ async function fetchAndSaveDotEntry(btn,entry,searchName){
   }
 }
 
+
+// 各州の自治区ポリゴンを結合して DOT外形(merged) を生成・保存する。
+// 会員マップの既定表示「州・DOT外形」で、重い自治区を読まずに外形を出すために使う。
+// Jalisco は state-level（州全体がDOT）のため dotState をそのまま外形として使い、対象外。
+g('btn-dot-gen-merged').addEventListener('click',async function(){
+  if(typeof turf==='undefined'){ toast('turf.js が読み込まれていません','err'); return; }
+  var btn=this; var statusEl=g('dot-admin-status');
+  btn.disabled=true; statusEl.textContent='自治区データ取得中...';
+  try{
+    var snap=await db.collection('dotMunicipios').where('entryType','==','municipio').get();
+    var byIso={};
+    snap.docs.forEach(function(doc){
+      var d=doc.data(); if(!d.geomJson) return;
+      var iso=d.iso||((doc.id.match(/^([^_]+-[^_]+)_/)||['',''])[1]);
+      var sq=DOT_ADMIN_STATES.find(function(s){return s.iso===iso;});
+      if(!sq||sq.stateLevel) return; // Jaliscoは対象外
+      try{
+        var g2=JSON.parse(d.geomJson);
+        if(g2.type==='Polygon'||g2.type==='MultiPolygon'){
+          (byIso[iso]=byIso[iso]||{sq:sq,polys:[]}).polys.push(turf.feature(g2));
+        }
+      }catch(e){}
+    });
+    var isos=Object.keys(byIso);
+    if(!isos.length){ statusEl.textContent='対象の自治区データがありません（先に自治区を取得してください）'; btn.disabled=false; return; }
+    var done=0;
+    for(var k=0;k<isos.length;k++){
+      var iso=isos[k], grp=byIso[iso];
+      statusEl.textContent='merged生成中: '+grp.sq.state+' ('+(k+1)+'/'+isos.length+')';
+      var acc=grp.polys[0];
+      for(var i=1;i<grp.polys.length;i++){
+        try{ var u=turf.union(acc, grp.polys[i]); if(u) acc=u; }catch(e){}
+      }
+      await db.collection('dotMunicipios').doc(iso+'_dotMerged').set({
+        state:grp.sq.state, iso:iso, color:grp.sq.color, entryType:'dotMerged',
+        geomJson:JSON.stringify(acc.geometry),
+        fetchedAt:firebase.firestore.FieldValue.serverTimestamp()
+      },{merge:true});
+      done++;
+    }
+    statusEl.textContent='DOT外形生成完了: '+done+'州';
+    toast('DOT外形(merged)を'+done+'州分生成しました');
+    await loadDotMasterList();
+  }catch(e){
+    statusEl.textContent='失敗: '+e.message;
+    toast('merged生成失敗: '+e.message,'err');
+  }finally{
+    btn.disabled=false;
+  }
+});
 
 g('btn-dot-fetch-missing').addEventListener('click',async function(){
   // Firestoreのスナップを再取得してエントリを構築
