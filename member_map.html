@@ -202,9 +202,9 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
   <label style="font-size:10px;color:var(--ink2);white-space:nowrap;">境界</label>
   <select id="sel-dot" class="ctrl-btn" onchange="onDotSelChange(this.value)" style="cursor:pointer;">
     <option value="none">なし</option>
-    <option value="state">州境界</option>
+    <option value="state" selected>州・DOT外形</option>
     <option value="municipio">自治区境界</option>
-    <option value="all" selected>全境界</option>
+    <option value="all">全境界</option>
   </select>
   <span id="dot-opacity-ctrl" style="display:none;align-items:center;gap:3px;font-size:10px;color:var(--ink3);">
     <label>透過</label>
@@ -888,10 +888,9 @@ AuthRole.requireMember(auth, async function(user){
     requestAnimationFrame(function(){ map.invalidateSize(); });
   });
   await loadElevSettings();
-  // dotMunicipios(境界ポリゴン)は onDotSelChange('all') 内で1回だけ取得する。
-  // 以前はここで loadDotStatusFromFirestore() が同じ全件を先読みし、二重取得で
-  // 回線の弱い環境で表示が遅かったため先読みを廃止（状態パネルはloadDotsが更新）。
-  loadData(); loadOverlays(); onDotSelChange('all');
+  // 既定は「州・DOT外形」のみ取得（軽量）。自治区の細かいポリゴンは
+  // 「自治区境界」「全境界」を選んだ時に初めて遅延読み込みする。
+  loadData(); loadOverlays(); onDotSelChange('state');
 }, function(){
   document.getElementById('login-screen').style.display='flex';
   document.getElementById('app').style.display='none';
@@ -1171,6 +1170,63 @@ function dotLayerStyle(f){
   return {color:mc,weight:0.6,fillColor:c,fillOpacity:fo,opacity:0.85};
 }
 
+// ── DOT境界のモード別・遅延読み込み ──────────────────────────────
+// 軽い外形（州境界/DOT外形merged/Jalisco州）と、重い自治区ポリゴンを
+// 別クエリに分割し、選択されたモードで必要なものだけ取得する。
+var dotOutlineDocs=null, dotMuniDocs=null; // Firestoreドキュメントのキャッシュ
+
+function _dotMuniIsoSet(){
+  var set=new Set();
+  (dotMuniDocs||[]).forEach(function(doc){
+    var m=doc.id.match(/^([^_]+-[^_]+)_municipio_/);
+    if(m){ var sq=DOT_STATES.find(function(s){return s.stateLevel&&s.iso===m[1];}); if(sq) set.add(m[1]); }
+  });
+  return set;
+}
+
+// ドキュメント配列 → GeoJSON Feature配列（描画用プロパティ付き）
+function _buildDotFeatures(docs, muniIsoSet){
+  var features=[];
+  (docs||[]).forEach(function(doc){
+    if(doc.id==='_config') return;
+    var d=doc.data(); if(!d.geomJson) return;
+    try{
+      var geom=JSON.parse(d.geomJson);
+      var et=d.entryType;
+      if((et==='dotState'||et==='stateBoundary'||et==='dotMerged')&&geom.type==='Polygon'&&geom.coordinates.length>1){
+        geom={type:'Polygon',coordinates:[geom.coordinates[0]]};
+      }
+      var nm=et==='municipio'?d.name:((et==='dotState'||et==='dotMerged')?(d.name||d.state):null);
+      var mOrig=doc.id.match(/_municipio_(.+)$/);
+      var mapKey=mOrig?(mOrig[1].replace(/_/g,' ')):((et==='dotState'||et==='dotMerged')?d.state:null);
+      var docIso=d.iso||((doc.id.match(/^([^_]+-[^_]+)_/)||['',''])[1]);
+      // 州の外形線: stateBoundary、または自治区を読み込んだstate-level州(Jalisco)のdotState
+      var isOutline=et==='stateBoundary'||(et==='dotState'&&muniIsoSet.has(d.iso));
+      // 塗り表示するDOT領域: dotMerged、または自治区未読込のstate-level州(Jalisco)のdotState
+      var isDotFill=(et==='dotMerged')||(et==='dotState'&&!muniIsoSet.has(d.iso));
+      features.push({type:'Feature',geometry:geom,properties:{
+        _dotColor:d.color,_municipioName:mapKey,
+        _isStateOutline:isOutline,
+        _isDotState:isDotFill,
+        _displayName:nm,_mapKey:mapKey,_iso:docIso
+      }});
+    }catch(e){}
+  });
+  return features;
+}
+
+async function _ensureDotOutlines(){
+  if(dotOutlineDocs) return;
+  var snap=await db.collection('dotMunicipios')
+    .where('entryType','in',['stateBoundary','dotState','dotMerged']).get();
+  dotOutlineDocs=snap.docs;
+}
+async function _ensureDotMunis(){
+  if(dotMuniDocs) return;
+  var snap=await db.collection('dotMunicipios').where('entryType','==','municipio').get();
+  dotMuniDocs=snap.docs;
+}
+
 async function onDotSelChange(mode){
   var sel=document.getElementById('sel-dot');
   if(dotLayer){ map.removeLayer(dotLayer); dotLayer=null; dotLayerMap={}; }
@@ -1180,56 +1236,35 @@ async function onDotSelChange(mode){
     document.getElementById('dot-sp').classList.remove('open');
     buildStatusPanel(); updateLegend(); return;
   }
-  if(!dotGJ){
-    if(dotLoading) return;
-    dotLoading=true; if(sel) sel.disabled=true;
-    try{
-      var snap=await db.collection('dotMunicipios').get();
-      dotFirestoreSnap=snap;
-      dotFetchStatus=deriveDotFetchStatusFromFirestore(snap);
-      snap.docs.forEach(function(doc){
-        if(doc.id==='_config'){
-          var s=doc.data();
-          if(typeof s.fillOpacity==='number'){ dotFillOpacity=s.fillOpacity; _syncOpacitySlider(s.fillOpacity); }
-        }
-      });
-      var stateLevelMuniIsos=new Set();
-      snap.docs.forEach(function(doc){
-        var m=doc.id.match(/^([^_]+-[^_]+)_municipio_/);
-        if(m){
-          var sq=DOT_STATES.find(function(s){return s.stateLevel&&s.iso===m[1];});
-          if(sq) stateLevelMuniIsos.add(m[1]);
-        }
-      });
-      var features=[];
-      snap.docs.forEach(function(doc){
-        var d=doc.data(); if(!d.geomJson) return;
-        try{
-          var geom=JSON.parse(d.geomJson);
-          if((d.entryType==='dotState'||d.entryType==='stateBoundary')&&geom.type==='Polygon'&&geom.coordinates.length>1){
-            geom={type:'Polygon',coordinates:[geom.coordinates[0]]};
-          }
-          var nm=d.entryType==='municipio'?d.name:(d.entryType==='dotState'?(d.name||d.state):null);
-          var mOrig=doc.id.match(/_municipio_(.+)$/);
-          var mapKey=mOrig?(mOrig[1].replace(/_/g,' ')):(d.entryType==='dotState'?d.state:null);
-          var docIso=d.iso||((doc.id.match(/^([^_]+-[^_]+)_/)||['',''])[1]);
-          var isOutline=d.entryType==='stateBoundary'||(d.entryType==='dotState'&&stateLevelMuniIsos.has(d.iso));
-          features.push({type:'Feature',geometry:geom,properties:{
-            _dotColor:d.color,_municipioName:mapKey,
-            _isStateOutline:isOutline,
-            _isDotState:d.entryType==='dotState'&&!stateLevelMuniIsos.has(d.iso),
-            _displayName:nm,_mapKey:mapKey,_iso:docIso
-          }});
-        }catch(e){}
-      });
-      dotGJ={type:'FeatureCollection',features:features};
-    }catch(e){
-      alert('DOT境界の読み込みに失敗しました:\n'+e.message);
-      if(sel){ sel.value='none'; sel.disabled=false; } dotLoading=false;
-      buildStatusPanel(); updateLegend(); return;
-    }finally{
-      dotLoading=false; if(sel) sel.disabled=false;
+  if(dotLoading) return;
+  dotLoading=true; if(sel) sel.disabled=true;
+  try{
+    var needOutlines=(mode==='state'||mode==='all');
+    var needMunis=(mode==='municipio'||mode==='all');
+    if(needOutlines) await _ensureDotOutlines();
+    if(needMunis) await _ensureDotMunis();
+    var muniIsoSet=_dotMuniIsoSet();
+    var feats;
+    if(mode==='state'){
+      feats=_buildDotFeatures(dotOutlineDocs, muniIsoSet);
+    } else if(mode==='municipio'){
+      feats=_buildDotFeatures(dotMuniDocs, muniIsoSet);
+    } else {
+      // 全境界: 自治区の詳細ポリゴン + 州外形（mergedは自治区と重複するため除外）
+      var outlineNoMerged=(dotOutlineDocs||[]).filter(function(doc){ return doc.data().entryType!=='dotMerged'; });
+      feats=_buildDotFeatures(outlineNoMerged, muniIsoSet).concat(_buildDotFeatures(dotMuniDocs, muniIsoSet));
     }
+    dotGJ={type:'FeatureCollection',features:feats};
+    // 状態パネル用: これまでに読み込んだドキュメントから取得状況を導出
+    var statusDocs=(dotOutlineDocs||[]).concat(dotMuniDocs||[]);
+    dotFirestoreSnap={docs:statusDocs};
+    dotFetchStatus=deriveDotFetchStatusFromFirestore({docs:statusDocs});
+  }catch(e){
+    alert('DOT境界の読み込みに失敗しました:\n'+e.message);
+    if(sel){ sel.value='none'; sel.disabled=false; } dotLoading=false;
+    buildStatusPanel(); updateLegend(); return;
+  }finally{
+    dotLoading=false; if(sel) sel.disabled=false;
   }
   _rebuildDotLayer(mode);
 }
