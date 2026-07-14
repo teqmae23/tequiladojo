@@ -54,10 +54,13 @@ var AuthRole = (function() {
     return null;
   }
 
+  // 注: ロール判定（getRole）が完了するまで画面を表示解禁しない。
+  // 冒頭で showScreens() すると、非同期判定の待ち時間にログイン画面が
+  // 一瞬見えてしまう（遷移時のちらつき）ため、確定した分岐でのみ解禁する。
   function requireStaff(auth, onAllowed, onSignedOut){
     auth.onAuthStateChanged(async function(user){
-      showScreens();
       if(!user){
+        showScreens();
         if(onSignedOut) onSignedOut();
         else showLoginScreen();
         return;
@@ -71,6 +74,7 @@ var AuthRole = (function() {
       var role = null;
       try { role = await getRole(user); } catch(e){}
       if(role === 'owner' || role === 'staff'){
+        showScreens();
         onAllowed(user, role);
       } else {
         var msg = role ? 'アクセス権限がありません（role:' + role + '）' : '権限が設定されていません（email:' + user.email + '）';
@@ -82,8 +86,8 @@ var AuthRole = (function() {
 
   function requireOwner(auth, onAllowed, onSignedOut){
     auth.onAuthStateChanged(async function(user){
-      showScreens();
       if(!user){
+        showScreens();
         if(onSignedOut) onSignedOut();
         else showLoginScreen();
         return;
@@ -91,6 +95,7 @@ var AuthRole = (function() {
       var role = null;
       try { role = await getRole(user); } catch(e){}
       if(role === 'owner'){
+        showScreens();
         onAllowed(user, role);
       } else {
         var msg = 'オーナー権限が必要です（role:' + role + '）';
@@ -102,12 +107,13 @@ var AuthRole = (function() {
 
   function requireMember(auth, onAllowed, onSignedOut){
     auth.onAuthStateChanged(async function(user){
-      showScreens();
       if(!user){
+        showScreens();
         if(onSignedOut) onSignedOut();
         else showLoginScreen();
         return;
       }
+      showScreens();
       onAllowed(user, null);
     });
   }
