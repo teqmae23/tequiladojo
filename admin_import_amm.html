@@ -393,6 +393,35 @@ async function scrapeOne(nom,url){
       var el=doc.querySelector('meta[property="'+name+'"],meta[name="'+name+'"]');
       return el?el.getAttribute('content'):'';
     }
+    // DISTILLERY EQUIPMENT テーブル（COOKING/EXTRACTION/FERMENTATION/STILL/AGING/WATER SOURCE）
+    function equip(){
+      var o={},tbs=doc.querySelectorAll('table');
+      for(var t=0;t<tbs.length;t++){
+        var rows=tbs[t].querySelectorAll('tr'),on=false;
+        for(var i=0;i<rows.length;i++){
+          var cs=rows[i].querySelectorAll('th,td');
+          var lb=(cs[0]?cs[0].textContent:'').replace(/[:：]/g,' ').trim().toUpperCase();
+          var v=(cs[1]?cs[1].textContent:'').replace(/[,，]\s*$/,'').trim();
+          if(v==='--'||v==='-') v='';
+          if(lb.indexOf('DISTILLERY EQUIPMENT')>=0){on=true;continue;}
+          if(!on) continue;
+          if(lb.indexOf('COOKING')>=0)o.cooking=v;
+          else if(lb.indexOf('EXTRACTION')>=0)o.extraction=v;
+          else if(lb.indexOf('FERMENTATION')>=0)o.fermentation=v;
+          else if(lb.indexOf('STILL')>=0)o.still=v;
+          else if(lb.indexOf('AGING')>=0)o.aging=v;
+          else if(lb.indexOf('WATER')>=0)o.waterSource=v;
+        }
+        if(on) break;
+      }
+      return o;
+    }
+    var eq=equip();
+    // 製品(ボトル)ページURLも収集（ボトル単位取込のため）
+    var prodUrls=[].map.call(doc.querySelectorAll('a[href*="/agave_spirits/"]'),function(a){
+      var h=a.getAttribute('href')||''; if(h.indexOf('http')!==0) h=location.origin+(h.charAt(0)==='/'?'':'/')+h;
+      return h.split('#')[0].split('?')[0];
+    }).filter(function(u,i,arr){return u&&arr.indexOf(u)===i;});
     return {
       nom, url,
       distilleryName: txt(['h1','.entry-title','.distillery-name','[class*="title"] h1']),
@@ -402,7 +431,10 @@ async function scrapeOne(nom,url){
       address:  txt(['[class*="address"]','.address','address']),
       founded:  txt(['[class*="founded"],[class*="established"],[class*="year"]']),
       description: meta('og:description') || txt(['.entry-content p','.description p','[class*="about"] p']).slice(0,500),
-      pageTitle: doc.title
+      pageTitle: doc.title,
+      cooking:eq.cooking||'', extraction:eq.extraction||'', fermentation:eq.fermentation||'',
+      still:eq.still||'', aging:eq.aging||'', waterSource:eq.waterSource||'',
+      productUrls: prodUrls
     };
   }catch(e){return {nom,url,error:e.message};}
 }
@@ -453,7 +485,7 @@ async function scrapeOne(nom,url){
     <div id="detail-preview-wrap" style="display:none;">
       <div class="tbl-wrap" style="margin-top:12px;">
         <table class="data-table" id="preview-detail">
-          <thead><tr><th>NOM</th><th>蒸留所名</th><th>URL</th><th>Website</th><th>City</th><th>Founded</th><th>状態</th></tr></thead>
+          <thead><tr><th>NOM</th><th>蒸留所名</th><th>URL</th><th>Website</th><th>City</th><th>Founded</th><th>製法/製品</th><th>状態</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -901,6 +933,9 @@ var SCRAPE_FN_SRC='async function scrapeOne(nom,url){\n'
   +'    function txt(sels){for(var s of sels){var el=doc.querySelector(s);if(el&&el.textContent.trim()) return el.textContent.trim();}return \'\';}\n'
   +'    function href(sels){for(var s of sels){var el=doc.querySelector(s);if(el&&el.href) return el.href;}return \'\';}\n'
   +'    function meta(name){var el=doc.querySelector(\'meta[property="\'+name+\'"],meta[name="\'+name+\'"]\');return el?el.getAttribute(\'content\'):\'\';};\n'
+  +'    function equip(){var o={},tbs=doc.querySelectorAll(\'table\');for(var t=0;t<tbs.length;t++){var rows=tbs[t].querySelectorAll(\'tr\'),on=false;for(var i=0;i<rows.length;i++){var cs=rows[i].querySelectorAll(\'th,td\');var lb=(cs[0]?cs[0].textContent:\'\').replace(/[:：]/g,\' \').trim().toUpperCase();var v=(cs[1]?cs[1].textContent:\'\').replace(/[,，]\\s*$/,\'\').trim();if(v===\'--\'||v===\'-\')v=\'\';if(lb.indexOf(\'DISTILLERY EQUIPMENT\')>=0){on=true;continue;}if(!on)continue;if(lb.indexOf(\'COOKING\')>=0)o.cooking=v;else if(lb.indexOf(\'EXTRACTION\')>=0)o.extraction=v;else if(lb.indexOf(\'FERMENTATION\')>=0)o.fermentation=v;else if(lb.indexOf(\'STILL\')>=0)o.still=v;else if(lb.indexOf(\'AGING\')>=0)o.aging=v;else if(lb.indexOf(\'WATER\')>=0)o.waterSource=v;}if(on)break;}return o;}\n'
+  +'    var eq=equip();\n'
+  +'    var prodUrls=[].map.call(doc.querySelectorAll(\'a[href*="/agave_spirits/"]\'),function(a){var h=a.getAttribute(\'href\')||\'\';if(h.indexOf(\'http\')!==0)h=location.origin+(h.charAt(0)===\'/\'?\'\':\'/\')+h;return h.split(\'#\')[0].split(\'?\')[0];}).filter(function(u,i,arr){return u&&arr.indexOf(u)===i;});\n'
   +'    return {nom,url,\n'
   +'      distilleryName:txt([\'h1\',\'.entry-title\',\'.distillery-name\']),\n'
   +'      website:href([\'a.website\']),\n'
@@ -909,7 +944,8 @@ var SCRAPE_FN_SRC='async function scrapeOne(nom,url){\n'
   +'      address:txt([\'[class*="address"]\',\'.address\',\'address\']),\n'
   +'      founded:txt([\'[class*="founded"],[class*="established"],[class*="year"]\']),\n'
   +'      description:meta(\'og:description\')||txt([\'.entry-content p\',\'.description p\']).slice(0,500),\n'
-  +'      pageTitle:doc.title};\n'
+  +'      pageTitle:doc.title,\n'
+  +'      cooking:eq.cooking||\'\',extraction:eq.extraction||\'\',fermentation:eq.fermentation||\'\',still:eq.still||\'\',aging:eq.aging||\'\',waterSource:eq.waterSource||\'\',productUrls:prodUrls};\n'
   +'  }catch(e){return {nom,url,error:e.message};}\n'
   +'}';
 
@@ -1082,6 +1118,7 @@ function renderDetailPreview(){
       +'<td style="font-size:10px;">'+esc((x.website||'').slice(0,30))+'</td>'
       +'<td>'+esc(x.city||'')+'</td>'
       +'<td class="mono">'+esc(x.founded||'')+'</td>'
+      +'<td style="font-size:10px;">'+(function(){var eqN=['cooking','extraction','fermentation','still','aging','waterSource'].filter(function(k){return x[k];}).length;var pN=(x.productUrls||[]).length;return '製法'+eqN+'/6 ・製品'+pN;})()+'</td>'
       +statusCell+'</tr>';
   });
 }
@@ -1109,6 +1146,15 @@ async function doDetailImport(){
           founded:x.founded||'',
           description:x.description||'',
           pageTitle:x.pageTitle||'',
+          // DISTILLERY EQUIPMENT（製法）
+          cooking:x.cooking||'',
+          extraction:x.extraction||'',
+          fermentation:x.fermentation||'',
+          still:x.still||'',
+          aging:x.aging||'',
+          waterSource:x.waterSource||'',
+          // 製品(ボトル)ページURL一覧（ボトル単位取込で使用）
+          productUrls:Array.isArray(x.productUrls)?x.productUrls:[],
           scrapedAt:firebase.firestore.FieldValue.serverTimestamp()
         });
       });
