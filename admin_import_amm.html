@@ -492,6 +492,59 @@ async function scrapeOne(nom,url){
     </div>
   </div>
 
+  <!-- ④ 製品(ボトル)製法データ -->
+  <div class="sec-head"><span class="sec-num">4</span>製品(ボトル)製法データ 取込・突合</div>
+  <div class="card">
+    <div class="card-title">🍾 ammBottleDetails — 製品ページ「PRODUCTION DETAILS」の取込</div>
+    <div class="card-sub">
+      ③で <span class="mono">ammDistilleryDetails.productUrls</span> に収集した製品URLを巡回して、各製品(ボトル)の製法を取得します。<br>
+      コレクション: <span class="mono">ammBottleDetails</span> &nbsp;|&nbsp; ドキュメントID: AMM製品ID（URL末尾の数字）
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-sm" id="btn-prod-genscript" onclick="genProductScript()">① 製品URLからスクリプト生成</button>
+      <span class="status-line" id="st-prod-gen" style="display:inline-block;margin:0 0 0 8px;"></span>
+    </div>
+    <div class="script-wrap" id="script-product-wrap" style="display:none;margin-top:8px;">
+      <div class="script-label">
+        製品ページ取得スクリプト（agavematchmaker.com上のコンソールで実行）
+        <button class="copy-btn" onclick="copyScript('script-product')">コピー</button>
+      </div>
+      <div class="script-box" id="script-product"></div>
+    </div>
+
+    <div class="paste-label" style="margin-top:10px;">② 出力JSONを貼り付け: <span id="product-parse-status"></span></div>
+    <textarea class="paste-area" id="product-json" placeholder='[{"ammProductId":"8377","sourceUrl":"https://...","nom":"1675","brandName":"...","productName":"...","cooking":"...","fermentation":"...","distillation":"...","still":"...","aging":"...","abvProof":"..."},...]' oninput="onProductPaste()"></textarea>
+    <div class="btn-row" style="margin-top:10px;">
+      <button class="btn btn-primary" id="btn-product-import" onclick="doProductImport()" disabled>③ 製品データを取込（ammBottleDetails）</button>
+      <button class="btn btn-danger btn-sm" id="btn-product-clear" onclick="doProductClear()" disabled>ammBottleDetails 全削除</button>
+    </div>
+    <div class="prog-wrap" id="prog-product">
+      <div class="prog-bg"><div class="prog-bar" id="pb-product"></div></div>
+      <div class="prog-txt" id="pt-product"></div>
+    </div>
+    <div class="status-line" id="st-product"></div>
+    <div id="product-preview-wrap" style="display:none;">
+      <div class="tbl-wrap" style="margin-top:12px;">
+        <table class="data-table" id="preview-product">
+          <thead><tr><th>製品ID</th><th>NOM</th><th>ブランド</th><th>製品名</th><th>ABV</th><th>製法</th><th>状態</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--cream3);">
+      <div class="card-sub" style="margin-bottom:8px;">
+        ④ <b>ボトルへの突合</b> — NOM＋ブランド名で候補を自動サジェストします。確定するとボトルに <span class="mono">ammProductId</span>／<span class="mono">ammUrl</span> を紐付けます。
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary btn-sm" id="btn-match-run" onclick="runMatch()" disabled>自動突合を実行</button>
+        <span class="status-line" id="st-match" style="display:inline-block;margin:0 0 0 8px;"></span>
+      </div>
+      <div id="match-wrap" style="margin-top:10px;"></div>
+    </div>
+  </div>
+
   <div class="divider"></div>
   <div class="sec-head">ログ</div>
   <div class="log-box" id="log-box"><span style="color:#4a3820;">待機中...</span></div>
@@ -713,6 +766,11 @@ function refreshButtons(){
   document.getElementById('btn-sync-url').disabled=!isAdmin;
   document.getElementById('btn-detail-import').disabled=!(isAdmin&&parsedDetail.length>0);
   document.getElementById('btn-detail-clear').disabled=!isAdmin;
+  var _pp=(typeof parsedProduct!=='undefined')?parsedProduct:[];
+  var _g=document.getElementById('btn-prod-genscript'); if(_g) _g.disabled=!isAdmin;
+  var _pi=document.getElementById('btn-product-import'); if(_pi) _pi.disabled=!(isAdmin&&_pp.length>0);
+  var _pc=document.getElementById('btn-product-clear'); if(_pc) _pc.disabled=!isAdmin;
+  var _mr=document.getElementById('btn-match-run'); if(_mr) _mr.disabled=!isAdmin;
 }
 
 // ── Basic preview ─────────────────────────────────────────────
@@ -1221,6 +1279,266 @@ function copyScript(id){
   }).catch(function(){
     log('コピーに失敗しました。手動でコピーしてください','warn');
   });
+}
+
+// ══════════════════════════════════════════════════════════════
+// ④ 製品(ボトル)製法データ 取込・突合
+// ══════════════════════════════════════════════════════════════
+var parsedProduct=[];
+
+// agavematchmaker.com のコンソールで実行される製品ページscraper（toStringで埋め込む）
+function scrapeProductRemote(url){
+  return fetch(url,{credentials:'omit'}).then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.text();
+  }).then(function(html){
+    var doc=new DOMParser().parseFromString(html,'text/html');
+    // PRODUCTION DETAILS テーブルを label:value で取得
+    var o={},tbs=doc.querySelectorAll('table');
+    for(var t=0;t<tbs.length;t++){
+      var rows=tbs[t].querySelectorAll('tr'),on=false;
+      for(var i=0;i<rows.length;i++){
+        var cs=rows[i].querySelectorAll('th,td');
+        var lb=(cs[0]?cs[0].textContent:'').replace(/[:：]/g,' ').trim().toUpperCase();
+        var v=(cs[1]?cs[1].textContent:'').replace(/[,，]\s*$/,'').trim();
+        if(v==='--'||v==='-') v='';
+        if(lb.indexOf('PRODUCTION DETAILS')>=0){on=true;continue;}
+        if(!on) continue;
+        if(lb) o[lb]=v;
+      }
+      if(on) break;
+    }
+    var brandA=doc.querySelector('a[href*="/brands/"]');
+    var h1=doc.querySelector('h1');
+    var title=(doc.title||'').split('|')[0].trim();
+    var m=url.match(/agave_spirits\/(\d+)/);
+    return {
+      ammProductId:m?m[1]:url,
+      sourceUrl:url,
+      nom:o['NOM']||'',
+      brandName:brandA?brandA.textContent.replace(/\s+/g,' ').trim():'',
+      productName:(h1?h1.textContent.replace(/\s+/g,' ').trim():'')||title,
+      type:o['TYPE']||'',
+      agaveType:o['AGAVE TYPE']||'',
+      agaveRegion:o['AGAVE REGION']||'',
+      region:o['REGION']||'',
+      cooking:o['COOKING']||'',
+      extraction:o['EXTRACTION']||'',
+      waterSource:o['WATER SOURCE']||'',
+      fermentation:o['FERMENTATION']||'',
+      distillation:o['DISTILLATION']||'',
+      still:o['STILL']||'',
+      aging:o['AGING']||'',
+      abvProof:o['ABV/PROOF']||'',
+      other:o['OTHER']||''
+    };
+  }).catch(function(e){ return {sourceUrl:url,error:e.message}; });
+}
+
+async function genProductScript(){
+  if(!isAdmin) return;
+  st('st-prod-gen','製品URL収集中...','');
+  try{
+    var snap=await db.collection('ammDistilleryDetails').get();
+    var urls=[];
+    snap.forEach(function(d){
+      var pu=d.data().productUrls;
+      // 数字ID付きの実製品URL(例 /agave_spirits/8377-...)のみ対象。
+      // blanco/joven/reposado等のカテゴリ汎用リンクは除外。
+      if(Array.isArray(pu)) pu.forEach(function(u){ if(u && /\/agave_spirits\/\d+-/.test(u)) urls.push(u); });
+    });
+    urls=urls.filter(function(u,i,a){return a.indexOf(u)===i;});
+    if(!urls.length){ st('st-prod-gen','製品URLがありません。③の詳細取得（更新版スクリプト）を先に実行してください','err'); return; }
+    var script='var URLS='+JSON.stringify(urls)+';\n'
+      +scrapeProductRemote.toString()+'\n'
+      +'(async function(){\n'
+      +'  if(!/agavematchmaker\\.com$/.test(location.hostname)){console.error("agavematchmaker.com上で実行してください（現在: "+location.hostname+"）");return;}\n'
+      +'  console.log("製品スクレイピング開始: "+URLS.length+"件");\n'
+      +'  var results=[];\n'
+      +'  for(var i=0;i<URLS.length;i++){\n'
+      +'    results.push(await scrapeProductRemote(URLS[i]));\n'
+      +'    if((i+1)%10===0) console.log((i+1)+"/"+URLS.length+" 完了...");\n'
+      +'    await new Promise(function(r){setTimeout(r,600);});\n'
+      +'  }\n'
+      +'  var json=JSON.stringify(results);\n'
+      +'  try{copy(json);console.log("✓ クリップボードにコピー済み ("+results.length+"件)");}catch(e){}\n'
+      +'  console.log(json);\n'
+      +'  return results;\n'
+      +'})();';
+    document.getElementById('script-product').textContent=script;
+    document.getElementById('script-product-wrap').style.display='';
+    st('st-prod-gen','✓ '+urls.length+'件の製品URLでスクリプト生成しました','ok');
+    log('製品スクリプト生成: '+urls.length+'URL','ok');
+  }catch(e){ st('st-prod-gen','エラー: '+e.message,'err'); log('製品スクリプト生成エラー: '+e.message,'err'); }
+}
+
+function onProductPaste(){
+  var sp=document.getElementById('product-parse-status');
+  var txt=document.getElementById('product-json').value.trim();
+  if(!txt){ sp.textContent=''; parsedProduct=[]; refreshButtons(); return; }
+  try{
+    var arr=JSON.parse(txt);
+    if(!Array.isArray(arr)) arr=[arr];
+    parsedProduct=arr.filter(function(x){return x&&(x.ammProductId||x.sourceUrl);});
+    var errN=parsedProduct.filter(function(x){return x.error;}).length;
+    sp.textContent='✓ '+parsedProduct.length+'件 解析OK'+(errN?' (エラー'+errN+'件含む)':'');
+    renderProductPreview();
+  }catch(e){
+    sp.textContent='⚠ JSON解析失敗: '+e.message;
+    parsedProduct=[];
+    document.getElementById('product-preview-wrap').style.display='none';
+  }
+  refreshButtons();
+}
+
+function renderProductPreview(){
+  document.getElementById('product-preview-wrap').style.display='';
+  var tbody=document.querySelector('#preview-product tbody');
+  tbody.innerHTML='';
+  parsedProduct.slice(0,20).forEach(function(x){
+    var eqN=['cooking','extraction','fermentation','distillation','still','aging','waterSource'].filter(function(k){return x[k];}).length;
+    var statusCell=x.error
+      ?'<td><span style="color:var(--red);font-size:10px;">⚠ '+esc(x.error)+'</span></td>'
+      :'<td><span class="badge-ok">OK</span></td>';
+    tbody.innerHTML+='<tr><td class="mono">'+esc(x.ammProductId||'')+'</td>'
+      +'<td class="mono">'+esc(x.nom||'')+'</td>'
+      +'<td>'+esc((x.brandName||'').slice(0,24))+'</td>'
+      +'<td style="max-width:180px;">'+esc((x.productName||'').slice(0,40))+'</td>'
+      +'<td style="font-size:10px;">'+esc(x.abvProof||'')+'</td>'
+      +'<td style="font-size:10px;">製法'+eqN+'/7</td>'
+      +statusCell+'</tr>';
+  });
+}
+
+async function doProductImport(){
+  if(!isAdmin||!parsedProduct.length) return;
+  var valid=parsedProduct.filter(function(x){return !x.error;});
+  if(!confirm('ammBottleDetails に'+valid.length+'件を取込みます（エラー'+(parsedProduct.length-valid.length)+'件スキップ）。続行しますか？')) return;
+  document.getElementById('btn-product-import').disabled=true;
+  document.getElementById('prog-product').style.display='block';
+  log('製品データ取込開始: '+valid.length+'件','info');
+  try{
+    var done=0;
+    for(var i=0;i<valid.length;i+=499){
+      var batch=db.batch();
+      valid.slice(i,i+499).forEach(function(x){
+        var pid=String(x.ammProductId||((String(x.sourceUrl||'').match(/agave_spirits\/(\d+)/)||[])[1])||'');
+        if(!pid) return;
+        var ref=db.collection('ammBottleDetails').doc(pid);
+        batch.set(ref,{
+          ammProductId:pid, sourceUrl:x.sourceUrl||'', nom:String(x.nom||''),
+          brandName:x.brandName||'', productName:x.productName||'',
+          type:x.type||'', agaveType:x.agaveType||'', agaveRegion:x.agaveRegion||'', region:x.region||'',
+          cooking:x.cooking||'', extraction:x.extraction||'', waterSource:x.waterSource||'',
+          fermentation:x.fermentation||'', distillation:x.distillation||'', still:x.still||'',
+          aging:x.aging||'', abvProof:x.abvProof||'', other:x.other||'',
+          scrapedAt:firebase.firestore.FieldValue.serverTimestamp()
+        },{merge:true});
+      });
+      await batch.commit();
+      done+=Math.min(499,valid.length-i);
+      var pct=Math.round(done/valid.length*100);
+      document.getElementById('pb-product').style.width=pct+'%';
+      document.getElementById('pt-product').textContent=done+'/'+valid.length+' 件 ('+pct+'%)';
+    }
+    st('st-product','✓ 製品データ取込完了: '+done+'件','ok');
+    log('✓ 製品データ取込完了: '+done+'件','ok');
+  }catch(e){ st('st-product','エラー: '+e.message,'err'); log('製品取込エラー: '+e.message,'err'); }
+  document.getElementById('btn-product-import').disabled=false;
+}
+
+async function doProductClear(){
+  if(!isAdmin) return;
+  if(!confirm('ammBottleDetails の全データを削除します。よろしいですか？')) return;
+  document.getElementById('btn-product-clear').disabled=true;
+  log('ammBottleDetails 全削除開始...','info');
+  try{
+    var snap=await db.collection('ammBottleDetails').get();
+    var docs=snap.docs, deleted=0;
+    for(var i=0;i<docs.length;i+=499){
+      var batch=db.batch();
+      docs.slice(i,i+499).forEach(function(d){batch.delete(d.ref);});
+      await batch.commit();
+      deleted+=Math.min(499,docs.length-i);
+    }
+    st('st-product','✓ 全削除完了: '+deleted+'件','ok');
+    log('✓ ammBottleDetails 全削除: '+deleted+'件','ok');
+  }catch(e){ st('st-product','エラー: '+e.message,'err'); log('削除エラー: '+e.message,'err'); }
+  document.getElementById('btn-product-clear').disabled=false;
+}
+
+function _mNorm(s){ return String(s||'').toLowerCase().replace(/tequila|100%|agave/g,'').replace(/[^a-z0-9]/g,''); }
+
+async function runMatch(){
+  if(!isAdmin) return;
+  st('st-match','読込中...','');
+  var wrap=document.getElementById('match-wrap'); wrap.innerHTML='';
+  try{
+    var res=await Promise.all([
+      db.collection('ammBottleDetails').get(),
+      db.collection('bottles').get(),
+      db.collection('brands').get()
+    ]);
+    var amm=res[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    var bottles=res[1].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    var brands={}; res[2].docs.forEach(function(d){brands[d.id]=d.data();});
+    if(!amm.length){ st('st-match','ammBottleDetailsが空です（先に③製品取込を実行）','err'); return; }
+    var byNom={};
+    bottles.forEach(function(b){ var nom=String(b.id).slice(0,4); (byNom[nom]=byNom[nom]||[]).push(b); });
+    function brandOf(b){ return brands[b.brandId||String(b.id).slice(0,7)]; }
+    function bottleLabel(b){
+      var br=brandOf(b); var bn=b.bottleEs||b.bottleJa||b.id;
+      return (br?((br.brandEs||br.brandJa||'')+' / '):'')+bn+' ['+b.id+']';
+    }
+    var html='<div class="tbl-wrap"><table class="data-table"><thead><tr><th>AMM製品</th><th>NOM</th><th>ブランド</th><th>突合先ボトル</th><th></th></tr></thead><tbody>';
+    amm.forEach(function(a){
+      var nom=String(a.nom||'');
+      var cands=byNom[nom]||[];
+      var anBrand=_mNorm(a.brandName), anProd=_mNorm(a.productName);
+      var best=null,bestScore=-1;
+      cands.forEach(function(b){
+        var br=brandOf(b);
+        var brName=_mNorm(br?(br.brandEs||br.brandJa):'');
+        var bn=_mNorm(b.bottleEs||b.bottleJa);
+        var score=0;
+        if(anBrand&&brName&&(brName.indexOf(anBrand)>=0||anBrand.indexOf(brName)>=0)) score+=2;
+        if(anProd&&bn&&(bn.indexOf(anProd)>=0||anProd.indexOf(bn)>=0)) score+=1;
+        if(score>bestScore){bestScore=score;best=b;}
+      });
+      var opts='<option value="">— 未選択 —</option>';
+      cands.forEach(function(b){
+        var sel=(a.matchedBottleId?(String(a.matchedBottleId)===b.id):(best&&best.id===b.id&&bestScore>0))?' selected':'';
+        opts+='<option value="'+esc(b.id)+'"'+sel+'>'+esc(bottleLabel(b))+'</option>';
+      });
+      var already=a.matchedBottleId?' ✓':'';
+      html+='<tr data-pid="'+esc(a.ammProductId||a.id)+'" data-url="'+esc(a.sourceUrl||'')+'">'
+        +'<td style="max-width:200px;font-size:11px;">'+esc((a.productName||'').slice(0,44))+'</td>'
+        +'<td class="mono">'+esc(nom)+'</td>'
+        +'<td style="font-size:11px;">'+esc(a.brandName||'')+'</td>'
+        +'<td>'+(cands.length?'<select class="match-sel" style="font-size:11px;max-width:260px;">'+opts+'</select>':'<span style="color:var(--red);font-size:11px;">NOM '+esc(nom)+' のボトルなし</span>')+'</td>'
+        +'<td>'+(cands.length?'<button class="btn btn-sm match-confirm">確定'+already+'</button>':'')+'</td>'
+        +'</tr>';
+    });
+    html+='</tbody></table></div>';
+    wrap.innerHTML=html;
+    Array.prototype.forEach.call(wrap.querySelectorAll('.match-confirm'),function(btn){
+      btn.addEventListener('click',function(){
+        var tr=btn.parentNode.parentNode;
+        var sel=tr.querySelector('.match-sel');
+        var bottleId=sel?sel.value:'';
+        var pid=tr.getAttribute('data-pid'), purl=tr.getAttribute('data-url');
+        if(!bottleId){ alert('突合先ボトルを選択してください'); return; }
+        btn.disabled=true; btn.textContent='保存中...';
+        Promise.all([
+          db.collection('bottles').doc(bottleId).set({ammProductId:pid,ammUrl:purl},{merge:true}),
+          db.collection('ammBottleDetails').doc(pid).set({matchedBottleId:bottleId},{merge:true})
+        ]).then(function(){ btn.textContent='✓確定済'; log('突合確定: 製品'+pid+' → ボトル'+bottleId,'ok'); })
+        .catch(function(e){ btn.disabled=false; btn.textContent='確定'; alert('保存失敗: '+e.message); });
+      });
+    });
+    st('st-match','✓ '+amm.length+'件の突合候補を表示（自動サジェスト済み）','ok');
+    log('突合候補表示: '+amm.length+'件','ok');
+  }catch(e){ st('st-match','エラー: '+e.message,'err'); log('突合エラー: '+e.message,'err'); }
 }
 </script>
 </body>
