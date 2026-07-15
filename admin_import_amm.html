@@ -1290,10 +1290,19 @@ var parsedProduct=[];
 function scrapeProductRemote(url){
   // 実行中ページのホスト名に合わせる（www有無のCORS回避）
   try{ var _u=new URL(url); _u.hostname=location.hostname; url=_u.href; }catch(e){}
-  return fetch(url,{credentials:'omit'}).then(function(r){
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.text();
-  }).then(function(html){
+  // 429(レート制限)は待って自動リトライ
+  function fetchText(attempt){
+    return fetch(url,{credentials:'omit'}).then(function(r){
+      if(r.status===429 && attempt<5){
+        var wait=4000*(attempt+1);
+        console.log('  429(混雑) '+Math.round(wait/1000)+'秒待って再試行: '+url);
+        return new Promise(function(res){setTimeout(res,wait);}).then(function(){return fetchText(attempt+1);});
+      }
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.text();
+    });
+  }
+  return fetchText(0).then(function(html){
     var doc=new DOMParser().parseFromString(html,'text/html');
     // PRODUCTION DETAILS テーブルを label:value で取得
     var o={},tbs=doc.querySelectorAll('table');
@@ -1360,7 +1369,7 @@ async function genProductScript(){
       +'  for(var i=0;i<URLS.length;i++){\n'
       +'    results.push(await scrapeProductRemote(URLS[i]));\n'
       +'    if((i+1)%10===0) console.log((i+1)+"/"+URLS.length+" 完了...");\n'
-      +'    await new Promise(function(r){setTimeout(r,600);});\n'
+      +'    await new Promise(function(r){setTimeout(r,1500);});\n'
       +'  }\n'
       +'  var json=JSON.stringify(results);\n'
       +'  try{copy(json);console.log("✓ クリップボードにコピー済み ("+results.length+"件)");}catch(e){}\n'
