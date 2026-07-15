@@ -501,10 +501,15 @@ async function scrapeOne(nom,url){
       コレクション: <span class="mono">ammBottleDetails</span> &nbsp;|&nbsp; ドキュメントID: AMM製品ID（URL末尾の数字）
     </div>
 
-    <div class="btn-row">
+    <div class="btn-row" style="align-items:center;flex-wrap:wrap;gap:6px;">
       <button class="btn btn-sm" id="btn-prod-genscript" onclick="genProductScript()">① 製品URLからスクリプト生成</button>
+      <label style="font-size:12px;color:var(--ink2);margin-left:6px;">開始位置</label>
+      <input type="number" id="prod-offset" value="0" min="0" step="100" style="width:80px;padding:5px 8px;border:1px solid var(--cream3);border-radius:5px;font-family:var(--mono);font-size:12px;">
+      <label style="font-size:12px;color:var(--ink2);">件数</label>
+      <input type="number" id="prod-count" value="100" min="1" step="50" style="width:70px;padding:5px 8px;border:1px solid var(--cream3);border-radius:5px;font-family:var(--mono);font-size:12px;">
       <span class="status-line" id="st-prod-gen" style="display:inline-block;margin:0 0 0 8px;"></span>
     </div>
+    <div class="card-sub" style="margin-top:4px;">全製品を一度に取ると重い/429になりやすいため、<b>100件ずつ</b>など分割して実行してください（開始位置を 0 → 100 → 200 …とずらす）。</div>
     <div class="script-wrap" id="script-product-wrap" style="display:none;margin-top:8px;">
       <div class="script-label">
         製品ページ取得スクリプト（agavematchmaker.com上のコンソールで実行）
@@ -1360,7 +1365,13 @@ async function genProductScript(){
     });
     urls=urls.filter(function(u,i,a){return a.indexOf(u)===i;});
     if(!urls.length){ st('st-prod-gen','製品URLがありません。③の詳細取得（更新版スクリプト）を先に実行してください','err'); return; }
-    var script='var URLS='+JSON.stringify(urls)+';\n'
+    var total=urls.length;
+    var offset=Math.max(0,parseInt(document.getElementById('prod-offset').value)||0);
+    var count=Math.max(1,parseInt(document.getElementById('prod-count').value)||100);
+    var batch=urls.slice(offset,offset+count);
+    if(!batch.length){ st('st-prod-gen','開始位置('+offset+')が全'+total+'件を超えています。0に戻すか完了です。','err'); return; }
+    var rangeEnd=offset+batch.length;
+    var script='var URLS='+JSON.stringify(batch)+';\n'
       +scrapeProductRemote.toString()+'\n'
       +'(async function(){\n'
       +'  if(!/agavematchmaker\\.com$/.test(location.hostname)){console.error("agavematchmaker.com上で実行してください（現在: "+location.hostname+"）");return;}\n'
@@ -1378,8 +1389,9 @@ async function genProductScript(){
       +'})();';
     document.getElementById('script-product').textContent=script;
     document.getElementById('script-product-wrap').style.display='';
-    st('st-prod-gen','✓ '+urls.length+'件の製品URLでスクリプト生成しました','ok');
-    log('製品スクリプト生成: '+urls.length+'URL','ok');
+    var next=rangeEnd<total ? '（次は開始位置を '+rangeEnd+' に）' : '（これで最後まで到達）';
+    st('st-prod-gen','✓ '+(offset+1)+'〜'+rangeEnd+'件目 / 全'+total+'件 のスクリプト生成'+next,'ok');
+    log('製品スクリプト生成: '+(offset+1)+'〜'+rangeEnd+'/'+total,'ok');
   }catch(e){ st('st-prod-gen','エラー: '+e.message,'err'); log('製品スクリプト生成エラー: '+e.message,'err'); }
 }
 
