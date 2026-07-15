@@ -244,6 +244,18 @@ var LEVELS=[
       {field:'production',  label:'生産区分',  type:'select', options:[['0','定番品'],['1','限定品']], fmt:function(v){return v==='0'?'定番':'限定';}},
       {field:'filtration',  label:'色素濾過',  type:'select', options:[['0','なし'],['1','あり']], fmt:function(v){return v==='1'?'あり':'なし';}},
       {field:'serviceStatus',label:'提供',     type:'select', options:[['0','OP'],['1','CL']], fmt:function(v){return v==='0'?'OP':'CL';}},
+      // AMM製法（ammBottleDetailsから突合表示・読み取り専用）
+      {field:'_ammMatched',     label:'AMM紐付',    type:'readonly'},
+      {field:'_ammAgaveType',   label:'AMMアガベ',   type:'readonly'},
+      {field:'_ammCooking',     label:'AMM糖化',     type:'readonly'},
+      {field:'_ammExtraction',  label:'AMM搾汁',     type:'readonly'},
+      {field:'_ammFermentation',label:'AMM発酵',     type:'readonly'},
+      {field:'_ammDistillation',label:'AMM蒸留回数', type:'readonly'},
+      {field:'_ammStill',       label:'AMM蒸留器',   type:'readonly'},
+      {field:'_ammAging',       label:'AMM熟成',     type:'readonly'},
+      {field:'_ammWaterSource', label:'AMM水源',     type:'readonly'},
+      {field:'_ammAbvProof',    label:'AMM度数',     type:'readonly'},
+      {field:'_ammUrl',         label:'AMM製品',     type:'readonly'},
     ]
   },
   {
@@ -452,6 +464,8 @@ function duplicateBottle(bottle){
   rawBottles.forEach(function(b){ if(b.id.slice(0,9)===prefix){ var s=parseInt(b.id.slice(9,12))||0; if(s>max) max=s; } });
   var newId=prefix+String(max+1).padStart(3,'0');
   var doc=Object.assign({},bottle,{bottleId:newId}); delete doc.id;
+  // 表示用の派生フィールド(_amm*)はFirestoreに保存しない
+  Object.keys(doc).forEach(function(k){ if(k.charAt(0)==='_') delete doc[k]; });
   db.collection('bottles').doc(newId).set(doc).then(function(){
     rawBottles.push(Object.assign({id:newId},doc)); buildTree(); renderTree();
   }).catch(function(e){ alert('複製失敗: '+e.message); });
@@ -803,16 +817,43 @@ function loadAll(){
     db.collection('distilleries').get(),
     db.collection('brands').get(),
     db.collection('bottles').get(),
-    db.collection('bottleData').get()
+    db.collection('bottleData').get(),
+    db.collection('ammBottleDetails').get().catch(function(){return {docs:[]};})
   ]).then(function(res){
     rawDis=res[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
     rawBrands=res[1].docs.map(function(d){return Object.assign({id:d.id},d.data());});
     rawBottles=res[2].docs.map(function(d){return Object.assign({id:d.id},d.data());});
     rawBdata=res[3].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    mergeAmmBottle(res[4].docs.map(function(d){return Object.assign({id:d.id},d.data());}));
     msg.textContent='';
     buildTree(); buildColPanel(); renderTree();
     if(document.getElementById('audit-panel').style.display==='block') renderAudit();
   }).catch(function(e){ msg.textContent='読み込み失敗: '+e.message; });
+}
+
+// ammBottleDetails を突合済みボトルにマージ（読み取り専用の _amm* フィールド）
+function mergeAmmBottle(ammDocs){
+  var byBottle={};
+  ammDocs.forEach(function(a){ if(a.matchedBottleId) byBottle[String(a.matchedBottleId)]=a; });
+  rawBottles.forEach(function(b){
+    var a=byBottle[String(b.id)];
+    if(!a){
+      b._ammMatched=b._ammAgaveType=b._ammCooking=b._ammExtraction=b._ammFermentation=
+      b._ammDistillation=b._ammStill=b._ammAging=b._ammWaterSource=b._ammAbvProof=b._ammUrl='';
+      return;
+    }
+    b._ammMatched=a.ammProductId||'✓';
+    b._ammAgaveType=a.agaveType||'';
+    b._ammCooking=a.cooking||'';
+    b._ammExtraction=a.extraction||'';
+    b._ammFermentation=a.fermentation||'';
+    b._ammDistillation=a.distillation||'';
+    b._ammStill=a.still||'';
+    b._ammAging=a.aging||'';
+    b._ammWaterSource=a.waterSource||'';
+    b._ammAbvProof=a.abvProof||'';
+    b._ammUrl=a.sourceUrl||'';
+  });
 }
 
 // ── 認証 ─────────────────────────────────────────────────────────────
