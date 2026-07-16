@@ -395,9 +395,16 @@ var PROD_FIELDS=[
 var colVisible={}; // key -> bool（製造詳細列の表示可否）
 
 function botScore(b, which){
-  if(which==='rating') return numOr(b,'ratingCount','ratings_count','nb_ratings','num_reviews','reviewsCount','rating_count');
-  if(which==='panel')  return numOr(b,'panelScore','panel_score','panel_rating','panel');
-  if(which==='community') return numOr(b,'communityScore','community_score','community_rating','community');
+  if(which==='panel')  return numOr(b,'panelScore','average_expert_rating','panel_score');       // PNL
+  if(which==='community') return numOr(b,'communityScore','average_non_expert_rating','community_score'); // COM
+  if(which==='rating'){
+    var rc=numOr(b,'ratingCount','ratings_count','nb_ratings','num_ratings','rating_count');
+    if(rc!=null) return rc;
+    // 専門家数＋非専門家数の合算でRATING数を算出（存在する場合）
+    var e=numOr(b,'expertRatingCount'), c=numOr(b,'communityRatingCount');
+    if(e!=null||c!=null) return (e||0)+(c||0);
+    return null;
+  }
   return null;
 }
 
@@ -422,8 +429,8 @@ function buildBotFacets(){
   // スコア範囲（現状未取込の場合は未取込表示）
   var hasPanel=botList.some(function(b){return botScore(b,'panel')!=null;});
   var hasComm=botList.some(function(b){return botScore(b,'community')!=null;});
-  makeRangeFacet(c,'panel','PANELスコア', botRange, renderBot, '', !hasPanel);
-  makeRangeFacet(c,'community','COMMUNITYスコア', botRange, renderBot, '', !hasComm);
+  makeRangeFacet(c,'panel','PNLスコア（専門家）', botRange, renderBot, '', !hasPanel);
+  makeRangeFacet(c,'community','COMスコア（非専門家）', botRange, renderBot, '', !hasComm);
   // 製造詳細
   PROD_FIELDS.forEach(function(f){
     if(f.range){
@@ -468,7 +475,7 @@ function renderBot(){
   var visProd=PROD_FIELDS.filter(function(f){return colVisible[f.key];});
   var h='<table><thead><tr>'
     +'<th>名前</th><th>ブランド</th><th>NOM</th>'
-    +'<th class="num">RATING数</th><th class="num">PANEL</th><th class="num">COMMUNITY</th>'
+    +'<th class="num">RATING数</th><th class="num" title="専門家評価の平均">PNL</th><th class="num" title="非専門家（コミュニティ）評価の平均">COM</th>'
     +visProd.map(function(f){return '<th>'+escH(f.label)+'</th>';}).join('')
     +'</tr></thead><tbody>';
   if(!rows.length){ document.getElementById('bot-table').innerHTML='<div class="empty-msg">該当するボトルがありません</div>'; return; }
