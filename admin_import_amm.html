@@ -572,6 +572,12 @@ async function scrapeOne(nom,url){
       対象URLは既存の <span class="mono">ammBottleDetails.sourceUrl</span> を使用します（先に「★ Algolia一括取込」を実行しておいてください）。件数が多いので<b>バッチ単位</b>での実行を推奨します。
     </div>
     <div class="btn-row" style="align-items:center;">
+      <label style="font-size:12px;">PANEL閾値 ≥ <input type="number" id="rate-panel-min" value="85" min="0" max="100" style="width:60px;padding:4px 6px;"></label>
+      <button class="btn btn-sm" id="btn-rate-count" onclick="countRatingTargets()" style="border:1px solid #1a6e58;color:#1a6e58;background:#fff;">件数を確認</button>
+      <span class="status-line" id="st-rate-count" style="margin:0;"></span>
+    </div>
+    <div class="card-sub" style="font-size:11px;margin-top:2px;">PANEL閾値を <b>0</b> にすると全ボトルが対象。<b>85</b> 等にすると <span class="mono">average_expert_rating</span>（PNL）がその値以上のボトルだけをスクレイプ対象にします（件数を大きく削減できます）。</div>
+    <div class="btn-row" style="align-items:center;margin-top:6px;">
       <label style="font-size:12px;">開始位置 <input type="number" id="rate-offset" value="0" min="0" style="width:70px;padding:4px 6px;"></label>
       <label style="font-size:12px;">件数 <input type="number" id="rate-count" value="150" min="1" style="width:70px;padding:4px 6px;"></label>
       <button class="btn btn-sm" id="btn-rate-gen" onclick="genRatingScript()" style="border:1px solid #b03020;color:#b03020;background:#fff;">スクリプト生成</button>
@@ -881,6 +887,7 @@ function refreshButtons(){
   var _pi=document.getElementById('btn-product-import'); if(_pi) _pi.disabled=!(isAdmin&&_pp.length>0);
   var _pc=document.getElementById('btn-product-clear'); if(_pc) _pc.disabled=!isAdmin;
   var _rg=document.getElementById('btn-rate-gen'); if(_rg) _rg.disabled=!isAdmin;
+  var _rcnt=document.getElementById('btn-rate-count'); if(_rcnt) _rcnt.disabled=!isAdmin;
   var _rr=(typeof parsedRating!=='undefined')?parsedRating:[];
   var _ri=document.getElementById('btn-rate-import'); if(_ri) _ri.disabled=!(isAdmin&&_rr.length>0);
   var _mr=document.getElementById('btn-match-run'); if(_mr) _mr.disabled=!isAdmin;
@@ -1815,19 +1822,59 @@ function scrapeRatingRemote(item){
   }).catch(function(e){ return {ammProductId:String(item.id), error:e.message}; });
 }
 
-async function genRatingScript(){
-  if(!isAdmin) return;
-  st('st-rate-gen','製品URL収集中...','');
+// PANEL閾値でRATING取得対象の件数を確認（AlgoliaのnumericFiltersで集計）
+async function countRatingTargets(){
+  var th=parseFloat(document.getElementById('rate-panel-min').value)||0;
+  st('st-rate-count','集計中...','');
   try{
+    var all=await algoliaQuery('query=&hitsPerPage=0');
+    var msg='全 '+(all.nbHits||0)+' 製品';
+    if(th>0){
+      var nf=encodeURIComponent(JSON.stringify(['average_expert_rating>='+th]));
+      var sub=await algoliaQuery('query=&hitsPerPage=0&numericFilters='+nf);
+      msg+=' 中、PANEL(専門家スコア)≥'+th+' は '+(sub.nbHits||0)+' 件';
+    }else{
+      msg+='（PANEL閾値0＝全件が対象）';
+    }
+    st('st-rate-count','✓ '+msg,'ok');
+    log('RATING対象件数: '+msg,'ok');
+  }catch(e){ st('st-rate-count','エラー: '+e.message,'err'); }
+}
+
+// RATING取得対象の {id,url} を収集。閾値>0はAlgoliaのPANELスコアで絞り込み、
+// 0はammBottleDetailsの全sourceUrlを使用
+async function collectRatingTargets(threshold){
+  var items=[];
+  if(threshold>0){
+    var nf=encodeURIComponent(JSON.stringify(['average_expert_rating>='+threshold]));
+    var page=0,nbPages=1;
+    do{
+      var res=await algoliaQuery('query=&hitsPerPage=1000&page='+page+'&numericFilters='+nf);
+      (res.hits||[]).forEach(function(h){
+        var id=String(h.id||h.objectID||''); if(!id) return;
+        var slug=h.parameterized_name||'';
+        items.push({id:id, url:'https://www.agavematchmaker.com/agave_spirits/'+id+(slug?'-'+slug:'')});
+      });
+      nbPages=res.nbPages||1; page++;
+    }while(page<nbPages && page<20);
+  }else{
     var snap=await db.collection('ammBottleDetails').get();
-    var items=[];
     snap.forEach(function(d){
       var v=d.data();
       var url=v.sourceUrl||'';
       if(url && /\/agave_spirits\/\d+/.test(url)) items.push({id:String(v.ammProductId||d.id), url:url});
     });
-    items=items.filter(function(x,i,a){return a.map(function(y){return y.id;}).indexOf(x.id)===i;});
-    if(!items.length){ st('st-rate-gen','製品URLがありません。先に「★ Algolia一括取込」を実行してください','err'); return; }
+  }
+  return items.filter(function(x,i,a){return a.map(function(y){return y.id;}).indexOf(x.id)===i;});
+}
+
+async function genRatingScript(){
+  if(!isAdmin) return;
+  var threshold=parseFloat(document.getElementById('rate-panel-min').value)||0;
+  st('st-rate-gen','対象製品を収集中...','');
+  try{
+    var items=await collectRatingTargets(threshold);
+    if(!items.length){ st('st-rate-gen',threshold>0?('PANEL≥'+threshold+'の製品がありません（閾値を下げてください）'):'製品URLがありません。先に「★ Algolia一括取込」を実行してください','err'); return; }
     var total=items.length;
     var offset=Math.max(0,parseInt(document.getElementById('rate-offset').value)||0);
     var count=Math.max(1,parseInt(document.getElementById('rate-count').value)||150);
@@ -1853,8 +1900,9 @@ async function genRatingScript(){
     document.getElementById('script-rate').textContent=script;
     document.getElementById('script-rate-wrap').style.display='';
     var next=rangeEnd<total ? '（次は開始位置を '+rangeEnd+' に）' : '（これで最後まで到達）';
-    st('st-rate-gen','✓ '+(offset+1)+'〜'+rangeEnd+'件目 / 全'+total+'件 のスクリプト生成'+next,'ok');
-    log('RATINGスクリプト生成: '+(offset+1)+'〜'+rangeEnd+'/'+total,'ok');
+    var scope=threshold>0?('PANEL≥'+threshold+'の'):'';
+    st('st-rate-gen','✓ '+scope+(offset+1)+'〜'+rangeEnd+'件目 / 対象'+total+'件 のスクリプト生成'+next,'ok');
+    log('RATINGスクリプト生成: '+scope+(offset+1)+'〜'+rangeEnd+'/'+total,'ok');
   }catch(e){ st('st-rate-gen','エラー: '+e.message,'err'); log('RATINGスクリプト生成エラー: '+e.message,'err'); }
 }
 
