@@ -563,6 +563,39 @@ async function scrapeOne(nom,url){
     </details>
   </div>
 
+  <!-- ⑤ RATING数（評価件数）取込 -->
+  <div class="sec-head"><span class="sec-num" style="background:#b03020;">⑤</span>RATING数（評価件数）取込</div>
+  <div class="card" style="border:1.5px solid #b03020;">
+    <div class="card-title">⭐ ammBottleDetails.ratingCount — 詳細ページ「N RATINGS」の取込</div>
+    <div class="card-sub">
+      評価件数（例:「11 RATINGS」）は Algolia インデックスに<b>存在しない</b>ため、各ボトル詳細ページからスクレイプします。管理画面からは直接取得できない（CORS）ので、<b>agavematchmaker.com のコンソールで下記スクリプトを実行</b>し、出力JSONをこの下の欄に貼り付けて取込みます。<br>
+      対象URLは既存の <span class="mono">ammBottleDetails.sourceUrl</span> を使用します（先に「★ Algolia一括取込」を実行しておいてください）。件数が多いので<b>バッチ単位</b>での実行を推奨します。
+    </div>
+    <div class="btn-row" style="align-items:center;">
+      <label style="font-size:12px;">開始位置 <input type="number" id="rate-offset" value="0" min="0" style="width:70px;padding:4px 6px;"></label>
+      <label style="font-size:12px;">件数 <input type="number" id="rate-count" value="150" min="1" style="width:70px;padding:4px 6px;"></label>
+      <button class="btn btn-sm" id="btn-rate-gen" onclick="genRatingScript()" style="border:1px solid #b03020;color:#b03020;background:#fff;">スクリプト生成</button>
+      <span class="status-line" id="st-rate-gen" style="margin:0;"></span>
+    </div>
+    <div class="script-wrap" id="script-rate-wrap" style="display:none;margin-top:8px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span style="font-size:11px;color:var(--ink3);">↓ agavematchmaker.com のコンソールに貼って実行 → 出力JSONを下欄へ</span>
+        <button class="copy-btn" onclick="copyScript('script-rate')">コピー</button>
+      </div>
+      <div class="script-box" id="script-rate"></div>
+    </div>
+    <textarea class="paste-area" id="rate-json" placeholder='[{"ammProductId":"7392","ratingCount":11},...]' oninput="onRatingPaste()"></textarea>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btn-rate-import" onclick="doRatingImport()" disabled style="background:#b03020;">RATING数を取込（ammBottleDetails.ratingCount）</button>
+      <span class="status-line" id="product-parse-status-rate" style="margin:0;"></span>
+    </div>
+    <div class="prog-wrap" id="prog-rate">
+      <div class="prog-bg"><div class="prog-bar" id="pb-rate"></div></div>
+      <div class="prog-txt" id="pt-rate"></div>
+    </div>
+    <div class="status-line" id="st-rate"></div>
+  </div>
+
   <!-- ④ 製品(ボトル)製法データ -->
   <!-- ④ は Algolia一括取込(★)＋ツリー突合(#398) で不要になったため非表示 -->
   <div class="sec-head" style="display:none"><span class="sec-num">4</span>製品(ボトル)製法データ 取込・突合</div>
@@ -847,6 +880,9 @@ function refreshButtons(){
   var _g=document.getElementById('btn-prod-genscript'); if(_g) _g.disabled=!isAdmin;
   var _pi=document.getElementById('btn-product-import'); if(_pi) _pi.disabled=!(isAdmin&&_pp.length>0);
   var _pc=document.getElementById('btn-product-clear'); if(_pc) _pc.disabled=!isAdmin;
+  var _rg=document.getElementById('btn-rate-gen'); if(_rg) _rg.disabled=!isAdmin;
+  var _rr=(typeof parsedRating!=='undefined')?parsedRating:[];
+  var _ri=document.getElementById('btn-rate-import'); if(_ri) _ri.disabled=!(isAdmin&&_rr.length>0);
   var _mr=document.getElementById('btn-match-run'); if(_mr) _mr.disabled=!isAdmin;
   var _bg=document.getElementById('btn-brand-genscript'); if(_bg) _bg.disabled=!isAdmin;
   var _bp=(typeof parsedBrand!=='undefined')?parsedBrand:[];
@@ -1747,6 +1783,122 @@ function scrapeProductRemote(url){
       other:o['OTHER']||''
     };
   }).catch(function(e){ return {sourceUrl:url,error:e.message}; });
+}
+
+// ══════════════════════════════════════════════════════════════
+// ⑤ RATING数（評価件数）取込
+// ══════════════════════════════════════════════════════════════
+var parsedRating=[];
+
+// agavematchmaker.com のコンソールで実行される「N RATINGS」scraper（toStringで埋め込む）
+function scrapeRatingRemote(item){
+  var url=item.url;
+  try{ var _u=new URL(url); _u.hostname=location.hostname; url=_u.href; }catch(e){}
+  function fetchText(attempt){
+    return fetch(url,{credentials:'omit'}).then(function(r){
+      if(r.status===429 && attempt<6){
+        var wait=8000*(attempt+1)+Math.floor(Math.random()*5000);
+        console.log('  429(混雑) '+Math.round(wait/1000)+'秒待って再試行: '+url);
+        return new Promise(function(res){setTimeout(res,wait);}).then(function(){return fetchText(attempt+1);});
+      }
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.text();
+    });
+  }
+  return fetchText(0).then(function(html){
+    var doc=new DOMParser().parseFromString(html,'text/html');
+    var txt=(doc.body?doc.body.textContent:html)||'';
+    // 「11 RATINGS」「1,234 RATINGS」等。MY RATING(単数)は除外される
+    var m=txt.match(/([\d,]+)\s*RATINGS\b/i);
+    var n=m?parseInt(m[1].replace(/,/g,''),10):0;
+    return {ammProductId:String(item.id), ratingCount:isNaN(n)?0:n};
+  }).catch(function(e){ return {ammProductId:String(item.id), error:e.message}; });
+}
+
+async function genRatingScript(){
+  if(!isAdmin) return;
+  st('st-rate-gen','製品URL収集中...','');
+  try{
+    var snap=await db.collection('ammBottleDetails').get();
+    var items=[];
+    snap.forEach(function(d){
+      var v=d.data();
+      var url=v.sourceUrl||'';
+      if(url && /\/agave_spirits\/\d+/.test(url)) items.push({id:String(v.ammProductId||d.id), url:url});
+    });
+    items=items.filter(function(x,i,a){return a.map(function(y){return y.id;}).indexOf(x.id)===i;});
+    if(!items.length){ st('st-rate-gen','製品URLがありません。先に「★ Algolia一括取込」を実行してください','err'); return; }
+    var total=items.length;
+    var offset=Math.max(0,parseInt(document.getElementById('rate-offset').value)||0);
+    var count=Math.max(1,parseInt(document.getElementById('rate-count').value)||150);
+    var batch=items.slice(offset,offset+count);
+    if(!batch.length){ st('st-rate-gen','開始位置('+offset+')が全'+total+'件を超えています。0に戻すか完了です。','err'); return; }
+    var rangeEnd=offset+batch.length;
+    var script='var ITEMS='+JSON.stringify(batch)+';\n'
+      +scrapeRatingRemote.toString()+'\n'
+      +'(async function(){\n'
+      +'  if(!/agavematchmaker\\.com$/.test(location.hostname)){console.error("agavematchmaker.com上で実行してください（現在: "+location.hostname+"）");return;}\n'
+      +'  console.log("RATING数スクレイピング開始: "+ITEMS.length+"件");\n'
+      +'  var results=[];\n'
+      +'  for(var i=0;i<ITEMS.length;i++){\n'
+      +'    results.push(await scrapeRatingRemote(ITEMS[i]));\n'
+      +'    if((i+1)%10===0) console.log((i+1)+"/"+ITEMS.length+" 完了...");\n'
+      +'    await new Promise(function(r){setTimeout(r, 2500+Math.floor(Math.random()*3500));});\n'
+      +'  }\n'
+      +'  var json=JSON.stringify(results);\n'
+      +'  try{copy(json);console.log("✓ クリップボードにコピー済み ("+results.length+"件)");}catch(e){}\n'
+      +'  console.log(json);\n'
+      +'  return results;\n'
+      +'})();';
+    document.getElementById('script-rate').textContent=script;
+    document.getElementById('script-rate-wrap').style.display='';
+    var next=rangeEnd<total ? '（次は開始位置を '+rangeEnd+' に）' : '（これで最後まで到達）';
+    st('st-rate-gen','✓ '+(offset+1)+'〜'+rangeEnd+'件目 / 全'+total+'件 のスクリプト生成'+next,'ok');
+    log('RATINGスクリプト生成: '+(offset+1)+'〜'+rangeEnd+'/'+total,'ok');
+  }catch(e){ st('st-rate-gen','エラー: '+e.message,'err'); log('RATINGスクリプト生成エラー: '+e.message,'err'); }
+}
+
+function onRatingPaste(){
+  var sp=document.getElementById('product-parse-status-rate');
+  var txt=document.getElementById('rate-json').value.trim();
+  if(!txt){ sp.textContent=''; parsedRating=[]; refreshButtons(); return; }
+  try{
+    var arr=JSON.parse(txt);
+    if(!Array.isArray(arr)) arr=[arr];
+    parsedRating=arr.filter(function(x){ return x && x.ammProductId!=null; });
+    var withErr=parsedRating.filter(function(x){return x.error;}).length;
+    var valid=parsedRating.filter(function(x){return !x.error && typeof x.ratingCount==='number';}).length;
+    sp.textContent='解析: '+valid+'件（エラー'+withErr+'件）';
+    sp.style.color=valid?'var(--green,#1a6640)':'var(--red)';
+  }catch(e){ sp.textContent='JSON解析エラー: '+e.message; sp.style.color='var(--red)'; parsedRating=[]; }
+  refreshButtons();
+}
+
+async function doRatingImport(){
+  if(!isAdmin) return;
+  var valid=parsedRating.filter(function(x){return !x.error && typeof x.ratingCount==='number';});
+  if(!valid.length){ st('st-rate','取込対象がありません','err'); return; }
+  if(!confirm('ammBottleDetails の ratingCount を '+valid.length+'件 更新します。続行しますか？')) return;
+  document.getElementById('btn-rate-import').disabled=true;
+  document.getElementById('prog-rate').style.display='block';
+  log('RATING数取込開始: '+valid.length+'件','info');
+  try{
+    var done=0;
+    for(var i=0;i<valid.length;i+=400){
+      var batch=db.batch();
+      valid.slice(i,i+400).forEach(function(x){
+        batch.set(db.collection('ammBottleDetails').doc(String(x.ammProductId)),{ratingCount:x.ratingCount},{merge:true});
+      });
+      await batch.commit();
+      done+=Math.min(400,valid.length-i);
+      var pct=Math.round(done/valid.length*100);
+      document.getElementById('pb-rate').style.width=pct+'%';
+      document.getElementById('pt-rate').textContent=done+'/'+valid.length+' 件 ('+pct+'%)';
+    }
+    st('st-rate','✓ RATING数取込完了: '+done+'件。会員のボトル閲覧に反映されます','ok');
+    log('✓ RATING数取込完了: '+done+'件','ok');
+  }catch(e){ st('st-rate','エラー: '+e.message,'err'); log('RATING数取込エラー: '+e.message,'err'); }
+  document.getElementById('btn-rate-import').disabled=false;
 }
 
 async function genProductScript(){
