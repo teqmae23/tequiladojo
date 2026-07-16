@@ -422,6 +422,11 @@ async function scrapeOne(nom,url){
       var h=a.getAttribute('href')||''; if(h.indexOf('http')!==0) h=location.origin+(h.charAt(0)==='/'?'':'/')+h;
       return h.split('#')[0].split('?')[0];
     }).filter(function(u,i,arr){return u&&arr.indexOf(u)===i;});
+    // ブランドページURLも収集（各ブランドの全製品URLを後段で取得するため）
+    var brandUrls=[].map.call(doc.querySelectorAll('a[href*="/brands/"]'),function(a){
+      var h=a.getAttribute('href')||''; if(h.indexOf('http')!==0) h=location.origin+(h.charAt(0)==='/'?'':'/')+h;
+      return h.split('#')[0].split('?')[0];
+    }).filter(function(u,i,arr){return u&&/\/brands\/[^\/]+/.test(u)&&arr.indexOf(u)===i;});
     return {
       nom, url,
       distilleryName: txt(['h1','.entry-title','.distillery-name','[class*="title"] h1']),
@@ -434,7 +439,7 @@ async function scrapeOne(nom,url){
       pageTitle: doc.title,
       cooking:eq.cooking||'', extraction:eq.extraction||'', fermentation:eq.fermentation||'',
       still:eq.still||'', aging:eq.aging||'', waterSource:eq.waterSource||'',
-      productUrls: prodUrls
+      productUrls: prodUrls, brandUrls: brandUrls
     };
   }catch(e){return {nom,url,error:e.message};}
 }
@@ -490,6 +495,41 @@ async function scrapeOne(nom,url){
         </table>
       </div>
     </div>
+  </div>
+
+  <!-- ③-B ブランドページから製品URL収集 -->
+  <div class="sec-head"><span class="sec-num">3.5</span>ブランドページから全製品URLを収集</div>
+  <div class="card">
+    <div class="card-title">🏷️ 各ブランドページを巡回して全製品URLを集める</div>
+    <div class="card-sub">
+      蒸留所ページには「最近の評価」の数件しか製品リンクが無いため、各ブランドページを巡回して<b>全製品URL</b>を集め、<span class="mono">ammDistilleryDetails.productUrls</span> に統合（重複は自動排除）します。<br>
+      前提: ③の詳細取得で <span class="mono">brandUrls</span> を収集済み（未収集なら③を更新版スクリプトで再実行）。
+    </div>
+    <div class="btn-row" style="align-items:center;flex-wrap:wrap;gap:6px;">
+      <button class="btn btn-sm" id="btn-brand-genscript" onclick="genBrandScript()">① ブランドURLからスクリプト生成</button>
+      <label style="font-size:12px;color:var(--ink2);margin-left:6px;">開始位置</label>
+      <input type="number" id="brand-offset" value="0" min="0" step="100" style="width:80px;padding:5px 8px;border:1px solid var(--cream3);border-radius:5px;font-family:var(--mono);font-size:12px;">
+      <label style="font-size:12px;color:var(--ink2);">件数</label>
+      <input type="number" id="brand-count" value="100" min="1" step="50" style="width:70px;padding:5px 8px;border:1px solid var(--cream3);border-radius:5px;font-family:var(--mono);font-size:12px;">
+      <span class="status-line" id="st-brand-gen" style="display:inline-block;margin:0 0 0 8px;"></span>
+    </div>
+    <div class="script-wrap" id="script-brand-wrap" style="display:none;margin-top:8px;">
+      <div class="script-label">
+        ブランドページ取得スクリプト（agavematchmaker.com上のコンソールで実行）
+        <button class="copy-btn" onclick="copyScript('script-brand')">コピー</button>
+      </div>
+      <div class="script-box" id="script-brand"></div>
+    </div>
+    <div class="paste-label" style="margin-top:10px;">② 出力JSONを貼り付け: <span id="brand-parse-status"></span></div>
+    <textarea class="paste-area" id="brand-json" placeholder='[{"nom":"1493","brandUrl":"https://...","productUrls":["https://.../8377-..."]},...]' oninput="onBrandPaste()"></textarea>
+    <div class="btn-row" style="margin-top:10px;">
+      <button class="btn btn-primary" id="btn-brand-import" onclick="doBrandImport()" disabled>③ 製品URLを productUrls に統合</button>
+    </div>
+    <div class="prog-wrap" id="prog-brand">
+      <div class="prog-bg"><div class="prog-bar" id="pb-brand"></div></div>
+      <div class="prog-txt" id="pt-brand"></div>
+    </div>
+    <div class="status-line" id="st-brand"></div>
   </div>
 
   <!-- ④ 製品(ボトル)製法データ -->
@@ -776,6 +816,9 @@ function refreshButtons(){
   var _pi=document.getElementById('btn-product-import'); if(_pi) _pi.disabled=!(isAdmin&&_pp.length>0);
   var _pc=document.getElementById('btn-product-clear'); if(_pc) _pc.disabled=!isAdmin;
   var _mr=document.getElementById('btn-match-run'); if(_mr) _mr.disabled=!isAdmin;
+  var _bg=document.getElementById('btn-brand-genscript'); if(_bg) _bg.disabled=!isAdmin;
+  var _bp=(typeof parsedBrand!=='undefined')?parsedBrand:[];
+  var _bi=document.getElementById('btn-brand-import'); if(_bi) _bi.disabled=!(isAdmin&&_bp.length>0);
 }
 
 // ── Basic preview ─────────────────────────────────────────────
@@ -999,6 +1042,7 @@ var SCRAPE_FN_SRC='async function scrapeOne(nom,url){\n'
   +'    function equip(){var o={},tbs=doc.querySelectorAll(\'table\');for(var t=0;t<tbs.length;t++){var rows=tbs[t].querySelectorAll(\'tr\'),on=false;for(var i=0;i<rows.length;i++){var cs=rows[i].querySelectorAll(\'th,td\');var lb=(cs[0]?cs[0].textContent:\'\').replace(/[:：]/g,\' \').trim().toUpperCase();var v=(cs[1]?cs[1].textContent:\'\').replace(/[,，]\\s*$/,\'\').trim();if(v===\'--\'||v===\'-\')v=\'\';if(lb.indexOf(\'DISTILLERY EQUIPMENT\')>=0){on=true;continue;}if(!on)continue;if(lb.indexOf(\'COOKING\')>=0)o.cooking=v;else if(lb.indexOf(\'EXTRACTION\')>=0)o.extraction=v;else if(lb.indexOf(\'FERMENTATION\')>=0)o.fermentation=v;else if(lb.indexOf(\'STILL\')>=0)o.still=v;else if(lb.indexOf(\'AGING\')>=0)o.aging=v;else if(lb.indexOf(\'WATER\')>=0)o.waterSource=v;}if(on)break;}return o;}\n'
   +'    var eq=equip();\n'
   +'    var prodUrls=[].map.call(doc.querySelectorAll(\'a[href*="/agave_spirits/"]\'),function(a){var h=a.getAttribute(\'href\')||\'\';if(h.indexOf(\'http\')!==0)h=location.origin+(h.charAt(0)===\'/\'?\'\':\'/\')+h;return h.split(\'#\')[0].split(\'?\')[0];}).filter(function(u,i,arr){return u&&arr.indexOf(u)===i;});\n'
+  +'    var brandUrls=[].map.call(doc.querySelectorAll(\'a[href*="/brands/"]\'),function(a){var h=a.getAttribute(\'href\')||\'\';if(h.indexOf(\'http\')!==0)h=location.origin+(h.charAt(0)===\'/\'?\'\':\'/\')+h;return h.split(\'#\')[0].split(\'?\')[0];}).filter(function(u,i,arr){return u&&/\\/brands\\/[^\\/]+/.test(u)&&arr.indexOf(u)===i;});\n'
   +'    return {nom,url,\n'
   +'      distilleryName:txt([\'h1\',\'.entry-title\',\'.distillery-name\']),\n'
   +'      website:href([\'a.website\']),\n'
@@ -1008,7 +1052,7 @@ var SCRAPE_FN_SRC='async function scrapeOne(nom,url){\n'
   +'      founded:txt([\'[class*="founded"],[class*="established"],[class*="year"]\']),\n'
   +'      description:meta(\'og:description\')||txt([\'.entry-content p\',\'.description p\']).slice(0,500),\n'
   +'      pageTitle:doc.title,\n'
-  +'      cooking:eq.cooking||\'\',extraction:eq.extraction||\'\',fermentation:eq.fermentation||\'\',still:eq.still||\'\',aging:eq.aging||\'\',waterSource:eq.waterSource||\'\',productUrls:prodUrls};\n'
+  +'      cooking:eq.cooking||\'\',extraction:eq.extraction||\'\',fermentation:eq.fermentation||\'\',still:eq.still||\'\',aging:eq.aging||\'\',waterSource:eq.waterSource||\'\',productUrls:prodUrls,brandUrls:brandUrls};\n'
   +'  }catch(e){return {nom,url,error:e.message};}\n'
   +'}';
 
@@ -1218,6 +1262,7 @@ async function doDetailImport(){
           waterSource:x.waterSource||'',
           // 製品(ボトル)ページURL一覧（ボトル単位取込で使用）
           productUrls:Array.isArray(x.productUrls)?x.productUrls:[],
+          brandUrls:Array.isArray(x.brandUrls)?x.brandUrls:[],
           scrapedAt:firebase.firestore.FieldValue.serverTimestamp()
         });
       });
@@ -1287,6 +1332,129 @@ function copyScript(id){
 }
 
 // ══════════════════════════════════════════════════════════════
+// ③-B ブランドページから全製品URLを収集
+// ══════════════════════════════════════════════════════════════
+var parsedBrand=[];
+
+// agavematchmaker.com のコンソールで実行されるブランドページscraper（toStringで埋め込む）
+function scrapeBrandRemote(nom,brandUrl){
+  var url=brandUrl;
+  try{ var _u=new URL(url); _u.hostname=location.hostname; url=_u.href; }catch(e){}
+  function fetchText(attempt){
+    return fetch(url,{credentials:'omit'}).then(function(r){
+      if(r.status===429 && attempt<6){
+        var w=8000*(attempt+1)+Math.floor(Math.random()*5000);
+        console.log('  429(混雑) '+Math.round(w/1000)+'秒待って再試行: '+url);
+        return new Promise(function(res){setTimeout(res,w);}).then(function(){return fetchText(attempt+1);});
+      }
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.text();
+    });
+  }
+  return fetchText(0).then(function(html){
+    var doc=new DOMParser().parseFromString(html,'text/html');
+    var pu=[].map.call(doc.querySelectorAll('a[href*="/agave_spirits/"]'),function(a){
+      var h=a.getAttribute('href')||''; if(h.indexOf('http')!==0) h=location.origin+(h.charAt(0)==='/'?'':'/')+h;
+      return h.split('#')[0].split('?')[0];
+    }).filter(function(u,i,arr){return u && /\/agave_spirits\/\d+-/.test(u) && arr.indexOf(u)===i;});
+    return {nom:nom, brandUrl:brandUrl, productUrls:pu};
+  }).catch(function(e){ return {nom:nom, brandUrl:brandUrl, error:e.message}; });
+}
+
+async function genBrandScript(){
+  if(!isAdmin) return;
+  st('st-brand-gen','ブランドURL収集中...','');
+  try{
+    var snap=await db.collection('ammDistilleryDetails').get();
+    var pairs=[], seen={};
+    snap.forEach(function(d){
+      var data=d.data(); var nom=String(data.nom||d.id);
+      var bu=data.brandUrls;
+      if(Array.isArray(bu)) bu.forEach(function(u){ if(u && !seen[u]){ seen[u]=1; pairs.push({nom:nom,brandUrl:u}); } });
+    });
+    if(!pairs.length){ st('st-brand-gen','ブランドURLがありません。③の詳細取得（更新版スクリプト）を先に実行してください','err'); return; }
+    var total=pairs.length;
+    var offset=Math.max(0,parseInt(document.getElementById('brand-offset').value)||0);
+    var count=Math.max(1,parseInt(document.getElementById('brand-count').value)||100);
+    var batch=pairs.slice(offset,offset+count);
+    if(!batch.length){ st('st-brand-gen','開始位置('+offset+')が全'+total+'件を超えています。','err'); return; }
+    var rangeEnd=offset+batch.length;
+    var script='var PAIRS='+JSON.stringify(batch)+';\n'
+      +scrapeBrandRemote.toString()+'\n'
+      +'(async function(){\n'
+      +'  if(!/agavematchmaker\\.com$/.test(location.hostname)){console.error("agavematchmaker.com上で実行してください（現在: "+location.hostname+"）");return;}\n'
+      +'  console.log("ブランド巡回開始: "+PAIRS.length+"件");\n'
+      +'  var results=[];\n'
+      +'  for(var i=0;i<PAIRS.length;i++){\n'
+      +'    results.push(await scrapeBrandRemote(PAIRS[i].nom, PAIRS[i].brandUrl));\n'
+      +'    if((i+1)%10===0) console.log((i+1)+"/"+PAIRS.length+" 完了...");\n'
+      +'    await new Promise(function(r){setTimeout(r, 2500+Math.floor(Math.random()*3500));});\n'
+      +'  }\n'
+      +'  var json=JSON.stringify(results);\n'
+      +'  try{copy(json);console.log("✓ クリップボードにコピー済み ("+results.length+"件)");}catch(e){}\n'
+      +'  console.log(json);\n'
+      +'  return results;\n'
+      +'})();';
+    document.getElementById('script-brand').textContent=script;
+    document.getElementById('script-brand-wrap').style.display='';
+    var next=rangeEnd<total ? '（次は開始位置を '+rangeEnd+' に）' : '（これで最後まで到達）';
+    st('st-brand-gen','✓ '+(offset+1)+'〜'+rangeEnd+' / 全'+total+'ブランド のスクリプト生成'+next,'ok');
+    log('ブランドスクリプト生成: '+(offset+1)+'〜'+rangeEnd+'/'+total,'ok');
+  }catch(e){ st('st-brand-gen','エラー: '+e.message,'err'); log('ブランドスクリプト生成エラー: '+e.message,'err'); }
+}
+
+function onBrandPaste(){
+  var sp=document.getElementById('brand-parse-status');
+  var txt=document.getElementById('brand-json').value.trim();
+  if(!txt){ sp.textContent=''; parsedBrand=[]; refreshButtons(); return; }
+  try{
+    var arr=JSON.parse(txt);
+    if(!Array.isArray(arr)) arr=[arr];
+    parsedBrand=arr.filter(function(x){return x&&x.nom;});
+    var pn=0; parsedBrand.forEach(function(x){ if(Array.isArray(x.productUrls)) pn+=x.productUrls.length; });
+    var errN=parsedBrand.filter(function(x){return x.error;}).length;
+    sp.textContent='✓ '+parsedBrand.length+'ブランド 解析OK（製品URL計'+pn+'件'+(errN?' / エラー'+errN+'件':'')+'）';
+  }catch(e){
+    sp.textContent='⚠ JSON解析失敗: '+e.message;
+    parsedBrand=[];
+  }
+  refreshButtons();
+}
+
+async function doBrandImport(){
+  if(!isAdmin||!parsedBrand.length) return;
+  // NOM別に製品URLを集約（数字ID付きのみ）
+  var byNom={};
+  parsedBrand.forEach(function(x){
+    if(x.error||!x.nom||!Array.isArray(x.productUrls)) return;
+    var n=String(x.nom); byNom[n]=byNom[n]||[];
+    x.productUrls.forEach(function(u){ if(u && /\/agave_spirits\/\d+-/.test(u) && byNom[n].indexOf(u)<0) byNom[n].push(u); });
+  });
+  var noms=Object.keys(byNom).filter(function(n){return byNom[n].length;});
+  var totalUrls=noms.reduce(function(s,n){return s+byNom[n].length;},0);
+  if(!noms.length){ st('st-brand','統合できる製品URLがありません','err'); return; }
+  if(!confirm(noms.length+'蒸留所の productUrls に、製品URL計'+totalUrls+'件を統合します（重複は自動排除）。続行しますか？')) return;
+  document.getElementById('btn-brand-import').disabled=true;
+  document.getElementById('prog-brand').style.display='block';
+  log('ブランド製品URL統合開始: '+noms.length+'蒸留所 / '+totalUrls+'URL','info');
+  try{
+    var done=0;
+    for(var i=0;i<noms.length;i++){
+      var n=noms[i];
+      await db.collection('ammDistilleryDetails').doc(n).set(
+        {productUrls: firebase.firestore.FieldValue.arrayUnion.apply(null, byNom[n])},{merge:true});
+      done++;
+      var pct=Math.round(done/noms.length*100);
+      document.getElementById('pb-brand').style.width=pct+'%';
+      document.getElementById('pt-brand').textContent=done+'/'+noms.length+' 蒸留所 ('+pct+'%)';
+    }
+    st('st-brand','✓ 統合完了: '+noms.length+'蒸留所 / '+totalUrls+'URL。④で製品取込へ進めます','ok');
+    log('✓ ブランド製品URL統合完了: '+noms.length+'蒸留所','ok');
+  }catch(e){ st('st-brand','エラー: '+e.message,'err'); log('ブランド統合エラー: '+e.message,'err'); }
+  document.getElementById('btn-brand-import').disabled=false;
+}
+
+// ══════════════════════════════════════════════════════════════
 // ④ 製品(ボトル)製法データ 取込・突合
 // ══════════════════════════════════════════════════════════════
 var parsedProduct=[];
@@ -1298,8 +1466,8 @@ function scrapeProductRemote(url){
   // 429(レート制限)は待って自動リトライ
   function fetchText(attempt){
     return fetch(url,{credentials:'omit'}).then(function(r){
-      if(r.status===429 && attempt<5){
-        var wait=4000*(attempt+1);
+      if(r.status===429 && attempt<6){
+        var wait=8000*(attempt+1)+Math.floor(Math.random()*5000);
         console.log('  429(混雑) '+Math.round(wait/1000)+'秒待って再試行: '+url);
         return new Promise(function(res){setTimeout(res,wait);}).then(function(){return fetchText(attempt+1);});
       }
@@ -1380,7 +1548,7 @@ async function genProductScript(){
       +'  for(var i=0;i<URLS.length;i++){\n'
       +'    results.push(await scrapeProductRemote(URLS[i]));\n'
       +'    if((i+1)%10===0) console.log((i+1)+"/"+URLS.length+" 完了...");\n'
-      +'    await new Promise(function(r){setTimeout(r,1500);});\n'
+      +'    await new Promise(function(r){setTimeout(r, 2500+Math.floor(Math.random()*3500));});\n'
       +'  }\n'
       +'  var json=JSON.stringify(results);\n'
       +'  try{copy(json);console.log("✓ クリップボードにコピー済み ("+results.length+"件)");}catch(e){}\n'
