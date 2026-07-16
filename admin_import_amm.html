@@ -1539,6 +1539,22 @@ async function doAlgoliaInspect(){
       lines.push('→ RATING/PANEL/COMMUNITY は Algolia インデックスには無い可能性が高いです。');
       lines.push('  その場合は各ボトルの詳細ページ(sourceUrl)からスクレイプする方式に切り替えます。');
     }
+    // RATING数（件数）の特定用: 整数値をとるフィールドを一覧（ページの「N RATINGS」に一致するものを探す）
+    lines.push('');
+    lines.push('=== 🔢 整数フィールド一覧（RATING数=「N RATINGS」の特定用） ===');
+    lines.push('  ※ 各ボトルの詳細ページ上部の「N RATINGS」の N と一致するフィールドがRATING数です');
+    var intKeys=keys.filter(function(k){
+      return hits.some(function(h){ var v=h[k]; return typeof v==='number' && Number.isInteger(v); })
+          && hits.every(function(h){ var v=h[k]; return v==null || (typeof v==='number' && Number.isInteger(v)); });
+    });
+    if(intKeys.length){
+      intKeys.forEach(function(k){
+        var vals=hits.map(function(h){ return h[k]==null?'-':String(h[k]); });
+        lines.push('    '+k+' → '+vals.join(' , '));
+      });
+    } else {
+      lines.push('    （整数フィールドなし）');
+    }
     out.textContent=lines.join('\n');
     log('フィールド調査 完了（キー'+keys.length+'個）','ok');
   }catch(e){
@@ -1611,10 +1627,13 @@ function ammHitToDoc(h){
     waterSource:_ammArr(h.water_source), abvProof:_ammArrC(h.abv_proof), other:_ammArr(h.other),
     awards:_ammArrC(h.awards), status:h.status||'',
     // 評価スコア（会員向けAMM閲覧で使用。インデックスに存在する場合のみ値が入る）
-    panelScore:_ammNum(h.panel_score,h.panel_rating,h.panel,h.panelScore),
-    communityScore:_ammNum(h.community_score,h.community_rating,h.community,h.communityScore),
-    ratingCount:_ammNum(h.nb_ratings,h.ratings_count,h.reviews_count,h.num_reviews,h.rating_count,h.ratingCount),
-    avgRating:_ammNum(h.avg_rating,h.average_rating,h.rating,h.avgRating),
+    // 評価スコア（AMM Algolia BaseProduct の実フィールド名）
+    panelScore:_ammNum(h.average_expert_rating,h.panel_score,h.panelScore),        // PNL=専門家平均
+    communityScore:_ammNum(h.average_non_expert_rating,h.community_score,h.communityScore), // COM=非専門家平均
+    ratingCount:_ammNum(h.ratings_count,h.ratings,h.reviews_count,h.nb_ratings,h.num_ratings,h.rating_count,h.total_ratings,h.raters_count,h.raters,h.n_ratings,h.sample_size,h.popularity),
+    expertRatingCount:_ammNum(h.expert_ratings_count,h.expert_reviews_count,h.num_expert_ratings),
+    communityRatingCount:_ammNum(h.non_expert_ratings_count,h.non_expert_reviews_count,h.num_non_expert_ratings),
+    avgRating:_ammNum(h.average_rating,h.avg_rating,h.rating),
     source:'algolia', scrapedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
 }
