@@ -143,6 +143,16 @@ tbody tr:hover{background:rgba(200,146,30,.06)}
       <input class="tb-search" id="bot-search" type="text" placeholder="名前 / ブランド / NOM で検索">
       <button class="tb-btn" id="bot-filter-btn" onclick="toggleFilter('bot')">🔎 抽出条件</button>
       <button class="tb-btn" id="bot-col-btn" onclick="toggleColCfg()">🗂 表示項目</button>
+      <label style="font-size:11px;color:var(--ink3);">並び順
+        <select id="bot-sort" style="font-size:12px;padding:3px 5px;border:1px solid var(--border2);border-radius:5px;">
+          <option value="nom">NOM+ボトル名</option>
+          <option value="ratings">評価数</option>
+          <option value="panel">PNL</option>
+          <option value="community">COM</option>
+          <option value="pnlcom">PNL+COM</option>
+          <option value="abv">ABV</option>
+        </select>
+      </label>
       <span class="tb-count" id="bot-count"></span>
     </div>
     <div class="filter-panel" id="bot-filters"><div class="fp-grid" id="bot-facets"></div></div>
@@ -251,7 +261,7 @@ function toggleColCfg(){ document.getElementById('colcfg').classList.toggle('ope
 /* selections: 各ファセットの選択集合を保持 */
 var disSel={}, botSel={}, disRange={}, botRange={};
 
-function makeFacet(container, key, label, values, selStore, onChange, pendingMsg){
+function makeFacet(container, key, label, values, selStore, onChange, pendingMsg, fmtFn){
   var opts=uniqSorted(values.map(function(x){return String(x);}));
   var det=document.createElement('details'); det.className='facet';
   var cnt=opts.length;
@@ -277,7 +287,7 @@ function makeFacet(container, key, label, values, selStore, onChange, pendingMsg
         onChange();
       });
       lab.appendChild(cb);
-      var sp=document.createElement('span'); sp.textContent=v; lab.appendChild(sp);
+      var sp=document.createElement('span'); sp.textContent=fmtFn?fmtFn(v):v; lab.appendChild(sp);
       var sm=document.createElement('small'); sm.textContent=freq[v]; lab.appendChild(sm);
       box.appendChild(lab);
     });
@@ -416,11 +426,16 @@ document.getElementById('dis-search').addEventListener('input',renderDis);
 document.getElementById('dis-sort').addEventListener('change',function(){ disSort=this.value; renderDis(); });
 
 /* ================= ② ボトルビュー ================= */
+/* 表示フォーマッタ */
+function fmtType(v){ v=String(v==null?'':v).trim(); return v==='Tequila'?'T':(v==='Agave Spirits'?'A':v); }
+function fmtAbv(v){ v=String(v==null?'':v); var m=v.match(/(\d+(?:\.\d+)?)\s*%/); if(m) return m[1]+'%'; var n=firstNum(v); return n!=null?n+'%':v; }
+function botAbv(b){ return firstNum(pick(b,'abvProof')); }
+
 /* 製造詳細（列表示 & 抽出条件の対象） */
 var PROD_FIELDS=[
-  {key:'category',    label:'カテゴリ',   multi:true},
-  {key:'type',        label:'タイプ',     multi:true},
-  {key:'abvProof',    label:'ABV/PROOF',  range:true},
+  {key:'category',    label:'クラス',     multi:true},
+  {key:'type',        label:'タイプ',     multi:true, fmt:fmtType},
+  {key:'abvProof',    label:'ABV',        range:true, fmt:fmtAbv, unit:'%'},
   {key:'agaveRegion', label:'アガベ産地', multi:true},
   {key:'cooking',     label:'糖化',       multi:true},
   {key:'extraction',  label:'搾汁',       multi:true},
@@ -450,9 +465,9 @@ function buildBotColCfg(){
   var box=document.getElementById('colcfg'); box.innerHTML='';
   box.insertAdjacentHTML('beforeend','<span class="cc-title">表示する製造詳細列:</span>');
   PROD_FIELDS.forEach(function(f){
-    // データが1件も無い列は既定で非表示
+    // 既定でチェックするのは クラス と ABV のみ（データがある場合）
     var hasData=botList.some(function(b){ return pick(b,f.key); });
-    if(colVisible[f.key]===undefined) colVisible[f.key]=hasData;
+    if(colVisible[f.key]===undefined) colVisible[f.key]=(f.key==='category'||f.key==='abvProof') && hasData;
     var lab=document.createElement('label'); lab.className='cc-item'+(colVisible[f.key]?'':' off');
     var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=colVisible[f.key]; cb.disabled=!hasData;
     cb.addEventListener('change',function(){ colVisible[f.key]=cb.checked; lab.className='cc-item'+(cb.checked?'':' off'); renderBot(); });
@@ -472,11 +487,11 @@ function buildBotFacets(){
   // 製造詳細
   PROD_FIELDS.forEach(function(f){
     if(f.range){
-      makeRangeFacet(c,f.key,f.label, botRange, renderBot, '');
+      makeRangeFacet(c,f.key,f.label, botRange, renderBot, f.unit||'');
     } else {
       var vals=[];
       botList.forEach(function(b){ tokens(pick(b,f.key)).forEach(function(t){vals.push(t);}); });
-      makeFacet(c,f.key,f.label, vals, botSel, renderBot);
+      makeFacet(c,f.key,f.label, vals, botSel, renderBot, null, f.fmt);
     }
   });
   var act=document.createElement('div'); act.className='fp-actions';
@@ -505,15 +520,28 @@ function botPass(b){
   return true;
 }
 
+var botSort='nom'; // nom | ratings | panel | community | pnlcom | abv
+function _nomName(a,b){ return String(a.nom).localeCompare(String(b.nom)) || String(pick(a,'productName')).localeCompare(String(pick(b,'productName'))); }
+function _desc(va,vb){ return (vb==null?-Infinity:vb)-(va==null?-Infinity:va); } // 大きい順・null末尾
+function _asc(va,vb){ return (va==null?Infinity:va)-(vb==null?Infinity:vb); }   // 小さい順・null末尾
+function _sum2(a,b){ if(a==null&&b==null) return null; return (a||0)+(b||0); }  // PNL+COM（両方nullならnull）
+
 function renderBot(){
   var rows=botList.filter(botPass).sort(function(a,b){
-    return String(a.nom).localeCompare(String(b.nom)) || String(pick(a,'productName')).localeCompare(String(pick(b,'productName')));
+    switch(botSort){
+      case 'ratings':   return _desc(botScore(a,'rating'),botScore(b,'rating')) || _nomName(a,b);
+      case 'panel':     return _desc(botScore(a,'panel'),botScore(b,'panel')) || _nomName(a,b);
+      case 'community': return _desc(botScore(a,'community'),botScore(b,'community')) || _nomName(a,b);
+      case 'pnlcom':    return _desc(_sum2(botScore(a,'panel'),botScore(a,'community')),_sum2(botScore(b,'panel'),botScore(b,'community'))) || _nomName(a,b);
+      case 'abv':       return _asc(botAbv(a),botAbv(b)) || _nomName(a,b);
+      default:          return _nomName(a,b);
+    }
   });
   document.getElementById('bot-count').textContent=rows.length+' / '+botList.length+' ボトル';
   var visProd=PROD_FIELDS.filter(function(f){return colVisible[f.key];});
   var h='<table><thead><tr>'
     +'<th>名前</th><th>ブランド</th><th>NOM</th>'
-    +'<th class="num">RATING数</th><th class="num" title="専門家評価の平均">PNL</th><th class="num" title="非専門家（コミュニティ）評価の平均">COM</th>'
+    +'<th class="num">評価数</th><th class="num" title="専門家評価の平均">PNL</th><th class="num" title="非専門家（コミュニティ）評価の平均">COM</th>'
     +visProd.map(function(f){return '<th>'+escH(f.label)+'</th>';}).join('')
     +'</tr></thead><tbody>';
   if(!rows.length){ document.getElementById('bot-table').innerHTML='<div class="empty-msg">該当するボトルがありません</div>'; return; }
@@ -530,8 +558,8 @@ function renderBot(){
       +visProd.map(function(f){
           var v=pick(b,f.key);
           if(!v) return '<td><span class="dash">—</span></td>';
-          if(f.multi){ return '<td class="cell-multi">'+tokens(v).map(function(t){return '<span class="pill">'+escH(t)+'</span>';}).join('')+'</td>'; }
-          return '<td class="cell-multi">'+escH(v)+'</td>';
+          if(f.multi){ return '<td class="cell-multi">'+tokens(v).map(function(t){return '<span class="pill">'+escH(f.fmt?f.fmt(t):t)+'</span>';}).join('')+'</td>'; }
+          return '<td class="cell-multi">'+escH(f.fmt?f.fmt(v):v)+'</td>';
         }).join('')
       +'</tr>';
   });
@@ -539,6 +567,7 @@ function renderBot(){
   document.getElementById('bot-table').innerHTML=h;
 }
 document.getElementById('bot-search').addEventListener('input',renderBot);
+document.getElementById('bot-sort').addEventListener('change',function(){ botSort=this.value; renderBot(); });
 </script>
 </body>
 </html>
