@@ -544,7 +544,11 @@ async function scrapeOne(nom,url){
     <div class="btn-row">
       <button class="btn btn-primary" id="btn-algolia-import" onclick="doAlgoliaImport()" disabled style="background:#1a6e58;">Algoliaから全製品を取込</button>
       <button class="btn btn-danger btn-sm" id="btn-algolia-clear" onclick="doProductClear()" disabled>ammBottleDetails 全削除</button>
+      <button class="btn btn-sm" id="btn-algolia-inspect" onclick="doAlgoliaInspect()" style="border:1px solid #1a6e58;color:#1a6e58;background:#fff;">🔍 フィールド調査</button>
+      <button class="btn btn-sm" id="btn-dist-probe" onclick="doDistilleryIndexProbe()" style="border:1px solid #7a5610;color:#7a5610;background:#fff;">🏭 蒸留所インデックス調査</button>
     </div>
+    <div class="card-sub" style="margin-top:4px;font-size:11px;">「フィールド調査」= Algoliaの1件を取得し、<b>RATING/PANEL/COMMUNITYスコアの実フィールド名</b>を確認します。下に全キーが出るので、スコアらしき項目名を教えてください（見つからなければAlgoliaには無く、ボトル詳細ページから取得が必要です）。</div>
+    <pre id="algolia-inspect-out" style="display:none;background:#0d1a16;color:#c9e8dc;font-family:var(--mono,monospace);font-size:11px;padding:10px 12px;border-radius:6px;margin-top:8px;max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-all;"></pre>
     <div class="prog-wrap" id="prog-algolia">
       <div class="prog-bg"><div class="prog-bar" id="pb-algolia"></div></div>
       <div class="prog-txt" id="pt-algolia"></div>
@@ -1489,13 +1493,105 @@ async function doBrandImport(){
 // ══════════════════════════════════════════════════════════════
 var AMM_ALGOLIA={app:'2CRZRW17AQ', key:'97e29f6bb3ec7ac7f19989286b1ab51a', index:'BaseProduct'};
 
-function algoliaQuery(params){
+function algoliaQuery(params){ return algoliaQueryIndex(AMM_ALGOLIA.index, params); }
+// 任意のインデックス名を指定して問い合わせ（インデックス存在確認にも使用）
+function algoliaQueryIndex(indexName, params){
   var url='https://'+AMM_ALGOLIA.app.toLowerCase()+'-dsn.algolia.net/1/indexes/*/queries'
     +'?x-algolia-application-id='+AMM_ALGOLIA.app+'&x-algolia-api-key='+AMM_ALGOLIA.key;
   return fetch(url,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},
-    body:JSON.stringify({requests:[{indexName:AMM_ALGOLIA.index,params:params}]})})
-    .then(function(r){ if(!r.ok) throw new Error('Algolia HTTP '+r.status+'（キーのリファラ制限の可能性）'); return r.json(); })
-    .then(function(j){ return j.results[0]; });
+    body:JSON.stringify({requests:[{indexName:indexName,params:params}]})})
+    .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(j){ if(j.results&&j.results[0]&&j.results[0].message) throw new Error(j.results[0].message); return j.results[0]; });
+}
+
+// ── フィールド調査: Algolia hit の全キーを表示（スコア類の実名確認用）──
+async function doAlgoliaInspect(){
+  var out=document.getElementById('algolia-inspect-out');
+  out.style.display='block'; out.textContent='Algoliaから取得中...';
+  try{
+    var res=await algoliaQuery('query=&hitsPerPage=3&page=0');
+    var hits=res.hits||[];
+    if(!hits.length){ out.textContent='0件でした。'; return; }
+    // 全ヒットに現れるキーを集約
+    var keyset={}; hits.forEach(function(h){ Object.keys(h).forEach(function(k){ keyset[k]=1; }); });
+    var keys=Object.keys(keyset).sort();
+    var scoreRe=/rat|panel|communit|score|review|vote|star|rank|avg|mean/i;
+    var lines=[];
+    lines.push('=== 全フィールド一覧（'+keys.length+'個 / サンプル'+hits.length+'件） ===');
+    var flagged=[];
+    keys.forEach(function(k){
+      var v=hits[0][k];
+      var s=(v&&typeof v==='object')?JSON.stringify(v):String(v);
+      if(s.length>90) s=s.slice(0,90)+'…';
+      var mark=scoreRe.test(k)?'  ⭐ ':'    ';
+      if(scoreRe.test(k)) flagged.push(k);
+      lines.push(mark+k+' = '+s);
+    });
+    lines.push('');
+    if(flagged.length){
+      lines.push('=== ⭐ スコア/評価らしきフィールド ===');
+      flagged.forEach(function(k){
+        var vals=hits.map(function(h){ var v=h[k]; return (v&&typeof v==='object')?JSON.stringify(v):String(v); });
+        lines.push('  '+k+' → '+vals.join(' , '));
+      });
+    } else {
+      lines.push('=== ⭐ スコア/評価らしきフィールドは見つかりませんでした ===');
+      lines.push('→ RATING/PANEL/COMMUNITY は Algolia インデックスには無い可能性が高いです。');
+      lines.push('  その場合は各ボトルの詳細ページ(sourceUrl)からスクレイプする方式に切り替えます。');
+    }
+    out.textContent=lines.join('\n');
+    log('フィールド調査 完了（キー'+keys.length+'個）','ok');
+  }catch(e){
+    out.textContent='取得失敗: '+e.message;
+    log('フィールド調査エラー: '+e.message,'err');
+  }
+}
+
+// ── 蒸留所インデックス調査: 蒸留所属性(Location/Private Labels/Tours等)が
+//    Algoliaの別インデックスにあるか、候補名を試し打ちして確認する ──
+async function doDistilleryIndexProbe(){
+  var out=document.getElementById('algolia-inspect-out');
+  out.style.display='block'; out.textContent='蒸留所インデックスを調査中...';
+  // AMMがRails+Algoliaのため、モデル名由来の候補を順に試す
+  var candidates=['Distillery','BaseDistillery','Distilleries','Distillery_production',
+                  'Producer','BaseProducer','Brand','BaseBrand','Brands','Company','Vinata'];
+  var attrRe=/locat|city|state|region|private|label|tour|contract|address|website|nom|distiller|brand|equip/i;
+  var lines=['=== 蒸留所インデックス調査 ==='];
+  var found=[];
+  for(var i=0;i<candidates.length;i++){
+    var nm=candidates[i];
+    try{
+      var res=await algoliaQueryIndex(nm,'query=&hitsPerPage=2');
+      var nb=res.nbHits||0;
+      lines.push('✓ '+nm+' : '+nb+'件 ヒット');
+      if(res.hits&&res.hits.length){ found.push({name:nm,res:res}); }
+    }catch(e){
+      lines.push('✗ '+nm+' : '+e.message.slice(0,60));
+    }
+    out.textContent=lines.join('\n');
+  }
+  lines.push('');
+  if(!found.length){
+    lines.push('→ 蒸留所らしきインデックスは見つかりませんでした。');
+    lines.push('  Location(city/state)は蒸留所詳細ページのスクレイプで取得済み。');
+    lines.push('  Private Labels / Open to Contracts / Tours は詳細ページからのスクレイプが必要です。');
+  } else {
+    found.forEach(function(f){
+      lines.push('');
+      lines.push('=== 「'+f.name+'」の全フィールド（'+f.res.nbHits+'件） ===');
+      var keyset={}; f.res.hits.forEach(function(h){ Object.keys(h).forEach(function(k){keyset[k]=1;}); });
+      Object.keys(keyset).sort().forEach(function(k){
+        var v=f.res.hits[0][k];
+        var s=(v&&typeof v==='object')?JSON.stringify(v):String(v);
+        if(s.length>90) s=s.slice(0,90)+'…';
+        lines.push((attrRe.test(k)?'  ⭐ ':'    ')+k+' = '+s);
+      });
+    });
+    lines.push('');
+    lines.push('→ ⭐印に Location/Private Labels/Tours 等があれば、そのインデックスから一括取込できます。');
+  }
+  out.textContent=lines.join('\n');
+  log('蒸留所インデックス調査 完了','ok');
 }
 
 function _ammArr(x){ return Array.isArray(x)?x.join('\n'):(x||''); }
