@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AMMデータ閲覧 - テキーラ道場</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=DM+Mono&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --red:#8c2818;--green:#1a6640;
+  --cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;
+  --border:rgba(160,130,100,.2);--border2:rgba(160,130,100,.34);
+  --sans:'Noto Sans JP',sans-serif;--mono:'DM Mono',monospace;
+}
+html,body{font-family:var(--sans);background:var(--cream);color:var(--ink);height:100vh;overflow:hidden}
+body{display:flex;flex-direction:column}
+button{cursor:pointer;font-family:var(--sans);border:none}
+a{color:inherit}
+
+#gate{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--cream);color:var(--ink3);font-size:13px;z-index:2000}
+#app{display:none;flex-direction:column;height:100vh}
+
+/* ── ヘッダ ── */
+.topbar{background:var(--ink);padding:0 14px;display:flex;align-items:center;gap:10px;height:46px;flex-shrink:0}
+.top-brand{font-size:14px;color:var(--gold-l);letter-spacing:.04em;font-weight:500}
+.top-sub{font-size:11px;color:var(--ink3)}
+.top-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.top-link{color:var(--gold-l);font-size:12px;text-decoration:none;opacity:.75;padding:4px 8px;border:1px solid rgba(200,146,30,.4);border-radius:6px}
+.top-link:hover{opacity:1}
+
+/* ── タブ ── */
+.tabs{display:flex;background:var(--cream2);border-bottom:1px solid var(--cream3);flex-shrink:0}
+.tab{padding:10px 20px;font-size:13px;font-weight:600;color:var(--ink3);background:none;border-bottom:2px solid transparent}
+.tab.active{color:var(--gold-d);border-bottom-color:var(--gold-d);background:var(--white)}
+
+/* ── ツールバー ── */
+.toolbar{background:var(--white);border-bottom:1px solid var(--cream3);padding:8px 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.tb-btn{padding:5px 11px;border:1px solid var(--border2);border-radius:6px;background:var(--white);color:var(--ink2);font-size:12px}
+.tb-btn:hover{border-color:var(--gold)}
+.tb-btn.on{background:var(--ink);color:var(--cream);border-color:var(--ink)}
+.tb-count{font-size:11px;color:var(--ink3);margin-left:auto;font-family:var(--mono)}
+.tb-search{padding:5px 9px;border:1px solid var(--border2);border-radius:6px;font-size:12px;width:150px;font-family:var(--sans)}
+.tb-search:focus{outline:none;border-color:var(--gold)}
+
+/* ── フィルタパネル ── */
+.filter-panel{background:var(--cream2);border-bottom:1px solid var(--cream3);padding:10px 12px;display:none;flex-shrink:0;max-height:44vh;overflow-y:auto}
+.filter-panel.open{display:block}
+.fp-grid{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.facet{background:var(--white);border:1px solid var(--border);border-radius:8px;min-width:150px;max-width:240px;overflow:hidden}
+.facet>summary{list-style:none;cursor:pointer;padding:7px 10px;font-size:12px;font-weight:600;color:var(--ink2);display:flex;align-items:center;gap:6px;user-select:none}
+.facet>summary::-webkit-details-marker{display:none}
+.facet>summary::before{content:'▸';font-size:9px;color:var(--ink3);transition:transform .1s}
+.facet[open]>summary::before{transform:rotate(90deg)}
+.facet .fc-badge{margin-left:auto;font-size:10px;background:var(--gold-d);color:#fff;border-radius:9px;padding:0 6px;min-width:16px;text-align:center}
+.facet .fc-badge.zero{background:var(--cream3);color:var(--ink3)}
+.fc-opts{padding:2px 10px 9px;max-height:190px;overflow-y:auto}
+.fc-opt{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink);padding:2px 0;cursor:pointer}
+.fc-opt input{accent-color:var(--gold-d);flex-shrink:0}
+.fc-opt span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fc-opt small{color:var(--ink3);margin-left:auto;font-family:var(--mono);font-size:10px}
+.fc-empty{font-size:11px;color:var(--ink3);padding:4px 0 6px;font-style:italic}
+.fc-range{padding:2px 10px 9px;display:flex;align-items:center;gap:5px}
+.fc-range input{width:60px;padding:4px 6px;border:1px solid var(--border2);border-radius:5px;font-size:12px;font-family:var(--mono)}
+.fc-range input:focus{outline:none;border-color:var(--gold)}
+.fc-range span{font-size:11px;color:var(--ink3)}
+.fp-actions{width:100%;display:flex;gap:8px;margin-top:4px}
+.fp-clear{font-size:11px;color:var(--red);background:none;border:1px solid var(--border2);border-radius:6px;padding:4px 10px}
+
+/* ── テーブル ── */
+.table-wrap{flex:1;overflow:auto;padding:0}
+table{border-collapse:collapse;width:100%;font-size:12px}
+thead th{position:sticky;top:0;background:var(--ink);color:var(--cream);font-weight:500;font-size:11px;padding:7px 9px;text-align:left;white-space:nowrap;z-index:5}
+thead th.num{text-align:right}
+tbody td{padding:6px 9px;border-bottom:1px solid var(--cream3);vertical-align:top;max-width:220px}
+tbody td.num{text-align:right;font-family:var(--mono);white-space:nowrap}
+tbody tr:hover{background:rgba(200,146,30,.06)}
+.cell-name{font-weight:600;color:var(--ink)}
+.cell-sub{font-size:10px;color:var(--ink3)}
+.cell-mono{font-family:var(--mono);color:var(--ink2)}
+.cell-multi{color:var(--ink2);line-height:1.5}
+.amm-a{color:var(--gold-d);text-decoration:none;font-size:11px;white-space:nowrap}
+.amm-a:hover{text-decoration:underline}
+.bcount{font-family:var(--mono);white-space:nowrap}
+.bcount b{color:var(--ink)}
+.bc-c{color:var(--green)}.bc-p{color:var(--ink3)}.bc-n{color:var(--gold-d)}
+.pill{display:inline-block;background:var(--cream2);border-radius:9px;padding:0 7px;font-size:11px;color:var(--ink2);margin:1px 2px 1px 0}
+.dash{color:var(--cream3)}
+.empty-msg{padding:40px;text-align:center;color:var(--ink3);font-size:13px}
+.pending-note{font-size:10px;color:var(--gold-d);background:#fff7e6;border:1px solid #f0d48a;border-radius:5px;padding:1px 6px;white-space:nowrap}
+/* 列表示設定 */
+#colcfg{background:var(--white);border-bottom:1px solid var(--cream3);padding:9px 12px;display:none;flex-shrink:0;flex-wrap:wrap;gap:6px 14px;align-items:center}
+#colcfg.open{display:flex}
+#colcfg .cc-title{font-size:11px;font-weight:600;color:var(--ink2);margin-right:4px}
+.cc-item{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink);cursor:pointer}
+.cc-item input{accent-color:var(--gold-d)}
+.cc-item.off{color:var(--ink3)}
+</style>
+</head>
+<body>
+
+<div id="gate">読み込み中…</div>
+
+<div id="app">
+  <div class="topbar">
+    <span class="top-brand">テキーラ道場</span>
+    <span class="top-sub">AMMデータ閲覧</span>
+    <div class="top-right">
+      <a href="/member.html" class="top-link">← 会員ページ</a>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" id="tab-dis" onclick="switchTab('dis')">🌵 蒸留所</button>
+    <button class="tab" id="tab-bot" onclick="switchTab('bot')">🍶 ボトル</button>
+  </div>
+
+  <!-- ========== 蒸留所ビュー ========== -->
+  <div id="view-dis" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+    <div class="toolbar">
+      <input class="tb-search" id="dis-search" type="text" placeholder="NOM / 蒸留所名 で検索">
+      <button class="tb-btn" id="dis-filter-btn" onclick="toggleFilter('dis')">🔎 抽出条件</button>
+      <span class="tb-count" id="dis-count"></span>
+    </div>
+    <div class="filter-panel" id="dis-filters"><div class="fp-grid" id="dis-facets"></div></div>
+    <div class="table-wrap"><div id="dis-table"></div></div>
+  </div>
+
+  <!-- ========== ボトルビュー ========== -->
+  <div id="view-bot" style="display:none;flex-direction:column;flex:1;min-height:0;">
+    <div class="toolbar">
+      <input class="tb-search" id="bot-search" type="text" placeholder="名前 / ブランド / NOM で検索">
+      <button class="tb-btn" id="bot-filter-btn" onclick="toggleFilter('bot')">🔎 抽出条件</button>
+      <button class="tb-btn" id="bot-col-btn" onclick="toggleColCfg()">🗂 表示項目</button>
+      <span class="tb-count" id="bot-count"></span>
+    </div>
+    <div class="filter-panel" id="bot-filters"><div class="fp-grid" id="bot-facets"></div></div>
+    <div id="colcfg"></div>
+    <div class="table-wrap"><div id="bot-table"></div></div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+firebase.initializeApp({
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
+});
+var auth=firebase.auth(), db=firebase.firestore();
+
+/* ── ユーティリティ ── */
+function escH(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function pick(o){ for(var i=1;i<arguments.length;i++){ var v=o[arguments[i]]; if(v!==undefined&&v!==null&&v!=='') return v; } return ''; }
+function numOr(o){ for(var i=1;i<arguments.length;i++){ var v=o[arguments[i]]; if(v!==undefined&&v!==null&&v!==''&&!isNaN(parseFloat(v))) return parseFloat(v); } return null; }
+function tokens(v){ // 改行/カンマ区切りの複数値を配列へ
+  if(v==null) return [];
+  return String(v).split(/[\n;]+/).map(function(s){return s.trim();}).filter(Boolean);
+}
+function firstNum(s){ var m=String(s==null?'':s).match(/-?\d+(\.\d+)?/); return m?parseFloat(m[0]):null; }
+function uniqSorted(arr){ var seen={},out=[]; arr.forEach(function(x){ if(x&&!seen[x]){seen[x]=1;out.push(x);} }); return out.sort(function(a,b){return a.localeCompare(b,'ja');}); }
+
+/* ── データ ── */
+var disList=[], detailMap={}, botList=[], brandAgg={};
+var curTab='dis';
+
+auth.onAuthStateChanged(function(user){
+  if(user){ document.getElementById('gate').style.display='none'; document.getElementById('app').style.display='flex'; loadData(); }
+  else{ location.replace('/member.html'); }
+});
+
+function loadData(){
+  document.getElementById('gate').style.display='flex';
+  document.getElementById('gate').textContent='AMMデータ読み込み中…';
+  Promise.all([
+    db.collection('ammDistilleries').get(),
+    db.collection('ammDistilleryDetails').get().catch(function(){return {docs:[]};}),
+    db.collection('ammBottleDetails').get()
+  ]).then(function(res){
+    disList=res[0].docs.map(function(d){return Object.assign({nom:d.id},d.data());});
+    detailMap={}; res[1].docs.forEach(function(d){ detailMap[String(d.id)]=d.data(); });
+    botList=res[2].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    aggregateBrands();
+    document.getElementById('gate').style.display='none';
+    buildDisFacets(); renderDis();
+    buildBotColCfg(); buildBotFacets(); renderBot();
+  }).catch(function(e){
+    document.getElementById('gate').textContent='読み込み失敗: '+e.message;
+  });
+}
+
+/* 蒸留所ごとのブランド数（Current/Previous/NotListed）をボトルデータから集計 */
+function normStatus(s){
+  s=String(s||'').toLowerCase();
+  if(s.indexOf('not')>=0&&s.indexOf('list')>=0) return 'n';
+  if(s.indexOf('prev')>=0||s.indexOf('discont')>=0||s.indexOf('former')>=0) return 'p';
+  if(s.indexOf('current')>=0||s.indexOf('active')>=0||s.indexOf('list')>=0) return 'c';
+  return s?'c':'';
+}
+function aggregateBrands(){
+  brandAgg={}; // nom -> {c:{},p:{},n:{},all:{}}
+  botList.forEach(function(b){
+    var nom=String(b.nom||''); if(!nom) return;
+    var bid=String(b.brandId||b.brandName||''); if(!bid) return;
+    if(!brandAgg[nom]) brandAgg[nom]={c:{},p:{},n:{},all:{}};
+    brandAgg[nom].all[bid]=1;
+    var st=normStatus(b.status);
+    if(st) brandAgg[nom][st][bid]=1;
+  });
+}
+function brandCounts(nom){
+  var a=brandAgg[nom]; if(!a) return {c:0,p:0,n:0,all:0};
+  return {c:Object.keys(a.c).length,p:Object.keys(a.p).length,n:Object.keys(a.n).length,all:Object.keys(a.all).length};
+}
+
+/* ================= タブ / パネル制御 ================= */
+function switchTab(t){
+  curTab=t;
+  document.getElementById('tab-dis').classList.toggle('active',t==='dis');
+  document.getElementById('tab-bot').classList.toggle('active',t==='bot');
+  document.getElementById('view-dis').style.display=(t==='dis')?'flex':'none';
+  document.getElementById('view-bot').style.display=(t==='bot')?'flex':'none';
+}
+function toggleFilter(v){ document.getElementById(v+'-filters').classList.toggle('open'); document.getElementById(v+'-filter-btn').classList.toggle('on'); }
+function toggleColCfg(){ document.getElementById('colcfg').classList.toggle('open'); document.getElementById('bot-col-btn').classList.toggle('on'); }
+
+/* ================= 汎用ファセット生成 ================= */
+/* selections: 各ファセットの選択集合を保持 */
+var disSel={}, botSel={}, disRange={}, botRange={};
+
+function makeFacet(container, key, label, values, selStore, onChange, pendingMsg){
+  var opts=uniqSorted(values.map(function(x){return String(x);}));
+  var det=document.createElement('details'); det.className='facet';
+  var cnt=opts.length;
+  var sum=document.createElement('summary');
+  sum.innerHTML=escH(label)+'<span class="fc-badge'+(cnt?'':' zero')+'" id="badge-'+key+'">'+(selStore[key]&&Object.keys(selStore[key]).length?Object.keys(selStore[key]).length:cnt)+'</span>';
+  det.appendChild(sum);
+  var box=document.createElement('div'); box.className='fc-opts';
+  if(!opts.length){
+    box.innerHTML='<div class="fc-empty">'+(pendingMsg||'該当データなし')+'</div>';
+  } else {
+    // 値ごとの件数
+    var freq={}; values.forEach(function(x){ x=String(x); freq[x]=(freq[x]||0)+1; });
+    opts.forEach(function(v){
+      var lab=document.createElement('label'); lab.className='fc-opt';
+      var cb=document.createElement('input'); cb.type='checkbox'; cb.value=v;
+      cb.checked=!!(selStore[key]&&selStore[key][v]);
+      cb.addEventListener('change',function(){
+        if(!selStore[key]) selStore[key]={};
+        if(cb.checked) selStore[key][v]=1; else delete selStore[key][v];
+        var n=Object.keys(selStore[key]).length;
+        var badge=document.getElementById('badge-'+key);
+        badge.textContent=n||cnt; badge.className='fc-badge'+(n?'':(cnt?'':' zero'));
+        onChange();
+      });
+      lab.appendChild(cb);
+      var sp=document.createElement('span'); sp.textContent=v; lab.appendChild(sp);
+      var sm=document.createElement('small'); sm.textContent=freq[v]; lab.appendChild(sm);
+      box.appendChild(lab);
+    });
+  }
+  det.appendChild(box);
+  container.appendChild(det);
+}
+
+function makeRangeFacet(container, key, label, rangeStore, onChange, unit, pending){
+  var det=document.createElement('details'); det.className='facet';
+  var sum=document.createElement('summary'); sum.innerHTML=escH(label)+(pending?'<span class="pending-note" style="margin-left:6px;">未取込</span>':'');
+  det.appendChild(sum);
+  var box=document.createElement('div'); box.className='fc-range';
+  var mn=document.createElement('input'); mn.type='number'; mn.placeholder='min'; mn.step='any';
+  var mx=document.createElement('input'); mx.type='number'; mx.placeholder='max'; mx.step='any';
+  if(rangeStore[key]){ if(rangeStore[key].min!=null)mn.value=rangeStore[key].min; if(rangeStore[key].max!=null)mx.value=rangeStore[key].max; }
+  function upd(){
+    rangeStore[key]={min:mn.value===''?null:parseFloat(mn.value), max:mx.value===''?null:parseFloat(mx.value)};
+    onChange();
+  }
+  mn.addEventListener('input',upd); mx.addEventListener('input',upd);
+  box.appendChild(mn); var t=document.createElement('span'); t.textContent='〜'+(unit||''); box.appendChild(t); box.appendChild(mx);
+  det.appendChild(box); container.appendChild(det);
+}
+
+function inRange(val, r){
+  if(!r) return true;
+  if(val==null) return (r.min==null&&r.max==null);
+  if(r.min!=null&&val<r.min) return false;
+  if(r.max!=null&&val>r.max) return false;
+  return true;
+}
+function selMatch(sel, vals){ // sel: {value:1}, vals: array of tokens ; OR (いずれか一致)
+  var keys=sel?Object.keys(sel):[];
+  if(!keys.length) return true;
+  for(var i=0;i<vals.length;i++){ if(sel[vals[i]]) return true; }
+  return false;
+}
+
+/* ================= ① 蒸留所ビュー ================= */
+function disLocation(d){
+  var det=detailMap[d.nom]||{};
+  var city=pick(det,'city'), state=pick(det,'state');
+  return [city,state].filter(Boolean).join(', ');
+}
+function disState(d){ var det=detailMap[d.nom]||{}; return pick(det,'state'); }
+function disEquip(d){ var det=detailMap[d.nom]||{}; return ['cooking','extraction','fermentation','still','aging','waterSource'].map(function(k){return pick(det,k);}).filter(Boolean); }
+function disAttr(d, keys){ var det=detailMap[d.nom]||{}; var v=pick.apply(null,[det].concat(keys)); return v; }
+
+function buildDisFacets(){
+  var c=document.getElementById('dis-facets'); c.innerHTML=''; disSel={}; disRange={};
+  var regions=[], states=[], equips=[], plabels=[], contracts=[], tours=[];
+  disList.forEach(function(d){
+    var det=detailMap[d.nom]||{};
+    if(pick(d,'region')) regions.push(pick(d,'region'));
+    var st=pick(det,'state'); if(st) states.push(st);
+    disEquip(d).forEach(function(e){ tokens(e).forEach(function(t){equips.push(t);}); });
+    var pl=pick(det,'privateLabels','private_labels','privateLabel'); if(pl) plabels.push(pl);
+    var oc=pick(det,'openToContracts','open_to_contracts','contracts'); if(oc) contracts.push(oc);
+    var tr=pick(det,'tours','tour'); if(tr) tours.push(tr);
+  });
+  makeFacet(c,'region','Region', regions, disSel, renderDis);
+  makeFacet(c,'state','Location（州）', states, disSel, renderDis, 'ammDistilleryDetails未取込');
+  makeFacet(c,'equip','設備 Equipment', equips, disSel, renderDis, 'ammDistilleryDetails未取込');
+  makeFacet(c,'plabel','Private Labels', plabels, disSel, renderDis, 'データ未取込（AMM要インポート）');
+  makeFacet(c,'contract','Open to Contracts', contracts, disSel, renderDis, 'データ未取込（AMM要インポート）');
+  makeFacet(c,'tours','Tours', tours, disSel, renderDis, 'データ未取込（AMM要インポート）');
+  var act=document.createElement('div'); act.className='fp-actions';
+  var btn=document.createElement('button'); btn.className='fp-clear'; btn.textContent='条件クリア';
+  btn.onclick=function(){ buildDisFacets(); renderDis(); };
+  act.appendChild(btn); c.appendChild(act);
+}
+
+function disPass(d){
+  var det=detailMap[d.nom]||{};
+  if(!selMatch(disSel.region, [pick(d,'region')])) return false;
+  if(!selMatch(disSel.state, [pick(det,'state')])) return false;
+  if(disSel.equip&&Object.keys(disSel.equip).length){
+    var ev=[]; disEquip(d).forEach(function(e){ tokens(e).forEach(function(t){ev.push(t);}); });
+    if(!selMatch(disSel.equip, ev)) return false;
+  }
+  if(!selMatch(disSel.plabel, [pick(det,'privateLabels','private_labels','privateLabel')])) return false;
+  if(!selMatch(disSel.contract, [pick(det,'openToContracts','open_to_contracts','contracts')])) return false;
+  if(!selMatch(disSel.tours, [pick(det,'tours','tour')])) return false;
+  var q=(document.getElementById('dis-search').value||'').trim().toLowerCase();
+  if(q){ var hay=(d.nom+' '+pick(d,'distilleryName')).toLowerCase(); if(hay.indexOf(q)<0) return false; }
+  return true;
+}
+
+function renderDis(){
+  var rows=disList.filter(disPass).sort(function(a,b){ return String(a.nom).localeCompare(String(b.nom)); });
+  document.getElementById('dis-count').textContent=rows.length+' / '+disList.length+' 蒸留所';
+  var h='<table><thead><tr>'
+    +'<th>NOM</th><th>蒸留所名</th><th class="num">ブランド数<br>(C/P/N)</th><th>Location</th><th>Region</th><th>AMM</th>'
+    +'</tr></thead><tbody>';
+  if(!rows.length){ document.getElementById('dis-table').innerHTML='<div class="empty-msg">該当する蒸留所がありません</div>'; return; }
+  rows.forEach(function(d){
+    var bc=brandCounts(d.nom);
+    var loc=disLocation(d);
+    var url=pick(d,'ammUrl','sourceUrl') || (detailMap[d.nom]&&pick(detailMap[d.nom],'sourceUrl'));
+    h+='<tr>'
+      +'<td class="cell-mono">'+escH(d.nom)+'</td>'
+      +'<td class="cell-name">'+escH(pick(d,'distilleryName')||'—')+'</td>'
+      +'<td class="num"><span class="bcount"><b>'+bc.all+'</b> <span class="bc-c">'+bc.c+'</span>/<span class="bc-p">'+bc.p+'</span>/<span class="bc-n">'+bc.n+'</span></span></td>'
+      +'<td>'+(loc?escH(loc):'<span class="dash">—</span>')+'</td>'
+      +'<td>'+(pick(d,'region')?escH(pick(d,'region')):'<span class="dash">—</span>')+'</td>'
+      +'<td>'+(url?'<a class="amm-a" href="'+escH(url)+'" target="_blank" rel="noopener">開く ↗</a>':'<span class="dash">—</span>')+'</td>'
+      +'</tr>';
+  });
+  h+='</tbody></table>';
+  document.getElementById('dis-table').innerHTML=h;
+}
+document.getElementById('dis-search').addEventListener('input',renderDis);
+
+/* ================= ② ボトルビュー ================= */
+/* 製造詳細（列表示 & 抽出条件の対象） */
+var PROD_FIELDS=[
+  {key:'category',    label:'カテゴリ',   multi:true},
+  {key:'type',        label:'タイプ',     multi:true},
+  {key:'abvProof',    label:'ABV/PROOF',  range:true},
+  {key:'agaveRegion', label:'アガベ産地', multi:true},
+  {key:'cooking',     label:'糖化',       multi:true},
+  {key:'extraction',  label:'搾汁',       multi:true},
+  {key:'fermentation',label:'発酵',       multi:true},
+  {key:'distillation',label:'蒸留',       multi:true},
+  {key:'still',       label:'蒸留器',     multi:true},
+  {key:'aging',       label:'熟成',       multi:true},
+  {key:'waterSource', label:'水源',       multi:true}
+];
+var colVisible={}; // key -> bool（製造詳細列の表示可否）
+
+function botScore(b, which){
+  if(which==='rating') return numOr(b,'ratingCount','ratings_count','nb_ratings','num_reviews','reviewsCount','rating_count');
+  if(which==='panel')  return numOr(b,'panelScore','panel_score','panel_rating','panel');
+  if(which==='community') return numOr(b,'communityScore','community_score','community_rating','community');
+  return null;
+}
+
+function buildBotColCfg(){
+  var box=document.getElementById('colcfg'); box.innerHTML='';
+  box.insertAdjacentHTML('beforeend','<span class="cc-title">表示する製造詳細列:</span>');
+  PROD_FIELDS.forEach(function(f){
+    // データが1件も無い列は既定で非表示
+    var hasData=botList.some(function(b){ return pick(b,f.key); });
+    if(colVisible[f.key]===undefined) colVisible[f.key]=hasData;
+    var lab=document.createElement('label'); lab.className='cc-item'+(colVisible[f.key]?'':' off');
+    var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=colVisible[f.key]; cb.disabled=!hasData;
+    cb.addEventListener('change',function(){ colVisible[f.key]=cb.checked; lab.className='cc-item'+(cb.checked?'':' off'); renderBot(); });
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode(f.label+(hasData?'':'（データなし）')));
+    box.appendChild(lab);
+  });
+}
+
+function buildBotFacets(){
+  var c=document.getElementById('bot-facets'); c.innerHTML=''; botSel={}; botRange={};
+  // スコア範囲（現状未取込の場合は未取込表示）
+  var hasPanel=botList.some(function(b){return botScore(b,'panel')!=null;});
+  var hasComm=botList.some(function(b){return botScore(b,'community')!=null;});
+  makeRangeFacet(c,'panel','PANELスコア', botRange, renderBot, '', !hasPanel);
+  makeRangeFacet(c,'community','COMMUNITYスコア', botRange, renderBot, '', !hasComm);
+  // 製造詳細
+  PROD_FIELDS.forEach(function(f){
+    if(f.range){
+      makeRangeFacet(c,f.key,f.label, botRange, renderBot, '');
+    } else {
+      var vals=[];
+      botList.forEach(function(b){ tokens(pick(b,f.key)).forEach(function(t){vals.push(t);}); });
+      makeFacet(c,f.key,f.label, vals, botSel, renderBot);
+    }
+  });
+  var act=document.createElement('div'); act.className='fp-actions';
+  var btn=document.createElement('button'); btn.className='fp-clear'; btn.textContent='条件クリア';
+  btn.onclick=function(){ buildBotFacets(); renderBot(); };
+  act.appendChild(btn); c.appendChild(act);
+}
+
+function botPass(b){
+  // スコア範囲
+  if(!inRange(botScore(b,'panel'), botRange.panel)) return false;
+  if(!inRange(botScore(b,'community'), botRange.community)) return false;
+  // 製造詳細
+  for(var i=0;i<PROD_FIELDS.length;i++){
+    var f=PROD_FIELDS[i];
+    if(f.range){
+      if(botRange[f.key]&&(botRange[f.key].min!=null||botRange[f.key].max!=null)){
+        if(!inRange(firstNum(pick(b,f.key)), botRange[f.key])) return false;
+      }
+    } else if(botSel[f.key]&&Object.keys(botSel[f.key]).length){
+      if(!selMatch(botSel[f.key], tokens(pick(b,f.key)))) return false;
+    }
+  }
+  var q=(document.getElementById('bot-search').value||'').trim().toLowerCase();
+  if(q){ var hay=(pick(b,'productName')+' '+pick(b,'brandName')+' '+pick(b,'nom')).toLowerCase(); if(hay.indexOf(q)<0) return false; }
+  return true;
+}
+
+function renderBot(){
+  var rows=botList.filter(botPass).sort(function(a,b){
+    return String(a.nom).localeCompare(String(b.nom)) || String(pick(a,'productName')).localeCompare(String(pick(b,'productName')));
+  });
+  document.getElementById('bot-count').textContent=rows.length+' / '+botList.length+' ボトル';
+  var visProd=PROD_FIELDS.filter(function(f){return colVisible[f.key];});
+  var h='<table><thead><tr>'
+    +'<th>名前</th><th>ブランド</th><th>NOM</th>'
+    +'<th class="num">RATING数</th><th class="num">PANEL</th><th class="num">COMMUNITY</th>'
+    +visProd.map(function(f){return '<th>'+escH(f.label)+'</th>';}).join('')
+    +'</tr></thead><tbody>';
+  if(!rows.length){ document.getElementById('bot-table').innerHTML='<div class="empty-msg">該当するボトルがありません</div>'; return; }
+  rows.forEach(function(b){
+    var url=pick(b,'sourceUrl','ammUrl');
+    var rc=botScore(b,'rating'), ps=botScore(b,'panel'), cs=botScore(b,'community');
+    h+='<tr>'
+      +'<td class="cell-name">'+(url?'<a class="amm-a" href="'+escH(url)+'" target="_blank" rel="noopener">'+escH(pick(b,'productName')||b.id)+'</a>':escH(pick(b,'productName')||b.id))+'</td>'
+      +'<td>'+escH(pick(b,'brandName')||'—')+'</td>'
+      +'<td class="cell-mono">'+escH(pick(b,'nom')||'—')+'</td>'
+      +'<td class="num">'+(rc!=null?rc:'<span class="dash">—</span>')+'</td>'
+      +'<td class="num">'+(ps!=null?ps:'<span class="dash">—</span>')+'</td>'
+      +'<td class="num">'+(cs!=null?cs:'<span class="dash">—</span>')+'</td>'
+      +visProd.map(function(f){
+          var v=pick(b,f.key);
+          if(!v) return '<td><span class="dash">—</span></td>';
+          if(f.multi){ return '<td class="cell-multi">'+tokens(v).map(function(t){return '<span class="pill">'+escH(t)+'</span>';}).join('')+'</td>'; }
+          return '<td class="cell-multi">'+escH(v)+'</td>';
+        }).join('')
+      +'</tr>';
+  });
+  h+='</tbody></table>';
+  document.getElementById('bot-table').innerHTML=h;
+}
+document.getElementById('bot-search').addEventListener('input',renderBot);
+</script>
+</body>
+</html>
