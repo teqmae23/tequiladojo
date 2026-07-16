@@ -920,18 +920,31 @@ function openAmmMatch(bottle){
   var brand=rawBrands.filter(function(x){return x.id===String(bottle.brandId||String(bottle.id).slice(0,7));})[0];
   var brName=brand?(brand.brandEs||brand.brandJa||''):'';
   document.getElementById('amm-title').textContent='AMM製法の突合';
-  document.getElementById('amm-sub').innerHTML='ボトル: <b>'+escH(bottle.bottleEs||bottle.bottleJa||bottle.id)+'</b>（'+escH(bottle.id)+'）<br>NOM '+escH(nom)+(brName?' / ブランド: '+escH(brName):'')+' の製品候補から選んでください。';
+  document.getElementById('amm-sub').innerHTML='ボトル: <b>'+escH(bottle.bottleEs||bottle.bottleJa||bottle.id)+'</b>（'+escH(bottle.id)+'）<br>NOM '+escH(nom)+(brName?' / ブランド: '+escH(brName):'')+' の未突合の製品候補から選んでください。'
+    +'<label style="display:inline-flex;align-items:center;gap:5px;margin-top:8px;font-size:11px;color:var(--ink3);cursor:pointer;"><input type="checkbox" id="amm-show-taken"> 他ボトルに突合確定済みも表示</label>';
   var nb=_mNorm(brName);
-  var cands=rawAmmBottle.filter(function(a){return String(a.nom)===nom;});
-  cands.sort(function(a,b){
+  var allCands=rawAmmBottle.filter(function(a){return String(a.nom)===nom;});
+  allCands.sort(function(a,b){
     var sa=(nb&&_mNorm(a.brandName).indexOf(nb)>=0)?0:1;
     var sb=(nb&&_mNorm(b.brandName).indexOf(nb)>=0)?0:1;
     return sa-sb || String(a.productName||'').localeCompare(String(b.productName||''));
   });
-  var wrap=document.getElementById('amm-cand-list');
-  if(!cands.length){
-    wrap.innerHTML='<div class="amm-none">NOM '+escH(nom)+' のAMM製品データがありません。<br>先に「AMMインポート」→「製品(ボトル)取込」を実行してください。</div>';
-  } else {
+  function renderCands(){
+    var showTaken=document.getElementById('amm-show-taken').checked;
+    var wrap=document.getElementById('amm-cand-list');
+    if(!allCands.length){
+      wrap.innerHTML='<div class="amm-none">NOM '+escH(nom)+' のAMM製品データがありません。<br>先に「AMMインポート」→「★ Algoliaから全製品を取込」を実行してください。</div>';
+      return;
+    }
+    // 突合確定済み（他ボトルに紐付済み）は既定で除外。このボトル自身の突合は常に表示。
+    var cands=allCands.filter(function(a){
+      var takenOther=a.matchedBottleId&&String(a.matchedBottleId)!==String(bottle.id);
+      return showTaken || !takenOther;
+    });
+    if(!cands.length){
+      wrap.innerHTML='<div class="amm-none">未突合の候補がありません（NOM '+escH(nom)+' の製品は全て他ボトルへ突合確定済み）。<br>上の「他ボトルに突合確定済みも表示」で確認・付け替えできます。</div>';
+      return;
+    }
     wrap.innerHTML=cands.map(function(a){
       var taken=a.matchedBottleId&&String(a.matchedBottleId)!==String(bottle.id);
       var takenName='';
@@ -942,10 +955,12 @@ function openAmmMatch(bottle){
         +'<div class="amm-cand-meta">'+escH(a.brandName||'')
         +(a.abvProof?' ・ '+escH(a.abvProof):'')
         +(a.aging?' ・熟成: '+escH(String(a.aging).split('\n')[0]):'')
-        +(taken?' ・<span class="amm-cand-taken">既に「'+escH(takenName)+'」へ紐付済</span>':'')
+        +(taken?' ・<span class="amm-cand-taken">既に「'+escH(takenName)+'」へ突合確定済</span>':'')
         +'</div></label>';
     }).join('');
   }
+  document.getElementById('amm-show-taken').addEventListener('change', renderCands);
+  renderCands();
   document.getElementById('amm-msg').textContent='';
   document.getElementById('amm-btn-clear').style.display=bottle._ammMatched?'':'none';
   document.getElementById('amm-modal').classList.add('open');

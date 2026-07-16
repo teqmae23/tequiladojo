@@ -1526,23 +1526,21 @@ async function doAlgoliaImport(){
   log('Algolia一括取込 開始','info');
   try{
     var all={};
-    // 1) 全体トップ1000件
-    var base=await algoliaQuery('query=&hitsPerPage=1000&page=0');
-    (base.hits||[]).forEach(function(h){ var k=String(h.id||h.objectID); if(k) all[k]=h; });
-    // 2) カテゴリ別に取得して1000上限を回避（合計1000超に対応）
-    var facetRes=await algoliaQuery('query=&hitsPerPage=0&facets='+encodeURIComponent('["category"]'));
-    var cats=(facetRes.facets&&facetRes.facets.category)?Object.keys(facetRes.facets.category):[];
-    for(var ci=0;ci<cats.length;ci++){
-      var ff=encodeURIComponent(JSON.stringify(['category:'+cats[ci]]));
-      var page=0, nbPages=1;
-      do{
-        var res=await algoliaQuery('query=&hitsPerPage=1000&page='+page+'&facetFilters='+ff);
-        (res.hits||[]).forEach(function(h){ var k=String(h.id||h.objectID); if(k) all[k]=h; });
-        nbPages=res.nbPages||1; page++;
-      }while(page<nbPages && page<10);
-      st('st-algolia','取得中... '+Object.keys(all).length+'件（カテゴリ '+(ci+1)+'/'+cats.length+'）','');
+    // 総件数を把握（進捗表示・取りこぼし検出用）
+    var total=0; try{ var t=await algoliaQuery('query=&hitsPerPage=0'); total=t.nbHits||0; }catch(e){}
+    // id範囲を再帰分割して取得（1範囲が1000件超なら半分に割る）。
+    // カテゴリ別だと「1カテゴリ>1000件」で取りこぼす（NOM1102等）ため、id窓で完全取得する。
+    async function collectRange(lo,hi){
+      var nf=encodeURIComponent(JSON.stringify(['id>='+lo,'id<'+hi]));
+      var res=await algoliaQuery('query=&hitsPerPage=1000&page=0&numericFilters='+nf);
+      var nb=res.nbHits||0;
+      if(nb>1000 && (hi-lo)>1){ var mid=Math.floor((lo+hi)/2); await collectRange(lo,mid); await collectRange(mid,hi); return; }
+      (res.hits||[]).forEach(function(h){ var k=String(h.id||h.objectID); if(k) all[k]=h; });
+      st('st-algolia','取得中... '+Object.keys(all).length+(total?('/'+total):'')+'件','');
     }
+    await collectRange(0, 60000);
     var docs=Object.keys(all).map(function(k){ return ammHitToDoc(all[k]); }).filter(function(d){ return d.ammProductId; });
+    if(total && docs.length<total) log('注意: 取得'+docs.length+'件 < 総数'+total+'件。id上限を超える製品がある可能性','warn');
     if(!docs.length){ st('st-algolia','0件でした（キー/インデックスをご確認ください）','err'); document.getElementById('btn-algolia-import').disabled=false; return; }
     st('st-algolia','取得完了 '+docs.length+'件。Firestoreへ書込中...','');
     log('Algolia取得: '+docs.length+'件、書込開始','info');
