@@ -157,10 +157,15 @@ details summary{font-size:12px;color:var(--ink3);cursor:pointer;padding:5px 0;}
       ランキングは数カ月ごとに更新されます。<b>更新日（ランキング基準日）</b>を入れて取込むと、その日付で <span class="mono">ammRankingHistory/&lt;日付&gt;</span> に履歴スナップショットを保存します（過去の順位・点数を保持）。
     </div>
     <div class="btn-row" style="align-items:center;">
-      <label style="font-size:12px;">更新日 <input type="date" id="basic-date" value="2025-12-31" style="padding:4px 6px;border:1px solid var(--cream3);border-radius:5px;font-family:var(--mono);font-size:12px;"></label>
+      <label style="font-size:12px;">更新日 <input type="date" id="basic-date" value="2026-01-05" style="padding:4px 6px;border:1px solid var(--cream3);border-radius:5px;font-family:var(--mono);font-size:12px;"></label>
       <button class="btn btn-primary" id="btn-import" onclick="doImport()" disabled>基本データをインポート（152件）</button>
       <button class="btn btn-danger btn-sm" id="btn-clear" onclick="doClear()" disabled>コレクション全削除</button>
     </div>
+    <div class="btn-row" style="align-items:center;margin-top:4px;">
+      <button class="btn btn-sm" id="btn-backfill-date" onclick="doBackfillRankDate()" disabled style="border:1px solid var(--gold-d);color:var(--gold-d);background:#fff;">既存の全ランキングデータに上の更新日を設定（履歴も保存）</button>
+      <span class="status-line" id="st-backfill" style="margin:0;"></span>
+    </div>
+    <div class="card-sub" style="font-size:11px;margin-top:2px;">再取込せず、既に入っている <span class="mono">ammDistilleries</span>（ランク付き）の <span class="mono">collectionDate</span> を上の更新日にまとめて設定し、その日付で <span class="mono">ammRankingHistory</span> に履歴を保存します。</div>
     <div class="prog-wrap" id="prog-basic">
       <div class="prog-bg"><div class="prog-bar" id="pb-basic"></div></div>
       <div class="prog-txt" id="pt-basic"></div>
@@ -945,6 +950,7 @@ function refreshButtons(){
   document.getElementById('btn-import').disabled=!isAdmin;
   document.getElementById('btn-clear').disabled=!isAdmin;
   var _rh=document.getElementById('btn-rank-hist'); if(_rh) _rh.disabled=!isAdmin;
+  var _bf=document.getElementById('btn-backfill-date'); if(_bf) _bf.disabled=!isAdmin;
   document.getElementById('btn-url-import').disabled=!isAdmin;
   document.getElementById('btn-sync-url').disabled=!isAdmin;
   document.getElementById('btn-detail-import').disabled=!(isAdmin&&parsedDetail.length>0);
@@ -988,6 +994,40 @@ function renderBasicPreview(){
 }
 
 // ── Step1: Basic Import ───────────────────────────────────────
+async function doBackfillRankDate(){
+  if(!isAdmin) return;
+  var rankDate=(document.getElementById('basic-date').value||'').trim();
+  if(!rankDate){ st('st-backfill','更新日を入力してください','err'); return; }
+  if(!confirm('既存の全ランキングデータ（ammDistilleriesのランク付き）の collectionDate を '+rankDate+' に設定し、履歴 ammRankingHistory/'+rankDate+' を保存します。続行しますか？')) return;
+  document.getElementById('btn-backfill-date').disabled=true;
+  st('st-backfill','処理中...','');
+  try{
+    var snap=await db.collection('ammDistilleries').get();
+    var ranked=snap.docs.filter(function(d){ var v=d.data(); return v.rank!=null && !isNaN(parseInt(v.rank)); });
+    if(!ranked.length){ st('st-backfill','ランク付きデータがありません','err'); document.getElementById('btn-backfill-date').disabled=false; return; }
+    // 1) collectionDate をまとめて更新（merge）
+    var done=0;
+    for(var i=0;i<ranked.length;i+=400){
+      var b=db.batch();
+      ranked.slice(i,i+400).forEach(function(d){ b.set(d.ref,{collectionDate:rankDate},{merge:true}); });
+      await b.commit();
+      done+=Math.min(400,ranked.length-i);
+    }
+    // 2) 履歴スナップショットを保存（現在のFirestoreデータから）
+    var rows=ranked.map(function(d){ var v=d.data(); return {rank:parseInt(v.rank),nom:String(v.nom||d.id),distilleryName:v.distilleryName||'',avgRating:v.avgRating,ratingCount:v.ratingCount,region:v.region||''}; });
+    await db.collection('ammRankingHistory').doc(rankDate).set({
+      date:rankDate, count:rows.length, rows:rows,
+      importedAt:firebase.firestore.FieldValue.serverTimestamp(), source:'backfill'
+    });
+    await db.collection('masterMeta').doc('ammRankingLatest').set({
+      date:rankDate, count:rows.length, updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    },{merge:true});
+    st('st-backfill','✓ '+done+'件に更新日 '+rankDate+' を設定し、履歴を保存しました','ok');
+    log('✓ collectionDate バックフィル: '+done+'件 → '+rankDate+'、履歴保存','ok');
+  }catch(e){ st('st-backfill','エラー: '+e.message,'err'); log('バックフィルエラー: '+e.message,'err'); }
+  document.getElementById('btn-backfill-date').disabled=false;
+}
+
 async function showRankHistory(){
   var out=document.getElementById('rank-hist-out');
   out.style.display='block'; out.textContent='読み込み中...';
