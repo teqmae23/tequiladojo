@@ -153,10 +153,11 @@ details summary{font-size:12px;color:var(--ink3);cursor:pointer;padding:5px 0;}
   <div class="card">
     <div class="card-title">🌵 ammDistilleries — 152件（ランキング基本データ）</div>
     <div class="card-sub">
-      出典: tastetequila.com / Agave Matchmaker &nbsp;|&nbsp; 集計日: 2025-12-31<br>
-      コレクション: <span class="mono">ammDistilleries</span> &nbsp;|&nbsp; ドキュメントID: NOM番号
+      出典: tastetequila.com / Agave Matchmaker &nbsp;|&nbsp; コレクション: <span class="mono">ammDistilleries</span> &nbsp;|&nbsp; ドキュメントID: NOM番号<br>
+      ランキングは数カ月ごとに更新されます。<b>更新日（ランキング基準日）</b>を入れて取込むと、その日付で <span class="mono">ammRankingHistory/&lt;日付&gt;</span> に履歴スナップショットを保存します（過去の順位・点数を保持）。
     </div>
-    <div class="btn-row">
+    <div class="btn-row" style="align-items:center;">
+      <label style="font-size:12px;">更新日 <input type="date" id="basic-date" value="2025-12-31" style="padding:4px 6px;border:1px solid var(--cream3);border-radius:5px;font-family:var(--mono);font-size:12px;"></label>
       <button class="btn btn-primary" id="btn-import" onclick="doImport()" disabled>基本データをインポート（152件）</button>
       <button class="btn btn-danger btn-sm" id="btn-clear" onclick="doClear()" disabled>コレクション全削除</button>
     </div>
@@ -165,6 +166,10 @@ details summary{font-size:12px;color:var(--ink3);cursor:pointer;padding:5px 0;}
       <div class="prog-txt" id="pt-basic"></div>
     </div>
     <div class="status-line" id="st-basic"></div>
+    <div style="margin-top:10px;">
+      <button class="btn btn-sm" id="btn-rank-hist" onclick="showRankHistory()" style="border:1px solid var(--gold-d);color:var(--gold-d);background:#fff;">📅 保存済みランキング履歴を表示</button>
+      <pre id="rank-hist-out" style="display:none;background:#faf7ef;border:1px solid var(--cream3);border-radius:6px;padding:8px 10px;font-family:var(--mono,monospace);font-size:11px;margin-top:6px;max-height:180px;overflow:auto;white-space:pre-wrap;"></pre>
+    </div>
     <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--cream3);">
       <div class="card-sub" style="margin-bottom:8px;">distilleries マスタへの AMM URL 同期 — NOMが一致するドキュメントの <code>ammUrl</code> フィールドを更新します。</div>
       <div class="btn-row">
@@ -939,6 +944,7 @@ async function checkAmmAccess(){
 function refreshButtons(){
   document.getElementById('btn-import').disabled=!isAdmin;
   document.getElementById('btn-clear').disabled=!isAdmin;
+  var _rh=document.getElementById('btn-rank-hist'); if(_rh) _rh.disabled=!isAdmin;
   document.getElementById('btn-url-import').disabled=!isAdmin;
   document.getElementById('btn-sync-url').disabled=!isAdmin;
   document.getElementById('btn-detail-import').disabled=!(isAdmin&&parsedDetail.length>0);
@@ -982,20 +988,34 @@ function renderBasicPreview(){
 }
 
 // ── Step1: Basic Import ───────────────────────────────────────
+async function showRankHistory(){
+  var out=document.getElementById('rank-hist-out');
+  out.style.display='block'; out.textContent='読み込み中...';
+  try{
+    var snap=await db.collection('ammRankingHistory').get();
+    if(snap.empty){ out.textContent='保存済みの履歴はありません。更新日を入れて基本データを取込むと保存されます。'; return; }
+    var rows=snap.docs.map(function(d){var v=d.data();return {date:v.date||d.id,count:v.count||(v.rows?v.rows.length:0)};})
+      .sort(function(a,b){return String(b.date).localeCompare(String(a.date));});
+    out.textContent='=== ランキング履歴（新しい順） '+rows.length+'件 ===\n'
+      +rows.map(function(r){return '  '+r.date+'   '+r.count+'件';}).join('\n');
+  }catch(e){ out.textContent='取得失敗: '+e.message; }
+}
+
 async function doImport(){
   console.log('[doImport] called. isAdmin='+isAdmin+' uid='+(auth.currentUser&&auth.currentUser.uid)+' anon='+(auth.currentUser&&auth.currentUser.isAnonymous));
   if(!isAdmin){ console.warn('[doImport] abort: not admin'); return; }
-  if(!confirm('ammDistilleries に152件を書き込みます（上書き）。続行しますか？')){ console.log('[doImport] confirm cancelled'); return; }
+  var rankDate=(document.getElementById('basic-date').value||'').trim()||COLLECTION_DATE;
+  if(!confirm('ammDistilleries に152件を書き込みます（上書き）。\n更新日 '+rankDate+' で履歴スナップショット(ammRankingHistory/'+rankDate+')も保存します。続行しますか？')){ console.log('[doImport] confirm cancelled'); return; }
   document.getElementById('btn-import').disabled=true;
   document.getElementById('prog-basic').style.display='block';
-  log('基本データ インポート開始...','info');
+  log('基本データ インポート開始（更新日 '+rankDate+'）...','info');
   console.log('[doImport] start. RAW.length='+RAW.length+' projectId='+FIREBASE_CONFIG.projectId);
   try{
     var writes=RAW.map(function(r){
       var nom=r[2];
       var data={nom:nom,distilleryName:r[1],rank:parseInt(r[0]),
         avgRating:parseFloat(r[3]),ratingCount:parseInt(r[4]),
-        region:r[5],collectionDate:COLLECTION_DATE,
+        region:r[5],collectionDate:rankDate,
         importedAt:firebase.firestore.FieldValue.serverTimestamp()};
       if(URL_MAP[nom]) data.ammUrl=URL_MAP[nom];
       return {nom:nom,data:data};
@@ -1038,8 +1058,23 @@ async function doImport(){
       console.log('[doImport] ammUrl sync targets:', syncCount);
       if(syncCount>0) await disBatch.commit();
       console.log('[doImport] ammUrl sync done:', syncCount);
-      st('st-basic','✓ インポート完了: '+writes.length+'件 / distilleries ammUrl 同期: '+syncCount+'件','ok');
-      log('✓ 基本データ インポート完了: '+writes.length+'件、distilleries ammUrl 同期: '+syncCount+'件','ok');
+      // ── ランキング履歴スナップショットを更新日ごとに保存 ──
+      try{
+        var histRows=RAW.map(function(r){ return {rank:parseInt(r[0]),nom:r[2],distilleryName:r[1],avgRating:parseFloat(r[3]),ratingCount:parseInt(r[4]),region:r[5]}; });
+        await db.collection('ammRankingHistory').doc(rankDate).set({
+          date:rankDate, count:histRows.length, rows:histRows,
+          importedAt:firebase.firestore.FieldValue.serverTimestamp()
+        });
+        // 最新更新日を記録（履歴一覧の起点）
+        await db.collection('masterMeta').doc('ammRankingLatest').set({
+          date:rankDate, count:histRows.length, updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+        },{merge:true});
+        st('st-basic','✓ インポート完了: '+writes.length+'件 / ammUrl同期: '+syncCount+'件 / 履歴保存: '+rankDate,'ok');
+        log('✓ 基本データ インポート完了: '+writes.length+'件、履歴 ammRankingHistory/'+rankDate+' を保存','ok');
+      }catch(he){
+        st('st-basic','✓ インポート完了（但し履歴保存に失敗: '+he.message+'）','ok');
+        log('履歴保存エラー: '+he.message,'err');
+      }
     }
   }catch(e){
     console.error('[doImport] CATCH:', e.code, e.message, e);
