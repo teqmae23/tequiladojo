@@ -123,6 +123,14 @@ tbody tr:hover{background:rgba(200,146,30,.06)}
     <div class="toolbar">
       <input class="tb-search" id="dis-search" type="text" placeholder="NOM / 蒸留所名 で検索">
       <button class="tb-btn" id="dis-filter-btn" onclick="toggleFilter('dis')">🔎 抽出条件</button>
+      <label style="font-size:11px;color:var(--ink3);">並び順
+        <select id="dis-sort" style="font-size:12px;padding:3px 5px;border:1px solid var(--border2);border-radius:5px;">
+          <option value="rank">ランク順</option>
+          <option value="score">スコア高い順</option>
+          <option value="ratings">評価数多い順</option>
+          <option value="nom">NOM順</option>
+        </select>
+      </label>
       <span class="tb-count" id="dis-count"></span>
     </div>
     <div class="filter-panel" id="dis-filters"><div class="fp-grid" id="dis-facets"></div></div>
@@ -360,20 +368,41 @@ function disPass(d){
   return true;
 }
 
+var disSort='rank'; // rank | nom | score | ratings
+function disRank(d){ return numOr(d,'rank'); }
+function disAvg(d){ return numOr(d,'avgRating','average_rating'); }
+function disRatings(d){ return numOr(d,'ratingCount','ratings_count'); }
+
 function renderDis(){
-  var rows=disList.filter(disPass).sort(function(a,b){ return String(a.nom).localeCompare(String(b.nom)); });
+  var rows=disList.filter(disPass);
+  rows.sort(function(a,b){
+    if(disSort==='nom') return String(a.nom).localeCompare(String(b.nom));
+    if(disSort==='score'){ var av=disAvg(a),bv=disAvg(b); return (bv==null?-1:bv)-(av==null?-1:av) || String(a.nom).localeCompare(String(b.nom)); }
+    if(disSort==='ratings'){ var ar=disRatings(a),br=disRatings(b); return (br==null?-1:br)-(ar==null?-1:ar) || String(a.nom).localeCompare(String(b.nom)); }
+    // rank（昇順、rank無しは末尾）
+    var ra=disRank(a),rb=disRank(b);
+    if(ra==null&&rb==null) return String(a.nom).localeCompare(String(b.nom));
+    if(ra==null) return 1; if(rb==null) return -1;
+    return ra-rb;
+  });
   document.getElementById('dis-count').textContent=rows.length+' / '+disList.length+' 蒸留所';
   var h='<table><thead><tr>'
-    +'<th>NOM</th><th>蒸留所名</th><th class="num">ブランド数<br>(C/P/N)</th><th>Location</th><th>Region</th><th>AMM</th>'
+    +'<th class="num">ランク</th><th>NOM</th><th>蒸留所名</th>'
+    +'<th class="num">スコア</th><th class="num">評価数</th>'
+    +'<th class="num">ブランド数<br>(C/P/N)</th><th>Location</th><th>Region</th><th>AMM</th>'
     +'</tr></thead><tbody>';
   if(!rows.length){ document.getElementById('dis-table').innerHTML='<div class="empty-msg">該当する蒸留所がありません</div>'; return; }
   rows.forEach(function(d){
     var bc=brandCounts(d.nom);
     var loc=disLocation(d);
     var url=pick(d,'ammUrl','sourceUrl') || (detailMap[d.nom]&&pick(detailMap[d.nom],'sourceUrl'));
+    var rk=disRank(d), av=disAvg(d), rc=disRatings(d);
     h+='<tr>'
+      +'<td class="num">'+(rk!=null?'#'+rk:'<span class="dash">—</span>')+'</td>'
       +'<td class="cell-mono">'+escH(d.nom)+'</td>'
       +'<td class="cell-name">'+escH(pick(d,'distilleryName')||'—')+'</td>'
+      +'<td class="num">'+(av!=null?'<b>'+av+'</b>':'<span class="dash">—</span>')+'</td>'
+      +'<td class="num">'+(rc!=null?rc:'<span class="dash">—</span>')+'</td>'
       +'<td class="num"><span class="bcount" title="'+(bc.src==='amm'?'AMM蒸留所ページの区分':'ボトルからの概算（⑥取込で正確化）')+'"><b>'+bc.all+'</b> <span class="bc-c">'+bc.c+'</span>/<span class="bc-p">'+bc.p+'</span>/<span class="bc-n">'+bc.n+'</span>'+(bc.src==='est'?'<span class="dash"> ~</span>':'')+'</span></td>'
       +'<td>'+(loc?escH(loc):'<span class="dash">—</span>')+'</td>'
       +'<td>'+(disRegion(d)?escH(disRegion(d)):'<span class="dash">—</span>')+'</td>'
@@ -384,6 +413,7 @@ function renderDis(){
   document.getElementById('dis-table').innerHTML=h;
 }
 document.getElementById('dis-search').addEventListener('input',renderDis);
+document.getElementById('dis-sort').addEventListener('change',function(){ disSort=this.value; renderDis(); });
 
 /* ================= ② ボトルビュー ================= */
 /* 製造詳細（列表示 & 抽出条件の対象） */
