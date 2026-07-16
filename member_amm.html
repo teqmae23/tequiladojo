@@ -217,8 +217,15 @@ function aggregateBrands(){
   });
 }
 function brandCounts(nom){
-  var a=brandAgg[nom]; if(!a) return {c:0,p:0,n:0,all:0};
-  return {c:Object.keys(a.c).length,p:Object.keys(a.p).length,n:Object.keys(a.n).length,all:Object.keys(a.all).length};
+  // 蒸留所ページから取得したブランド区分件数を優先（⑥ 蒸留所追加情報）
+  var det=detailMap[nom]||{};
+  if(det.brandCurrentCount!=null||det.brandPreviousCount!=null||det.brandNotListedCount!=null){
+    var c=det.brandCurrentCount||0, p=det.brandPreviousCount||0, n=det.brandNotListedCount||0;
+    return {c:c,p:p,n:n,all:c+p+n, src:'amm'};
+  }
+  // フォールバック: ボトルから集計した概算
+  var a=brandAgg[nom]; if(!a) return {c:0,p:0,n:0,all:0,src:'est'};
+  return {c:Object.keys(a.c).length,p:Object.keys(a.p).length,n:Object.keys(a.n).length,all:Object.keys(a.all).length,src:'est'};
 }
 
 /* ================= タブ / パネル制御 ================= */
@@ -305,31 +312,33 @@ function selMatch(sel, vals){ // sel: {value:1}, vals: array of tokens ; OR (い
 /* ================= ① 蒸留所ビュー ================= */
 function disLocation(d){
   var det=detailMap[d.nom]||{};
+  var loc=pick(det,'location'); if(loc) return loc;
   var city=pick(det,'city'), state=pick(det,'state');
   return [city,state].filter(Boolean).join(', ');
 }
-function disState(d){ var det=detailMap[d.nom]||{}; return pick(det,'state'); }
+function disRegion(d){ var det=detailMap[d.nom]||{}; return pick(d,'region')||pick(det,'region'); }
 function disEquip(d){ var det=detailMap[d.nom]||{}; return ['cooking','extraction','fermentation','still','aging','waterSource'].map(function(k){return pick(det,k);}).filter(Boolean); }
-function disAttr(d, keys){ var det=detailMap[d.nom]||{}; var v=pick.apply(null,[det].concat(keys)); return v; }
+function disPL(d){ var det=detailMap[d.nom]||{}; return pick(det,'privateLabels','private_labels','privateLabel'); }
+function disOC(d){ var det=detailMap[d.nom]||{}; return pick(det,'openToContracts','open_to_contracts','contracts'); }
+function disTours(d){ var det=detailMap[d.nom]||{}; return pick(det,'tours','tour'); }
 
 function buildDisFacets(){
   var c=document.getElementById('dis-facets'); c.innerHTML=''; disSel={}; disRange={};
-  var regions=[], states=[], equips=[], plabels=[], contracts=[], tours=[];
+  var regions=[], locs=[], equips=[], plabels=[], contracts=[], tours=[];
   disList.forEach(function(d){
-    var det=detailMap[d.nom]||{};
-    if(pick(d,'region')) regions.push(pick(d,'region'));
-    var st=pick(det,'state'); if(st) states.push(st);
+    if(disRegion(d)) regions.push(disRegion(d));
+    var lo=disLocation(d); if(lo) locs.push(lo);
     disEquip(d).forEach(function(e){ tokens(e).forEach(function(t){equips.push(t);}); });
-    var pl=pick(det,'privateLabels','private_labels','privateLabel'); if(pl) plabels.push(pl);
-    var oc=pick(det,'openToContracts','open_to_contracts','contracts'); if(oc) contracts.push(oc);
-    var tr=pick(det,'tours','tour'); if(tr) tours.push(tr);
+    if(disPL(d)) plabels.push(disPL(d));
+    if(disOC(d)) contracts.push(disOC(d));
+    if(disTours(d)) tours.push(disTours(d));
   });
   makeFacet(c,'region','Region', regions, disSel, renderDis);
-  makeFacet(c,'state','Location（州）', states, disSel, renderDis, 'ammDistilleryDetails未取込');
-  makeFacet(c,'equip','設備 Equipment', equips, disSel, renderDis, 'ammDistilleryDetails未取込');
-  makeFacet(c,'plabel','Private Labels', plabels, disSel, renderDis, 'データ未取込（AMM要インポート）');
-  makeFacet(c,'contract','Open to Contracts', contracts, disSel, renderDis, 'データ未取込（AMM要インポート）');
-  makeFacet(c,'tours','Tours', tours, disSel, renderDis, 'データ未取込（AMM要インポート）');
+  makeFacet(c,'loc','Location', locs, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
+  makeFacet(c,'equip','設備 Equipment', equips, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
+  makeFacet(c,'plabel','Private Labels', plabels, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
+  makeFacet(c,'contract','Open to Contracts', contracts, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
+  makeFacet(c,'tours','Tours', tours, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
   var act=document.createElement('div'); act.className='fp-actions';
   var btn=document.createElement('button'); btn.className='fp-clear'; btn.textContent='条件クリア';
   btn.onclick=function(){ buildDisFacets(); renderDis(); };
@@ -337,16 +346,15 @@ function buildDisFacets(){
 }
 
 function disPass(d){
-  var det=detailMap[d.nom]||{};
-  if(!selMatch(disSel.region, [pick(d,'region')])) return false;
-  if(!selMatch(disSel.state, [pick(det,'state')])) return false;
+  if(!selMatch(disSel.region, [disRegion(d)])) return false;
+  if(!selMatch(disSel.loc, [disLocation(d)])) return false;
   if(disSel.equip&&Object.keys(disSel.equip).length){
     var ev=[]; disEquip(d).forEach(function(e){ tokens(e).forEach(function(t){ev.push(t);}); });
     if(!selMatch(disSel.equip, ev)) return false;
   }
-  if(!selMatch(disSel.plabel, [pick(det,'privateLabels','private_labels','privateLabel')])) return false;
-  if(!selMatch(disSel.contract, [pick(det,'openToContracts','open_to_contracts','contracts')])) return false;
-  if(!selMatch(disSel.tours, [pick(det,'tours','tour')])) return false;
+  if(!selMatch(disSel.plabel, [disPL(d)])) return false;
+  if(!selMatch(disSel.contract, [disOC(d)])) return false;
+  if(!selMatch(disSel.tours, [disTours(d)])) return false;
   var q=(document.getElementById('dis-search').value||'').trim().toLowerCase();
   if(q){ var hay=(d.nom+' '+pick(d,'distilleryName')).toLowerCase(); if(hay.indexOf(q)<0) return false; }
   return true;
@@ -366,9 +374,9 @@ function renderDis(){
     h+='<tr>'
       +'<td class="cell-mono">'+escH(d.nom)+'</td>'
       +'<td class="cell-name">'+escH(pick(d,'distilleryName')||'—')+'</td>'
-      +'<td class="num"><span class="bcount"><b>'+bc.all+'</b> <span class="bc-c">'+bc.c+'</span>/<span class="bc-p">'+bc.p+'</span>/<span class="bc-n">'+bc.n+'</span></span></td>'
+      +'<td class="num"><span class="bcount" title="'+(bc.src==='amm'?'AMM蒸留所ページの区分':'ボトルからの概算（⑥取込で正確化）')+'"><b>'+bc.all+'</b> <span class="bc-c">'+bc.c+'</span>/<span class="bc-p">'+bc.p+'</span>/<span class="bc-n">'+bc.n+'</span>'+(bc.src==='est'?'<span class="dash"> ~</span>':'')+'</span></td>'
       +'<td>'+(loc?escH(loc):'<span class="dash">—</span>')+'</td>'
-      +'<td>'+(pick(d,'region')?escH(pick(d,'region')):'<span class="dash">—</span>')+'</td>'
+      +'<td>'+(disRegion(d)?escH(disRegion(d)):'<span class="dash">—</span>')+'</td>'
       +'<td>'+(url?'<a class="amm-a" href="'+escH(url)+'" target="_blank" rel="noopener">開く ↗</a>':'<span class="dash">—</span>')+'</td>'
       +'</tr>';
   });
