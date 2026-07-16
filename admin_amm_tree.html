@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>テキーラ道場 — AMMツリー</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
+};
+</script>
+<script src="/auth-role.js?v=20260714"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;1,400&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#F1EFE8;--cream2:#E8E4D8;--cream3:#DDD8C8;
+  --red:#b03020;--teal:#1a6e58;
+  --c-dis:#7a4010;--c-brand:#1a6e58;--c-bottle:#1252a0;
+  --sans:'Noto Sans JP',sans-serif;--serif:'Cormorant Garamond',serif;--mono:'DM Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+#login-screen{display:none;align-items:center;justify-content:center;height:100vh;background:var(--cream);}
+.lcard{background:#fff;border:1px solid var(--cream3);border-radius:10px;padding:32px 28px;width:100%;max-width:360px;box-shadow:0 4px 20px rgba(0,0,0,.08);}
+.lcard h2{font-family:var(--serif);font-size:22px;color:var(--gold-d);margin-bottom:4px;}
+.lcard .lsub{font-size:12px;color:var(--ink3);margin-bottom:20px;}
+.lcard label{display:block;font-size:11px;color:var(--ink3);margin-bottom:4px;margin-top:14px;}
+.lcard input{width:100%;padding:9px 11px;border:1px solid var(--cream3);border-radius:5px;font-size:13px;box-sizing:border-box;font-family:var(--sans);}
+.lcard input:focus{outline:none;border-color:var(--gold);}
+#lerr{font-size:12px;color:var(--red);margin-top:8px;min-height:16px;}
+.lcard .lbtn{width:100%;margin-top:18px;padding:10px;background:var(--gold-d);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;font-family:var(--sans);}
+.lcard .lbtn:hover{background:var(--gold);}
+#app{display:none;flex-direction:column;height:100vh;}
+.hdr{background:var(--ink);padding:0 16px;display:flex;align-items:center;gap:12px;height:48px;flex-shrink:0;}
+.hdr-logo{font-family:var(--serif);font-size:16px;color:var(--gold-l);letter-spacing:.04em;}
+.hdr-sub{font-size:11px;color:var(--ink3);margin-left:4px;}
+.hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+.hdr-user{font-size:11px;color:var(--ink3);font-family:var(--mono);}
+.hdr-btn{padding:4px 10px;border:1px solid rgba(255,255,255,.2);border-radius:5px;background:transparent;color:var(--gold-l);font-size:11px;cursor:pointer;font-family:var(--sans);}
+.hdr-link{color:var(--gold-l);font-size:12px;text-decoration:none;opacity:.7;}
+.hdr-link:hover{opacity:1;}
+.ctrl{background:var(--cream2);border-bottom:1px solid var(--cream3);padding:8px 14px;display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap;}
+.ctrl input[type=text]{padding:5px 9px;border:1px solid var(--cream3);border-radius:5px;background:#fff;font-family:var(--mono);font-size:12px;width:130px;}
+.ctrl input:focus{outline:none;border-color:var(--gold);}
+.cbtn{padding:4px 10px;border:1px solid var(--cream3);border-radius:5px;background:#fff;color:var(--ink2);font-size:12px;cursor:pointer;font-family:var(--sans);}
+.cbtn:hover{border-color:var(--gold);}
+.cbtn.active{background:var(--ink);color:var(--cream);border-color:var(--ink);}
+.ctrl label.chk{font-size:12px;color:var(--ink2);display:inline-flex;align-items:center;gap:4px;cursor:pointer;}
+#ctrl-count{font-size:11px;color:var(--ink3);margin-left:auto;}
+#loading-msg{font-size:12px;color:var(--ink3);}
+#tree-wrap{flex:1;overflow-y:auto;padding:10px 14px 30px;}
+.tree-node{margin-bottom:1px;}
+.tree-row{display:flex;align-items:flex-start;gap:6px;padding:4px 7px;border-radius:5px;transition:background .1s;}
+.tree-row:hover{background:rgba(180,140,50,.09);}
+.tree-toggle{width:18px;height:18px;border:none;background:none;cursor:pointer;color:var(--ink3);font-size:11px;padding:0;flex-shrink:0;display:flex;align-items:center;justify-content:center;border-radius:3px;margin-top:1px;}
+.tree-toggle:hover:not(.leaf){background:var(--cream3);color:var(--ink);}
+.tree-toggle.leaf{cursor:default;color:var(--cream3);}
+.level-badge{font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;color:#fff;flex-shrink:0;letter-spacing:.04em;margin-top:2px;}
+.lvl-dis .level-badge{background:var(--c-dis);}
+.lvl-brand .level-badge{background:var(--c-brand);}
+.lvl-prod .level-badge{background:var(--c-bottle);}
+.tree-id{font-family:var(--mono);font-size:11px;color:var(--ink3);flex-shrink:0;margin-top:2px;}
+.tree-name{font-size:12px;font-weight:600;color:var(--ink);}
+.tree-main{flex:1;min-width:0;}
+.tree-meta{font-size:11px;color:var(--ink3);margin-top:2px;line-height:1.5;}
+.tree-meta b{color:var(--ink2);font-weight:600;}
+.chip{display:inline-block;background:var(--cream2);border-radius:8px;padding:0 6px;font-size:10px;color:var(--ink2);margin-right:4px;}
+.tree-children{padding-left:22px;border-left:1px dashed var(--cream3);margin-left:9px;}
+.lvl-dis>.tree-row{background:rgba(122,64,16,.04);}
+.lvl-brand>.tree-row{background:rgba(26,110,88,.03);}
+.tree-acts{display:flex;gap:4px;align-items:center;flex-shrink:0;margin-left:4px;margin-top:1px;}
+.act-match{font-size:10px;color:#1252a0;padding:3px 8px;border:1px solid var(--cream3);border-radius:3px;white-space:nowrap;cursor:pointer;background:#fff;}
+.act-match:hover{border-color:#1252a0;}
+.act-match.matched{background:#e3eefb;border-color:#9cc0ee;color:#0d3d78;}
+/* モーダル */
+#m-modal{display:none;position:fixed;inset:0;background:rgba(24,17,10,.5);z-index:1000;align-items:center;justify-content:center;padding:16px;}
+#m-modal.open{display:flex;}
+.m-panel{background:#fff;border-radius:10px;width:100%;max-width:560px;max-height:86vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.3);}
+.m-head{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--cream3);position:sticky;top:0;background:#fff;}
+.m-title{font-size:15px;font-weight:600;color:var(--ink);flex:1;}
+.m-close{border:1px solid var(--cream3);background:#fff;border-radius:5px;padding:4px 10px;font-size:12px;cursor:pointer;}
+.m-body{padding:14px 16px;}
+.m-sub{font-size:12px;color:var(--ink3);margin-bottom:10px;line-height:1.6;}
+.m-cand{display:block;border:1px solid var(--cream3);border-radius:6px;padding:9px 11px;margin-bottom:7px;cursor:pointer;font-size:12px;}
+.m-cand:hover{border-color:var(--gold);background:var(--cream2);}
+.m-cand input{margin-right:8px;}
+.m-cand-name{font-weight:600;color:var(--ink);}
+.m-cand-meta{font-size:11px;color:var(--ink3);margin-top:3px;}
+.m-cand-taken{color:var(--red);font-weight:500;}
+.m-none{font-size:12px;color:var(--ink3);padding:10px;text-align:center;}
+.m-foot{display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--cream3);position:sticky;bottom:0;background:#fff;}
+.m-btn{padding:8px 16px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--cream3);background:#fff;}
+.m-btn-primary{background:var(--gold-d);color:#fff;border-color:var(--gold-d);}
+.m-btn-clear{color:var(--red);border-color:#e0a89e;}
+.m-msg{font-size:12px;color:var(--ink3);margin-right:auto;align-self:center;}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="lcard">
+    <h2>テキーラ道場</h2>
+    <div class="lsub">オーナーとしてログインしてください</div>
+    <label>メールアドレス</label>
+    <input id="l-email" type="email" autocomplete="username">
+    <label>パスワード</label>
+    <input id="l-pass" type="password" autocomplete="current-password">
+    <div id="lerr"></div>
+    <button class="lbtn" id="l-btn">ログイン</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="hdr">
+    <div class="hdr-logo">テキーラ道場</div>
+    <div class="hdr-sub">AMMツリー（Agave Matchmaker）</div>
+    <div class="hdr-right">
+      <span class="hdr-user" id="hdr-user"></span>
+      <button class="hdr-btn" id="btn-logout">ログアウト</button>
+      <a class="hdr-link" href="admin_distillerytree.html">🌳 蒸留所ツリー →</a>
+      <a class="hdr-link" href="admin_import_amm.html" style="margin-left:4px;">AMMインポート →</a>
+    </div>
+  </div>
+
+  <div class="ctrl">
+    <label style="font-size:12px;color:var(--ink2);">NOM</label>
+    <input type="text" id="nom-filter" placeholder="例: 1102" maxlength="4">
+    <button class="cbtn" id="btn-search">検索</button>
+    <button class="cbtn" id="btn-clear">クリア</button>
+    <span style="width:1px;height:20px;background:var(--cream3);display:inline-block;"></span>
+    <button class="cbtn" id="btn-expand">全展開</button>
+    <button class="cbtn" id="btn-collapse">全折り畳み</button>
+    <span style="width:1px;height:20px;background:var(--cream3);display:inline-block;"></span>
+    <label class="chk"><input type="checkbox" id="chk-unmatched"> 未突合の製品のみ</label>
+    <button class="cbtn" id="btn-reload" title="再読み込み">↺ 再読込</button>
+    <span id="loading-msg"></span>
+    <span id="ctrl-count"></span>
+  </div>
+
+  <div id="tree-wrap"><div id="tree-root"></div></div>
+</div>
+
+<!-- ボトルマスタ突合モーダル -->
+<div id="m-modal">
+  <div class="m-panel">
+    <div class="m-head">
+      <span class="m-title" id="m-title">ボトルマスタへ突合</span>
+      <button class="m-close" onclick="closeMatch()">閉じる</button>
+    </div>
+    <div class="m-body">
+      <div class="m-sub" id="m-sub"></div>
+      <div id="m-cand-list"></div>
+    </div>
+    <div class="m-foot">
+      <span class="m-msg" id="m-msg"></span>
+      <button class="m-btn m-btn-clear" id="m-btn-clear" onclick="doClear()">突合を解除</button>
+      <button class="m-btn m-btn-primary" onclick="doMatch()">確定</button>
+    </div>
+  </div>
+</div>
+
+<script>
+if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth();
+var db=firebase.firestore();
+
+function escH(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function _norm(s){ return String(s||'').toLowerCase().replace(/tequila|100%|agave/g,'').replace(/[^a-z0-9]/g,''); }
+function firstLine(s){ return String(s||'').split('\n')[0]; }
+
+// ── ログイン ──
+document.getElementById('l-btn').addEventListener('click',async function(){
+  var email=document.getElementById('l-email').value.trim();
+  var pass=document.getElementById('l-pass').value;
+  document.getElementById('lerr').textContent=''; this.disabled=true;
+  try{ await auth.signInWithEmailAndPassword(email,pass); }
+  catch(e){ document.getElementById('lerr').textContent=e.message; this.disabled=false; }
+});
+document.getElementById('l-pass').addEventListener('keydown',function(e){ if(e.key==='Enter') document.getElementById('l-btn').click(); });
+document.getElementById('btn-logout').addEventListener('click',function(){ auth.signOut(); });
+
+// ── データ ──
+var rawAmm=[], rawDisNames={}, rawBottles=[], rawBrands=[];
+var tree={};            // nom -> {name, brands:{brandId:{name, products:[]}}}
+var nomFilter='', openState={}, unmatchedOnly=false;
+
+function loadAll(){
+  var msg=document.getElementById('loading-msg');
+  msg.textContent='読み込み中...';
+  document.getElementById('tree-root').innerHTML='';
+  Promise.all([
+    db.collection('ammBottleDetails').get(),
+    db.collection('ammDistilleries').get().catch(function(){return {docs:[]};}),
+    db.collection('bottles').get(),
+    db.collection('brands').get()
+  ]).then(function(res){
+    rawAmm=res[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    rawDisNames={};
+    res[1].docs.forEach(function(d){ var v=d.data(); rawDisNames[String(d.id)]=v.distilleryName||v.nomEs||''; });
+    rawBottles=res[2].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    rawBrands=res[3].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    msg.textContent='';
+    buildTree(); renderTree();
+  }).catch(function(e){ msg.textContent='読み込み失敗: '+e.message; });
+}
+
+function buildTree(){
+  tree={};
+  rawAmm.forEach(function(a){
+    var nom=String(a.nom||''); if(!nom) return;
+    if(!tree[nom]) tree[nom]={name:rawDisNames[nom]||'', brands:{}};
+    var bid=String(a.brandId||'0');
+    if(!tree[nom].brands[bid]) tree[nom].brands[bid]={name:a.brandName||'', products:[]};
+    if(!tree[nom].brands[bid].name && a.brandName) tree[nom].brands[bid].name=a.brandName;
+    tree[nom].brands[bid].products.push(a);
+  });
+}
+
+function matchedBottleLabel(a){
+  if(!a.matchedBottleId) return '';
+  var b=rawBottles.filter(function(x){return x.id===String(a.matchedBottleId);})[0];
+  return b?(b.bottleEs||b.bottleJa||b.id):String(a.matchedBottleId);
+}
+
+function renderTree(){
+  var root=document.getElementById('tree-root');
+  root.innerHTML='';
+  var noms=Object.keys(tree).sort();
+  if(nomFilter) noms=noms.filter(function(n){return n.indexOf(nomFilter)===0;});
+  var disCount=0, prodCount=0, matchedCount=0;
+
+  noms.forEach(function(nom){
+    var entry=tree[nom];
+    var brandIds=Object.keys(entry.brands).sort();
+    // 未突合フィルタ時、表示対象の製品があるブランドだけ
+    var visBrands=brandIds.filter(function(bid){
+      return entry.brands[bid].products.some(function(p){ return !unmatchedOnly || !p.matchedBottleId; });
+    });
+    if(!visBrands.length) return;
+    disCount++;
+    var disKey='dis:'+nom;
+    var disNode=makeNode('lvl-dis','蒸留所', nom, entry.name||('NOM '+nom), '', brandIds.length+'ブランド / '+countProducts(entry)+'製品', disKey, true, null);
+    if(openState[disKey]!==false){
+      var disC=document.createElement('div'); disC.className='tree-children';
+      visBrands.forEach(function(bid){
+        var br=entry.brands[bid];
+        var prods=br.products.filter(function(p){ return !unmatchedOnly || !p.matchedBottleId; })
+          .sort(function(x,y){ return String(x.productName||'').localeCompare(String(y.productName||'')); });
+        var brandKey='brand:'+nom+':'+bid;
+        var brandNode=makeNode('lvl-brand','BR', bid==='0'?'—':bid, br.name||'(ブランド不明)', '', prods.length+'製品', brandKey, true, null);
+        if(openState[brandKey]!==false){
+          var brC=document.createElement('div'); brC.className='tree-children';
+          prods.forEach(function(p){
+            prodCount++; if(p.matchedBottleId) matchedCount++;
+            brC.appendChild(makeProductNode(p));
+          });
+          brandNode.appendChild(brC);
+        }
+        disC.appendChild(brandNode);
+      });
+      disNode.appendChild(disC);
+    }
+    root.appendChild(disNode);
+  });
+  document.getElementById('ctrl-count').textContent='蒸留所 '+disCount+' / 製品 '+prodCount+'（突合済 '+matchedCount+'）';
+}
+
+function countProducts(entry){
+  var n=0; Object.keys(entry.brands).forEach(function(b){ n+=entry.brands[b].products.length; }); return n;
+}
+
+function makeNode(cls, badge, id, name, name2, meta, stateKey, hasChildren, actsEl){
+  var node=document.createElement('div'); node.className='tree-node '+cls;
+  var row=document.createElement('div'); row.className='tree-row';
+  var tog=document.createElement('button');
+  tog.className='tree-toggle'+(hasChildren?'':' leaf');
+  tog.textContent=hasChildren?(openState[stateKey]!==false?'▼':'▶'):'•';
+  if(hasChildren) tog.addEventListener('click',function(e){ e.stopPropagation(); openState[stateKey]=(openState[stateKey]===false)?true:false; renderTree(); });
+  row.appendChild(tog);
+  var badgeEl=document.createElement('span'); badgeEl.className='level-badge'; badgeEl.textContent=badge; row.appendChild(badgeEl);
+  var idEl=document.createElement('span'); idEl.className='tree-id'; idEl.textContent=id; row.appendChild(idEl);
+  var main=document.createElement('div'); main.className='tree-main';
+  main.innerHTML='<span class="tree-name">'+escH(name)+'</span>'+(meta?'<div class="tree-meta">'+meta+'</div>':'');
+  row.appendChild(main);
+  if(actsEl) row.appendChild(actsEl);
+  node.appendChild(row);
+  return node;
+}
+
+function makeProductNode(p){
+  var meta='';
+  meta+=(p.category?'<span class="chip">'+escH(p.category)+'</span>':'')
+      +(p.abvProof?'<span class="chip">'+escH(p.abvProof)+'</span>':'');
+  var fields=[['糖化',p.cooking],['搾汁',p.extraction],['発酵',p.fermentation],['蒸留',p.distillation],['蒸留器',p.still],['熟成',p.aging],['水源',p.waterSource],['アガベ産地',p.agaveRegion]];
+  var parts=fields.filter(function(f){return f[1];}).map(function(f){ return '<b>'+f[0]+':</b> '+escH(firstLine(f[1])); });
+  if(parts.length) meta+='<div style="margin-top:2px">'+parts.join(' ／ ')+'</div>';
+
+  var acts=document.createElement('div'); acts.className='tree-acts';
+  var btn=document.createElement('button');
+  var matched=!!p.matchedBottleId;
+  btn.className='act-match'+(matched?' matched':'');
+  btn.textContent=matched?('🍶✓ '+matchedBottleLabel(p)) : '🍶 ボトル突合';
+  btn.title=matched?'突合済み（クリックで変更/解除）':'ボトルマスタへ突合';
+  btn.addEventListener('click',function(e){ e.stopPropagation(); openMatch(p); });
+  acts.appendChild(btn);
+
+  var pid=String(p.ammProductId||p.id);
+  return makeNode('lvl-prod','製品', pid, p.productName||pid, '', meta, 'prod:'+pid, false, acts);
+}
+
+// ── 突合（AMM製品 → ボトルマスタ） ──
+var _matchProduct=null;
+function openMatch(p){
+  _matchProduct=p;
+  var nom=String(p.nom||'');
+  document.getElementById('m-title').textContent='ボトルマスタへ突合';
+  document.getElementById('m-sub').innerHTML='AMM製品: <b>'+escH(p.productName||p.id)+'</b>（ID '+escH(String(p.ammProductId||p.id))+'）<br>NOM '+escH(nom)+(p.brandName?' / '+escH(p.brandName):'')+' のボトルマスタ候補から選んでください。';
+  var nb=_norm(p.brandName);
+  var np=_norm(p.productName);
+  var cands=rawBottles.filter(function(b){ return String(b.id).slice(0,4)===nom; });
+  cands.sort(function(a,b){
+    var sa=score(a), sb=score(b); return sb-sa || String(a.id).localeCompare(String(b.id));
+    function score(bt){ var br=brandOf(bt); var s=0;
+      if(nb && _norm(br).indexOf(nb)>=0) s+=2;
+      if(np && _norm(bt.bottleEs||bt.bottleJa).indexOf(np)>=0) s+=1; return s; }
+  });
+  var wrap=document.getElementById('m-cand-list');
+  if(!cands.length){ wrap.innerHTML='<div class="m-none">NOM '+escH(nom)+' のボトルマスタがありません。</div>'; }
+  else{
+    wrap.innerHTML=cands.map(function(b){
+      var takenOther=b.ammProductId && String(b.ammProductId)!==String(p.ammProductId||p.id);
+      var checked=(String(b.ammProductId)===String(p.ammProductId||p.id))?' checked':'';
+      var br=brandOf(b);
+      return '<label class="m-cand"><input type="radio" name="m-cand" value="'+escH(b.id)+'"'+checked+'>'
+        +'<span class="m-cand-name">'+escH((br?br+' / ':'')+(b.bottleEs||b.bottleJa||b.id))+'</span>'
+        +'<div class="m-cand-meta">ID '+escH(b.id)+(b.abv?' ・ '+escH(String(b.abv))+'%':'')
+        +(takenOther?' ・<span class="m-cand-taken">別のAMM製品と突合済</span>':'')+'</div></label>';
+    }).join('');
+  }
+  document.getElementById('m-msg').textContent='';
+  document.getElementById('m-btn-clear').style.display=p.matchedBottleId?'':'none';
+  document.getElementById('m-modal').classList.add('open');
+}
+function brandOf(b){ var br=rawBrands.filter(function(x){return x.id===String(b.brandId||String(b.id).slice(0,7));})[0]; return br?(br.brandEs||br.brandJa||''):''; }
+function closeMatch(){ document.getElementById('m-modal').classList.remove('open'); _matchProduct=null; }
+
+function doMatch(){
+  if(!_matchProduct) return;
+  var sel=document.querySelector('input[name="m-cand"]:checked');
+  if(!sel){ document.getElementById('m-msg').textContent='ボトルを選択してください'; return; }
+  var bottleId=sel.value;
+  var p=_matchProduct;
+  var pid=String(p.ammProductId||p.id);
+  document.getElementById('m-msg').textContent='保存中...';
+  var ops=[];
+  // 1) このAMM製品が別ボトルに紐付いていたら、そのボトルのキーを解除
+  rawBottles.forEach(function(b){
+    if(String(b.ammProductId)===pid && b.id!==bottleId){
+      ops.push(db.collection('bottles').doc(b.id).set({ammProductId:'',ammUrl:''},{merge:true}).then(function(){ b.ammProductId=''; b.ammUrl=''; }));
+    }
+  });
+  // 2) 選んだボトルが別のAMM製品に紐付いていたら、その製品側を解除
+  var bottle=rawBottles.filter(function(b){return b.id===bottleId;})[0];
+  if(bottle && bottle.ammProductId && String(bottle.ammProductId)!==pid){
+    var prev=rawAmm.filter(function(a){return String(a.ammProductId||a.id)===String(bottle.ammProductId);})[0];
+    if(prev){ ops.push(db.collection('ammBottleDetails').doc(String(prev.id)).set({matchedBottleId:''},{merge:true}).then(function(){ prev.matchedBottleId=''; })); }
+  }
+  // 3) このAMM製品が別ボトルに matchedBottleId を持っていたら解除（重複防止）
+  if(p.matchedBottleId && String(p.matchedBottleId)!==bottleId){
+    // 上の1)でボトル側は解除済み
+  }
+  // 4) 紐付け確定
+  ops.push(db.collection('bottles').doc(bottleId).set({ammProductId:pid, ammUrl:p.sourceUrl||''},{merge:true}).then(function(){ if(bottle){ bottle.ammProductId=pid; bottle.ammUrl=p.sourceUrl||''; } }));
+  ops.push(db.collection('ammBottleDetails').doc(String(p.id)).set({matchedBottleId:bottleId},{merge:true}).then(function(){ p.matchedBottleId=bottleId; }));
+  Promise.all(ops).then(function(){ renderTree(); closeMatch(); })
+    .catch(function(e){ document.getElementById('m-msg').textContent='保存失敗: '+e.message; });
+}
+
+function doClear(){
+  if(!_matchProduct) return;
+  var p=_matchProduct;
+  var pid=String(p.ammProductId||p.id);
+  document.getElementById('m-msg').textContent='解除中...';
+  var ops=[];
+  rawBottles.forEach(function(b){
+    if(String(b.ammProductId)===pid){
+      ops.push(db.collection('bottles').doc(b.id).set({ammProductId:'',ammUrl:''},{merge:true}).then(function(){ b.ammProductId=''; b.ammUrl=''; }));
+    }
+  });
+  ops.push(db.collection('ammBottleDetails').doc(String(p.id)).set({matchedBottleId:''},{merge:true}).then(function(){ p.matchedBottleId=''; }));
+  Promise.all(ops).then(function(){ renderTree(); closeMatch(); })
+    .catch(function(e){ document.getElementById('m-msg').textContent='解除失敗: '+e.message; });
+}
+
+// ── コントロール ──
+document.getElementById('btn-search').addEventListener('click',function(){ nomFilter=document.getElementById('nom-filter').value.trim(); renderTree(); });
+document.getElementById('nom-filter').addEventListener('keydown',function(e){ if(e.key==='Enter'){ nomFilter=this.value.trim(); renderTree(); } });
+document.getElementById('btn-clear').addEventListener('click',function(){ document.getElementById('nom-filter').value=''; nomFilter=''; renderTree(); });
+document.getElementById('btn-expand').addEventListener('click',function(){ openState={}; renderTree(); });
+document.getElementById('btn-collapse').addEventListener('click',function(){
+  Object.keys(tree).forEach(function(nom){ openState['dis:'+nom]=false; Object.keys(tree[nom].brands).forEach(function(bid){ openState['brand:'+nom+':'+bid]=false; }); });
+  renderTree();
+});
+document.getElementById('chk-unmatched').addEventListener('change',function(){ unmatchedOnly=this.checked; renderTree(); });
+document.getElementById('btn-reload').addEventListener('click',function(){ loadAll(); });
+
+// ── 認証 ──
+AuthRole.requireOwner(auth, function(user){
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').style.display='flex';
+  document.getElementById('hdr-user').textContent=user.email||'';
+  loadAll();
+}, function(){
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('app').style.display='none';
+});
+</script>
+</body>
+</html>
