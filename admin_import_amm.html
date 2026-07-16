@@ -633,6 +633,36 @@ async function scrapeOne(nom,url){
       <div class="prog-txt" id="pt-dinfo"></div>
     </div>
     <div class="status-line" id="st-dinfo"></div>
+    <div class="card-sub" style="font-size:11px;margin-top:6px;border-top:1px dashed var(--cream3);padding-top:6px;">
+      💡 現在152件ですが、AMMには約270件あります。下の⑦で全URLを取得すると、このスクリプト生成の対象に自動で合流し、未登録の蒸留所も取込時に新規作成されます。
+    </div>
+  </div>
+
+  <!-- ⑦ 全蒸留所URL取得（270件） -->
+  <div class="sec-head"><span class="sec-num" style="background:#1252a0;">⑦</span>全蒸留所URLの取得（約270件・未登録ぶんを追加）</div>
+  <div class="card" style="border:1.5px solid #1252a0;">
+    <div class="card-title">🗂 蒸留所一覧ページから全URLを収集 → masterMeta/ammDistilleryUrls</div>
+    <div class="card-sub">
+      <span class="mono">agavematchmaker.com/distilleries</span> の一覧（ページ送り含む）を巡回し、<b>全蒸留所のURL</b>を収集します。保存後、⑥「スクリプト生成」の対象に自動合流し、⑥の取込で<b>未登録の蒸留所を新規作成</b>（NOM・名前・評価はページから取得）します。<br>
+      ここでもコンソール実行→JSON貼付方式です（CORSのため）。
+    </div>
+    <div class="btn-row" style="align-items:center;">
+      <button class="btn btn-sm" id="btn-dlist-gen" onclick="genDistListScript()" style="border:1px solid #1252a0;color:#1252a0;background:#fff;">リスト取得スクリプト生成</button>
+      <span class="status-line" id="st-dlist-gen" style="margin:0;"></span>
+    </div>
+    <div class="script-wrap" id="script-dlist-wrap" style="display:none;margin-top:8px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span style="font-size:11px;color:var(--ink3);">↓ agavematchmaker.com のコンソールに貼って実行 → 出力JSONを下欄へ</span>
+        <button class="copy-btn" onclick="copyScript('script-dlist')">コピー</button>
+      </div>
+      <div class="script-box" id="script-dlist"></div>
+    </div>
+    <textarea class="paste-area" id="dlist-json" placeholder='[{"url":"https://agavematchmaker.com/distilleries/258-...","name":"..."},...]' oninput="onDistListPaste()"></textarea>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btn-dlist-import" onclick="doDistListImport()" disabled style="background:#1252a0;">URLリストを保存（masterMeta/ammDistilleryUrls）</button>
+      <span class="status-line" id="dlist-parse-status" style="margin:0;"></span>
+    </div>
+    <div class="status-line" id="st-dlist"></div>
   </div>
 
   <!-- ④ 製品(ボトル)製法データ -->
@@ -924,6 +954,9 @@ function refreshButtons(){
   var _dg=document.getElementById('btn-dinfo-gen'); if(_dg) _dg.disabled=!isAdmin;
   var _di=(typeof parsedDistInfo!=='undefined')?parsedDistInfo:[];
   var _dii=document.getElementById('btn-dinfo-import'); if(_dii) _dii.disabled=!(isAdmin&&_di.length>0);
+  var _dlg=document.getElementById('btn-dlist-gen'); if(_dlg) _dlg.disabled=!isAdmin;
+  var _dl=(typeof parsedDistList!=='undefined')?parsedDistList:[];
+  var _dli=document.getElementById('btn-dlist-import'); if(_dli) _dli.disabled=!(isAdmin&&_dl.length>0);
   var _rr=(typeof parsedRating!=='undefined')?parsedRating:[];
   var _ri=document.getElementById('btn-rate-import'); if(_ri) _ri.disabled=!(isAdmin&&_rr.length>0);
   var _mr=document.getElementById('btn-match-run'); if(_mr) _mr.disabled=!isAdmin;
@@ -2038,8 +2071,20 @@ function scrapeDistilleryRemote(item){
         }
       }
     }
+    // NOM/名前/評価をページから抽出（新規蒸留所の作成に使用）
+    var bodyTxt=(doc.body?doc.body.textContent:'')||'';
+    var nom=get('NOM'); if(nom){ var mn=nom.match(/\d{3,5}/); nom=mn?mn[0]:''; }
+    if(!nom){ var mm=bodyTxt.match(/NOM\s*[:#]?\s*(\d{3,5})/i); if(mm) nom=mm[1]; }
+    if(!nom) nom=item.nom||'';
+    var h1=doc.querySelector('h1');
+    var name=(h1?h1.textContent.replace(/\s+/g,' ').trim():'')||item.name||'';
+    var avgM=bodyTxt.match(/([\d.]+)\s*(?:AVG|AVERAGE)/i) || bodyTxt.match(/(?:AVG|AVERAGE)[^\d]{0,12}([\d.]+)/i);
+    var avgRating=get('AVERAGE RATING','AVERAGE','AVG') || (avgM?avgM[1]:'');
+    var ratM=bodyTxt.match(/([\d,]+)\s*RATINGS\b/i);
+    var ratingCount=ratM?parseInt(ratM[1].replace(/,/g,''),10):'';
     return {
-      nom:item.nom, url:url,
+      nom:nom, url:url, distilleryName:name,
+      avgRating:avgRating, ratingCount:ratingCount,
       location: get('LOCATION','CITY','MUNICIP','TOWN'),
       region: get('REGION','STATE'),
       privateLabels: get('PRIVATE LABEL'),
@@ -2059,13 +2104,24 @@ async function genDistInfoScript(){
   st('st-dinfo-gen','蒸留所URL収集中...','');
   try{
     var snap=await db.collection('ammDistilleries').get();
-    var items=[];
+    var items=[], seenUrl={};
     snap.forEach(function(d){
       var v=d.data(), url=v.ammUrl||'';
-      if(url && /\/distilleries\/\d+/.test(url)) items.push({nom:String(v.nom||d.id), url:url});
+      if(url && /\/distilleries\/\d+/.test(url)){ items.push({nom:String(v.nom||d.id), url:url}); seenUrl[url.replace(/^https?:\/\/(www\.)?/,'')]=1; }
     });
-    items=items.filter(function(x,i,a){return a.map(function(y){return y.nom;}).indexOf(x.nom)===i;});
-    if(!items.length){ st('st-dinfo-gen','ammUrl付きの蒸留所がありません。①②でURLを設定してください','err'); return; }
+    // ⑦で取得した全蒸留所URL(masterMeta/ammDistilleryUrls)を合流（未登録=NOM未取得ぶんも対象に）
+    try{
+      var mdoc=await db.collection('masterMeta').doc('ammDistilleryUrls').get();
+      if(mdoc.exists && Array.isArray(mdoc.data().urls)){
+        mdoc.data().urls.forEach(function(u){
+          var url=u&&u.url?u.url:(typeof u==='string'?u:''); if(!url||!/\/distilleries\/\d+/.test(url)) return;
+          var kk=url.replace(/^https?:\/\/(www\.)?/,''); if(seenUrl[kk]) return; seenUrl[kk]=1;
+          items.push({nom:'', url:url, name:(u&&u.name)||''});
+        });
+      }
+    }catch(e){}
+    items=items.filter(function(x,i,a){return a.map(function(y){return y.url;}).indexOf(x.url)===i;});
+    if(!items.length){ st('st-dinfo-gen','対象URLがありません。①②または⑦でURLを取得してください','err'); return; }
     var total=items.length;
     var offset=Math.max(0,parseInt(document.getElementById('dinfo-offset').value)||0);
     var count=Math.max(1,parseInt(document.getElementById('dinfo-count').value)||80);
@@ -2113,17 +2169,18 @@ function onDistInfoPaste(){
 
 async function doDistInfoImport(){
   if(!isAdmin) return;
-  var valid=parsedDistInfo.filter(function(x){return !x.error && x.nom!=null;});
-  if(!valid.length){ st('st-dinfo','取込対象がありません','err'); return; }
-  if(!confirm('ammDistilleryDetails の追加情報を '+valid.length+'件 更新します。続行しますか？')) return;
+  var valid=parsedDistInfo.filter(function(x){return !x.error && x.nom!=null && String(x.nom)!=='';});
+  if(!valid.length){ st('st-dinfo','取込対象がありません（NOMが取れた行がありません）','err'); return; }
+  if(!confirm('ammDistilleryDetails/ammDistilleries を '+valid.length+'件 更新します（新規蒸留所は作成）。続行しますか？')) return;
   document.getElementById('btn-dinfo-import').disabled=true;
   document.getElementById('prog-dinfo').style.display='block';
   log('蒸留所追加情報取込開始: '+valid.length+'件','info');
   try{
     var done=0;
-    for(var i=0;i<valid.length;i+=400){
+    for(var i=0;i<valid.length;i+=200){
       var b=db.batch();
-      valid.slice(i,i+400).forEach(function(x){
+      valid.slice(i,i+200).forEach(function(x){
+        var nom=String(x.nom);
         var doc={};
         ['location','region','privateLabels','openToContracts','tours','cooking','extraction','fermentation','still','aging','waterSource'].forEach(function(k){ if(x[k]!=null&&x[k]!=='') doc[k]=x[k]; });
         if(Array.isArray(x.brandCurrent)) doc.brandCurrent=x.brandCurrent;
@@ -2133,10 +2190,18 @@ async function doDistInfoImport(){
         if(typeof x.brandPreviousCount==='number') doc.brandPreviousCount=x.brandPreviousCount;
         if(typeof x.brandNotListedCount==='number') doc.brandNotListedCount=x.brandNotListedCount;
         doc.sourceUrl=x.url||'';
-        b.set(db.collection('ammDistilleryDetails').doc(String(x.nom)), doc, {merge:true});
+        b.set(db.collection('ammDistilleryDetails').doc(nom), doc, {merge:true});
+        // ammDistilleries を upsert（新規蒸留所の作成／既存は基本情報を補完）
+        var dd={nom:nom};
+        if(x.distilleryName) dd.distilleryName=x.distilleryName;
+        if(x.url) dd.ammUrl=x.url;
+        var av=parseFloat(x.avgRating); if(!isNaN(av)) dd.avgRating=av;
+        var rc=parseInt(x.ratingCount,10); if(!isNaN(rc)) dd.ratingCount=rc;
+        dd.source='amm-full'; dd.updatedAt=firebase.firestore.FieldValue.serverTimestamp();
+        b.set(db.collection('ammDistilleries').doc(nom), dd, {merge:true});
       });
       await b.commit();
-      done+=Math.min(400,valid.length-i);
+      done+=Math.min(200,valid.length-i);
       var pct=Math.round(done/valid.length*100);
       document.getElementById('pb-dinfo').style.width=pct+'%';
       document.getElementById('pt-dinfo').textContent=done+'/'+valid.length+' 件 ('+pct+'%)';
@@ -2145,6 +2210,77 @@ async function doDistInfoImport(){
     log('✓ 蒸留所追加情報 取込完了: '+done+'件','ok');
   }catch(e){ st('st-dinfo','エラー: '+e.message,'err'); log('蒸留所追加情報取込エラー: '+e.message,'err'); }
   document.getElementById('btn-dinfo-import').disabled=false;
+}
+
+// ══════════════════════════════════════════════════════════════
+// ⑦ 全蒸留所URL取得（270件）
+// ══════════════════════════════════════════════════════════════
+var parsedDistList=[];
+
+function genDistListScript(){
+  if(!isAdmin) return;
+  var script=''
+    +'(async function(){\n'
+    +'  if(!/agavematchmaker\\.com$/.test(location.hostname)){console.error("agavematchmaker.com上で実行してください（現在: "+location.hostname+"）");return;}\n'
+    +'  var base=location.origin+"/distilleries";\n'
+    +'  var map={};\n'
+    +'  for(var page=1;page<=40;page++){\n'
+    +'    var r;try{r=await fetch(base+"?page="+page,{credentials:"omit"});}catch(e){console.log("page "+page+" fetch失敗:"+e.message);break;}\n'
+    +'    if(!r.ok){console.log("page "+page+" HTTP "+r.status);break;}\n'
+    +'    var html=await r.text();\n'
+    +'    var doc=new DOMParser().parseFromString(html,"text/html");\n'
+    +'    var links=doc.querySelectorAll(\'a[href*="/distilleries/"]\');\n'
+    +'    var added=0;\n'
+    +'    [].forEach.call(links,function(a){\n'
+    +'      var h=a.getAttribute("href")||"";\n'
+    +'      if(!/\\/distilleries\\/\\d+-/.test(h))return;\n'
+    +'      if(h.indexOf("http")!==0)h=location.origin+(h.charAt(0)==="/"?"":"/")+h;\n'
+    +'      h=h.split("#")[0].split("?")[0];\n'
+    +'      if(!map[h]){map[h]={url:h,name:(a.textContent||"").replace(/\\s+/g," ").trim()};added++;}\n'
+    +'    });\n'
+    +'    console.log("page "+page+": +"+added+"（累計 "+Object.keys(map).length+"）");\n'
+    +'    if(added===0 && page>1)break;\n'
+    +'    await new Promise(function(res){setTimeout(res,1500+Math.floor(Math.random()*1500));});\n'
+    +'  }\n'
+    +'  var out=Object.keys(map).map(function(k){return map[k];});\n'
+    +'  var json=JSON.stringify(out);\n'
+    +'  try{copy(json);console.log("✓ クリップボードにコピー済み ("+out.length+"件)");}catch(e){}\n'
+    +'  console.log(json);\n'
+    +'  return out;\n'
+    +'})();';
+  document.getElementById('script-dlist').textContent=script;
+  document.getElementById('script-dlist-wrap').style.display='';
+  st('st-dlist-gen','✓ スクリプト生成。agavematchmaker.com のコンソールで実行してください','ok');
+}
+
+function onDistListPaste(){
+  var sp=document.getElementById('dlist-parse-status');
+  var txt=document.getElementById('dlist-json').value.trim();
+  if(!txt){ sp.textContent=''; parsedDistList=[]; refreshButtons(); return; }
+  try{
+    var arr=JSON.parse(txt); if(!Array.isArray(arr)) arr=[arr];
+    parsedDistList=arr.filter(function(x){ var u=x&&x.url?x.url:(typeof x==='string'?x:''); return u&&/\/distilleries\/\d+/.test(u); })
+      .map(function(x){ return (typeof x==='string')?{url:x,name:''}:{url:x.url,name:x.name||''}; });
+    sp.textContent='解析: '+parsedDistList.length+'件のURL';
+    sp.style.color=parsedDistList.length?'var(--green,#1a6640)':'var(--red)';
+  }catch(e){ sp.textContent='JSON解析エラー: '+e.message; sp.style.color='var(--red)'; parsedDistList=[]; }
+  refreshButtons();
+}
+
+async function doDistListImport(){
+  if(!isAdmin) return;
+  if(!parsedDistList.length){ st('st-dlist','URLがありません','err'); return; }
+  if(!confirm('全蒸留所URL '+parsedDistList.length+'件を masterMeta/ammDistilleryUrls に保存します。続行しますか？')) return;
+  document.getElementById('btn-dlist-import').disabled=true;
+  try{
+    await db.collection('masterMeta').doc('ammDistilleryUrls').set({
+      urls:parsedDistList, count:parsedDistList.length,
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    st('st-dlist','✓ '+parsedDistList.length+'件を保存。⑥「スクリプト生成」で全件が対象になります','ok');
+    log('全蒸留所URL保存: '+parsedDistList.length+'件','ok');
+  }catch(e){ st('st-dlist','エラー: '+e.message,'err'); log('全蒸留所URL保存エラー: '+e.message,'err'); }
+  document.getElementById('btn-dlist-import').disabled=false;
 }
 
 async function genProductScript(){
