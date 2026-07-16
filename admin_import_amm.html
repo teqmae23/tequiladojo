@@ -532,6 +532,32 @@ async function scrapeOne(nom,url){
     <div class="status-line" id="st-brand"></div>
   </div>
 
+  <!-- ★ Algolia 一括取込（推奨・最速） -->
+  <div class="sec-head"><span class="sec-num" style="background:#1a6e58;">★</span>AMM Algolia 一括取込（推奨・最速）</div>
+  <div class="card" style="border:1.5px solid #1a6e58;">
+    <div class="card-title">🚀 Algoliaから全製品＋製法を一括取得</div>
+    <div class="card-sub">
+      AMMの検索インデックス(Algolia <span class="mono">BaseProduct</span>)を直接問い合わせ、<b>全製品の製法データ</b>を一括で <span class="mono">ammBottleDetails</span> に取り込みます。<b>ページ巡回・コピペ・レート制限なし。</b>③-B/④のスクレイプはこれで代替できます。<br>
+      取得項目: NOM・ブランド・製品名・カテゴリ・アガベ産地・糖化・搾汁・発酵・蒸留回数・蒸留器・熟成・水源・度数・受賞・状態。
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btn-algolia-import" onclick="doAlgoliaImport()" disabled style="background:#1a6e58;">Algoliaから全製品を取込</button>
+      <button class="btn btn-danger btn-sm" id="btn-algolia-clear" onclick="doProductClear()" disabled>ammBottleDetails 全削除</button>
+    </div>
+    <div class="prog-wrap" id="prog-algolia">
+      <div class="prog-bg"><div class="prog-bar" id="pb-algolia"></div></div>
+      <div class="prog-txt" id="pt-algolia"></div>
+    </div>
+    <div class="status-line" id="st-algolia"></div>
+    <details style="margin-top:10px;">
+      <summary style="font-size:12px;color:var(--ink3);cursor:pointer;">うまくいかない場合（キーのリファラ制限など）</summary>
+      <div class="card-sub" style="margin-top:6px;">
+        直接取込が 403 等で失敗する場合は、agavematchmaker.com のコンソールで下を実行し、出力JSONを④の貼付欄に入れて「製品データを取込」してください（バッチ単位）。<br>
+        <code style="font-size:10px;">/* Algolia全件取得スニペットは管理者に問い合わせ */</code>
+      </div>
+    </details>
+  </div>
+
   <!-- ④ 製品(ボトル)製法データ -->
   <div class="sec-head"><span class="sec-num">4</span>製品(ボトル)製法データ 取込・突合</div>
   <div class="card">
@@ -819,6 +845,8 @@ function refreshButtons(){
   var _bg=document.getElementById('btn-brand-genscript'); if(_bg) _bg.disabled=!isAdmin;
   var _bp=(typeof parsedBrand!=='undefined')?parsedBrand:[];
   var _bi=document.getElementById('btn-brand-import'); if(_bi) _bi.disabled=!(isAdmin&&_bp.length>0);
+  var _ai=document.getElementById('btn-algolia-import'); if(_ai) _ai.disabled=!isAdmin;
+  var _ac=document.getElementById('btn-algolia-clear'); if(_ac) _ac.disabled=!isAdmin;
 }
 
 // ── Basic preview ─────────────────────────────────────────────
@@ -1452,6 +1480,86 @@ async function doBrandImport(){
     log('✓ ブランド製品URL統合完了: '+noms.length+'蒸留所','ok');
   }catch(e){ st('st-brand','エラー: '+e.message,'err'); log('ブランド統合エラー: '+e.message,'err'); }
   document.getElementById('btn-brand-import').disabled=false;
+}
+
+// ══════════════════════════════════════════════════════════════
+// ★ AMM Algolia 一括取込（推奨・最速）
+// ══════════════════════════════════════════════════════════════
+var AMM_ALGOLIA={app:'2CRZRW17AQ', key:'97e29f6bb3ec7ac7f19989286b1ab51a', index:'BaseProduct'};
+
+function algoliaQuery(params){
+  var url='https://'+AMM_ALGOLIA.app.toLowerCase()+'-dsn.algolia.net/1/indexes/*/queries'
+    +'?x-algolia-application-id='+AMM_ALGOLIA.app+'&x-algolia-api-key='+AMM_ALGOLIA.key;
+  return fetch(url,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},
+    body:JSON.stringify({requests:[{indexName:AMM_ALGOLIA.index,params:params}]})})
+    .then(function(r){ if(!r.ok) throw new Error('Algolia HTTP '+r.status+'（キーのリファラ制限の可能性）'); return r.json(); })
+    .then(function(j){ return j.results[0]; });
+}
+
+function _ammArr(x){ return Array.isArray(x)?x.join('\n'):(x||''); }
+function _ammArrC(x){ return Array.isArray(x)?x.join(', '):(x||''); }
+function ammHitToDoc(h){
+  var id=String(h.id||h.objectID||'');
+  var slug=h.parameterized_name||'';
+  return {
+    ammProductId:id,
+    sourceUrl:'https://www.agavematchmaker.com/agave_spirits/'+id+(slug?'-'+slug:''),
+    nom:String(h.nom||''), brandId:String(h.brand_id||''),
+    brandName:h.brand_name||'', productName:h.name||'',
+    type:h.spirit||'', category:h.category||'', region:h.region||'',
+    agaveRegion:_ammArrC(h.agave_region),
+    cooking:_ammArr(h.cooking), extraction:_ammArr(h.crushing), fermentation:_ammArr(h.fermentation),
+    distillation:_ammArr(h.distillation), still:_ammArr(h.still_type), aging:_ammArr(h.aging),
+    waterSource:_ammArr(h.water_source), abvProof:_ammArrC(h.abv_proof), other:_ammArr(h.other),
+    awards:_ammArrC(h.awards), status:h.status||'',
+    source:'algolia', scrapedAt:firebase.firestore.FieldValue.serverTimestamp()
+  };
+}
+
+async function doAlgoliaImport(){
+  if(!isAdmin) return;
+  document.getElementById('btn-algolia-import').disabled=true;
+  document.getElementById('prog-algolia').style.display='block';
+  st('st-algolia','Algoliaから取得中...','');
+  log('Algolia一括取込 開始','info');
+  try{
+    var all={};
+    // 1) 全体トップ1000件
+    var base=await algoliaQuery('query=&hitsPerPage=1000&page=0');
+    (base.hits||[]).forEach(function(h){ var k=String(h.id||h.objectID); if(k) all[k]=h; });
+    // 2) カテゴリ別に取得して1000上限を回避（合計1000超に対応）
+    var facetRes=await algoliaQuery('query=&hitsPerPage=0&facets='+encodeURIComponent('["category"]'));
+    var cats=(facetRes.facets&&facetRes.facets.category)?Object.keys(facetRes.facets.category):[];
+    for(var ci=0;ci<cats.length;ci++){
+      var ff=encodeURIComponent(JSON.stringify(['category:'+cats[ci]]));
+      var page=0, nbPages=1;
+      do{
+        var res=await algoliaQuery('query=&hitsPerPage=1000&page='+page+'&facetFilters='+ff);
+        (res.hits||[]).forEach(function(h){ var k=String(h.id||h.objectID); if(k) all[k]=h; });
+        nbPages=res.nbPages||1; page++;
+      }while(page<nbPages && page<10);
+      st('st-algolia','取得中... '+Object.keys(all).length+'件（カテゴリ '+(ci+1)+'/'+cats.length+'）','');
+    }
+    var docs=Object.keys(all).map(function(k){ return ammHitToDoc(all[k]); }).filter(function(d){ return d.ammProductId; });
+    if(!docs.length){ st('st-algolia','0件でした（キー/インデックスをご確認ください）','err'); document.getElementById('btn-algolia-import').disabled=false; return; }
+    st('st-algolia','取得完了 '+docs.length+'件。Firestoreへ書込中...','');
+    log('Algolia取得: '+docs.length+'件、書込開始','info');
+    var done=0;
+    for(var i=0;i<docs.length;i+=400){
+      var batch=db.batch();
+      docs.slice(i,i+400).forEach(function(d){ batch.set(db.collection('ammBottleDetails').doc(d.ammProductId), d, {merge:true}); });
+      await batch.commit();
+      done+=Math.min(400,docs.length-i);
+      var pct=Math.round(done/docs.length*100);
+      document.getElementById('pb-algolia').style.width=pct+'%';
+      document.getElementById('pt-algolia').textContent=done+'/'+docs.length+' ('+pct+'%)';
+    }
+    st('st-algolia','✓ 完了: '+docs.length+'製品を ammBottleDetails に取込。蒸留所ツリー(#398)の「🌵AMM」で突合できます','ok');
+    log('✓ Algolia一括取込 完了: '+docs.length+'件','ok');
+  }catch(e){
+    st('st-algolia','エラー: '+e.message,'err'); log('Algolia取込エラー: '+e.message,'err');
+  }
+  document.getElementById('btn-algolia-import').disabled=false;
 }
 
 // ══════════════════════════════════════════════════════════════
