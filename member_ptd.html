@@ -182,9 +182,9 @@ var auth=firebase.auth(), db=firebase.firestore();
 function escH(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function pick(o){ for(var i=1;i<arguments.length;i++){ var v=o[arguments[i]]; if(v!==undefined&&v!==null&&v!=='') return v; } return ''; }
 function numOr(o){ for(var i=1;i<arguments.length;i++){ var v=o[arguments[i]]; if(v!==undefined&&v!==null&&v!==''&&!isNaN(parseFloat(v))) return parseFloat(v); } return null; }
-function tokens(v){ // 改行/カンマ区切りの複数値を配列へ
+function tokens(v){ // 改行区切りの複数値を配列へ。項目前後の余分なカンマは除去
   if(v==null) return [];
-  return String(v).split(/[\n;]+/).map(function(s){return s.trim();}).filter(Boolean);
+  return String(v).split(/[\n;]+/).map(function(s){return s.trim().replace(/^,+/,'').replace(/,+$/,'').trim();}).filter(Boolean);
 }
 function firstNum(s){ var m=String(s==null?'':s).match(/-?\d+(\.\d+)?/); return m?parseFloat(m[0]):null; }
 function uniqSorted(arr){ var seen={},out=[]; arr.forEach(function(x){ if(x&&!seen[x]){seen[x]=1;out.push(x);} }); return out.sort(function(a,b){return a.localeCompare(b,'ja');}); }
@@ -356,20 +356,18 @@ function disTours(d){ var det=detailMap[d.nom]||{}; return pick(det,'tours','tou
 
 function buildDisFacets(){
   var c=document.getElementById('dis-facets'); c.innerHTML=''; disSel={}; disRange={};
-  var regions=[], locs=[], equips=[], plabels=[], contracts=[], tours=[];
+  var regions=[], locs=[], equips=[], plabels=[], tours=[];
   disList.forEach(function(d){
     if(disRegion(d)) regions.push(disRegion(d));
     var lo=disLocation(d); if(lo) locs.push(lo);
     disEquip(d).forEach(function(e){ tokens(e).forEach(function(t){equips.push(t);}); });
     if(disPL(d)) plabels.push(disPL(d));
-    if(disOC(d)) contracts.push(disOC(d));
     if(disTours(d)) tours.push(disTours(d));
   });
   makeFacet(c,'region','Region', regions, disSel, renderDis);
   makeFacet(c,'loc','Location', locs, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
   makeFacet(c,'equip','設備 Equipment', equips, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
   makeFacet(c,'plabel','Private Labels', plabels, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
-  makeFacet(c,'contract','Open to Contracts', contracts, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
   makeFacet(c,'tours','Tours', tours, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
   var act=document.createElement('div'); act.className='fp-actions';
   var btn=document.createElement('button'); btn.className='fp-clear'; btn.textContent='条件クリア';
@@ -385,7 +383,6 @@ function disPass(d){
     if(!selMatch(disSel.equip, ev)) return false;
   }
   if(!selMatch(disSel.plabel, [disPL(d)])) return false;
-  if(!selMatch(disSel.contract, [disOC(d)])) return false;
   if(!selMatch(disSel.tours, [disTours(d)])) return false;
   var q=(document.getElementById('dis-search').value||'').trim().toLowerCase();
   if(q){ var hay=(d.nom+' '+pick(d,'distilleryName')).toLowerCase(); if(hay.indexOf(q)<0) return false; }
@@ -496,6 +493,8 @@ function buildBotFacets(){
   // スコア範囲（現状未取込の場合は未取込表示）
   var hasPanel=botList.some(function(b){return botScore(b,'panel')!=null;});
   var hasComm=botList.some(function(b){return botScore(b,'community')!=null;});
+  var hasRating=botList.some(function(b){return botScore(b,'rating')!=null;});
+  makeRangeFacet(c,'rating','評価数', botRange, renderBot, '', !hasRating);
   makeRangeFacet(c,'panel','PNLスコア（専門家）', botRange, renderBot, '', !hasPanel);
   makeRangeFacet(c,'community','COMスコア（非専門家）', botRange, renderBot, '', !hasComm);
   // 製造詳細
@@ -515,7 +514,8 @@ function buildBotFacets(){
 }
 
 function botPass(b){
-  // スコア範囲
+  // スコア範囲・評価数
+  if(!inRange(botScore(b,'rating'), botRange.rating)) return false;
   if(!inRange(botScore(b,'panel'), botRange.panel)) return false;
   if(!inRange(botScore(b,'community'), botRange.community)) return false;
   // 製造詳細
