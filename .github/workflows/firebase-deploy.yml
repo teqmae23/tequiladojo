@@ -21,14 +21,23 @@ jobs:
           grep -q "is the current active version" /tmp/fb_out.txt && exit 0 || exit $EXIT
         env:
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
-      # ルールのデプロイはサービスアカウントの権限不足で失敗することがあるため
-      # hostingとは分離し、失敗してもジョブ全体は止めない（警告を出す）。
-      # 失敗した場合はオーナーがCloud Shellで
-      #   firebase deploy --only firestore:rules,storage --project tequiladojo
-      # を実行するか、サービスアカウントに roles/serviceusage.serviceUsageConsumer を付与する。
-      - name: Deploy Firestore and Storage rules (best effort)
+      # Firestoreルールは storage と分離してデプロイする。
+      # storage を一緒に指定すると serviceusage の 403（firebasestorage.googleapis.com
+      # の権限確認に失敗）でコマンド全体が落ち、Firestoreルールまでデプロイされない。
+      # ルール単体なら Firestore API は有効なため確実にデプロイできる。
+      - name: Deploy Firestore rules
         run: |
-          firebase deploy --only firestore:rules,storage --project tequiladojo --non-interactive \
-            || echo "::warning::ルールのデプロイに失敗しました。Cloud Shellから firebase deploy --only firestore:rules,storage を実行してください"
+          firebase deploy --only firestore:rules --project tequiladojo --non-interactive
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+      # storage ルールはサービスアカウントの権限不足（serviceusage 403）で失敗する
+      # ことがあるため、失敗してもジョブ全体は止めない（警告を出す）。
+      # 失敗した場合はオーナーがCloud Shellで
+      #   firebase deploy --only storage --project tequiladojo
+      # を実行するか、サービスアカウントに roles/serviceusage.serviceUsageConsumer を付与する。
+      - name: Deploy Storage rules (best effort)
+        run: |
+          firebase deploy --only storage --project tequiladojo --non-interactive \
+            || echo "::warning::Storageルールのデプロイに失敗しました。Cloud Shellから firebase deploy --only storage を実行してください"
         env:
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
