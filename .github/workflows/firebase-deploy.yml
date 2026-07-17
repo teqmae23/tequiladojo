@@ -21,20 +21,22 @@ jobs:
           grep -q "is the current active version" /tmp/fb_out.txt && exit 0 || exit $EXIT
         env:
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
-      # Firestoreルールは storage と分離してデプロイする。
-      # storage を一緒に指定すると serviceusage の 403（firebasestorage.googleapis.com
-      # の権限確認に失敗）でコマンド全体が落ち、Firestoreルールまでデプロイされない。
-      # ルール単体なら Firestore API は有効なため確実にデプロイできる。
-      - name: Deploy Firestore rules
-        run: |
-          firebase deploy --only firestore:rules --project tequiladojo --non-interactive
+      # Firestoreルールは firebase CLI ではなく Rules REST API 経由でデプロイする。
+      # `firebase deploy --only firestore:rules` は事前に serviceusage.googleapis.com へ
+      # 「firestore.googleapis.com が有効か」を問い合わせる（ensureApiEnabled）が、CIの
+      # サービスアカウントは serviceusage.services.get 権限を持たないため 403 で失敗し、
+      # ルール本体まで到達しない（会員パーミッションエラーの真因）。
+      # Rules REST API には serviceusage の事前チェックが無いため確実に反映できる。
+      - name: Deploy Firestore rules (REST API)
+        run: python3 scripts/deploy_firestore_rules.py
         env:
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
-      # storage ルールはサービスアカウントの権限不足（serviceusage 403）で失敗する
-      # ことがあるため、失敗してもジョブ全体は止めない（警告を出す）。
-      # 失敗した場合はオーナーがCloud Shellで
-      #   firebase deploy --only storage --project tequiladojo
-      # を実行するか、サービスアカウントに roles/serviceusage.serviceUsageConsumer を付与する。
+          FIREBASE_PROJECT: tequiladojo
+          RULES_FILE: firestore.rules
+          RULES_RELEASE: cloud.firestore
+      # storage ルールも同じ serviceusage 403 で CLI デプロイが失敗するため、
+      # 失敗してもジョブ全体は止めない（警告を出す）。恒久対応が必要なら
+      # サービスアカウントに roles/serviceusage.serviceUsageConsumer を付与する。
       - name: Deploy Storage rules (best effort)
         run: |
           firebase deploy --only storage --project tequiladojo --non-interactive \
