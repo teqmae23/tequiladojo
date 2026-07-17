@@ -104,6 +104,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
   <div class="ctrl">
     <button class="cbtn primary" id="btn-save" onclick="doSave()">💾 保存</button>
     <button class="cbtn" id="btn-scan" onclick="scanOther()">🔍 データ内の未分類値をスキャン</button>
+    <button class="cbtn" id="btn-debug" onclick="debugUnmatched()">🐛 デバッグ: マスタ外の文字を抽出</button>
     <button class="cbtn" id="btn-addcls" onclick="addClass()">＋ 分類を追加</button>
     <button class="cbtn danger" id="btn-reset" onclick="resetDefault()">初期リストに戻す</button>
     <span id="ctrl-msg"></span>
@@ -115,6 +116,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
     <div id="classes"></div>
     <div class="sec-title">未分類（その他）— 実データ中でマスタに無い値</div>
     <div class="other-card" id="other-card"><div class="note" style="margin:0;">「🔍 データ内の未分類値をスキャン」を押すと、ammBottleDetails / ammDistilleryDetails を走査して未登録の値を一覧表示します。</div></div>
+    <pre id="debug-out" style="display:none;background:#0d1a16;color:#c9e8dc;font-family:var(--mono,monospace);font-size:11px;padding:10px 12px;border-radius:6px;margin-top:10px;max-height:380px;overflow:auto;white-space:pre-wrap;word-break:break-all;"></pre>
   </div>
 </div>
 
@@ -220,6 +222,35 @@ function doSave(){
 }
 
 // ── 未分類（その他）スキャン ──
+// 設備欄のうちマスタ値を部分一致で除去した「残余（マスタ外の文字）」を、元の値ごとに一覧表示するデバッグ
+function debugUnmatched(){
+  var out=document.getElementById('debug-out');
+  out.style.display='block'; out.textContent='走査中...';
+  Promise.all([
+    db.collection('ammDistilleryDetails').get().catch(function(){return {docs:[]};}),
+    db.collection('ammBottleDetails').get().catch(function(){return {docs:[]};})
+  ]).then(function(res){
+    function residual(cls,str){ var s=' '+String(str==null?'':str).replace(/\s+/g,' ')+' ';
+      (cls.values||[]).slice().sort(function(a,b){return String(b).length-String(a).length;}).forEach(function(v){ if(v && s.indexOf(v)>=0) s=s.split(v).join(' '); });
+      return s.replace(/\s+/g,' ').replace(/^[\s,]+|[\s,]+$/g,''); }
+    var lines=[];
+    classes.forEach(function(cls){
+      if(!cls.field) return;
+      var seen={}; // rawValue -> {residual, count}
+      [res[0].docs,res[1].docs].forEach(function(docs){ docs.forEach(function(d){ var str=d.data()[cls.field]; if(str==null||str==='') return; str=String(str);
+        if(!seen[str]) seen[str]={res:residual(cls,str),cnt:0}; seen[str].cnt++; }); });
+      var withRes=Object.keys(seen).filter(function(k){return seen[k].res;});
+      lines.push('=== '+cls.label+' ('+cls.field+') : マスタ外の残余 '+withRes.length+'種 ===');
+      if(!withRes.length){ lines.push('  （マスタ外の文字なし）'); }
+      else withRes.sort(function(a,b){return seen[b].cnt-seen[a].cnt;}).slice(0,60).forEach(function(k){
+        lines.push('  残余「'+seen[k].res+'」  ← 元:「'+k+'」 ×'+seen[k].cnt);
+      });
+      lines.push('');
+    });
+    out.textContent=lines.join('\n');
+  }).catch(function(e){ out.textContent='走査失敗: '+e.message; });
+}
+
 function scanOther(){
   var card=document.getElementById('other-card');
   card.innerHTML='<div class="note" style="margin:0;">スキャン中...</div>';

@@ -643,6 +643,11 @@ async function scrapeOne(nom,url){
       <div class="prog-txt" id="pt-dinfo"></div>
     </div>
     <div class="status-line" id="st-dinfo"></div>
+    <div class="btn-row" style="align-items:center;margin-top:6px;">
+      <button class="btn btn-sm" id="btn-fixname" onclick="doFixDistilleryNames()" style="border:1px solid #b03020;color:#b03020;background:#fff;">🩹 蒸留所名を修復（Agave Matchmaker→URLから復元）</button>
+      <span class="status-line" id="st-fixname" style="margin:0;"></span>
+    </div>
+    <div class="card-sub" style="font-size:11px;margin-top:4px;">⑥の旧版で蒸留所名が「Agave Matchmaker」等になった場合の修復。ammDistilleries の distilleryName が空/Agave Matchmaker のものを ammUrl のスラッグから復元します（ランキング152件のきれいな名前は①の再取込で戻せます）。</div>
     <div class="card-sub" style="font-size:11px;margin-top:6px;border-top:1px dashed var(--cream3);padding-top:6px;">
       💡 現在152件ですが、AMMには約270件あります。下の⑦で全URLを取得すると、このスクリプト生成の対象に自動で合流し、未登録の蒸留所も取込時に新規作成されます。
     </div>
@@ -982,6 +987,7 @@ function refreshButtons(){
   var _dg=document.getElementById('btn-dinfo-gen'); if(_dg) _dg.disabled=!isAdmin;
   var _di=(typeof parsedDistInfo!=='undefined')?parsedDistInfo:[];
   var _dii=document.getElementById('btn-dinfo-import'); if(_dii) _dii.disabled=!(isAdmin&&_di.length>0);
+  var _fn=document.getElementById('btn-fixname'); if(_fn) _fn.disabled=!isAdmin;
   var _cg=document.getElementById('btn-crawl-gen'); if(_cg) _cg.disabled=!isAdmin;
   var _dlg=document.getElementById('btn-dlist-gen'); if(_dlg) _dlg.disabled=!isAdmin;
   var _dl=(typeof parsedDistList!=='undefined')?parsedDistList:[];
@@ -2168,8 +2174,11 @@ function scrapeDistilleryRemote(item){
     var nom=get('NOM'); if(nom){ var mn=nom.match(/\d{3,5}/); nom=mn?mn[0]:''; }
     if(!nom){ var mm=bodyTxt.match(/NOM\s*[:#]?\s*(\d{3,5})/i); if(mm) nom=mm[1]; }
     if(!nom) nom=item.nom||'';
+    // 詳細ページのh1はサイト名"Agave Matchmaker"のことが多いので、その場合はURLスラッグから名前を生成
+    function nameFromSlug(u){ var mm2=String(u||'').match(/\/distilleries\/\d+-([^/?#]+)/); if(!mm2) return ''; return mm2[1].replace(/-/g,' ').replace(/\s+/g,' ').trim().replace(/\b\w/g,function(c){return c.toUpperCase();}); }
     var h1=doc.querySelector('h1');
-    var name=(h1?h1.textContent.replace(/\s+/g,' ').trim():'')||item.name||'';
+    var h1t=(h1?h1.textContent.replace(/\s+/g,' ').trim():'');
+    var name=(h1t && !/agave\s*matchmaker|tequila\s*matchmaker/i.test(h1t)) ? h1t : (nameFromSlug(url)||item.name||'');
     var avgM=bodyTxt.match(/([\d.]+)\s*(?:AVG|AVERAGE)/i) || bodyTxt.match(/(?:AVG|AVERAGE)[^\d]{0,12}([\d.]+)/i);
     var avgRating=get('AVERAGE RATING','AVERAGE','AVG') || (avgM?avgM[1]:'');
     var ratM=bodyTxt.match(/([\d,]+)\s*RATINGS\b/i);
@@ -2257,6 +2266,33 @@ function onDistInfoPaste(){
     sp.style.color=valid?'var(--green,#1a6640)':'var(--red)';
   }catch(e){ sp.textContent='JSON解析エラー: '+e.message; sp.style.color='var(--red)'; parsedDistInfo=[]; }
   refreshButtons();
+}
+
+function _nameFromUrlSlug(u){ var m=String(u||'').match(/\/distilleries\/\d+-([^/?#]+)/); if(!m) return ''; return m[1].replace(/-/g,' ').replace(/\s+/g,' ').trim().replace(/\b\w/g,function(c){return c.toUpperCase();}); }
+async function doFixDistilleryNames(){
+  if(!isAdmin) return;
+  if(!confirm('ammDistilleries の distilleryName が空/「Agave Matchmaker」等のものを、ammUrl のスラッグから復元します。続行しますか？')) return;
+  document.getElementById('btn-fixname').disabled=true;
+  st('st-fixname','修復中...','');
+  try{
+    var snap=await db.collection('ammDistilleries').get();
+    var targets=[];
+    snap.forEach(function(d){
+      var v=d.data(), nm=String(v.distilleryName||'').trim();
+      var bad=(!nm)||/agave\s*matchmaker|tequila\s*matchmaker/i.test(nm);
+      if(bad){ var nn=_nameFromUrlSlug(v.ammUrl||''); if(nn) targets.push({id:d.id, name:nn}); }
+    });
+    if(!targets.length){ st('st-fixname','修復対象はありません','ok'); document.getElementById('btn-fixname').disabled=false; return; }
+    var done=0;
+    for(var i=0;i<targets.length;i+=400){
+      var b=db.batch();
+      targets.slice(i,i+400).forEach(function(t){ b.set(db.collection('ammDistilleries').doc(t.id),{distilleryName:t.name},{merge:true}); });
+      await b.commit(); done+=Math.min(400,targets.length-i);
+    }
+    st('st-fixname','✓ '+done+'件の蒸留所名を復元しました（①再取込で152件はより正式名に）','ok');
+    log('蒸留所名 修復: '+done+'件','ok');
+  }catch(e){ st('st-fixname','エラー: '+e.message,'err'); log('蒸留所名修復エラー: '+e.message,'err'); }
+  document.getElementById('btn-fixname').disabled=false;
 }
 
 async function doDistInfoImport(){
