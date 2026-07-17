@@ -227,19 +227,24 @@ function scanOther(){
     db.collection('ammBottleDetails').get(),
     db.collection('ammDistilleryDetails').get().catch(function(){return {docs:[]};})
   ]).then(function(res){
-    // フィールドごとに実データの値を収集
-    var byField={}; // field -> {value:count}
-    function collect(docs){ docs.forEach(function(d){ var v=d.data(); classes.forEach(function(cls){ if(!cls.field) return; tokens(v[cls.field]).forEach(function(t){ if(!byField[cls.field]) byField[cls.field]={}; byField[cls.field][t]=(byField[cls.field][t]||0)+1; }); }); }); }
+    // 設備値はスペース結合のため、マスタ値を部分一致で除去し「残余（未分類）」を抽出
+    function residual(cls, str){
+      var s=' '+String(str==null?'':str).replace(/\s+/g,' ')+' ';
+      (cls.values||[]).slice().sort(function(a,b){return String(b).length-String(a).length;}).forEach(function(v){
+        if(v && s.indexOf(v)>=0) s=s.split(v).join(' ');
+      });
+      return s.replace(/\s+/g,' ').replace(/^[\s,]+|[\s,]+$/g,'');
+    }
+    var byField={}; // field -> {residualValue:count}
+    function collect(docs){ docs.forEach(function(d){ var v=d.data(); classes.forEach(function(cls){ if(!cls.field) return; var str=v[cls.field]; if(str==null||str==='') return; var r=residual(cls,str); if(!r) return;
+      r.split(/[,;]+/).map(function(s){return s.trim();}).filter(Boolean).forEach(function(val){ if(!byField[cls.field]) byField[cls.field]={}; byField[cls.field][val]=(byField[cls.field][val]||0)+1; }); }); }); }
     collect(res[0].docs); collect(res[1].docs);
-    // 各分類で、マスタに無い値を抽出
-    var rows=[]; // {value, field, count, classKeys:[分類候補]}
+    // byField は「マスタに無い残余値」のみ
+    var rows=[]; // {value, field, count, clsKey}
     classes.forEach(function(cls){
       if(!cls.field) return;
       var fmap=byField[cls.field]||{};
-      Object.keys(fmap).forEach(function(val){
-        if((cls.values||[]).indexOf(val)>=0) return; // 既に分類済み
-        rows.push({value:val, field:cls.field, count:fmap[val], clsKey:cls.key});
-      });
+      Object.keys(fmap).forEach(function(val){ rows.push({value:val, field:cls.field, count:fmap[val], clsKey:cls.key}); });
     });
     // 同じ(value,field)の重複を除去
     var seen={}, uniq=[];
