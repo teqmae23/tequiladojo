@@ -84,8 +84,10 @@ tbody tr:hover{background:rgba(200,146,30,.06)}
 .cell-multi{color:var(--ink2);line-height:1.5}
 .amm-a{color:var(--gold-d);text-decoration:none;font-size:11px;white-space:nowrap}
 .amm-a:hover{text-decoration:underline}
+.bc-cell{text-align:left;font-family:var(--mono);white-space:nowrap}
 .bcount{font-family:var(--mono);white-space:nowrap}
 .bcount b{color:var(--ink)}
+.bcount .bc-c{display:inline-block;min-width:2.4ch;text-align:right}
 .bc-c{color:var(--green)}.bc-p{color:var(--ink3)}.bc-n{color:var(--gold-d)}
 .pill{display:inline-block;background:var(--cream2);border-radius:9px;padding:0 7px;font-size:11px;color:var(--ink2);margin:1px 2px 1px 0}
 .dash{color:var(--cream3)}
@@ -109,6 +111,7 @@ tbody tr:hover{background:rgba(200,146,30,.06)}
     <span class="top-brand">テキーラ道場</span>
     <span class="top-sub">PTDデータ閲覧</span>
     <div class="top-right">
+      <a href="/admin_equipment_classes.html" id="owner-edit-link" class="top-link" style="display:none;">🏷 分類編集</a>
       <a href="/member.html" class="top-link">← 会員ページ</a>
     </div>
   </div>
@@ -182,9 +185,9 @@ var auth=firebase.auth(), db=firebase.firestore();
 function escH(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function pick(o){ for(var i=1;i<arguments.length;i++){ var v=o[arguments[i]]; if(v!==undefined&&v!==null&&v!=='') return v; } return ''; }
 function numOr(o){ for(var i=1;i<arguments.length;i++){ var v=o[arguments[i]]; if(v!==undefined&&v!==null&&v!==''&&!isNaN(parseFloat(v))) return parseFloat(v); } return null; }
-function tokens(v){ // 改行区切りの複数値を配列へ。項目前後の余分なカンマは除去
+function tokens(v){ // 改行/カンマ/セミコロン区切りの複数値を個別項目へ分解
   if(v==null) return [];
-  return String(v).split(/[\n;]+/).map(function(s){return s.trim().replace(/^,+/,'').replace(/,+$/,'').trim();}).filter(Boolean);
+  return String(v).split(/[\n;,]+/).map(function(s){return s.trim();}).filter(Boolean);
 }
 function firstNum(s){ var m=String(s==null?'':s).match(/-?\d+(\.\d+)?/); return m?parseFloat(m[0]):null; }
 function uniqSorted(arr){ var seen={},out=[]; arr.forEach(function(x){ if(x&&!seen[x]){seen[x]=1;out.push(x);} }); return out.sort(function(a,b){return a.localeCompare(b,'ja');}); }
@@ -200,9 +203,18 @@ var DEFAULT_DIST_CLASSES=[
 ];
 
 auth.onAuthStateChanged(function(user){
-  if(user){ document.getElementById('gate').style.display='none'; document.getElementById('app').style.display='flex'; loadData(); }
+  if(user){ document.getElementById('gate').style.display='none'; document.getElementById('app').style.display='flex'; loadData(); checkOwner(user); }
   else{ location.replace('/member.html'); }
 });
+// オーナーなら分類編集リンクを表示
+function checkOwner(user){
+  function reveal(){ var el=document.getElementById('owner-edit-link'); if(el) el.style.display=''; }
+  user.getIdTokenResult().then(function(t){ if(t.claims && t.claims.role==='owner'){ reveal(); return; }
+    db.collection('staffRoles').doc(user.uid).get().then(function(d){ if(d.exists && d.data().role==='owner') reveal(); }).catch(function(){});
+  }).catch(function(){
+    db.collection('staffRoles').doc(user.uid).get().then(function(d){ if(d.exists && d.data().role==='owner') reveal(); }).catch(function(){});
+  });
+}
 
 function loadData(){
   document.getElementById('gate').style.display='flex';
@@ -500,7 +512,7 @@ function renderDis(){
       +'<td class="cell-name">'+escH(pick(d,'distilleryName')||'—')+'</td>'
       +'<td class="num">'+(av!=null?'<b>'+av+'</b>':'<span class="dash">—</span>')+'</td>'
       +'<td class="num">'+(rc!=null?rc:'<span class="dash">—</span>')+'</td>'
-      +'<td class="num"><span class="bcount" title="'+(bc.src==='amm'?'現（Current・大）/ 前（Previous）/ 止（Not Listed）':'現/前（ボトルの製品状態から概算・止は算出不可）')+'"><b class="bc-c" style="font-size:14px;">'+bc.c+'</b> <span class="dash">/</span><span class="bc-p">'+bc.p+'</span><span class="dash">/</span><span class="bc-n">'+bc.n+'</span>'+(bc.src==='est'?'<span class="dash"> ~</span>':'')+'</span></td>'
+      +'<td class="bc-cell"><span class="bcount" title="'+(bc.src==='amm'?'現（Current・大）/ 前（Previous）/ 止（Not Listed）':'現/前（ボトルの製品状態から概算・止は算出不可）')+'"><b class="bc-c" style="font-size:14px;">'+bc.c+'</b><span class="dash">/</span><span class="bc-p">'+bc.p+'</span><span class="dash">/</span><span class="bc-n">'+bc.n+'</span>'+(bc.src==='est'?'<span class="dash"> ~</span>':'')+'</span></td>'
       +'<td>'+(loc?escH(loc):'<span class="dash">—</span>')+'</td>'
       +'<td>'+(disRegion(d)?escH(disRegion(d)):'<span class="dash">—</span>')+'</td>'
       +'<td>'+(url?'<a class="amm-a" href="'+escH(url)+'" target="_blank" rel="noopener">開く ↗</a>':'<span class="dash">—</span>')+'</td>'
