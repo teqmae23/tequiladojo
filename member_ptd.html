@@ -192,6 +192,12 @@ function uniqSorted(arr){ var seen={},out=[]; arr.forEach(function(x){ if(x&&!se
 /* ── データ ── */
 var disList=[], detailMap={}, botList=[], brandAgg={};
 var curTab='dis';
+var eqClasses=[], classByField={}; // 製法・設備 分類マスタ（masterMeta/equipmentClasses）
+// マスタ未保存時のフォールバック（蒸留所の設備6項目）
+var DEFAULT_DIST_CLASSES=[
+  {label:'糖化',field:'cooking'},{label:'搾汁',field:'extraction'},{label:'発酵',field:'fermentation'},
+  {label:'蒸留',field:'still'},{label:'熟成',field:'aging'},{label:'水源',field:'waterSource'}
+];
 
 auth.onAuthStateChanged(function(user){
   if(user){ document.getElementById('gate').style.display='none'; document.getElementById('app').style.display='flex'; loadData(); }
@@ -204,11 +210,14 @@ function loadData(){
   Promise.all([
     db.collection('ammDistilleries').get(),
     db.collection('ammDistilleryDetails').get().catch(function(){return {docs:[]};}),
-    db.collection('ammBottleDetails').get()
+    db.collection('ammBottleDetails').get(),
+    db.collection('masterMeta').doc('equipmentClasses').get().catch(function(){return {exists:false};})
   ]).then(function(res){
     disList=res[0].docs.map(function(d){return Object.assign({nom:d.id},d.data());});
     detailMap={}; res[1].docs.forEach(function(d){ detailMap[String(d.id)]=d.data(); });
     botList=res[2].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    eqClasses=(res[3]&&res[3].exists&&Array.isArray(res[3].data().classes))?res[3].data().classes:[];
+    classByField={}; eqClasses.forEach(function(cls){ if(cls.field){ classByField[cls.field]={label:cls.label,values:cls.values||[],set:{}}; (cls.values||[]).forEach(function(v){classByField[cls.field].set[v]=1;}); } });
     aggregateBrands();
     document.getElementById('gate').style.display='none';
     updateRankDate();
@@ -229,35 +238,40 @@ function updateRankDate(){
   else{ bar.style.display='none'; }
 }
 
-/* 蒸留所ごとのブランド数（Current/Previous/NotListed）をボトルデータから集計 */
-function normStatus(s){
-  s=String(s||'').toLowerCase();
-  if(s.indexOf('not')>=0&&s.indexOf('list')>=0) return 'n';
-  if(s.indexOf('prev')>=0||s.indexOf('discont')>=0||s.indexOf('former')>=0) return 'p';
-  if(s.indexOf('current')>=0||s.indexOf('active')>=0||s.indexOf('list')>=0) return 'c';
-  return s?'c':'';
+/* 蒸留所ごとのブランド区分（現=Current/前=Previous）をボトル(Algolia)データから算出。
+   製品の status（"In Production" 等）から、現行製品を持つブランド=現、持たないブランド=前 とみなす。
+   止（Not Listed=製品が無いブランド）は製品データからは算出不可のため 0。 */
+function productIsCurrent(status){
+  var s=String(status||'').toLowerCase();
+  if(!s) return true; // 状態不明は現行扱い（多くは In Production）
+  if(/not\s*in|discont|former|previous|historic|inactive|closed|ceased/.test(s)) return false;
+  return true;
 }
 function aggregateBrands(){
-  brandAgg={}; // nom -> {c:{},p:{},n:{},all:{}}
+  brandAgg={}; // nom -> { brandId: {cur:bool} }
   botList.forEach(function(b){
     var nom=String(b.nom||''); if(!nom) return;
     var bid=String(b.brandId||b.brandName||''); if(!bid) return;
-    if(!brandAgg[nom]) brandAgg[nom]={c:{},p:{},n:{},all:{}};
-    brandAgg[nom].all[bid]=1;
-    var st=normStatus(b.status);
-    if(st) brandAgg[nom][st][bid]=1;
+    if(!brandAgg[nom]) brandAgg[nom]={};
+    if(!brandAgg[nom][bid]) brandAgg[nom][bid]={cur:false};
+    if(productIsCurrent(b.status)) brandAgg[nom][bid].cur=true;
   });
 }
+function brandCountsEst(nom){
+  var m=brandAgg[nom]; if(!m) return {c:0,p:0,n:0,all:0};
+  var c=0,p=0,all=0;
+  Object.keys(m).forEach(function(bid){ all++; if(m[bid].cur) c++; else p++; });
+  return {c:c,p:p,n:0,all:all};
+}
 function brandCounts(nom){
-  // 蒸留所ページから取得したブランド区分件数を優先（⑥ 蒸留所追加情報）
+  // 蒸留所ページ由来の区分件数は「非0のものがある場合のみ」優先（スクレイプ失敗時の全0は使わない）
   var det=detailMap[nom]||{};
-  if(det.brandCurrentCount!=null||det.brandPreviousCount!=null||det.brandNotListedCount!=null){
-    var c=det.brandCurrentCount||0, p=det.brandPreviousCount||0, n=det.brandNotListedCount||0;
-    return {c:c,p:p,n:n,all:c+p+n, src:'amm'};
+  var ammTotal=(det.brandCurrentCount||0)+(det.brandPreviousCount||0)+(det.brandNotListedCount||0);
+  if(ammTotal>0){
+    return {c:det.brandCurrentCount||0,p:det.brandPreviousCount||0,n:det.brandNotListedCount||0,all:ammTotal,src:'amm'};
   }
-  // フォールバック: ボトルから集計した概算
-  var a=brandAgg[nom]; if(!a) return {c:0,p:0,n:0,all:0,src:'est'};
-  return {c:Object.keys(a.c).length,p:Object.keys(a.p).length,n:Object.keys(a.n).length,all:Object.keys(a.all).length,src:'est'};
+  // フォールバック: ボトル(Algolia)から算出
+  var e=brandCountsEst(nom); e.src='est'; return e;
 }
 
 /* ================= タブ / パネル制御 ================= */
@@ -342,31 +356,96 @@ function selMatch(sel, vals){ // sel: {value:1}, vals: array of tokens ; OR (い
 }
 
 /* ================= ① 蒸留所ビュー ================= */
+function clean(v){ return String(v==null?'':v).replace(/^[,\s]+/,'').replace(/[,\s]+$/,''); } // 前後の余分なカンマ/空白を除去
 function disLocation(d){
   var det=detailMap[d.nom]||{};
-  var loc=pick(det,'location'); if(loc) return loc;
+  var loc=pick(det,'location'); if(loc) return clean(loc);
   var city=pick(det,'city'), state=pick(det,'state');
-  return [city,state].filter(Boolean).join(', ');
+  return clean([clean(city),clean(state)].filter(Boolean).join(', '));
 }
-function disRegion(d){ var det=detailMap[d.nom]||{}; return pick(d,'region')||pick(det,'region'); }
+function disRegion(d){ var det=detailMap[d.nom]||{}; return clean(pick(d,'region')||pick(det,'region')); }
 function disEquip(d){ var det=detailMap[d.nom]||{}; return ['cooking','extraction','fermentation','still','aging','waterSource'].map(function(k){return pick(det,k);}).filter(Boolean); }
-function disPL(d){ var det=detailMap[d.nom]||{}; return pick(det,'privateLabels','private_labels','privateLabel'); }
-function disOC(d){ var det=detailMap[d.nom]||{}; return pick(det,'openToContracts','open_to_contracts','contracts'); }
-function disTours(d){ var det=detailMap[d.nom]||{}; return pick(det,'tours','tour'); }
+function disPL(d){ var det=detailMap[d.nom]||{}; return clean(pick(det,'privateLabels','private_labels','privateLabel')); }
+function disTours(d){ var det=detailMap[d.nom]||{}; return clean(pick(det,'tours','tour')); }
+
+// 設備の分類リスト（マスタの蒸留所関連分類、無ければデフォルト6項目）
+function distFacetList(){
+  var list=[], seen={};
+  DEFAULT_DIST_CLASSES.forEach(function(dc){
+    var lbl=(classByField[dc.field]&&classByField[dc.field].label)||dc.label;
+    list.push({label:lbl, field:dc.field}); seen[dc.field]=1;
+  });
+  eqClasses.forEach(function(cls){
+    if(!cls.field || seen[cls.field]) return;
+    if(disList.some(function(d){ return (detailMap[d.nom]||{})[cls.field]; })){ list.push({label:cls.label, field:cls.field}); seen[cls.field]=1; }
+  });
+  return list;
+}
+// 分類ファセット（マスタ値のみ表示、マスタ外は「その他」に集約）
+function makeClassFacet(container, field, label){
+  var freq={}, master=classByField[field], anyData=false;
+  disList.forEach(function(d){
+    tokens((detailMap[d.nom]||{})[field]).forEach(function(t){
+      anyData=true;
+      if(master && !master.set[t]) freq['__other__']=(freq['__other__']||0)+1;
+      else freq[t]=(freq[t]||0)+1;
+    });
+  });
+  var opts;
+  if(master){ opts=(master.values||[]).filter(function(v){return freq[v];}); if(freq['__other__']) opts.push('__other__'); }
+  else opts=Object.keys(freq).sort(function(a,b){return a.localeCompare(b,'ja');});
+  var key='eq_'+field, cnt=opts.length;
+  var det=document.createElement('details'); det.className='facet';
+  var sum=document.createElement('summary');
+  sum.innerHTML=escH(label)+'<span class="fc-badge'+(cnt?'':' zero')+'" id="badge-'+key+'">'+(disSel[key]&&Object.keys(disSel[key]).length?Object.keys(disSel[key]).length:cnt)+'</span>';
+  det.appendChild(sum);
+  var box=document.createElement('div'); box.className='fc-opts';
+  if(!opts.length){ box.innerHTML='<div class="fc-empty">'+(anyData?'該当なし':'未取込（⑥ 蒸留所追加情報を取込）')+'</div>'; }
+  else opts.forEach(function(v){
+    var lab=document.createElement('label'); lab.className='fc-opt';
+    var cb=document.createElement('input'); cb.type='checkbox'; cb.value=v; cb.checked=!!(disSel[key]&&disSel[key][v]);
+    cb.addEventListener('change',function(){
+      if(!disSel[key]) disSel[key]={};
+      if(cb.checked) disSel[key][v]=1; else delete disSel[key][v];
+      var n=Object.keys(disSel[key]).length, badge=document.getElementById('badge-'+key);
+      badge.textContent=n||cnt; badge.className='fc-badge'+(n?'':(cnt?'':' zero'));
+      renderDis();
+    });
+    lab.appendChild(cb);
+    var sp=document.createElement('span'); sp.textContent=(v==='__other__'?'（その他）':v); lab.appendChild(sp);
+    var sm=document.createElement('small'); sm.textContent=freq[v]||0; lab.appendChild(sm);
+    box.appendChild(lab);
+  });
+  det.appendChild(box); container.appendChild(det);
+}
+function equipPass(d){
+  var det=detailMap[d.nom]||{}, list=distFacetList();
+  for(var i=0;i<list.length;i++){
+    var field=list[i].field, sel=disSel['eq_'+field];
+    if(!sel||!Object.keys(sel).length) continue;
+    var master=classByField[field], toks=tokens(det[field]), ok=false;
+    for(var j=0;j<toks.length;j++){
+      if(sel[toks[j]]){ ok=true; break; }
+      if(sel['__other__'] && master && !master.set[toks[j]]){ ok=true; break; }
+    }
+    if(!ok) return false;
+  }
+  return true;
+}
 
 function buildDisFacets(){
   var c=document.getElementById('dis-facets'); c.innerHTML=''; disSel={}; disRange={};
-  var regions=[], locs=[], equips=[], plabels=[], tours=[];
+  var regions=[], locs=[], plabels=[], tours=[];
   disList.forEach(function(d){
     if(disRegion(d)) regions.push(disRegion(d));
     var lo=disLocation(d); if(lo) locs.push(lo);
-    disEquip(d).forEach(function(e){ tokens(e).forEach(function(t){equips.push(t);}); });
     if(disPL(d)) plabels.push(disPL(d));
     if(disTours(d)) tours.push(disTours(d));
   });
   makeFacet(c,'region','Region', regions, disSel, renderDis);
   makeFacet(c,'loc','Location', locs, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
-  makeFacet(c,'equip','設備 Equipment', equips, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
+  // 設備を分類ごとにばらす（分類マスタ準拠・マスタ外は「その他」）
+  distFacetList().forEach(function(fc){ makeClassFacet(c, fc.field, fc.label); });
   makeFacet(c,'plabel','Private Labels', plabels, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
   makeFacet(c,'tours','Tours', tours, disSel, renderDis, '未取込（⑥ 蒸留所追加情報を取込）');
   var act=document.createElement('div'); act.className='fp-actions';
@@ -378,10 +457,7 @@ function buildDisFacets(){
 function disPass(d){
   if(!selMatch(disSel.region, [disRegion(d)])) return false;
   if(!selMatch(disSel.loc, [disLocation(d)])) return false;
-  if(disSel.equip&&Object.keys(disSel.equip).length){
-    var ev=[]; disEquip(d).forEach(function(e){ tokens(e).forEach(function(t){ev.push(t);}); });
-    if(!selMatch(disSel.equip, ev)) return false;
-  }
+  if(!equipPass(d)) return false;
   if(!selMatch(disSel.plabel, [disPL(d)])) return false;
   if(!selMatch(disSel.tours, [disTours(d)])) return false;
   var q=(document.getElementById('dis-search').value||'').trim().toLowerCase();
@@ -410,7 +486,7 @@ function renderDis(){
   var h='<table><thead><tr>'
     +'<th class="num">ランク</th><th>NOM</th><th>蒸留所名</th>'
     +'<th class="num">スコア</th><th class="num">評価数</th>'
-    +'<th class="num">ブランド数<br>(C/P/N)</th><th>Location</th><th>Region</th><th>PTD</th>'
+    +'<th class="num">ブランド数<br>(現/前/止)</th><th>Location</th><th>Region</th><th>PTD</th>'
     +'</tr></thead><tbody>';
   if(!rows.length){ document.getElementById('dis-table').innerHTML='<div class="empty-msg">該当する蒸留所がありません</div>'; return; }
   rows.forEach(function(d){
@@ -424,7 +500,7 @@ function renderDis(){
       +'<td class="cell-name">'+escH(pick(d,'distilleryName')||'—')+'</td>'
       +'<td class="num">'+(av!=null?'<b>'+av+'</b>':'<span class="dash">—</span>')+'</td>'
       +'<td class="num">'+(rc!=null?rc:'<span class="dash">—</span>')+'</td>'
-      +'<td class="num"><span class="bcount" title="'+(bc.src==='amm'?'Current（大）/ Previous / Not Listed':'ボトルからの概算')+'"><b class="bc-c" style="font-size:14px;">'+bc.c+'</b> <span class="dash">/</span><span class="bc-p">'+bc.p+'</span><span class="dash">/</span><span class="bc-n">'+bc.n+'</span>'+(bc.src==='est'?'<span class="dash"> ~</span>':'')+'</span></td>'
+      +'<td class="num"><span class="bcount" title="'+(bc.src==='amm'?'現（Current・大）/ 前（Previous）/ 止（Not Listed）':'現/前（ボトルの製品状態から概算・止は算出不可）')+'"><b class="bc-c" style="font-size:14px;">'+bc.c+'</b> <span class="dash">/</span><span class="bc-p">'+bc.p+'</span><span class="dash">/</span><span class="bc-n">'+bc.n+'</span>'+(bc.src==='est'?'<span class="dash"> ~</span>':'')+'</span></td>'
       +'<td>'+(loc?escH(loc):'<span class="dash">—</span>')+'</td>'
       +'<td>'+(disRegion(d)?escH(disRegion(d)):'<span class="dash">—</span>')+'</td>'
       +'<td>'+(url?'<a class="amm-a" href="'+escH(url)+'" target="_blank" rel="noopener">開く ↗</a>':'<span class="dash">—</span>')+'</td>'
