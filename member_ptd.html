@@ -87,7 +87,9 @@ tbody tr:hover{background:rgba(200,146,30,.06)}
 .bc-cell{text-align:left;font-family:var(--mono);white-space:nowrap}
 .bcount{font-family:var(--mono);white-space:nowrap}
 .bcount b{color:var(--ink)}
-.bcount .bc-c{display:inline-block;min-width:2.4ch;text-align:right}
+.bcount .bc-c,.bcount .bc-p,.bcount .bc-n{display:inline-block;text-align:right}
+.bcount .bc-c{min-width:2.6ch}
+.bcount .bc-p,.bcount .bc-n{min-width:1.8ch}
 .bc-c{color:var(--green)}.bc-p{color:var(--ink3)}.bc-n{color:var(--gold-d)}
 .pill{display:inline-block;background:var(--cream2);border-radius:9px;padding:0 7px;font-size:11px;color:var(--ink2);margin:1px 2px 1px 0}
 .dash{color:var(--cream3)}
@@ -196,11 +198,33 @@ function uniqSorted(arr){ var seen={},out=[]; arr.forEach(function(x){ if(x&&!se
 var disList=[], detailMap={}, botList=[], brandAgg={};
 var curTab='dis';
 var eqClasses=[], classByField={}; // 製法・設備 分類マスタ（masterMeta/equipmentClasses）
-// マスタ未保存時のフォールバック（蒸留所の設備6項目）
+// マスタ未保存時のフォールバック（蒸留所の設備6項目・並び順）
 var DEFAULT_DIST_CLASSES=[
   {label:'糖化',field:'cooking'},{label:'搾汁',field:'extraction'},{label:'発酵',field:'fermentation'},
   {label:'蒸留',field:'still'},{label:'熟成',field:'aging'},{label:'水源',field:'waterSource'}
 ];
+// マスタ未保存時のデフォルト分類（値まで含む・admin_equipment_classes と同一）
+var DEFAULT_CLASSES=[
+  {key:'category',label:'カテゴリー',field:'category',values:['100% agave','Mixto']},
+  {key:'cooking',label:'糖化',field:'cooking',values:['Acid-Thermal Hydrolysis','Autoclave (high pressure)','Autoclave (low pressure)','Autoclave (post diffuser)','Boiling Tank','Stone/Brick Ovens']},
+  {key:'extraction',label:'搾汁',field:'extraction',values:['Diffuser','Earthen Pit','Hand Crushed','Roller Mill','Screw Mill','Tahona']},
+  {key:'fermentation',label:'発酵',field:'fermentation',values:['Cement Tank','Champagne Yeast','Classical music','Closed fermentation','Fermentation with fibers','Fermentation without fibers','Open-air fermentation','Proprietary yeast','Spontaneous fermentation','Wood tanks/pipones']},
+  {key:'distillation',label:'蒸留',field:'still',values:['Column','Copper Pot','Filipino Style (wood/copper)','Stainless Pot w/Copper Coil','Stainless Steel Pot','Stainless steel tanks','Stainless/Copper Hybrid']},
+  {key:'aging',label:'熟成',field:'aging',values:['Amburana barrels','American White Oak barrels','Beer Casks','Bourbon barrels','Canadian Oak','Cognac casks','Custom hybrid barrels','Double Barrel','French Oak barrels','Hungarian Oak barrels','Jackfruit Barrels','Japanese Oak','New barrels','Oak barrels','Pipones','Port casks','Rum barrels','Rye barrels','Scotch barrels','Sherry casks','Single Barrel','Used barrels','Whisky barrels','Wine casks','Wood chips']},
+  {key:'waterSource',label:'水源',field:'waterSource',values:['Deep well water','Distilled water','Natural spring water','Rain water']}
+];
+// 設備値をマスタ値の部分一致で個別項目に分解（値自体にスペースを含むため区切り分割不可）
+function classHits(field, str){
+  var master=classByField[field];
+  var s=' '+String(str==null?'':str).replace(/\s+/g,' ')+' ';
+  if(!master || !master.values || !master.values.length){ return {hits:tokens(str), other:false}; }
+  var hits=[];
+  master.values.slice().sort(function(a,b){return String(b).length-String(a).length;}).forEach(function(v){
+    if(v && s.indexOf(v)>=0){ hits.push(v); s=s.split(v).join(' '); }
+  });
+  var residual=s.replace(/[,\s]+/g,'');
+  return {hits:hits, other: residual.length>0};
+}
 
 auth.onAuthStateChanged(function(user){
   if(user){ document.getElementById('gate').style.display='none'; document.getElementById('app').style.display='flex'; loadData(); checkOwner(user); }
@@ -228,7 +252,7 @@ function loadData(){
     disList=res[0].docs.map(function(d){return Object.assign({nom:d.id},d.data());});
     detailMap={}; res[1].docs.forEach(function(d){ detailMap[String(d.id)]=d.data(); });
     botList=res[2].docs.map(function(d){return Object.assign({id:d.id},d.data());});
-    eqClasses=(res[3]&&res[3].exists&&Array.isArray(res[3].data().classes))?res[3].data().classes:[];
+    eqClasses=(res[3]&&res[3].exists&&Array.isArray(res[3].data().classes)&&res[3].data().classes.length)?res[3].data().classes:DEFAULT_CLASSES;
     classByField={}; eqClasses.forEach(function(cls){ if(cls.field){ classByField[cls.field]={label:cls.label,values:cls.values||[],set:{}}; (cls.values||[]).forEach(function(v){classByField[cls.field].set[v]=1;}); } });
     aggregateBrands();
     document.getElementById('gate').style.display='none';
@@ -393,18 +417,17 @@ function distFacetList(){
   });
   return list;
 }
-// 分類ファセット（マスタ値のみ表示、マスタ外は「その他」に集約）
+// 分類ファセット（マスタの個別値のみ表示、部分一致でばらす。マスタ外は「その他」）
 function makeClassFacet(container, field, label){
-  var freq={}, master=classByField[field], anyData=false;
+  var master=classByField[field], freq={}, anyData=false;
   disList.forEach(function(d){
-    tokens((detailMap[d.nom]||{})[field]).forEach(function(t){
-      anyData=true;
-      if(master && !master.set[t]) freq['__other__']=(freq['__other__']||0)+1;
-      else freq[t]=(freq[t]||0)+1;
-    });
+    var str=(detailMap[d.nom]||{})[field]; if(str==null||str==='') return; anyData=true;
+    var h=classHits(field, str), seen={};
+    h.hits.forEach(function(v){ if(!seen[v]){ seen[v]=1; freq[v]=(freq[v]||0)+1; } });
+    if(h.other) freq['__other__']=(freq['__other__']||0)+1;
   });
   var opts;
-  if(master){ opts=(master.values||[]).filter(function(v){return freq[v];}); if(freq['__other__']) opts.push('__other__'); }
+  if(master && master.values && master.values.length){ opts=master.values.filter(function(v){return freq[v];}); if(freq['__other__']) opts.push('__other__'); }
   else opts=Object.keys(freq).sort(function(a,b){return a.localeCompare(b,'ja');});
   var key='eq_'+field, cnt=opts.length;
   var det=document.createElement('details'); det.className='facet';
@@ -430,17 +453,20 @@ function makeClassFacet(container, field, label){
   });
   det.appendChild(box); container.appendChild(det);
 }
+// 選択した値を「すべて所持」する蒸留所に絞る（AND）。__other__はマスタ外の値を持つこと
 function equipPass(d){
   var det=detailMap[d.nom]||{}, list=distFacetList();
   for(var i=0;i<list.length;i++){
     var field=list[i].field, sel=disSel['eq_'+field];
     if(!sel||!Object.keys(sel).length) continue;
-    var master=classByField[field], toks=tokens(det[field]), ok=false;
-    for(var j=0;j<toks.length;j++){
-      if(sel[toks[j]]){ ok=true; break; }
-      if(sel['__other__'] && master && !master.set[toks[j]]){ ok=true; break; }
+    var h=classHits(field, det[field]), hitSet={};
+    h.hits.forEach(function(v){ hitSet[v]=1; });
+    var keys=Object.keys(sel);
+    for(var j=0;j<keys.length;j++){
+      var k=keys[j];
+      if(k==='__other__'){ if(!h.other) return false; }
+      else if(!hitSet[k]) return false;
     }
-    if(!ok) return false;
   }
   return true;
 }
