@@ -653,7 +653,7 @@ async function scrapeOne(nom,url){
   <div class="card" style="border:1.5px solid #1252a0;">
     <div class="card-title">🏭 未登録の蒸留所を追加（一覧URL収集 → ⑥で詳細取得）</div>
     <div class="card-sub">
-      一覧ページ <span class="mono">/distilleries</span> は<b>JS描画</b>のため fetch では0件ですが、<b>ブラウザで開いて描画済みのDOM</b>からはURLを取得できます。下記①を <b>agavematchmaker.com/distilleries を開いた状態</b>で実行（自動スクロール）→ ②で保存すると、⑥「スクリプト生成」の対象に合流し、⑥取込で<b>未登録の蒸留所を新規作成</b>します。
+      一覧 <span class="mono">/distilleries</span> の生HTML（<span class="mono">?page=N</span>）に蒸留所URLがテキストで含まれるため、下記①を <b>agavematchmaker.com のコンソール</b>で実行すると<b>全ページを自動巡回して全URLを抽出</b>します（スクロール・アンカー不要）。② で保存すると ⑥「スクリプト生成」の対象に合流し、⑥取込で<b>未登録の蒸留所を新規作成</b>します。
     </div>
     <div class="btn-row" style="align-items:center;">
       <button class="btn btn-sm" id="btn-dlist-gen" onclick="genDistListCollect()" style="border:1px solid #1252a0;color:#1252a0;background:#fff;">① 一覧URL収集スクリプト生成</button>
@@ -2339,25 +2339,25 @@ function genDistCrawlScript(){
 var parsedDistList=[];
 function genDistListCollect(){
   if(!isAdmin) return;
+  // /distilleries?page=N の生HTML（同一オリジンfetch）に蒸留所URLがテキストで含まれるため、
+  // 全ページを巡回して正規表現で抽出する（アンカー不要・JS描画非依存）
   var script=''
     +'(async function(){\n'
-    +'  if(!/agavematchmaker\\.com$/.test(location.hostname)){console.error("agavematchmaker.com/distilleries を開いて実行してください（現在: "+location.hostname+"）");return;}\n'
-    +'  if(!/\\/distilleries/.test(location.pathname)) console.warn("注意: 蒸留所一覧ページ(/distilleries)で実行してください。現在: "+location.pathname);\n'
+    +'  if(!/agavematchmaker\\.com$/.test(location.hostname)){console.error("agavematchmaker.com で実行してください（現在: "+location.hostname+"）");return;}\n'
     +'  var map={};\n'
-    +'  function collect(){[].forEach.call(document.querySelectorAll(\'a[href*="/distilleries/"]\'),function(a){var h=a.getAttribute("href")||"";if(!/\\/distilleries\\/\\d+-/.test(h))return;if(h.indexOf("http")!==0)h=location.origin+(h.charAt(0)==="/"?"":"/")+h;h=h.split("#")[0].split("?")[0];if(!map[h])map[h]={url:h,name:(a.textContent||"").replace(/\\s+/g," ").trim()};});}\n'
-    +'  var last=-1,stable=0;\n'
-    +'  for(var i=0;i<400 && stable<6;i++){\n'
-    +'    collect();\n'
-    +'    window.scrollTo(0,document.body.scrollHeight);\n'
-    +'    var more=[].slice.call(document.querySelectorAll("a,button")).filter(function(e){return e.offsetParent&&/\\b(more|load|show more)\\b|もっと|さらに|次へ/i.test((e.textContent||""));})[0];\n'
-    +'    if(more){try{more.click();}catch(e){}}\n'
-    +'    await new Promise(function(r){setTimeout(r,900);});\n'
-    +'    var n=Object.keys(map).length;\n'
-    +'    if(n===last)stable++;else{stable=0;last=n;}\n'
-    +'    if(i%5===0)console.log("収集中... "+n+"件（スクロール "+i+"）");\n'
+    +'  for(var page=1;page<=40;page++){\n'
+    +'    var r; try{r=await fetch("/distilleries?page="+page,{credentials:"omit"});}catch(e){console.log("page "+page+" fetch失敗:"+e.message);break;}\n'
+    +'    if(!r.ok){console.log("page "+page+" HTTP "+r.status);break;}\n'
+    +'    var html=await r.text();\n'
+    +'    var m=html.match(/distilleries\\/\\d+-[a-z0-9\\-]+/gi)||[];\n'
+    +'    var before=Object.keys(map).length;\n'
+    +'    m.forEach(function(x){ map[location.origin+"/"+x.toLowerCase()]=1; });\n'
+    +'    var after=Object.keys(map).length;\n'
+    +'    console.log("page "+page+": +"+(after-before)+"（累計 "+after+"）");\n'
+    +'    if(after===before && page>1) break;\n'
+    +'    await new Promise(function(res){setTimeout(res,700+Math.floor(Math.random()*600));});\n'
     +'  }\n'
-    +'  collect();\n'
-    +'  var out=Object.keys(map).map(function(k){return map[k];});\n'
+    +'  var out=Object.keys(map).map(function(u){return {url:u,name:""};});\n'
     +'  var json=JSON.stringify(out);\n'
     +'  try{copy(json);console.log("✓ クリップボードにコピー済み "+out.length+"件");}catch(e){}\n'
     +'  console.log(json);\n'
@@ -2366,7 +2366,7 @@ function genDistListCollect(){
     +'})();';
   document.getElementById('script-dlist').textContent=script;
   document.getElementById('script-dlist-wrap').style.display='';
-  st('st-dlist-gen','✓ スクリプト生成。/distilleries を開いた状態で実行してください','ok');
+  st('st-dlist-gen','✓ スクリプト生成。agavematchmaker.com のコンソールで実行（全ページ自動巡回）','ok');
 }
 function onDistListPaste(){
   var sp=document.getElementById('dlist-parse-status');
