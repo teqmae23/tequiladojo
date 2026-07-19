@@ -37,7 +37,7 @@ var FIREBASE_CONFIG={
 body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100vh;overflow:hidden;}
 
 /* ── Header ── */
-.hdr{background:var(--ink);padding:0 16px;display:flex;align-items:center;gap:12px;height:52px;flex-shrink:0;}
+.hdr{background:var(--ink);padding:0 16px;display:flex;align-items:center;gap:12px;height:67px;flex-shrink:0;}
 .hdr-logo{font-family:var(--serif);font-size:17px;color:var(--gold-l);letter-spacing:.04em;white-space:nowrap;}
 .hdr-sub{font-size:11px;color:var(--ink3);margin-top:1px;text-align:right;}
 .hdr-back{margin-left:auto;color:var(--gold-l);font-size:12px;text-decoration:none;opacity:.8;}
@@ -150,7 +150,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 #lerr{font-size:12px;color:var(--red);margin-top:8px;min-height:16px;}
 .lcard .lbtn{width:100%;margin-top:18px;padding:10px;background:var(--gold-d);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;font-family:var(--sans);}
 .lcard .lbtn:hover{background:var(--gold);}
-#app{display:none;height:100vh;flex-direction:column;}
+#app{display:none;height:calc(100vh - 30px);flex-direction:column;}
 
 </style>
 </head>
@@ -229,11 +229,14 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
   <input list="nom-list" id="nom-search" placeholder="NOM…" style="width:78px;padding:5px 9px;border:1px solid var(--cream3);border-radius:5px;background:#fff;color:var(--ink);font-family:var(--sans);font-size:12px;" autocomplete="off">
   <datalist id="nom-list"></datalist>
   <span id="map-count" style="white-space:nowrap;"></span>
-  <button id="btn-visited" class="ctrl-btn" onclick="toggleVisitedFilter()" style="flex-shrink:0;">既飲</button>
+  <select id="sel-visited" class="ctrl-btn" onchange="onVisitedSelChange(this.value)" style="flex-shrink:0;cursor:pointer;">
+    <option value="all">全件</option>
+    <option value="visited">既飲</option>
+  </select>
   <button class="ctrl-btn" onclick="setInfoOff()" style="margin-left:auto;flex-shrink:0;">情報オフ</button>
 </div>
 
-<button id="btn-info-on" onclick="setInfoOn()" style="display:none;position:fixed;top:62px;right:10px;z-index:1100;padding:5px 11px;border:1px solid var(--cream3);border-radius:5px;background:rgba(241,239,232,.92);color:var(--ink2);font-family:var(--sans);font-size:12px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.18);backdrop-filter:blur(4px);">情報オン</button>
+<button id="btn-info-on" onclick="setInfoOn()" style="display:none;position:fixed;top:77px;right:10px;z-index:1100;padding:5px 11px;border:1px solid var(--cream3);border-radius:5px;background:rgba(241,239,232,.92);color:var(--ink2);font-family:var(--sans);font-size:12px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.18);backdrop-filter:blur(4px);">情報オン</button>
 
 <div id="map" class="labels-off">
   <div class="dot-sp" id="dot-sp">
@@ -261,16 +264,26 @@ var _currentUser=null;
 var _memberNomsLoaded=false;
 var map=L.map('map',{zoomControl:true}).setView([20.5,-103.5],8);
 
+// ウィンドウ／端末のサイズ変化（Androidのアドレスバー開閉・画面回転など）に追従。
+// invalidateSize でLeafletにコンテナ実サイズを再認識させ、縮尺スケールも正しく再計算する。
+var _resizeTimer=null;
+function _onViewportResize(){
+  if(_resizeTimer) clearTimeout(_resizeTimer);
+  _resizeTimer=setTimeout(function(){ map.invalidateSize(); },150);
+}
+window.addEventListener('resize',_onViewportResize);
+window.addEventListener('orientationchange',_onViewportResize);
+
 L.Control.Ruler=L.Control.extend({
   options:{position:'bottomleft',maxWidth:200},
   onAdd:function(map){
     this._div=L.DomUtil.create('div','ruler-ctrl');
     L.DomEvent.disableClickPropagation(this._div);
     this._update();
-    map.on('zoomend moveend',this._update,this);
+    map.on('zoomend moveend resize',this._update,this);
     return this._div;
   },
-  onRemove:function(map){map.off('zoomend moveend',this._update,this);},
+  onRemove:function(map){map.off('zoomend moveend resize',this._update,this);},
   _nice:function(n){var r=Math.pow(10,Math.floor(Math.log(n)/Math.LN10));return n>=10*r?10*r:n>=5*r?5*r:n>=2*r?2*r:r;},
   _update:function(){
     var maxW=this.options.maxWidth,map=this._map;
@@ -635,10 +648,8 @@ document.getElementById('nom-search').addEventListener('change',function(){
 });
 
 var _visitedOnly=false;
-async function toggleVisitedFilter(){
-  _visitedOnly=!_visitedOnly;
-  var btn=document.getElementById('btn-visited');
-  if(btn){ btn.textContent=_visitedOnly?'全件':'既飲'; btn.classList.toggle('on',_visitedOnly); }
+async function onVisitedSelChange(val){
+  _visitedOnly=(val==='visited');
   if(_visitedOnly && !_memberNomsLoaded && _currentUser){
     var loading=document.getElementById('map-loading');
     if(loading){ loading.textContent='データ抽出中...'; loading.style.display='block'; }
