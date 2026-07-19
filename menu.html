@@ -59,7 +59,8 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
 .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;}
 .toolbar input[type=text],.toolbar select{padding:7px 10px;border:1px solid var(--cream3);border-radius:8px;background:#fff;color:var(--ink);font-size:13px;font-family:var(--sans);}
 .toolbar .tsearch{flex:1;min-width:150px;}
-.tcount{font-size:11px;color:var(--ink3);margin-left:auto;white-space:nowrap;}
+.tcount{font-size:12px;color:var(--ink2);font-weight:600;white-space:nowrap;}
+.list-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:0 2px 8px;}
 
 /* ボトル一覧（1ボトル1行） */
 .blist{display:flex;flex-direction:column;background:#fff;border:1px solid var(--cream3);border-radius:12px;overflow:hidden;}
@@ -73,10 +74,27 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
 .babv{flex-shrink:0;font-family:var(--mono);font-size:11px;color:var(--ink3);white-space:nowrap;}
 .bp{flex-shrink:0;font-family:var(--mono);font-size:14px;font-weight:700;color:var(--ink);white-space:nowrap;min-width:52px;text-align:right;}
 .bp.none{font-size:11px;color:var(--ink3);font-weight:400;}
-.price-note{font-size:11px;color:var(--ink3);margin:0 2px 8px;}
+.price-note{font-size:11px;color:var(--ink3);text-align:right;}
 .empty{text-align:center;color:var(--ink3);padding:40px 0;font-size:13px;}
 .soon-box{text-align:center;color:var(--ink3);padding:48px 16px;font-size:14px;}
 .soon-box .si{font-size:40px;margin-bottom:10px;}
+
+/* 蒸留所一覧 */
+.dlist{display:flex;flex-direction:column;background:#fff;border:1px solid var(--cream3);border-radius:12px;overflow:hidden;}
+.drow{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--cream2);cursor:pointer;}
+.drow:last-child{border-bottom:none;}
+.drow:active{background:var(--cream2);}
+.dinfo{flex:1;min-width:0;}
+.dname{display:block;font-size:15px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dnom{display:block;font-size:11px;color:var(--ink3);font-family:var(--mono);margin-top:1px;}
+.dcount{flex-shrink:0;font-size:12px;color:var(--gold-d);font-weight:600;white-space:nowrap;}
+.dchev{flex-shrink:0;font-size:18px;color:var(--ink3);}
+/* 蒸留所詳細（ブランド別） */
+.dist-detail-head{margin-bottom:14px;}
+.dist-detail-name{font-family:var(--serif);font-size:20px;color:var(--ink);}
+.dist-detail-nom{font-size:12px;color:var(--ink3);font-family:var(--mono);margin-top:2px;}
+.brand-group{margin-bottom:16px;}
+.brand-head{font-size:14px;font-weight:700;color:var(--gold-d);letter-spacing:.02em;padding:4px 2px 6px;border-bottom:2px solid var(--cream3);margin-bottom:6px;}
 </style>
 </head>
 <body>
@@ -122,6 +140,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
         <select id="f-class"><option value="">全クラス</option></select>
         <select id="f-sort">
           <option value="name">名前</option>
+          <option value="class">クラス順</option>
           <option value="nom">NOM</option>
           <option value="price">価格</option>
           <option value="abv">度数</option>
@@ -130,11 +149,28 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
           <option value="asc">↑ 昇順</option>
           <option value="desc">↓ 降順</option>
         </select>
-        <span class="tcount" id="teq-count"></span>
       </div>
-      <div class="price-note">※ 価格はすべて10ml単位です</div>
+      <div class="list-head">
+        <span class="tcount" id="teq-count"></span>
+        <span class="price-note">※ 価格はすべて10ml単位です</span>
+      </div>
       <div class="blist" id="teq-list"><div class="empty">読み込み中…</div></div>
     </div>
+    <!-- 蒸留所モード -->
+    <div id="teq-dist-wrap" style="display:none;">
+      <div id="dist-list-view">
+        <div class="toolbar">
+          <input type="text" class="tsearch" id="dq" placeholder="蒸留所名・NOMで検索…">
+        </div>
+        <div class="list-head"><span class="tcount" id="dist-count"></span></div>
+        <div class="dlist" id="dist-list"></div>
+      </div>
+      <div id="dist-detail-view" style="display:none;">
+        <button class="crumb-back" id="dist-back" style="margin-bottom:12px;">← 蒸留所一覧へ</button>
+        <div id="dist-detail"></div>
+      </div>
+    </div>
+
     <!-- 準備中モード -->
     <div id="teq-soon" style="display:none;">
       <div class="soon-box"><div class="si">🚧</div><div id="teq-soon-label">準備中</div><div style="font-size:12px;margin-top:6px;">この表示モードは近日公開予定です。</div></div>
@@ -176,7 +212,7 @@ var CATEGORIES=[
 ];
 
 // データキャッシュ
-var bottles=[], brandMap={}, classMap={};
+var bottles=[], brandMap={}, classMap={}, distMap={};
 
 auth.onAuthStateChanged(function(user){
   if(user){
@@ -194,10 +230,12 @@ function loadData(){
   Promise.all([
     db.collection('bottleData').get(),
     db.collection('brands').get().catch(function(){return {docs:[]};}),
-    db.collection('classes').get().catch(function(){return {docs:[]};})
+    db.collection('classes').get().catch(function(){return {docs:[]};}),
+    db.collection('distilleries').get().catch(function(){return {docs:[]};})
   ]).then(function(res){
     brandMap={}; res[1].docs.forEach(function(d){ brandMap[d.id]=d.data(); });
     classMap={}; res[2].docs.forEach(function(d){ classMap[d.id]=d.data(); });
+    distMap={}; res[3].docs.forEach(function(d){ distMap[d.id]=d.data(); });
     // 掲載対象: home_order と同じく visibility が 0/false/未設定 のものを表示
     bottles=res[0].docs.map(function(d){return Object.assign({id:d.id},d.data());})
       .filter(function(b){ var v=b.visibility; return v==='0'||v===0||v===false||v===undefined||v===null; });
@@ -286,14 +324,18 @@ document.querySelectorAll('#teq-subnav button').forEach(function(btn){
 });
 function setTeqMode(mode){
   document.querySelectorAll('#teq-subnav button').forEach(function(b){ b.classList.toggle('on', b.dataset.mode===mode); });
-  var isList=(mode==='list');
+  var isList=(mode==='list'), isDist=(mode==='distillery');
   document.getElementById('teq-list-wrap').style.display=isList?'':'none';
-  document.getElementById('teq-soon').style.display=isList?'none':'';
-  if(!isList){
-    var lbl={distillery:'蒸留所メニュー',brand:'ブランドメニュー',map:'地図メニュー'}[mode]||'準備中';
+  document.getElementById('teq-dist-wrap').style.display=isDist?'':'none';
+  document.getElementById('teq-soon').style.display=(isList||isDist)?'none':'';
+  if(isDist){ backToDistList(); renderDistList(); }
+  if(!isList&&!isDist){
+    var lbl={brand:'ブランドメニュー',map:'地図メニュー'}[mode]||'準備中';
     document.getElementById('teq-soon-label').textContent=lbl;
   }
 }
+document.getElementById('dq').addEventListener('input',renderDistList);
+document.getElementById('dist-back').addEventListener('click',backToDistList);
 
 /* ── テキーラ一覧 ── */
 function buildClassFilter(){
@@ -330,25 +372,91 @@ function renderTeqList(){
     if(sort==='nom') c=String(nomOf(a)).localeCompare(String(nomOf(b)),undefined,{numeric:true});
     else if(sort==='price') c=price10(a)-price10(b);
     else if(sort==='abv') c=(parseFloat(a.abv)||0)-(parseFloat(b.abv)||0);
+    else if(sort==='class'){
+      var ra=CLS_ORDER.indexOf(clsLetterOf(a)); if(ra<0)ra=99;
+      var rb=CLS_ORDER.indexOf(clsLetterOf(b)); if(rb<0)rb=99;
+      c=ra-rb; if(c===0) c=nameOf(a).localeCompare(nameOf(b),'ja');
+    }
     else c=nameOf(a).localeCompare(nameOf(b),'ja');
     return c*dir;
   });
   document.getElementById('teq-count').textContent=list.length+' 種';
   if(!list.length){ document.getElementById('teq-list').innerHTML='<div class="empty">該当するボトルがありません</div>'; return; }
-  document.getElementById('teq-list').innerHTML=list.map(function(b){
-    var p=price10(b), letter=clsLetterOf(b), nom=nomOf(b), abv=b.abv, brand=brandOf(b);
-    var bg=CLS_COLOR[letter]||'#fff';
-    var meta=[brand, nom?('NOM'+nom):''].filter(Boolean).join(' / ');
-    return '<div class="brow" style="background:'+bg+'">'
-      +'<div class="binfo">'
-        +(letter?'<span class="clschip" title="'+esc(CLS_NAME[letter])+'">'+letter+'</span>':'')
-        +'<span class="bn">'+esc(nameOf(b))+'</span>'
-        +(meta?'<span class="bmeta">'+esc(meta)+'</span>':'')
-      +'</div>'
-      +(abv?'<span class="babv">'+esc(abv)+'%</span>':'')
-      +(p>0?'<div class="bp">'+yen(p)+'</div>':'<div class="bp none">—</div>')
+  document.getElementById('teq-list').innerHTML=list.map(function(b){ return bottleRowHtml(b,true); }).join('');
+}
+
+// ボトル1行のHTML。showMeta=true でブランド/NOMを表示（蒸留所別ではブランドが見出しなので抑制）
+function bottleRowHtml(b, showMeta){
+  var p=price10(b), letter=clsLetterOf(b), nom=nomOf(b), abv=b.abv;
+  var bg=CLS_COLOR[letter]||'#fff';
+  var meta=showMeta?[brandOf(b), nom?('NOM'+nom):''].filter(Boolean).join(' / '):'';
+  return '<div class="brow" style="background:'+bg+'">'
+    +'<div class="binfo">'
+      +(letter?'<span class="clschip" title="'+esc(CLS_NAME[letter])+'">'+letter+'</span>':'')
+      +'<span class="bn">'+esc(nameOf(b))+'</span>'
+      +(meta?'<span class="bmeta">'+esc(meta)+'</span>':'')
+    +'</div>'
+    +(abv?'<span class="babv">'+esc(abv)+'%</span>':'')
+    +(p>0?'<div class="bp">'+yen(p)+'</div>':'<div class="bp none">—</div>')
+  +'</div>';
+}
+
+/* ── 蒸留所メニュー ── */
+function distNameOf(nom){ var m=distMap[nom]; return m?(m.name||m.nameJa||m.distilleryEs||''):''; }
+
+function renderDistList(){
+  var groups={};
+  bottles.forEach(function(b){ var n=nomOf(b); if(!n) return; (groups[n]=groups[n]||[]).push(b); });
+  var noms=Object.keys(groups).sort(function(a,b){return a.localeCompare(b,undefined,{numeric:true});});
+  var dq=(document.getElementById('dq').value||'').toLowerCase().trim();
+  if(dq){
+    noms=noms.filter(function(n){
+      if(/^\d+$/.test(dq)) return n.indexOf(dq)>=0;
+      return distNameOf(n).toLowerCase().indexOf(dq)>=0;
+    });
+  }
+  document.getElementById('dist-count').textContent=noms.length+' 蒸留所';
+  if(!noms.length){ document.getElementById('dist-list').innerHTML='<div class="empty">該当する蒸留所がありません</div>'; return; }
+  document.getElementById('dist-list').innerHTML=noms.map(function(n){
+    var nm=distNameOf(n)||'(名称未登録)';
+    return '<div class="drow" onclick="openDistillery(\''+n+'\')">'
+      +'<div class="dinfo"><span class="dname">'+esc(nm)+'</span><span class="dnom">NOM '+esc(n)+'</span></div>'
+      +'<span class="dcount">'+groups[n].length+'種</span>'
+      +'<span class="dchev">›</span>'
     +'</div>';
   }).join('');
+}
+
+function openDistillery(nom){
+  document.getElementById('dist-list-view').style.display='none';
+  document.getElementById('dist-detail-view').style.display='';
+  var mine=bottles.filter(function(b){ return nomOf(b)===nom; });
+  // ブランドでグループ化
+  var bg={};
+  mine.forEach(function(b){ var bid=brandIdOf(b); (bg[bid]=bg[bid]||[]).push(b); });
+  var brandIds=Object.keys(bg).sort();
+  var nm=distNameOf(nom)||'(名称未登録)';
+  var html='<div class="dist-detail-head"><div class="dist-detail-name">'+esc(nm)+'</div><div class="dist-detail-nom">NOM '+esc(nom)+' ／ '+mine.length+'種</div></div>';
+  brandIds.forEach(function(bid){
+    var bm=brandMap[bid];
+    var bname=bm?(bm.brandJa||bm.brandEs||''):'';
+    // ブランド内はクラス順→名前
+    var items=bg[bid].slice().sort(function(a,b){
+      var ra=CLS_ORDER.indexOf(clsLetterOf(a)); if(ra<0)ra=99;
+      var rb=CLS_ORDER.indexOf(clsLetterOf(b)); if(rb<0)rb=99;
+      return ra-rb||nameOf(a).localeCompare(nameOf(b),'ja');
+    });
+    html+='<div class="brand-group">'
+      +'<div class="brand-head">'+esc(bname||'(ブランド未登録)')+'</div>'
+      +'<div class="blist">'+items.map(function(b){ return bottleRowHtml(b,false); }).join('')+'</div>'
+    +'</div>';
+  });
+  document.getElementById('dist-detail').innerHTML=html;
+  window.scrollTo(0,0);
+}
+function backToDistList(){
+  document.getElementById('dist-detail-view').style.display='none';
+  document.getElementById('dist-list-view').style.display='';
 }
 </script>
 </body>
