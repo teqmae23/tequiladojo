@@ -223,6 +223,12 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
     </div>
     <div id="today-date" style="font-size:12px;color:var(--ink3);margin-bottom:12px;text-align:right"></div>
 
+    <div id="bulk-bar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px;padding:8px 10px;background:var(--cream2);border-radius:var(--r)">
+      <span style="font-size:11px;color:var(--ink3);flex-shrink:0">選択：</span>
+      <button class="btn bp sm" id="btn-bulk-checkout" disabled onclick="openBulkCheckout()" style="padding:5px 10px;font-size:12px">💳 会計（<span id="selected-count">0</span>）</button>
+      <button class="btn bs sm" id="btn-bulk-checkouttime" disabled onclick="bulkCheckoutTime()" style="padding:5px 10px;font-size:12px;color:var(--teal);border-color:var(--teal)">🚪 退場（<span id="selected-count2">0</span>）</button>
+    </div>
+
     <div class="visitor-list" id="visitor-list">
       <div class="loading">読み込み中...</div>
     </div>
@@ -794,6 +800,7 @@ function renderVisCard(v, status){
       +'<span style="font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0">退'+timeStr+'</span>'
       +'<span style="font-size:13px;font-weight:500;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+'</span>'
       +'<span style="font-size:12px;font-family:var(--mono);color:var(--ink);white-space:nowrap;flex-shrink:0">¥'+totalAmt.toLocaleString()+'</span>'
+      +'<button class="btn bs sm" onclick="reprintReceipt(\''+v.id+'\')" style="padding:3px 7px;font-size:10px;flex-shrink:0">🖨</button>'
       +'<button class="btn bs sm" data-orders-visit="'+v.id+'" data-orders-name="'+escHtml(name)+'" style="padding:3px 7px;font-size:10px;flex-shrink:0">詳細</button>'
       +'</div>'
       +'</div>';
@@ -802,11 +809,15 @@ function renderVisCard(v, status){
   var timeStr2=fmtHHMM(v.visitTime||'');
   var gcClass=v.checkinGroupId&&(window._groupColorMap||{})[v.checkinGroupId]?' '+(window._groupColorMap||{})[v.checkinGroupId]:'';
   var actionBtn=isPaid
-    ?'<button class="btn bs sm" data-checkout-time="'+v.id+'" style="padding:3px 7px;font-size:10px;color:var(--teal);border-color:var(--teal);flex-shrink:0">🚪退場</button>'
+    ?'<button class="btn bs sm" onclick="reprintReceipt(\''+v.id+'\')" style="padding:3px 7px;font-size:10px;flex-shrink:0">🖨</button>'
+      +'<button class="btn bs sm" data-checkout-time="'+v.id+'" style="padding:3px 7px;font-size:10px;color:var(--teal);border-color:var(--teal);flex-shrink:0">🚪退場</button>'
     :'<button class="btn bs sm" data-checkout-visit="'+v.id+'" style="padding:3px 7px;font-size:10px;flex-shrink:0">💳会計</button>';
+
+  var chk='<input type="checkbox" class="vis-select-chk" data-visit-id="'+v.id+'" data-status="'+(isPaid?'paid':'active')+'" onchange="onVisitCheckChange()" style="width:16px;height:16px;flex-shrink:0;margin:0;cursor:pointer">';
 
   return '<div class="vis-card'+gcClass+'" style="padding:0">'
     +'<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;min-width:0">'
+    +chk
     +'<span style="font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0">'+timeStr2+'</span>'
     +'<span style="font-size:14px;font-weight:500;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+'</span>'
     +(isPaid?'<span class="badge" style="background:#e8b84b;color:#5a3800;font-size:9px;flex-shrink:0">会計済</span>':'')
@@ -2211,6 +2222,24 @@ function bulkCheckoutTime(){
 // ── レシート印刷（ESC/POS Bluetooth） ──────────────────────────
 var receiptDevice = null;
 var receiptCharacteristic = null;
+
+// 会計済・退場済の来場に対してレシートを再発行する
+function reprintReceipt(visitId){
+  var v=cache.visits.find(function(x){return x.id===visitId;})
+    ||(cache.allVisits||[]).find(function(x){return x.id===visitId;});
+  if(!v){ toast('来場データが見つかりません','err'); return; }
+  toast('レシートを準備中...','inf');
+  db.collection('orders').get().then(function(snap){
+    var all=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    var mine=all.filter(function(o){ return (o.visitKey||o.visitId)===visitId; });
+    // buildReceiptData は cache.orders / co-grand-total を参照するため一時的に整える
+    cache.orders=mine.concat((cache.orders||[]).filter(function(o){ return (o.visitKey||o.visitId)!==visitId; }));
+    bulkCheckoutVisitKeys=[visitId];
+    var total=(typeof v.amount==='number')?v.amount:calcAmount(mine);
+    var gt=g('co-grand-total'); if(gt) gt.textContent='¥'+total.toLocaleString();
+    printReceipt('all');
+  }).catch(function(e){ toast('注文読込失敗: '+e.message,'err'); });
+}
 
 async function printReceipt(mode){
   // bottleDataを取得してキャッシュ
