@@ -490,3 +490,39 @@ exports.adminUpdateEmail = functions.region('asia-northeast1')
 
     return { ok: true };
   });
+
+// ── 孤児Auth検出 ──────────────────────────────────────────────────
+// membersドキュメントに紐づかない（＝ログインできるのに会員マスタに存在しない）
+// Firebase Authアカウントを洗い出す。ハード削除でAuthだけ残ったケース等の調査用。
+exports.listOrphanAuthUsers = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    if (!context.auth || context.auth.token.role !== 'owner') {
+      throw new functions.https.HttpsError('permission-denied', 'オーナー権限が必要です');
+    }
+    // members の authUid を収集（削除済みも含めて突合する）
+    const memSnap = await db.collection('members').get();
+    const linkedUids = new Set();
+    memSnap.forEach((d) => { const u = d.data().authUid; if (u) linkedUids.add(u); });
+
+    const orphans = [];
+    let totalAuth = 0;
+    let pageToken;
+    do {
+      const res = await auth.listUsers(1000, pageToken);
+      res.users.forEach((u) => {
+        totalAuth++;
+        if (!linkedUids.has(u.uid)) {
+          orphans.push({
+            uid: u.uid,
+            email: u.email || null,
+            disabled: !!u.disabled,
+            creationTime: (u.metadata && u.metadata.creationTime) || null,
+            lastSignInTime: (u.metadata && u.metadata.lastSignInTime) || null,
+          });
+        }
+      });
+      pageToken = res.pageToken;
+    } while (pageToken);
+
+    return { orphans, totalAuth, totalMembers: memSnap.size, linkedCount: linkedUids.size };
+  });
