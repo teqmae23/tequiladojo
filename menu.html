@@ -66,12 +66,14 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
 .brow{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--cream2);}
 .brow:last-child{border-bottom:none;}
 .binfo{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.clschip{display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;background:#f3e3c0;color:var(--gold-d);margin-right:6px;vertical-align:middle;}
+.clschip{display:inline-block;font-size:10px;font-weight:700;min-width:16px;text-align:center;padding:1px 5px;border-radius:4px;background:#fff;color:var(--gold-d);border:1px solid rgba(122,86,16,.35);margin-right:6px;vertical-align:middle;}
+.brow .bmeta{background:transparent;}
 .bn{font-size:14px;font-weight:600;color:var(--ink);}
 .bmeta{font-size:11px;color:var(--ink3);margin-left:6px;}
-.bp{flex-shrink:0;font-family:var(--mono);font-size:14px;font-weight:700;color:var(--ink);white-space:nowrap;}
-.bp small{font-size:9px;color:var(--ink3);font-weight:400;}
+.babv{flex-shrink:0;font-family:var(--mono);font-size:11px;color:var(--ink3);white-space:nowrap;}
+.bp{flex-shrink:0;font-family:var(--mono);font-size:14px;font-weight:700;color:var(--ink);white-space:nowrap;min-width:52px;text-align:right;}
 .bp.none{font-size:11px;color:var(--ink3);font-weight:400;}
+.price-note{font-size:11px;color:var(--ink3);margin:0 2px 8px;}
 .empty{text-align:center;color:var(--ink3);padding:40px 0;font-size:13px;}
 .soon-box{text-align:center;color:var(--ink3);padding:48px 16px;font-size:14px;}
 .soon-box .si{font-size:40px;margin-bottom:10px;}
@@ -127,6 +129,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
         </select>
         <span class="tcount" id="teq-count"></span>
       </div>
+      <div class="price-note">※ 価格はすべて10ml単位です</div>
       <div class="blist" id="teq-list"><div class="empty">読み込み中…</div></div>
     </div>
     <!-- 準備中モード -->
@@ -192,9 +195,9 @@ function loadData(){
   ]).then(function(res){
     brandMap={}; res[1].docs.forEach(function(d){ brandMap[d.id]=d.data(); });
     classMap={}; res[2].docs.forEach(function(d){ classMap[d.id]=d.data(); });
-    // 提供中(serving!=1)のみ
+    // 掲載対象: home_order と同じく visibility が 0/false/未設定 のものを表示
     bottles=res[0].docs.map(function(d){return Object.assign({id:d.id},d.data());})
-      .filter(function(b){ return Number(b.serving||0)!==1; });
+      .filter(function(b){ var v=b.visibility; return v==='0'||v===0||v===false||v===undefined||v===null; });
     buildClassFilter();
     renderTeqList();
   }).catch(function(e){
@@ -210,12 +213,20 @@ function brandOf(b){
   var m=brandMap[b.brandId||b.brand];
   return m?(m.ja||m.es||m.name||''):'';
 }
-function classIdOf(b){ return b.classId||b.class||(b.id?String(b.id).slice(7,9):''); }
-function classOf(b){
-  var m=classMap[classIdOf(b)];
-  return m?(m.cls||m.abbr||''):'';
+// クラス: classId は2桁（カテゴリ+クラス）。2桁目でB/J/R/A/X判定（home_order準拠）
+var CLS_MAP={B:'1',J:'2',R:'3',A:'4',X:'5'};
+var CLS_ORDER=['B','J','R','A','X'];
+var CLS_NAME={B:'Blanco',J:'Joven/Gold',R:'Reposado',A:'Añejo',X:'Extra Añejo'};
+var CLS_COLOR={B:'#fcfbf7',J:'#fbf1d5',R:'#f5e6c0',A:'#eed7a8',X:'#e3c48f'};
+function clsDigit(b){
+  var cid=b.classId!=null?String(b.classId):(b.id?String(b.id).slice(7,9):'');
+  return cid.length>=2?cid.charAt(1):(cid.length===1?cid:'');
 }
-function nomOf(b){ return b.nom||''; }
+function clsLetterOf(b){
+  var d=clsDigit(b);
+  return CLS_ORDER.find(function(k){return CLS_MAP[k]===d;})||'';
+}
+function nomOf(b){ return b.nom==null?'':String(b.nom); }
 function nameOf(b){ return b.bottleEs||b.bottleEn||b.bottleJa||b.name||'(名称未設定)'; }
 // 10ml単価: bottleData の price が 10ml 単価（フォールバック unitPrice / price10）
 function price10(b){ return parseFloat(b.price!=null?b.price:(b.unitPrice!=null?b.unitPrice:b.price10))||0; }
@@ -277,10 +288,10 @@ function setTeqMode(mode){
 /* ── テキーラ一覧 ── */
 function buildClassFilter(){
   var used={};
-  bottles.forEach(function(b){ var c=classOf(b); if(c) used[c]=1; });
+  bottles.forEach(function(b){ var l=clsLetterOf(b); if(l) used[l]=1; });
   var sel=document.getElementById('f-class');
-  sel.innerHTML='<option value="">全クラス</option>'+Object.keys(used).sort().map(function(c){
-    return '<option value="'+esc(c)+'">'+esc(c)+'</option>';
+  sel.innerHTML='<option value="">全クラス</option>'+CLS_ORDER.filter(function(l){return used[l];}).map(function(l){
+    return '<option value="'+l+'">'+esc(l+' — '+CLS_NAME[l])+'</option>';
   }).join('');
 }
 ['q','f-class','f-sort'].forEach(function(id){
@@ -292,10 +303,15 @@ function renderTeqList(){
   var fc=document.getElementById('f-class').value;
   var sort=document.getElementById('f-sort').value;
   var list=bottles.filter(function(b){
-    if(fc && classOf(b)!==fc) return false;
+    if(fc && clsLetterOf(b)!==fc) return false;
     if(q){
-      var hay=(nameOf(b)+' '+(b.bottleJa||'')+' '+brandOf(b)+' '+nomOf(b)).toLowerCase();
-      if(hay.indexOf(q)<0) return false;
+      if(/^\d+$/.test(q)){
+        // 数字はNOMで絞り込み（前方・部分一致）
+        if(nomOf(b).indexOf(q)<0) return false;
+      } else {
+        var hay=(nameOf(b)+' '+(b.bottleJa||'')+' '+brandOf(b)).toLowerCase();
+        if(hay.indexOf(q)<0) return false;
+      }
     }
     return true;
   });
@@ -309,15 +325,17 @@ function renderTeqList(){
   document.getElementById('teq-count').textContent=list.length+' 種';
   if(!list.length){ document.getElementById('teq-list').innerHTML='<div class="empty">該当するボトルがありません</div>'; return; }
   document.getElementById('teq-list').innerHTML=list.map(function(b){
-    var p=price10(b), cls=classOf(b), nom=nomOf(b), abv=b.abv, brand=brandOf(b);
-    var meta=[brand, nom?('NOM'+nom):'', abv?(abv+'%'):''].filter(Boolean).join(' / ');
-    return '<div class="brow">'
+    var p=price10(b), letter=clsLetterOf(b), nom=nomOf(b), abv=b.abv, brand=brandOf(b);
+    var bg=CLS_COLOR[letter]||'#fff';
+    var meta=[brand, nom?('NOM'+nom):''].filter(Boolean).join(' / ');
+    return '<div class="brow" style="background:'+bg+'">'
       +'<div class="binfo">'
-        +(cls?'<span class="clschip">'+esc(cls)+'</span>':'')
+        +(letter?'<span class="clschip" title="'+esc(CLS_NAME[letter])+'">'+letter+'</span>':'')
         +'<span class="bn">'+esc(nameOf(b))+'</span>'
         +(meta?'<span class="bmeta">'+esc(meta)+'</span>':'')
       +'</div>'
-      +(p>0?'<div class="bp">'+yen(p)+'<small> /'+SERVING_ML+'ml</small></div>':'<div class="bp none">—</div>')
+      +(abv?'<span class="babv">'+esc(abv)+'%</span>':'')
+      +(p>0?'<div class="bp">'+yen(p)+'</div>':'<div class="bp none">—</div>')
     +'</div>';
   }).join('');
 }
