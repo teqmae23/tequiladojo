@@ -94,7 +94,18 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
 .dist-detail-name{font-family:var(--serif);font-size:20px;color:var(--ink);}
 .dist-detail-nom{font-size:12px;color:var(--ink3);font-family:var(--mono);margin-top:2px;}
 .brand-group{margin-bottom:16px;}
-.brand-head{font-size:14px;font-weight:700;color:var(--gold-d);letter-spacing:.02em;padding:4px 2px 6px;border-bottom:2px solid var(--cream3);margin-bottom:6px;}
+.brand-head{display:flex;align-items:center;justify-content:space-between;font-size:14px;font-weight:700;color:var(--gold-d);letter-spacing:.02em;padding:4px 2px 6px;border-bottom:2px solid var(--cream3);margin-bottom:6px;cursor:pointer;}
+.brand-head-more{font-size:11px;color:var(--ink3);font-weight:400;}
+/* ブランド詳細 */
+.brand-detail-head{background:#fff;border:1px solid var(--cream3);border-radius:12px;padding:14px 16px;margin-bottom:14px;}
+.brand-detail-es{font-family:var(--serif);font-size:20px;color:var(--ink);}
+.brand-detail-ja{font-size:13px;color:var(--ink3);margin-top:2px;}
+.brand-badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
+.bbadge{font-size:11px;background:var(--cream2);color:var(--ink2);border-radius:6px;padding:3px 9px;}
+.brand-dist{display:inline-flex;align-items:center;gap:4px;margin-top:12px;font-size:13px;color:var(--gold-d);cursor:pointer;}
+.brand-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+.ext-link{font-size:12px;color:var(--gold-d);text-decoration:none;border:1px solid var(--cream3);border-radius:8px;padding:5px 10px;}
+.ext-link:active{background:var(--cream2);}
 </style>
 </head>
 <body>
@@ -168,6 +179,21 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
       <div id="dist-detail-view" style="display:none;">
         <button class="crumb-back" id="dist-back" style="margin-bottom:12px;">← 蒸留所一覧へ</button>
         <div id="dist-detail"></div>
+      </div>
+    </div>
+
+    <!-- ブランドモード -->
+    <div id="teq-brand-wrap" style="display:none;">
+      <div id="brand-list-view">
+        <div class="toolbar">
+          <input type="text" class="tsearch" id="bq" placeholder="ブランド名・蒸留所・NOMで検索…">
+        </div>
+        <div class="list-head"><span class="tcount" id="brand-count"></span></div>
+        <div class="dlist" id="brand-list"></div>
+      </div>
+      <div id="brand-detail-view" style="display:none;">
+        <button class="crumb-back" id="brand-back" style="margin-bottom:12px;">← ブランド一覧へ</button>
+        <div id="brand-detail"></div>
       </div>
     </div>
 
@@ -324,18 +350,21 @@ document.querySelectorAll('#teq-subnav button').forEach(function(btn){
 });
 function setTeqMode(mode){
   document.querySelectorAll('#teq-subnav button').forEach(function(b){ b.classList.toggle('on', b.dataset.mode===mode); });
-  var isList=(mode==='list'), isDist=(mode==='distillery');
+  var isList=(mode==='list'), isDist=(mode==='distillery'), isBrand=(mode==='brand');
   document.getElementById('teq-list-wrap').style.display=isList?'':'none';
   document.getElementById('teq-dist-wrap').style.display=isDist?'':'none';
-  document.getElementById('teq-soon').style.display=(isList||isDist)?'none':'';
+  document.getElementById('teq-brand-wrap').style.display=isBrand?'':'none';
+  document.getElementById('teq-soon').style.display=(isList||isDist||isBrand)?'none':'';
   if(isDist){ backToDistList(); renderDistList(); }
-  if(!isList&&!isDist){
-    var lbl={brand:'ブランドメニュー',map:'地図メニュー'}[mode]||'準備中';
-    document.getElementById('teq-soon-label').textContent=lbl;
+  if(isBrand){ backToBrandList(); renderBrandList(); }
+  if(!isList&&!isDist&&!isBrand){
+    document.getElementById('teq-soon-label').textContent='地図メニュー';
   }
 }
 document.getElementById('dq').addEventListener('input',renderDistList);
 document.getElementById('dist-back').addEventListener('click',backToDistList);
+document.getElementById('bq').addEventListener('input',renderBrandList);
+document.getElementById('brand-back').addEventListener('click',backToBrandList);
 
 /* ── テキーラ一覧 ── */
 function buildClassFilter(){
@@ -402,7 +431,7 @@ function bottleRowHtml(b, showMeta){
 }
 
 /* ── 蒸留所メニュー ── */
-function distNameOf(nom){ var m=distMap[nom]; return m?(m.name||m.nameJa||m.distilleryEs||''):''; }
+function distNameOf(nom){ var m=distMap[nom]; return m?(m.nomJa||m.nomEs||m.name||''):''; }
 
 function renderDistList(){
   var groups={};
@@ -447,7 +476,7 @@ function openDistillery(nom){
       return ra-rb||nameOf(a).localeCompare(nameOf(b),'ja');
     });
     html+='<div class="brand-group">'
-      +'<div class="brand-head">'+esc(bname||'(ブランド未登録)')+'</div>'
+      +'<div class="brand-head" onclick="openBrand(\''+esc(bid)+'\')">'+esc(bname||'(ブランド未登録)')+'<span class="brand-head-more">詳細 ›</span></div>'
       +'<div class="blist">'+items.map(function(b){ return bottleRowHtml(b,false); }).join('')+'</div>'
     +'</div>';
   });
@@ -458,6 +487,77 @@ function backToDistList(){
   document.getElementById('dist-detail-view').style.display='none';
   document.getElementById('dist-list-view').style.display='';
 }
+
+/* ── ブランドメニュー ── */
+var BRAND_STATUS={0:'稼働中',1:'終売',2:'移転'};
+var BRAND_TYPE={0:'蒸留所ブランド',1:'委託ブランド'};
+function brandNameOf(bid){ var m=brandMap[bid]; return m?(m.brandJa||m.brandEs||''):''; }
+
+function renderBrandList(){
+  var groups={};
+  bottles.forEach(function(b){ var id=brandIdOf(b); if(!id) return; (groups[id]=groups[id]||[]).push(b); });
+  var ids=Object.keys(groups);
+  var bq=(document.getElementById('bq').value||'').toLowerCase().trim();
+  ids.sort(function(a,b){ return (brandNameOf(a)||a).localeCompare(brandNameOf(b)||b,'ja'); });
+  if(bq){
+    ids=ids.filter(function(id){
+      var hay=((brandNameOf(id))+' '+(brandMap[id]?brandMap[id].brandEs||'':'')+' '+distNameOf(String(id).slice(0,4))+' '+String(id).slice(0,4)).toLowerCase();
+      return hay.indexOf(bq)>=0;
+    });
+  }
+  document.getElementById('brand-count').textContent=ids.length+' ブランド';
+  if(!ids.length){ document.getElementById('brand-list').innerHTML='<div class="empty">該当するブランドがありません</div>'; return; }
+  document.getElementById('brand-list').innerHTML=ids.map(function(id){
+    var nm=brandNameOf(id)||'(名称未登録)';
+    var dnm=distNameOf(String(id).slice(0,4));
+    return '<div class="drow" onclick="openBrand(\''+esc(id)+'\')">'
+      +'<div class="dinfo"><span class="dname">'+esc(nm)+'</span><span class="dnom">'+esc(dnm||('NOM '+String(id).slice(0,4)))+'</span></div>'
+      +'<span class="dcount">'+groups[id].length+'種</span>'
+      +'<span class="dchev">›</span>'
+    +'</div>';
+  }).join('');
+}
+
+function openBrand(brandId){
+  setTeqMode('brand');
+  document.getElementById('brand-list-view').style.display='none';
+  document.getElementById('brand-detail-view').style.display='';
+  var m=brandMap[brandId]||{};
+  var nom=String(brandId).slice(0,4);
+  var mine=bottles.filter(function(b){ return brandIdOf(b)===brandId; }).sort(function(a,b){
+    var ra=CLS_ORDER.indexOf(clsLetterOf(a)); if(ra<0)ra=99;
+    var rb=CLS_ORDER.indexOf(clsLetterOf(b)); if(rb<0)rb=99;
+    return ra-rb||nameOf(a).localeCompare(nameOf(b),'ja');
+  });
+  var html='<div class="brand-detail-head">';
+  html+='<div class="brand-detail-es">'+esc(m.brandEs||brandNameOf(brandId)||'(名称未登録)')+'</div>';
+  if(m.brandJa) html+='<div class="brand-detail-ja">'+esc(m.brandJa)+'</div>';
+  html+='<div class="brand-badges">';
+  html+='<span class="bbadge">'+esc(BRAND_TYPE[String(m.brandType||'0')]||'—')+'</span>';
+  html+='<span class="bbadge">'+esc(BRAND_STATUS[String(m.brandStatus||'0')]||'—')+'</span>';
+  if(m.foundedYear) html+='<span class="bbadge">創設 '+esc(String(m.foundedYear))+'年</span>';
+  html+='</div>';
+  // 蒸留所リンク
+  var dnm=distNameOf(nom);
+  html+='<div class="brand-dist" onclick="openDistilleryFromBrand(\''+esc(nom)+'\')">🏭 '+esc(dnm||('NOM '+nom))+' <span class="dchev">›</span></div>';
+  // 外部リンク
+  var links='';
+  if(m.infoUrl) links+='<a class="ext-link" href="'+esc(m.infoUrl)+'" target="_blank" rel="noopener">🔗 詳細情報</a>';
+  if(m.ammUrl) links+='<a class="ext-link" href="'+esc(m.ammUrl)+'" target="_blank" rel="noopener">🌵 Agave Matchmaker</a>';
+  if(m.annUrl) links+='<a class="ext-link" href="'+esc(m.annUrl)+'" target="_blank" rel="noopener">📋 ANN</a>';
+  if(links) html+='<div class="brand-links">'+links+'</div>';
+  html+='</div>';
+  html+='<div class="list-head"><span class="tcount">'+mine.length+' 種</span><span class="price-note">※ 価格はすべて10ml単位です</span></div>';
+  html+='<div class="blist">'+(mine.length?mine.map(function(b){ return bottleRowHtml(b,false); }).join(''):'<div class="empty">提供中のボトルがありません</div>')+'</div>';
+  document.getElementById('brand-detail').innerHTML=html;
+  window.scrollTo(0,0);
+}
+function backToBrandList(){
+  document.getElementById('brand-detail-view').style.display='none';
+  document.getElementById('brand-list-view').style.display='';
+}
+// ブランド詳細から蒸留所メニューへ
+function openDistilleryFromBrand(nom){ setTeqMode('distillery'); openDistillery(nom); }
 </script>
 </body>
 </html>
