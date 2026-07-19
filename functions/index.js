@@ -1,10 +1,21 @@
 // firebase-functions v6ではトップレベルがv2 APIのため、v1 APIを明示的に読み込む
 const functions = require('firebase-functions/v1');
 const admin = require('firebase-admin');
+const { defineSecret } = require('firebase-functions/params');
 admin.initializeApp();
 
 const db = admin.firestore();
 const auth = admin.auth();
+
+// ── Stripe（決済） ────────────────────────────────────────────────
+// stripeWebhook / createStripeCustomer 用のシークレット。値はGCP側で設定済み。
+const stripeSecretKey = defineSecret('STRIPE_SECRET_KEY');
+const stripeWebhookSecret = defineSecret('STRIPE_WEBHOOK_SECRET');
+// StripeのPrice ID → 会員グレード対応
+const PRICE_GRADE_MAP = {
+  'price_1TUegc1PL3PJaVpo3Hc1vuH6': 1,
+  'price_1TUei41PL3PJaVpoiiQn3Or0': 2,
+};
 
 // ── roleをCustom Claimsに設定 ──────────────────────────────────
 // Firestoreのmembers/{memberId}.roleをCustom Claimsに同期する
@@ -525,4 +536,208 @@ exports.listOrphanAuthUsers = functions.region('asia-northeast1')
     } while (pageToken);
 
     return { orphans, totalAuth, totalMembers: memSnap.size, linkedCount: linkedUids.size };
+  });
+
+// ═══════════════════════════════════════════════════════════════════
+// 以下は従来 us-central1 にデプロイされている関数（Stripe決済・旧admin系）。
+// リージョン未指定のため us-central1 にデプロイされる（現状維持）。
+// ※注意: setUserRole / getStaffList の旧版（staffコレクション使用）は
+//   asia-northeast1 版（上部）が現行のため、ここには含めない。
+// ═══════════════════════════════════════════════════════════════════
+
+// ── Stripe Webhook（サブスク支払い状態を members に反映） ──
+exports.stripeWebhook = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'] })
+  .https.onRequest(async (req, res) => {
+    const stripe = require('stripe')(stripeSecretKey.value());
+    const webhookSecret = stripeWebhookSecret.value();
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.rawBody,
+        req.headers['stripe-signature'],
+        webhookSecret
+      );
+    } catch (err) {
+      return res.status(400).send('Webhook Error: ' + err.message);
+    }
+
+    const obj = event.data.object;
+
+    if (event.type === 'invoice.payment_succeeded') {
+      const cid = obj.customer;
+      const line = obj.lines.data[0];
+      const priceId = line && line.price && line.price.id;
+      const subId = obj.subscription;
+      const periodEnd = line && line.period && line.period.end;
+      const grade = PRICE_GRADE_MAP[priceId];
+      if (grade) {
+        const snap = await db.collection('members')
+          .where('stripeCustomerId', '==', cid).limit(1).get();
+        if (!snap.empty) {
+          await snap.docs[0].ref.update({
+            grade: grade,
+            stripeSubscriptionId: subId,
+            subscriptionStatus: 'active',
+            subscriptionPeriodEnd: new Date(periodEnd * 1000),
+          });
+        }
+      }
+    } else if (event.type === 'invoice.payment_failed') {
+      const cid = obj.customer;
+      const snap = await db.collection('members')
+        .where('stripeCustomerId', '==', cid).limit(1).get();
+      if (!snap.empty) {
+        await snap.docs[0].ref.update({ subscriptionStatus: 'past_due' });
+      }
+    } else if (event.type === 'customer.subscription.deleted') {
+      const cid = obj.customer;
+      const snap = await db.collection('members')
+        .where('stripeCustomerId', '==', cid).limit(1).get();
+      if (!snap.empty) {
+        await snap.docs[0].ref.update({
+          grade: 0,
+          stripeSubscriptionId: null,
+          subscriptionStatus: 'canceled',
+          subscriptionPeriodEnd: null,
+        });
+      }
+    }
+
+    res.json({ received: true });
+  });
+
+// ── 会員作成時に Stripe 顧客を作成 ──
+exports.createStripeCustomer = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .firestore.document('members/{uid}')
+  .onCreate(async (snap) => {
+    const stripe = require('stripe')(stripeSecretKey.value());
+    const data = snap.data();
+    const email = data.email || data.authEmail;
+    if (!email) return;
+    try {
+      const customer = await stripe.customers.create({
+        email: email,
+        name: data.name || '',
+      });
+      await snap.ref.update({ stripeCustomerId: customer.id });
+    } catch (err) {
+      console.error('Stripe顧客作成失敗:', err.message);
+    }
+  });
+
+// ── 会員削除時にFirebase Authアカウントも削除 ──
+// ※注意: context.params.uid は members ドキュメントID（現行モデルでは realId）で
+//   あり、Firebase AuthのUID（authUidフィールド）とは一致しない場合が多い。
+//   現状は user-not-found でスキップされることが多い（デプロイ済みの挙動を維持）。
+exports.deleteMemberAuth = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .firestore.document('members/{uid}')
+  .onDelete(async (snap, context) => {
+    const uid = context.params.uid;
+    try {
+      await admin.auth().deleteUser(uid);
+      console.log('Auth削除成功:', uid);
+    } catch (err) {
+      if (err.code === 'auth/user-not-found') {
+        console.log('Auth既に削除済み:', uid);
+      } else {
+        console.error('Auth削除失敗:', err.message);
+      }
+    }
+  });
+
+// ── authEmailからauthUidを補完するHTTPS Function（旧データ移行用） ──
+exports.fixMemberAuthUids = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onRequest(async (req, res) => {
+    if (req.query.secret !== 'tequiladojo-admin-fix') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const snap = await db.collection('members').get();
+    const results = [];
+    for (const doc of snap.docs) {
+      const d = doc.data();
+      if (d.authEmail && !d.authUid) {
+        try {
+          const userRecord = await admin.auth().getUserByEmail(d.authEmail);
+          await doc.ref.update({ authUid: userRecord.uid });
+          results.push({ id: doc.id, authEmail: d.authEmail, uid: userRecord.uid, status: 'fixed' });
+        } catch (e) {
+          results.push({ id: doc.id, authEmail: d.authEmail, status: 'error', message: e.message });
+        }
+      }
+    }
+    res.json({ fixed: results.length, results });
+  });
+
+// ── 管理者によるAuth操作（作成・削除・メール/パスワード変更） ──
+exports.adminAuthOperation = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError('unauthenticated', '認証が必要です');
+    }
+    const callerDoc = await db.collection('members')
+      .where('authUid', '==', context.auth.uid).limit(1).get();
+    if (callerDoc.empty || callerDoc.docs[0].data().role !== 'owner') {
+      throw new functions.https.HttpsError('permission-denied', '管理者権限が必要です');
+    }
+
+    const { operation, memberId, email, password, authUid } = data;
+
+    if (operation === 'create') {
+      const authEmail = email || (memberId + '@tequiladojo.member');
+      try {
+        const user = await admin.auth().createUser({ email: authEmail, password: password });
+        await db.collection('members').doc(memberId).update({ authUid: user.uid });
+        return { success: true, uid: user.uid };
+      } catch (e) {
+        throw new functions.https.HttpsError('already-exists', e.message);
+      }
+    } else if (operation === 'delete') {
+      try {
+        await admin.auth().deleteUser(authUid);
+        return { success: true };
+      } catch (e) {
+        throw new functions.https.HttpsError('not-found', e.message);
+      }
+    } else if (operation === 'updateEmail') {
+      try {
+        await admin.auth().updateUser(authUid, { email: data.email });
+        return { success: true };
+      } catch (e) {
+        throw new functions.https.HttpsError('not-found', e.message);
+      }
+    } else if (operation === 'updatePassword') {
+      try {
+        await admin.auth().updateUser(authUid, { password: password });
+        return { success: true };
+      } catch (e) {
+        throw new functions.https.HttpsError('not-found', e.message);
+      }
+    }
+    throw new functions.https.HttpsError('invalid-argument', '不明な操作です');
+  });
+
+// ── 管理者による強制本登録（emailVerifiedをtrueに設定） ──
+exports.forceVerifyEmail = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError('unauthenticated', '認証が必要です');
+    }
+    const callerSnap = await db.collection('members')
+      .where('authUid', '==', context.auth.uid).limit(1).get();
+    if (callerSnap.empty || callerSnap.docs[0].data().role !== 'owner') {
+      throw new functions.https.HttpsError('permission-denied', '管理者権限が必要です');
+    }
+    const { authUid, email } = data;
+    try {
+      await admin.auth().updateUser(authUid, { emailVerified: true, email: email });
+      return { success: true };
+    } catch (e) {
+      throw new functions.https.HttpsError('not-found', e.message);
+    }
   });
