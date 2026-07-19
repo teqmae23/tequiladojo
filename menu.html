@@ -205,13 +205,16 @@ function loadData(){
   });
 }
 
-/* ── 名称解決 ── */
-// ブランドはボトルに非正規化された brandJa/brandEs を優先。無ければ brands で解決。IDは出さない。
+/* ── 名称解決 ──
+   bottleData のドキュメントIDは連番(bottleDataId)で、12桁のbottleIdは別フィールド。
+   NOM(蒸留所4桁)・brandId(7桁)・classId(2桁)は bottleId から導出できる:
+   bottleId = 蒸留所ID4 + ブランド連番3 + classId2 + 連番3 (= brandId7 + classId2 + seq3)。 */
+function bidOf(b){ return String(b.bottleId||''); }
+function brandIdOf(b){ if(b.brandId) return String(b.brandId); var s=bidOf(b); return s.length>=7?s.slice(0,7):''; }
+// ブランド名は brands コレクション（brandEs/brandJa）で解決。IDは出さない。
 function brandOf(b){
-  if(b.brandJa) return b.brandJa;
-  if(b.brandEs) return b.brandEs;
-  var m=brandMap[b.brandId||b.brand];
-  return m?(m.ja||m.es||m.name||''):'';
+  var m=brandMap[brandIdOf(b)];
+  return m?(m.brandJa||m.brandEs||''):'';
 }
 // クラス: classId は2桁（カテゴリ+クラス）。2桁目でB/J/R/A/X判定（home_order準拠）
 var CLS_MAP={B:'1',J:'2',R:'3',A:'4',X:'5'};
@@ -219,14 +222,18 @@ var CLS_ORDER=['B','J','R','A','X'];
 var CLS_NAME={B:'Blanco',J:'Joven/Gold',R:'Reposado',A:'Añejo',X:'Extra Añejo'};
 var CLS_COLOR={B:'#fcfbf7',J:'#fbf1d5',R:'#f5e6c0',A:'#eed7a8',X:'#e3c48f'};
 function clsDigit(b){
-  var cid=b.classId!=null?String(b.classId):(b.id?String(b.id).slice(7,9):'');
-  return cid.length>=2?cid.charAt(1):(cid.length===1?cid:'');
+  if(b.classId!=null&&b.classId!==''){ var c=String(b.classId); return c.length>=2?c.charAt(1):c; }
+  var s=bidOf(b); return s.length>=9?s.charAt(8):'';
 }
 function clsLetterOf(b){
   var d=clsDigit(b);
   return CLS_ORDER.find(function(k){return CLS_MAP[k]===d;})||'';
 }
-function nomOf(b){ return b.nom==null?'':String(b.nom); }
+// NOM(蒸留所4桁): 明示フィールドが無ければ bottleId の先頭4桁を使う
+function nomOf(b){
+  if(b.nom!=null&&b.nom!=='') return String(b.nom);
+  var s=bidOf(b); return s.length>=4?s.slice(0,4):'';
+}
 function nameOf(b){ return b.bottleEs||b.bottleEn||b.bottleJa||b.name||'(名称未設定)'; }
 // 10ml単価: bottleData の price が 10ml 単価（フォールバック unitPrice / price10）
 function price10(b){ return parseFloat(b.price!=null?b.price:(b.unitPrice!=null?b.unitPrice:b.price10))||0; }
