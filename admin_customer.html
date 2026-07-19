@@ -201,6 +201,8 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <select class="fsel" id="f-mem-gender"><option value="">全性別</option><option value="男">男</option><option value="女">女</option><option value="他">他</option></select>
           <select class="fsel" id="f-mem-pref"><option value="">全都道府県</option></select>
           <select class="fsel" id="f-mem-type"><option value="">全区分</option><option value="full">本会員</option><option value="pending">認証待ち</option><option value="prov">仮登録</option><option value="guest">ゲスト</option></select>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--ink2);white-space:nowrap;cursor:pointer"><input type="checkbox" id="f-mem-deleted">削除済みも表示</label>
+          <button class="btn bs" id="btn-check-orphan" title="ログインできるのにマスタに存在しないAuthアカウントを検出">孤児Auth検出</button>
           <div style="margin-left:auto;display:flex;gap:4px;align-items:center">
             <select id="sort-key-members"><option value="id">会員番号</option><option value="name">会員名</option><option value="nameKana">カタカナ</option><option value="registeredAt">登録日</option><option value="birthday">誕生日</option><option value="prefecture">都道府県</option></select>
             <select id="sort-dir-members"><option value="asc">昇順 ▲</option><option value="desc">降順 ▼</option></select>
@@ -786,7 +788,7 @@ var PREFS=["北海道","青森県","岩手県","宮城県","秋田県","山形�
 })();
 
 function addFilter(ids,col){ ids.forEach(function(id){ var el=g(id); if(el){ el.addEventListener("input",function(){ render(col); }); el.addEventListener("change",function(){ render(col); }); }}); }
-addFilter(["s-mem","f-mem-gender","f-mem-pref","f-mem-type"],"members");
+addFilter(["s-mem","f-mem-gender","f-mem-pref","f-mem-type","f-mem-deleted"],"members");
 
 // 会員区分の判定（会員種別バッジと同じロジック）
 function memberTypeOf(r){
@@ -796,6 +798,44 @@ function memberTypeOf(r){
   return 'prov';
 }
 
+// ── 孤児Auth検出（membersに紐づかないAuthアカウント） ─────────────
+(function(){ var b=g('btn-check-orphan'); if(b) b.addEventListener('click',checkOrphanAuth); })();
+async function checkOrphanAuth(){
+  var btn=g('btn-check-orphan');
+  if(btn){ btn.disabled=true; btn.textContent='検査中...'; }
+  try{
+    var res=await functions.httpsCallable('listOrphanAuthUsers')();
+    showOrphanResult((res.data&&res.data.orphans)||[], res.data||{});
+  }catch(e){
+    toast('孤児Auth検出に失敗: '+(e.message||e),'err');
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent='孤児Auth検出'; }
+  }
+}
+function showOrphanResult(orphans, meta){
+  var rows=orphans.length?orphans.map(function(o){
+    return '<tr><td class="mono" style="font-size:11px">'+escHtml(o.email||'(メールなし)')+'</td>'
+      +'<td class="mono dim" style="font-size:10px">'+escHtml(o.uid)+'</td>'
+      +'<td class="dim" style="font-size:10px">'+escHtml((o.creationTime||'').slice(0,16))+'</td>'
+      +'<td class="dim" style="font-size:10px">'+escHtml((o.lastSignInTime||'').slice(0,16))+'</td>'
+      +'<td>'+(o.disabled?'<span class="badge bg-gray">無効</span>':'<span class="badge bg-teal">有効</span>')+'</td></tr>';
+  }).join(''):'<tr><td colspan="5" class="ec" style="padding:16px;text-align:center">孤児Authは見つかりませんでした</td></tr>';
+  var overlay=document.createElement('div');
+  overlay.id='orphan-overlay';
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  overlay.innerHTML='<div style="background:#fff;border-radius:10px;max-width:760px;width:100%;max-height:80vh;overflow:auto;padding:18px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+    +'<div style="font-weight:700">孤児Auth（会員マスタに存在しないログインアカウント）</div>'
+    +'<button class="btn bs sm" id="orphan-close">✕</button></div>'
+    +'<div class="dim" style="font-size:11px;margin-bottom:10px">Auth総数 '+(meta.totalAuth||0)+' ／ members連携 '+(meta.linkedCount||0)+' ／ 孤児 '+orphans.length+'</div>'
+    +'<table style="width:100%;border-collapse:collapse"><thead><tr style="text-align:left;font-size:11px;color:var(--ink3)"><th>メール</th><th>UID</th><th>作成</th><th>最終ログイン</th><th>状態</th></tr></thead><tbody>'+rows+'</tbody></table>'
+    +'<div class="dim" style="font-size:11px;margin-top:12px;line-height:1.6">※孤児Authは「ハード削除でAuthだけ残った」等の可能性があります。該当アカウントはFirebaseコンソール（Authentication）から削除できます。<br>※ソフト削除された会員は上部の「削除済みも表示」で確認・復元できます（孤児ではありません）。</div>'
+    +'</div>';
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click',function(e){ if(e.target===overlay) overlay.remove(); });
+  var c=g('orphan-close'); if(c) c.addEventListener('click',function(){ overlay.remove(); });
+}
+
 // ── テーブルレンダリング ─────────────────────────────────────────
 function render(col){
   if(col==="members") renderMembers();
@@ -803,7 +843,8 @@ function render(col){
 }
 
 function renderMembers(){
-  var list=cache.members.slice();
+  var showDeleted=g("f-mem-deleted")&&g("f-mem-deleted").checked;
+  var list=(showDeleted?(cache.allMembers||cache.members):cache.members).slice();
   var q=(g("s-mem")||{value:""}).value.toLowerCase(), gen=gv("f-mem-gender"), pref=gv("f-mem-pref"), mtype=gv("f-mem-type");
   list=list.filter(function(r){
     if(q&&(r.name||"").toLowerCase().indexOf(q)<0&&(r.nameKana||"").toLowerCase().indexOf(q)<0&&(r.nickname||"").toLowerCase().indexOf(q)<0&&(r.email||"").toLowerCase().indexOf(q)<0&&(r.displayId||r.id||"").indexOf(q)<0&&(r.id||"").indexOf(q)<0) return false;
@@ -832,12 +873,14 @@ function renderMembers(){
     if(r.pendingEmail) emailCell+='<br><span style="font-size:10px;color:var(--orange)">'+r.pendingEmail+' (確認待ち)</span>';
     var transferBtn=r.isGuest?'<button class="btn bs sm" style="color:var(--teal);border-color:var(--teal)" data-transfer-id="'+r.id+'">引継コード</button>':'';
     var deletedStyle=r.deleted?'opacity:.5;':'';
+    var delBadge=r.deleted?'<span class="badge bg-gray" style="font-size:9px;margin-right:4px">削除済</span>':'';
+    var restoreBtn=r.deleted?'<button class="btn bs sm" style="color:var(--teal);border-color:var(--teal)" data-restore-member="'+r.id+'">復元</button>':'';
     var typeBadge;
     if(r.isGuest) typeBadge='<span class="badge bg-gray" style="font-size:10px">ゲスト</span>';
     else if(r.pendingEmail) typeBadge='<span class="badge" style="font-size:10px;background:var(--orange);color:#fff">認証待ち</span>';
     else if(emailVal) typeBadge='<span class="badge bg-teal" style="font-size:10px">本会員</span>';
     else typeBadge='<span class="badge" style="font-size:10px;background:#b8860b;color:#fff">仮登録</span>';
-    return '<tr style="'+deletedStyle+'"><td class="mono">'+(r.displayId||r.id)+'</td><td style="font-size:12px;color:var(--teal)">'+(r.nickname||"—")+'</td><td>'+(r.name||"—")+'</td><td class="dim" style="font-size:12px">'+(r.nameKana||"—")+'</td><td>'+gBadge+'</td><td class="dim" style="font-size:11px">'+(r.prefecture||"—")+'</td><td style="padding-right:6px">'+emailCell+'</td><td style="padding-left:6px;padding-right:6px">'+typeBadge+'</td><td class="mono dim" style="font-size:11px;padding-left:6px;padding-right:6px">'+(normDateStr(r.registeredAt)||r.registeredAt||"—")+'</td><td style="padding-left:6px"><div class="acts" style="justify-content:flex-start"><button class="btn bs sm" data-edit-member="'+r.id+'">編集</button><button class="btn bs sm" data-copy-member="'+r.id+'">コピー</button>'+transferBtn+'<button class="btn bs sm" onclick="window.open(\'/admin_data.html?member='+r.id+'\',\'_blank\')" title="データツリー（営業データで開く）">ツリー</button><button class="btn bs sm" onclick="window.open(\'/mypage.html?preview='+r.id+'\',\'_blank\')" title="マイページを閲覧">MP</button><button class="btn bd sm" onclick="openMemberDelModal(\''+r.id+'\',\''+escHtml(r.name||r.nickname||r.id)+'\','+!!r.deleted+')">削除</button></div></td></tr>';
+    return '<tr style="'+deletedStyle+'"><td class="mono">'+delBadge+(r.displayId||r.id)+'</td><td style="font-size:12px;color:var(--teal)">'+(r.nickname||"—")+'</td><td>'+(r.name||"—")+'</td><td class="dim" style="font-size:12px">'+(r.nameKana||"—")+'</td><td>'+gBadge+'</td><td class="dim" style="font-size:11px">'+(r.prefecture||"—")+'</td><td style="padding-right:6px">'+emailCell+'</td><td style="padding-left:6px;padding-right:6px">'+typeBadge+'</td><td class="mono dim" style="font-size:11px;padding-left:6px;padding-right:6px">'+(normDateStr(r.registeredAt)||r.registeredAt||"—")+'</td><td style="padding-left:6px"><div class="acts" style="justify-content:flex-start"><button class="btn bs sm" data-edit-member="'+r.id+'">編集</button><button class="btn bs sm" data-copy-member="'+r.id+'">コピー</button>'+transferBtn+'<button class="btn bs sm" onclick="window.open(\'/admin_data.html?member='+r.id+'\',\'_blank\')" title="データツリー（営業データで開く）">ツリー</button><button class="btn bs sm" onclick="window.open(\'/mypage.html?preview='+r.id+'\',\'_blank\')" title="マイページを閲覧">MP</button>'+restoreBtn+'<button class="btn bd sm" onclick="openMemberDelModal(\''+r.id+'\',\''+escHtml(r.name||r.nickname||r.id)+'\','+!!r.deleted+')">削除</button></div></td></tr>';
   }).join("");
 }
 
@@ -858,6 +901,7 @@ document.addEventListener("click",function(e){
   if(btn.dataset.editMember)  { openMemberModal(btn.dataset.editMember); return; }
   if(btn.dataset.copyMember)  { copyMemberModal(btn.dataset.copyMember); return; }
   if(btn.dataset.transferId)  { issueTransferCode(btn.dataset.transferId); return; }
+  if(btn.dataset.restoreMember){ restoreMember(btn.dataset.restoreMember); return; }
   if(btn.dataset.editLayout)  { openLayoutModal(btn.dataset.editLayout); return; }
   if(btn.dataset.del){
     var col=btn.dataset.del, id=btn.dataset.delId, label=btn.dataset.delLabel;
@@ -880,8 +924,8 @@ function loadMembers(cb){
       var snap=results[0];
       cache.memberPrivate={};
       (results[1].docs||[]).forEach(function(d){ cache.memberPrivate[d.id]=d.data(); });
-      cache.members=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); })
-        .filter(function(m){ return !m.deleted; });
+      cache.allMembers=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+      cache.members=cache.allMembers.filter(function(m){ return !m.deleted; });
       setCnt("members",cache.members.length);
       renderMembers();
       migrateLegacyPrivateFields(snap.docs);
@@ -1267,6 +1311,14 @@ g('confirm-member-del-ok').addEventListener('click',async function(){
     await hardDeleteMember(id);
   }
 });
+
+// ソフト削除された会員を復元する
+function restoreMember(id){
+  if(!confirm('この会員を復元しますか？')) return;
+  journaledUpdate('members',id,{deleted:false, deletedAt:null})
+    .then(function(){ toast('会員を復元しました'); loadMembers(); })
+    .catch(function(e){ toast('復元失敗: '+e.message,'err'); });
+}
 
 async function hardDeleteMember(memberId){
   try{
