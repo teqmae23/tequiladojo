@@ -61,20 +61,17 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
 .toolbar .tsearch{flex:1;min-width:150px;}
 .tcount{font-size:11px;color:var(--ink3);margin-left:auto;white-space:nowrap;}
 
-/* ボトルカード */
-.blist{display:flex;flex-direction:column;gap:8px;}
-.bcard{background:#fff;border:1px solid var(--cream3);border-radius:12px;padding:12px 14px;display:flex;gap:12px;align-items:center;}
-.bcard .bmain{flex:1;min-width:0;}
-.bname{font-size:15px;font-weight:600;color:var(--ink);line-height:1.3;}
-.bname .bja{display:block;font-size:11px;color:var(--ink3);font-weight:400;margin-top:1px;}
-.bmeta{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
-.chip{font-size:10px;padding:2px 7px;border-radius:5px;background:var(--cream2);color:var(--ink2);white-space:nowrap;}
-.chip.cls{background:#f3e3c0;color:var(--gold-d);}
-.chip.nom{font-family:var(--mono);}
-.bprice{text-align:right;flex-shrink:0;}
-.bprice .pg{font-size:16px;font-weight:700;color:var(--ink);font-family:var(--mono);}
-.bprice .pgl{font-size:9px;color:var(--ink3);}
-.bprice .pb{font-size:10px;color:var(--ink3);font-family:var(--mono);margin-top:3px;}
+/* ボトル一覧（1ボトル1行） */
+.blist{display:flex;flex-direction:column;background:#fff;border:1px solid var(--cream3);border-radius:12px;overflow:hidden;}
+.brow{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--cream2);}
+.brow:last-child{border-bottom:none;}
+.binfo{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.clschip{display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;background:#f3e3c0;color:var(--gold-d);margin-right:6px;vertical-align:middle;}
+.bn{font-size:14px;font-weight:600;color:var(--ink);}
+.bmeta{font-size:11px;color:var(--ink3);margin-left:6px;}
+.bp{flex-shrink:0;font-family:var(--mono);font-size:14px;font-weight:700;color:var(--ink);white-space:nowrap;}
+.bp small{font-size:9px;color:var(--ink3);font-weight:400;}
+.bp.none{font-size:11px;color:var(--ink3);font-weight:400;}
 .empty{text-align:center;color:var(--ink3);padding:40px 0;font-size:13px;}
 .soon-box{text-align:center;color:var(--ink3);padding:48px 16px;font-size:14px;}
 .soon-box .si{font-size:40px;margin-bottom:10px;}
@@ -206,10 +203,12 @@ function loadData(){
 }
 
 /* ── 名称解決 ── */
+// ブランドはボトルに非正規化された brandJa/brandEs を優先。無ければ brands で解決。IDは出さない。
 function brandOf(b){
-  var id=b.brandId||b.brand||(b.id?String(b.id).slice(0,7):'');
-  var m=brandMap[id];
-  return m?(m.ja||m.es||m.name||id):id;
+  if(b.brandJa) return b.brandJa;
+  if(b.brandEs) return b.brandEs;
+  var m=brandMap[b.brandId||b.brand];
+  return m?(m.ja||m.es||m.name||''):'';
 }
 function classIdOf(b){ return b.classId||b.class||(b.id?String(b.id).slice(7,9):''); }
 function classOf(b){
@@ -218,9 +217,8 @@ function classOf(b){
 }
 function nomOf(b){ return b.nom||''; }
 function nameOf(b){ return b.bottleEs||b.bottleEn||b.bottleJa||b.name||'(名称未設定)'; }
-function jaOf(b){ var es=b.bottleEs||b.bottleEn; return (es&&b.bottleJa)?b.bottleJa:''; }
-function glassPrice(b){ var u=parseFloat(b.unitPrice)||0; return u>0?Math.round(u*SERVING_ML/10):0; }
-function bottlePrice(b){ return parseFloat(b.price)||0; }
+// 10ml単価: bottleData の price が 10ml 単価（フォールバック unitPrice / price10）
+function price10(b){ return parseFloat(b.price!=null?b.price:(b.unitPrice!=null?b.unitPrice:b.price10))||0; }
 
 /* ── メニュートップ ── */
 function renderTop(){
@@ -303,29 +301,23 @@ function renderTeqList(){
   });
   list.sort(function(a,b){
     if(sort==='nom') return String(nomOf(a)).localeCompare(String(nomOf(b)),undefined,{numeric:true});
-    if(sort==='price') return glassPrice(a)-glassPrice(b);
-    if(sort==='price_desc') return glassPrice(b)-glassPrice(a);
+    if(sort==='price') return price10(a)-price10(b);
+    if(sort==='price_desc') return price10(b)-price10(a);
     if(sort==='abv') return (parseFloat(b.abv)||0)-(parseFloat(a.abv)||0);
     return nameOf(a).localeCompare(nameOf(b),'ja');
   });
   document.getElementById('teq-count').textContent=list.length+' 種';
   if(!list.length){ document.getElementById('teq-list').innerHTML='<div class="empty">該当するボトルがありません</div>'; return; }
   document.getElementById('teq-list').innerHTML=list.map(function(b){
-    var gp=glassPrice(b), bp=bottlePrice(b), cls=classOf(b), nom=nomOf(b), ja=jaOf(b), abv=b.abv;
-    return '<div class="bcard">'
-      +'<div class="bmain">'
-        +'<div class="bname">'+esc(nameOf(b))+(ja?'<span class="bja">'+esc(ja)+'</span>':'')+'</div>'
-        +'<div class="bmeta">'
-          +(cls?'<span class="chip cls">'+esc(cls)+'</span>':'')
-          +'<span class="chip">'+esc(brandOf(b))+'</span>'
-          +(nom?'<span class="chip nom">NOM '+esc(nom)+'</span>':'')
-          +(abv?'<span class="chip">'+esc(abv)+'%</span>':'')
-        +'</div>'
+    var p=price10(b), cls=classOf(b), nom=nomOf(b), abv=b.abv, brand=brandOf(b);
+    var meta=[brand, nom?('NOM'+nom):'', abv?(abv+'%'):''].filter(Boolean).join(' / ');
+    return '<div class="brow">'
+      +'<div class="binfo">'
+        +(cls?'<span class="clschip">'+esc(cls)+'</span>':'')
+        +'<span class="bn">'+esc(nameOf(b))+'</span>'
+        +(meta?'<span class="bmeta">'+esc(meta)+'</span>':'')
       +'</div>'
-      +'<div class="bprice">'
-        +(gp>0?'<div class="pg">'+yen(gp)+'</div><div class="pgl">/ '+SERVING_ML+'ml</div>':'<div class="pgl">価格未設定</div>')
-        +(bp>0?'<div class="pb">ボトル '+yen(bp)+'</div>':'')
-      +'</div>'
+      +(p>0?'<div class="bp">'+yen(p)+'<small> /'+SERVING_ML+'ml</small></div>':'<div class="bp none">—</div>')
     +'</div>';
   }).join('');
 }
