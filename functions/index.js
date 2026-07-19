@@ -628,20 +628,22 @@ exports.createStripeCustomer = functions
   });
 
 // ── 会員削除時にFirebase Authアカウントも削除 ──
-// ※注意: context.params.uid は members ドキュメントID（現行モデルでは realId）で
-//   あり、Firebase AuthのUID（authUidフィールド）とは一致しない場合が多い。
-//   現状は user-not-found でスキップされることが多い（デプロイ済みの挙動を維持）。
+// 実際のFirebase Auth UIDは members ドキュメントの authUid フィールドに入っている。
+// ドキュメントID（現行モデルでは realId）はAuth UIDと一致しないため、authUid を優先し、
+// 無い場合のみ従来どおりドキュメントIDにフォールバックする（旧データ互換）。
+// これによりハード削除時にAuthアカウントが残る（孤児Auth）問題を防止する。
 exports.deleteMemberAuth = functions
   .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
   .firestore.document('members/{uid}')
   .onDelete(async (snap, context) => {
-    const uid = context.params.uid;
+    const data = (snap && snap.data()) || {};
+    const authUid = data.authUid || context.params.uid;
     try {
-      await admin.auth().deleteUser(uid);
-      console.log('Auth削除成功:', uid);
+      await admin.auth().deleteUser(authUid);
+      console.log('Auth削除成功:', authUid);
     } catch (err) {
       if (err.code === 'auth/user-not-found') {
-        console.log('Auth既に削除済み:', uid);
+        console.log('Auth既に削除済み:', authUid);
       } else {
         console.error('Auth削除失敗:', err.message);
       }
