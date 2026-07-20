@@ -89,6 +89,11 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
 .dnom{display:block;font-size:11px;color:var(--ink3);font-family:var(--mono);margin-top:1px;}
 .dcount{flex-shrink:0;font-size:12px;color:var(--gold-d);font-weight:600;white-space:nowrap;}
 .dchev{flex-shrink:0;font-size:18px;color:var(--ink3);}
+.drank{flex-shrink:0;min-width:34px;font-family:var(--mono);font-size:13px;font-weight:700;color:var(--gold-d);text-align:center;}
+.dstat{flex-shrink:0;text-align:center;min-width:36px;}
+.dstat-v{font-family:var(--mono);font-size:14px;font-weight:700;color:var(--ink);line-height:1.1;}
+.dstat-l{font-size:9px;color:var(--ink3);}
+.dir-sel{padding-left:8px!important;padding-right:8px!important;}
 /* 蒸留所詳細（ブランド別） */
 .dist-detail-head{margin-bottom:14px;}
 .dist-detail-name{font-family:var(--serif);font-size:20px;color:var(--ink);}
@@ -150,15 +155,15 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
         <input type="text" class="tsearch" id="q" placeholder="ボトル名・ブランド・NOMで検索…">
         <select id="f-class"><option value="">全クラス</option></select>
         <select id="f-sort">
+          <option value="nom" selected>NOM</option>
           <option value="name">名前</option>
           <option value="class">クラス順</option>
-          <option value="nom">NOM</option>
           <option value="price">価格</option>
           <option value="abv">度数</option>
         </select>
-        <select id="f-dir">
-          <option value="asc">↑ 昇順</option>
-          <option value="desc">↓ 降順</option>
+        <select id="f-dir" class="dir-sel">
+          <option value="asc">↑</option>
+          <option value="desc">↓</option>
         </select>
       </div>
       <div class="list-head">
@@ -172,6 +177,16 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
       <div id="dist-list-view">
         <div class="toolbar">
           <input type="text" class="tsearch" id="dq" placeholder="蒸留所名・NOMで検索…">
+          <select id="d-sort">
+            <option value="nom" selected>NOM</option>
+            <option value="name">名前</option>
+            <option value="score">スコア</option>
+            <option value="ratings">評価数</option>
+          </select>
+          <select id="d-dir" class="dir-sel">
+            <option value="asc">↑</option>
+            <option value="desc">↓</option>
+          </select>
         </div>
         <div class="list-head"><span class="tcount" id="dist-count"></span></div>
         <div class="dlist" id="dist-list"></div>
@@ -238,7 +253,12 @@ var CATEGORIES=[
 ];
 
 // データキャッシュ
-var bottles=[], brandMap={}, classMap={}, distMap={};
+var bottles=[], brandMap={}, classMap={}, distMap={}, ptdMap={};
+// PTD(AMM) 蒸留所データ: nom別に順位/スコア/評価数
+function _numOr(o){ if(!o) return null; for(var i=1;i<arguments.length;i++){ var v=o[arguments[i]]; if(v!==undefined&&v!==null&&v!==''&&!isNaN(parseFloat(v))) return parseFloat(v); } return null; }
+function ptdRank(nom){ return _numOr(ptdMap[nom],'rank'); }
+function ptdScore(nom){ return _numOr(ptdMap[nom],'avgRating','average_rating'); }
+function ptdRatings(nom){ return _numOr(ptdMap[nom],'ratingCount','ratings_count'); }
 
 auth.onAuthStateChanged(function(user){
   if(user){
@@ -257,11 +277,13 @@ function loadData(){
     db.collection('bottleData').get(),
     db.collection('brands').get().catch(function(){return {docs:[]};}),
     db.collection('classes').get().catch(function(){return {docs:[]};}),
-    db.collection('distilleries').get().catch(function(){return {docs:[]};})
+    db.collection('distilleries').get().catch(function(){return {docs:[]};}),
+    db.collection('ammDistilleries').get().catch(function(){return {docs:[]};})
   ]).then(function(res){
     brandMap={}; res[1].docs.forEach(function(d){ brandMap[d.id]=d.data(); });
     classMap={}; res[2].docs.forEach(function(d){ classMap[d.id]=d.data(); });
     distMap={}; res[3].docs.forEach(function(d){ distMap[d.id]=d.data(); });
+    ptdMap={}; res[4].docs.forEach(function(d){ ptdMap[d.id]=d.data(); });
     // 掲載対象: home_order と同じく visibility が 0/false/未設定 のものを表示
     bottles=res[0].docs.map(function(d){return Object.assign({id:d.id},d.data());})
       .filter(function(b){ var v=b.visibility; return v==='0'||v===0||v===false||v===undefined||v===null; });
@@ -362,6 +384,8 @@ function setTeqMode(mode){
   }
 }
 document.getElementById('dq').addEventListener('input',renderDistList);
+document.getElementById('d-sort').addEventListener('change',renderDistList);
+document.getElementById('d-dir').addEventListener('change',renderDistList);
 document.getElementById('dist-back').addEventListener('click',backToDistList);
 document.getElementById('bq').addEventListener('input',renderBrandList);
 document.getElementById('brand-back').addEventListener('click',backToBrandList);
@@ -436,7 +460,7 @@ function distNameOf(nom){ var m=distMap[nom]; return m?(m.nomJa||m.nomEs||m.name
 function renderDistList(){
   var groups={};
   bottles.forEach(function(b){ var n=nomOf(b); if(!n) return; (groups[n]=groups[n]||[]).push(b); });
-  var noms=Object.keys(groups).sort(function(a,b){return a.localeCompare(b,undefined,{numeric:true});});
+  var noms=Object.keys(groups);
   var dq=(document.getElementById('dq').value||'').toLowerCase().trim();
   if(dq){
     noms=noms.filter(function(n){
@@ -444,13 +468,30 @@ function renderDistList(){
       return distNameOf(n).toLowerCase().indexOf(dq)>=0;
     });
   }
+  // 並び替え（既定: NOM昇順）。スコア/評価数は未取得(null)を末尾へ
+  var key=document.getElementById('d-sort').value;
+  var dir=document.getElementById('d-dir').value==='desc'?-1:1;
+  function nn(v){ return v==null?(dir===1?Infinity:-Infinity):v; }
+  noms.sort(function(a,b){
+    var c;
+    if(key==='name') c=distNameOf(a).localeCompare(distNameOf(b),'ja');
+    else if(key==='score') c=nn(ptdScore(a))-nn(ptdScore(b));
+    else if(key==='ratings') c=nn(ptdRatings(a))-nn(ptdRatings(b));
+    else c=a.localeCompare(b,undefined,{numeric:true}); // NOM
+    if(c===0) c=a.localeCompare(b,undefined,{numeric:true});
+    return c*dir;
+  });
   document.getElementById('dist-count').textContent=noms.length+' 蒸留所';
   if(!noms.length){ document.getElementById('dist-list').innerHTML='<div class="empty">該当する蒸留所がありません</div>'; return; }
   document.getElementById('dist-list').innerHTML=noms.map(function(n){
     var nm=distNameOf(n)||'(名称未登録)';
+    var rk=ptdRank(n), sc=ptdScore(n), rt=ptdRatings(n);
     return '<div class="drow" onclick="openDistillery(\''+n+'\')">'
-      +'<div class="dinfo"><span class="dname">'+esc(nm)+'</span><span class="dnom">NOM '+esc(n)+'</span></div>'
-      +'<span class="dcount">'+groups[n].length+'種</span>'
+      +'<span class="drank">'+(rk!=null?'#'+rk:'—')+'</span>'
+      +'<div class="dinfo"><span class="dname">'+esc(nm)+'</span>'
+        +'<span class="dnom">NOM '+esc(n)+' ・ '+groups[n].length+'種</span></div>'
+      +'<div class="dstat"><div class="dstat-v">'+(sc!=null?sc:'—')+'</div><div class="dstat-l">スコア</div></div>'
+      +'<div class="dstat"><div class="dstat-v">'+(rt!=null?rt:'—')+'</div><div class="dstat-l">評価</div></div>'
       +'<span class="dchev">›</span>'
     +'</div>';
   }).join('');
