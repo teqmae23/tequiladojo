@@ -853,6 +853,35 @@ function syncBdNomSel(nom){
   sel.value=nom;
 }
 
+// bottleData のクラス(classId)を解決:
+//   明示 classId > ボトルマスタ(bottles)の classId > bottleId の8〜9桁目
+function deriveClassId(rec){
+  if(rec&&rec.classId) return String(rec.classId);
+  var bid=String((rec&&(rec.bottleId||rec.id))||"");
+  var mid=bid.slice(0,12);
+  var mb=cache.bottles.find(function(x){return x.id===mid;});
+  if(mb&&mb.classId) return String(mb.classId);
+  if(bid.length>=9) return bid.slice(7,9);
+  return "";
+}
+// クラスドロップダウンを構築して選択。候補(classesマスタ)に無いclassIdは
+// コードから区分名を導出したオプションを補って選択状態にする。
+function fillBdClass(cid){
+  var sel=g("bd-class"); if(!sel) return;
+  cid=String(cid||"");
+  sel.innerHTML='<option value="">—</option>'+cache.classes.map(function(cl){
+    return '<option value="'+cl.id+'">'+cl.id+' '+(cl.classNameJa||CLASS_CLS[cl.id[1]]||cl.id)+'</option>';
+  }).join("");
+  if(!cid){ sel.value=""; return; }
+  var has=false;
+  for(var i=0;i<sel.options.length;i++){ if(sel.options[i].value===cid){ has=true; break; } }
+  if(!has){
+    var lbl=cid+' '+((CLASS_CAT[cid[0]]||cid[0])+' / '+(CLASS_CLS[cid[1]]||cid[1]));
+    var o=document.createElement("option"); o.value=cid; o.textContent=lbl; sel.appendChild(o);
+  }
+  sel.value=cid;
+}
+
 // ── フィルター入力バインド ──────────────────────────────────────
 function addFilter(ids,col){
   ids.forEach(function(id){
@@ -1415,13 +1444,8 @@ function openBdataModal(id){
     sv("bd-abv",r?r.abv||"":"");
     sv("bd-prod",r?r.production||"0":"0");
     sv("bd-flt",r?r.filtration||"0":"0");
-    var clsSel2=g("bd-class");
-    if(clsSel2){
-      clsSel2.innerHTML=cache.classes.map(function(cl){
-        return '<option value="'+cl.id+'"'+(r&&cl.id===r.classId?' selected':'')+'>'+cl.id+' '+(cl.classNameJa||cl.id)+'</option>';
-      }).join("");
-      sv("bd-class",r?r.classId||"":"");
-    }
+    // クラス: 明示値が無ければボトルマスタ/ボトルIDから補完して表示
+    fillBdClass(deriveClassId(r));
     sv("bd-lottype",r?String(r.lotType||1):"1"); sv("bd-lot",r?r.lotNo:"N/A"); sv("bd-vol",r?r.volume:750); sv("bd-remain",r?r.remaining:750);
     sv("bd-price",r?r.price:""); sv("bd-pub",r?r.visibility:"0");
     setDateInputs("bd-buy-date",r?r.purchaseDate:""); setDateInputs("bd-start",r?r.serveStart:""); setDateInputs("bd-end",r?r.serveEnd:"");
@@ -1517,15 +1541,8 @@ function _fillBdataForm(r){
   // New seq for copy
   autoSetBdataSeq(bottleId);
 
-  // Class
-  var clsSel=g("bd-class");
-  if(clsSel){
-    clsSel.innerHTML=cache.classes.map(function(cl){
-      return '<option value="'+cl.id+'"'+(cl.id===r.classId?' selected':'')+'>'
-        +cl.id+' '+(cl.classNameJa||cl.id)+'</option>';
-    }).join("");
-    sv("bd-class",r.classId||"");
-  }
+  // Class: 明示値が無ければボトルマスタ/ボトルIDから補完して表示
+  fillBdClass(deriveClassId(r));
 
   // Data fields
   var _esRaw=r.bottleEsBase||r.bottleEs||"";
