@@ -116,6 +116,11 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
 .map-note{font-size:11px;color:var(--ink3);margin:0 2px 8px;}
 #menu-map{height:72vh;min-height:360px;border:1px solid var(--cream3);border-radius:12px;overflow:hidden;}
 .map-pin{width:14px;height:14px;border-radius:50%;background:var(--gold);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);}
+.map-pin-vis{width:14px;height:14px;border-radius:50%;background:var(--gold);border:2px solid #e8d000;box-shadow:0 1px 5px rgba(0,0,0,.5);}
+.map-pin-dim{width:12px;height:12px;border-radius:50%;background:#c2c2c2;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.3);opacity:.85;}
+.map-ctrls{display:flex;align-items:center;gap:8px;margin:0 2px 8px;flex-wrap:wrap;}
+.map-ctrls label{font-size:11px;color:var(--ink2);white-space:nowrap;}
+.map-ctrls select{font-size:12px;padding:4px 8px;border:1px solid var(--cream3);border-radius:8px;background:#fff;color:var(--ink);cursor:pointer;}
 .map-pop-name{font-weight:700;font-size:13px;color:var(--ink);}
 .map-pop-nom{font-size:11px;color:var(--ink3);font-family:var(--mono);margin:2px 0 6px;}
 .map-pop-btn{display:inline-block;background:var(--gold-d);color:var(--cream);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer;text-align:center;}
@@ -223,6 +228,20 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
     <!-- 地図モード -->
     <div id="teq-map-wrap" style="display:none;">
       <div class="map-note">📍 ボトルのある蒸留所のみ表示。ピンをタップすると蒸留所メニューを開きます。</div>
+      <div class="map-ctrls">
+        <label>境界</label>
+        <select id="menu-dot" onchange="onMenuDotChange(this.value)">
+          <option value="none" selected>なし</option>
+          <option value="state">州境界</option>
+          <option value="municipio">自治区境界</option>
+          <option value="all">全境界</option>
+        </select>
+        <select id="menu-visited" onchange="onMenuVisitedChange(this.value)">
+          <option value="all" selected>全件</option>
+          <option value="visited">既飲</option>
+        </select>
+        <span id="menu-map-loading" style="font-size:11px;color:var(--gold-d);display:none;">読み込み中…</span>
+      </div>
       <div id="menu-map"></div>
     </div>
 
@@ -242,6 +261,7 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);display:fl
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <script>
 firebase.initializeApp({
   apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -275,8 +295,10 @@ function ptdRank(nom){ return _numOr(ptdMap[nom],'rank'); }
 function ptdScore(nom){ return _numOr(ptdMap[nom],'avgRating','average_rating'); }
 function ptdRatings(nom){ return _numOr(ptdMap[nom],'ratingCount','ratings_count'); }
 
+var _menuUser=null;
 auth.onAuthStateChanged(function(user){
   if(user){
+    _menuUser=user;
     document.getElementById('gate').style.display='none';
     document.getElementById('app').style.display='flex';
     renderTop();
@@ -635,6 +657,11 @@ function showMenuMap(){
   }
   setTimeout(function(){ _menuMap.invalidateSize(); if(_menuBounds.length){ try{ _menuMap.fitBounds(_menuBounds,{padding:[30,30],maxZoom:9}); }catch(e){} } },60);
 }
+function _menuPinIcon(kind){
+  var cls=kind==='dim'?'map-pin-dim':(kind==='vis'?'map-pin-vis':'map-pin');
+  var sz=kind==='dim'?12:14, a=sz/2;
+  return L.divIcon({html:'<div class="'+cls+'"></div>',className:'',iconSize:[sz,sz],iconAnchor:[a,a]});
+}
 function renderMapMarkers(){
   _menuMarkers.forEach(function(m){ _menuMap.removeLayer(m); }); _menuMarkers=[]; _menuBounds=[];
   var noms={};
@@ -643,14 +670,178 @@ function renderMapMarkers(){
     var d=distMap[n]; if(!d) return;
     var lat=parseFloat(d.latitude), lng=parseFloat(d.longitude);
     if(isNaN(lat)||isNaN(lng)) return;
-    var icon=L.divIcon({html:'<div class="map-pin"></div>',className:'',iconSize:[14,14],iconAnchor:[7,7]});
-    var mk=L.marker([lat,lng],{icon:icon}).addTo(_menuMap);
+    var visited=_menuMemberNoms.has(String(n));
+    // 既飲モード: 既飲=強調ピン、未飲=グレーピン。全件モード: 通常ピン
+    var kind=_menuVisitedOnly?(visited?'vis':'dim'):'normal';
+    var mk=L.marker([lat,lng],{icon:_menuPinIcon(kind),zIndexOffset:(_menuVisitedOnly&&visited)?100:0}).addTo(_menuMap);
     var nm=distNameOf(n)||('NOM '+n);
-    mk.bindPopup('<div class="map-pop-name">'+esc(nm)+'</div>'
+    mk.bindPopup('<div class="map-pop-name">'+esc(nm)+(visited?' <span style="font-size:11px;color:#2e7d32;">✅ 既飲</span>':'')+'</div>'
       +'<div class="map-pop-nom">NOM '+esc(n)+' ／ '+noms[n]+'種</div>'
       +'<div class="map-pop-btn" onclick="goDistillery(\''+esc(n)+'\')">メニューを見る ›</div>');
     _menuMarkers.push(mk); _menuBounds.push([lat,lng]);
   });
+}
+
+/* ── 既飲/全件 切り替え ── */
+var _menuVisitedOnly=false, _menuMemberNoms=new Set(), _menuNomsLoaded=false;
+async function onMenuVisitedChange(val){
+  _menuVisitedOnly=(val==='visited');
+  if(_menuVisitedOnly && !_menuNomsLoaded && _menuUser){
+    var ld=document.getElementById('menu-map-loading');
+    if(ld) ld.style.display='inline';
+    await loadMenuMemberNoms(_menuUser);
+    _menuNomsLoaded=true;
+    if(ld) ld.style.display='none';
+  }
+  renderMapMarkers();
+}
+// 会員の既飲蒸留所(NOM)を取得: getMemberActivity(orders) → bottleData → brandId先頭4桁
+async function loadMenuMemberNoms(user){
+  _menuMemberNoms=new Set();
+  try{
+    var _act={orders:[]};
+    try{
+      var _res=await firebase.app().functions('asia-northeast1').httpsCallable('getMemberActivity')({});
+      _act=_res.data||_act;
+    }catch(e){ console.warn('getMemberActivity error:',e); return; }
+    var productCodes=new Set();
+    (_act.orders||[]).forEach(function(o){
+      if(o.productType==='cocktail'&&o.baseProductCode){ productCodes.add(o.baseProductCode); return; }
+      if(o.productCode||o.productId) productCodes.add(o.productCode||o.productId);
+    });
+    var pcArr=Array.from(productCodes);
+    for(var j=0;j<pcArr.length;j+=10){
+      var pchunk=pcArr.slice(j,j+10);
+      try{
+        var bdsnap=await db.collection('bottleData').where(firebase.firestore.FieldPath.documentId(),'in',pchunk).get();
+        bdsnap.forEach(function(d){
+          var bd=d.data();
+          if(bd.brandId) _menuMemberNoms.add(String(bd.brandId).slice(0,4));
+        });
+      }catch(e){}
+    }
+  }catch(e){ console.warn('loadMenuMemberNoms error:',e); }
+}
+
+/* ── DOT原産地呼称境界の表示/非表示（マイマップと同一データ源: dotMunicipios） ── */
+var DOT_STATES=[
+  {state:'Jalisco',   iso:'MX-JAL',stateLevel:true,color:'#2e7d32'},
+  {state:'Guanajuato',iso:'MX-GUA',color:'#7b1fa2'},
+  {state:'Michoacán', iso:'MX-MIC',color:'#e65100'},
+  {state:'Nayarit',   iso:'MX-NAY',color:'#e69900',muniColor:'#3d2800'},
+  {state:'Tamaulipas',iso:'MX-TAM',color:'#1565c0'}
+];
+var _dotColorByIso={}, _muniColorByIso={};
+DOT_STATES.forEach(function(s){ _dotColorByIso[s.iso]=s.color; if(s.muniColor) _muniColorByIso[s.iso]=s.muniColor; });
+var _menuDotFillOpacity=0.15;
+var _menuDotLayer=null, _menuDotLoading=false, _dotOutlineDocs=null, _dotMuniDocs=null;
+
+function _dotMuniIsoSet(){
+  var set=new Set();
+  (_dotMuniDocs||[]).forEach(function(doc){
+    var m=doc.id.match(/^([^_]+-[^_]+)_municipio_/);
+    if(m){ var sq=DOT_STATES.find(function(s){return s.stateLevel&&s.iso===m[1];}); if(sq) set.add(m[1]); }
+  });
+  return set;
+}
+function _buildDotFeatures(docs, muniIsoSet){
+  var features=[];
+  (docs||[]).forEach(function(doc){
+    if(doc.id==='_config') return;
+    var d=doc.data(); if(!d.geomJson) return;
+    try{
+      var geom=JSON.parse(d.geomJson);
+      var et=d.entryType;
+      if((et==='dotState'||et==='stateBoundary'||et==='dotMerged')&&geom.type==='Polygon'&&geom.coordinates.length>1){
+        geom={type:'Polygon',coordinates:[geom.coordinates[0]]};
+      }
+      var nm=et==='municipio'?d.name:((et==='dotState'||et==='dotMerged')?(d.name||d.state):null);
+      var mOrig=doc.id.match(/_municipio_(.+)$/);
+      var mapKey=mOrig?(mOrig[1].replace(/_/g,' ')):((et==='dotState'||et==='dotMerged')?d.state:null);
+      var docIso=d.iso||((doc.id.match(/^([^_]+-[^_]+)_/)||['',''])[1]);
+      var isOutline=et==='stateBoundary'||(et==='dotState'&&muniIsoSet.has(d.iso));
+      var isDotFill=(et==='dotMerged')||(et==='dotState'&&!muniIsoSet.has(d.iso));
+      features.push({type:'Feature',geometry:geom,properties:{
+        _dotColor:d.color,_isStateOutline:isOutline,_isDotState:isDotFill,
+        _displayName:nm,_mapKey:mapKey,_iso:docIso
+      }});
+    }catch(e){}
+  });
+  return features;
+}
+function _menuDotStyle(f){
+  var p=f.properties||{};
+  var iso=p._iso;
+  var c=(iso&&_dotColorByIso[iso])||p._dotColor||'#2e7d32';
+  var fo=_menuDotFillOpacity;
+  if(p._isStateOutline) return {color:c,weight:3,fillOpacity:0,opacity:0.9};
+  if(p._isDotState) return {color:c,weight:3,fillColor:c,fillOpacity:fo,opacity:0.9};
+  var mc=(iso&&_muniColorByIso[iso])||c;
+  return {color:mc,weight:0.6,fillColor:c,fillOpacity:fo,opacity:0.85};
+}
+async function _ensureDotOutlines(){
+  if(_dotOutlineDocs) return;
+  var snap=await db.collection('dotMunicipios').where('entryType','in',['stateBoundary','dotState','dotMerged']).get();
+  _dotOutlineDocs=snap.docs;
+}
+async function _ensureDotMunis(){
+  if(_dotMuniDocs) return;
+  var snap=await db.collection('dotMunicipios').where('entryType','==','municipio').get();
+  _dotMuniDocs=snap.docs;
+}
+function _menuBringJaliscoToFront(){
+  if(!_menuDotLayer) return;
+  _menuDotLayer.eachLayer(function(l){
+    var p=l.feature&&l.feature.properties;
+    if(p&&p._iso==='MX-JAL'&&(p._isStateOutline||p._isDotState)) l.bringToFront();
+  });
+}
+async function onMenuDotChange(mode){
+  var sel=document.getElementById('menu-dot');
+  if(_menuDotLayer){ _menuMap.removeLayer(_menuDotLayer); _menuDotLayer=null; }
+  if(mode==='none') return;
+  if(_menuDotLoading) return;
+  _menuDotLoading=true; if(sel) sel.disabled=true;
+  var ld=document.getElementById('menu-map-loading'); if(ld) ld.style.display='inline';
+  var feats;
+  try{
+    var needOutlines=(mode==='state'||mode==='all');
+    var needMunis=(mode==='municipio'||mode==='all');
+    if(needOutlines) await _ensureDotOutlines();
+    if(needMunis) await _ensureDotMunis();
+    var muniIsoSet=_dotMuniIsoSet();
+    if(mode==='state'){
+      feats=_buildDotFeatures(_dotOutlineDocs, muniIsoSet);
+    } else if(mode==='municipio'){
+      feats=_buildDotFeatures(_dotMuniDocs, muniIsoSet);
+    } else {
+      var outlineNoMerged=(_dotOutlineDocs||[]).filter(function(doc){ return doc.data().entryType!=='dotMerged'; });
+      feats=_buildDotFeatures(outlineNoMerged, muniIsoSet).concat(_buildDotFeatures(_dotMuniDocs, muniIsoSet));
+    }
+  }catch(e){
+    alert('境界の読み込みに失敗しました:\n'+e.message);
+    if(sel){ sel.value='none'; sel.disabled=false; } _menuDotLoading=false;
+    if(ld) ld.style.display='none'; return;
+  }finally{
+    _menuDotLoading=false; if(sel) sel.disabled=false; if(ld) ld.style.display='none';
+  }
+  _menuDotLayer=L.geoJSON({type:'FeatureCollection',features:feats},{
+    filter:function(f){
+      var t=f.geometry&&f.geometry.type;
+      if(!t||t==='Point'||t==='MultiPoint') return false;
+      var p=f.properties||{};
+      var isState=p._isStateOutline||p._isDotState;
+      if(mode==='state') return !!isState;
+      if(mode==='municipio') return !isState;
+      return true;
+    },
+    style:_menuDotStyle,
+    onEachFeature:function(f,layer){
+      var nm=f.properties&&f.properties._displayName;
+      if(nm) layer.bindPopup('<div style="padding:4px 6px;font-size:13px;font-weight:500;">'+esc(nm)+'</div>',{maxWidth:200});
+    }
+  }).addTo(_menuMap);
+  _menuBringJaliscoToFront();
 }
 </script>
 </body>
