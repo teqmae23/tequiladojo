@@ -1414,7 +1414,20 @@ function copyBdataModal(id){
   var r=cache.bdata.find(function(d){return d.id===id;});
   if(!r) return;
   openBdataModal(null);
-
+  _fillBdataForm(r);
+}
+// ボトルマスタ(bottleId)を起点に新規ボトルデータ登録を開く（BD追加）
+function openNewBdataForBottle(bottleId){
+  var b=cache.bottles.find(function(x){return x.id===bottleId;});
+  if(!b){ toast("ボトルマスタが見つかりません: "+bottleId,"err"); return; }
+  openBdataModal(null);
+  _fillBdataForm({bottleId:b.id,brandId:b.brandId,classId:b.classId,
+    bottleEs:b.bottleEs,bottleJa:b.bottleJa,
+    bottleEsBase:b.bottleEsBase||b.bottleEs,bottleJaBase:b.bottleJaBase||b.bottleJa,
+    suffix:b.suffix||"",abv:b.abv,production:b.production,filtration:b.filtration,
+    lotType:1,lotNo:"N/A",volume:750,remaining:750,price:null,visibility:"0",note:"",cost:null,importType:"0"});
+}
+function _fillBdataForm(r){
   var bottleId=r.bottleId||"";
   var brandId=r.brandId||"";
   var nom=brandId?brandId.slice(0,4):(bottleId?bottleId.slice(0,4):"");
@@ -1914,6 +1927,40 @@ g("btn-exec-repair").addEventListener("click",function(){
     })
     .catch(function(e){toast("修復失敗: "+e.message,"err");btn.disabled=false;btn.textContent="修復する";});
 });
+
+// ── URLパラメータ ?tab=&edit= で対象タブを開き、指定レコードの編集モーダルを開く ──
+//    （蒸留所ツリー等からの「編集」遷移用。パラメータ無しなら従来どおりクラスタブ表示）
+(function(){
+  var p=new URLSearchParams(location.search);
+  var tab=p.get('tab'), edit=p.get('edit'), newbd=p.get('newbd');
+  // newbd=<bottleId>: ボトルデータタブを開き、そのボトルの新規BD登録モーダルを開く
+  if(newbd){
+    var tbd=document.querySelector('.tab[data-page="bdata"]'); if(tbd) tbd.click();
+    var m=0;
+    (function w2(){ m++;
+      if(cache&&cache.bottles&&cache.bottles.length&&cache.brands&&cache.brands.length&&cache.classes&&cache.classes.length){
+        try{ openNewBdataForBottle(newbd); }catch(e){}
+      } else if(m<80){ setTimeout(w2,150); }
+    })();
+    return;
+  }
+  if(!tab) return;
+  var tb=document.querySelector('.tab[data-page="'+tab+'"]');
+  if(tb) tb.click();
+  if(!edit) return;
+  var openers={classes:openClassModal,brands:openBrandModal,bottles:openBottleModal,bdata:openBdataModal};
+  var cacheKeys={classes:'classes',brands:'brands',bottles:'bottles',bdata:'bdata'};
+  var open=openers[tab], ck=cacheKeys[tab];
+  if(!open||!ck) return;
+  var n=0;
+  (function wait(){
+    n++;
+    var col=cache&&cache[ck];
+    if(col&&col.length&&col.some(function(x){return String(x.id)===String(edit);})){
+      try{ open(edit); }catch(e){}
+    } else if(n<80){ setTimeout(wait,150); }
+  })();
+})();
 </script>
 </body>
 </html>
