@@ -118,6 +118,10 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 .sm{padding:5px 10px;font-size:11px}
 .mbg{position:fixed;inset:0;background:rgba(24,17,10,.52);z-index:1000;display:none;align-items:center;justify-content:center;padding:16px}
 .mbg.open{display:flex}
+/* 埋め込み(iframe)モード: ページ本体を隠し、モーダルだけを透明背景で表示（背後の暗転は親側で行う） */
+html.embed,html.embed body{background:transparent!important}
+html.embed #app,html.embed #login-screen{display:none!important}
+html.embed .mbg{background:transparent!important}
 .modal{background:var(--white);border-radius:var(--rl);width:100%;max-width:560px;max-height:94vh;overflow-y:auto;box-shadow:var(--shadow-lg)}
 .modal-lg{max-width:780px}
 .mhead{display:flex;justify-content:space-between;align-items:center;padding:20px 24px 16px;border-bottom:1px solid var(--border)}
@@ -197,6 +201,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 </head>
 <body>
+<script>if(new URLSearchParams(location.search).get('embed')==='1')document.documentElement.classList.add('embed');</script>
 
 <div id="login-screen">
   <div class="lcard">
@@ -602,6 +607,16 @@ if (!firebase.apps.length) { firebase.initializeApp(FIREBASE_CONFIG); }
 var auth = firebase.auth();
 var db   = firebase.firestore();
 
+// ── 埋め込み(iframe)モード：蒸留所ツリー等から編集モーダルだけを表示 ──
+var _embed = new URLSearchParams(location.search).get('embed')==='1';
+var _embedSaved = false;
+var EMBED_EDIT_MODALS = ["m-class","m-brand","m-bottle","m-bdata"];
+function _embedNotifyClose(id){
+  if(!_embed || EMBED_EDIT_MODALS.indexOf(id)<0) return;
+  try{ parent.postMessage({type:'tequila-embed-close',saved:_embedSaved,id:id},'*'); }catch(e){}
+  _embedSaved=false;
+}
+
 // ── ユーティリティ ─────────────────────────────────────────────
 function g(id)      { return document.getElementById(id); }
 function gv(id)     { var el=g(id); return el?el.value.trim():""; }
@@ -617,13 +632,14 @@ function toast(msg,type){
   setTimeout(function(){el.remove();},3000);
 }
 function openM(id)  { g(id).classList.add("open"); }
-function closeM(id) { g(id).classList.remove("open"); }
+function closeM(id) { g(id).classList.remove("open"); _embedNotifyClose(id); }
 
 var FORM_MODALS=["m-class","m-brand","m-bottle","m-bdata","m-swap"];
 function isFormModal(id){ return FORM_MODALS.indexOf(id)>=0; }
 function confirmClose(id){
   if(isFormModal(id)){ if(!confirm("登録作業を中止しますか？\n入力内容は破棄されます。")) return; }
   g(id).classList.remove("open");
+  _embedNotifyClose(id);
 }
 document.addEventListener("click",function(e){
   var btn=e.target.closest("[data-close]");
@@ -1032,7 +1048,7 @@ g("btn-save-class").addEventListener("click",function(){
   var cat=gv("cl-cat")||"0",cls=gv("cl-cls")||"1";
   var id=editId.klass||(cat+cls);
   db.collection("classes").doc(id).set({classId:id,classNameJa:gv("cl-name-ja")||null,abbr:gv("cl-abbr")||null},{merge:true})
-    .then(function(){ toast(editId.klass?"クラスを更新しました":"クラスを登録しました"); closeM("m-class"); bumpAndRender("classes"); loadCol("classes"); })
+    .then(function(){ toast(editId.klass?"クラスを更新しました":"クラスを登録しました"); _embedSaved=true; closeM("m-class"); bumpAndRender("classes"); loadCol("classes"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
@@ -1097,7 +1113,7 @@ g("btn-save-brand").addEventListener("click",function(){
     toast("ブランドID「"+id+"」は既に存在します。連番を変更してください","err"); return;
   }
   db.collection("brands").doc(id).set({brandId:id,distilleryId:dis,seq:seq,brandType:gv("br-type")||"0",brandStatus:gv("br-st")||"0",salesCategory:parseInt(gv("br-sales")),brandEs:es,brandJa:gv("br-ja")||null,foundedYear:parseInt(gv("br-year"))||null,infoUrl:gv("br-info")||null,ammUrl:gv("br-amm")||null,annUrl:gv("br-ann")||null},{merge:true})
-    .then(function(){ toast(editId.brand?"ブランドを更新しました":"ブランドを登録しました"); closeM("m-brand"); bumpAndRender("brands"); loadCol("brands"); })
+    .then(function(){ toast(editId.brand?"ブランドを更新しました":"ブランドを登録しました"); _embedSaved=true; closeM("m-brand"); bumpAndRender("brands"); loadCol("brands"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
@@ -1226,7 +1242,7 @@ g("btn-save-bottle").addEventListener("click",function(){
   var btEs=(gv("bt-es")||"").trim()||null;
   var btJa=(gv("bt-ja")||"").trim()||null;
   db.collection("bottles").doc(id).set({bottleId:id,brandId:brandId,classId:classId,seq:seq,bottleEs:btEs,bottleJa:btJa,abv:parseFloat(gv("bt-abv"))||null,production:gv("bt-prod")||"0",filtration:gv("bt-flt")||"0",additive:gv("bt-add")||"0",servingStatus:parseInt(gv("bt-serving")||"0"),minTasting:parseInt(gv("bt-min-tasting")||"10")},{merge:true})
-    .then(function(){ toast(editId.bottle?"ボトルを更新しました":"ボトルを登録しました"); closeM("m-bottle"); bumpAndRender("bottles"); loadCol("bottles"); })
+    .then(function(){ toast(editId.bottle?"ボトルを更新しました":"ボトルを登録しました"); _embedSaved=true; closeM("m-bottle"); bumpAndRender("bottles"); loadCol("bottles"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
@@ -1595,7 +1611,7 @@ g("btn-save-bdata").addEventListener("click",function(){
     cost:parseInt(gv("bd-cost"))||null, importType:gv("bd-import")||"0", domesticDist:gv("bd-domestic")||"0",
     lotType:parseInt(gv("bd-lottype")||"1")||1, note:gv("bd-note")||null
   },{merge:true})
-  .then(function(){ toast(editId.bdata?"ボトルデータを更新しました":"ボトルデータを登録しました"); closeM("m-bdata"); bumpAndRender("bottleData"); loadBdata(); })
+  .then(function(){ toast(editId.bdata?"ボトルデータを更新しました":"ボトルデータを登録しました"); _embedSaved=true; closeM("m-bdata"); bumpAndRender("bottleData"); loadBdata(); })
   .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
@@ -1994,6 +2010,7 @@ g("btn-exec-repair").addEventListener("click",function(){
       if(cache&&cache.brands&&cache.brands.length&&cache.classes&&cache.classes.length){
         try{ openNewBottleForBrand(newbt); }catch(e){}
       } else if(k<80){ setTimeout(w3,150); }
+      else if(_embed){ try{ parent.postMessage({type:'tequila-embed-close',saved:false,error:'timeout'},'*'); }catch(e){} }
     })();
     return;
   }
@@ -2005,6 +2022,7 @@ g("btn-exec-repair").addEventListener("click",function(){
       if(cache&&cache.bottles&&cache.bottles.length&&cache.brands&&cache.brands.length&&cache.classes&&cache.classes.length){
         try{ openNewBdataForBottle(newbd); }catch(e){}
       } else if(m<80){ setTimeout(w2,150); }
+      else if(_embed){ try{ parent.postMessage({type:'tequila-embed-close',saved:false,error:'timeout'},'*'); }catch(e){} }
     })();
     return;
   }
@@ -2023,6 +2041,7 @@ g("btn-exec-repair").addEventListener("click",function(){
     if(col&&col.length&&col.some(function(x){return String(x.id)===String(edit);})){
       try{ open(edit); }catch(e){}
     } else if(n<80){ setTimeout(wait,150); }
+    else if(_embed){ try{ parent.postMessage({type:'tequila-embed-close',saved:false,error:'notfound'},'*'); }catch(e){} }
   })();
 })();
 </script>
