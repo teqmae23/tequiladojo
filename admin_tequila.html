@@ -832,6 +832,27 @@ function updateBdataFilters(){
   }
 }
 
+// NOMドロップダウンに値をセット（蒸留所名付き）。オプションが未生成/欠落でも
+// 蒸留所名付きのオプションを補って選択状態にする。
+function syncBdNomSel(nom){
+  var sel=g("bd-nom-sel"); if(!sel) return;
+  nom=String(nom||"");
+  // 未populate（placeholderのみ）なら再構築
+  if(sel.options.length<=1) updateBdataFilters();
+  if(!nom){ sel.value=""; return; }
+  var has=false;
+  for(var i=0;i<sel.options.length;i++){ if(sel.options[i].value===nom){ has=true; break; } }
+  if(!has){
+    // cache から蒸留所名を解決してオプションを追加（無ければNOMのみ）
+    var d=cache.distilleries.find(function(x){return String(x.nom||x.id)===nom;});
+    var dnm=d?(d.nomJa||d.nomEs||d.name||d.nameJa||d.nameEs||""):"";
+    var label=nom+(dnm?" — "+dnm:"");
+    var opt=document.createElement("option"); opt.value=nom; opt.textContent=label;
+    sel.appendChild(opt);
+  }
+  sel.value=nom;
+}
+
 // ── フィルター入力バインド ──────────────────────────────────────
 function addFilter(ids,col){
   ids.forEach(function(id){
@@ -1372,8 +1393,8 @@ function openBdataModal(id){
     sv("bd-bottle",r?r.bottleId||r.id.slice(0,12):""); sv("bd-seq",r?r.id:"");
     bottleEl.readOnly=true; bottleEl.style.background="var(--cream2)"; seqEl.readOnly=true; seqEl.style.background="var(--cream2)";
     var nom=r?(r.bottleId||r.id).slice(0,4):""; sv("bd-nom",nom);
-    // ドロップダウンにも同期
-    var nomSelEl=g("bd-nom-sel"); if(nomSelEl) nomSelEl.value=nom;
+    // ドロップダウンにも同期（蒸留所名付きで確実に選択）
+    syncBdNomSel(nom);
     var brands=cache.brands.filter(function(b){return b.id.slice(0,4)===nom;});
     var brandSel=g("bd-brand");
     brandSel.innerHTML='<option value="">選択...</option>'+brands.map(function(b){return '<option value="'+b.id+'">'+b.id+' — '+(b.brandEs||"")+'</option>';}).join("");
@@ -1449,7 +1470,7 @@ function _fillBdataForm(r){
 
   // NOM
   sv("bd-nom",nom);
-  var nomSelEl=g("bd-nom-sel"); if(nomSelEl) nomSelEl.value=nom;
+  syncBdNomSel(nom);
 
   // Brand dropdown
   var brandSel=g("bd-brand");
