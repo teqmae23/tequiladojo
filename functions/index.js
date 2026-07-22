@@ -622,6 +622,8 @@ exports.stripeWebhook = functions
 
 // ── サブスク Checkout / カスタマーポータル（会員向け・us-central1） ──
 const SUBSCRIPTION_ALLOWED_ORIGINS = [
+  'https://tequiladojo.com',
+  'https://www.tequiladojo.com',
   'https://tequiladojo.web.app',
   'https://tequiladojo.firebaseapp.com',
 ];
