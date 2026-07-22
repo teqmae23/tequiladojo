@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>360°動画 管理 — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:"G-KMS18946JQ"
+};
+</script>
+<script src="/auth-role.js?v=20260714"></script>
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;
+  --red:#b03020;--teal:#1a6e58;
+  --border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);
+  --shadow:0 1px 12px rgba(24,17,10,.07);--shadow-lg:0 6px 36px rgba(24,17,10,.13);
+  --r:8px;--rl:12px;
+  --serif:'Hiragino Mincho ProN','Yu Mincho',serif;
+  --sans:'Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif;
+  --mono:'SFMono-Regular',Consolas,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+button{cursor:pointer;font-family:var(--sans)}
+input,textarea,select{font-family:var(--sans)}
+#login-screen{display:none;min-height:100vh;align-items:center;justify-content:center;padding:24px}
+.lcard{width:100%;max-width:360px;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:40px 30px;box-shadow:var(--shadow-lg)}
+.llogo{text-align:center;font-size:40px;margin-bottom:6px}
+.lbrand{font-family:var(--serif);font-size:22px;color:var(--gold-d);letter-spacing:.1em;text-align:center}
+.lsub{text-align:center;font-size:10px;letter-spacing:.18em;color:var(--ink3);margin-bottom:24px}
+.lcard label{display:block;font-size:10px;color:var(--ink3);letter-spacing:.06em;margin:12px 0 4px}
+.lcard input{width:100%;padding:11px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.lerr{min-height:16px;font-size:12px;color:var(--red);margin-top:8px;text-align:center}
+.lbtn{width:100%;margin-top:18px;padding:12px;background:var(--gold-d);color:var(--cream);border:none;border-radius:var(--r);font-size:13px}
+.hdr{background:var(--ink);padding:0 16px;height:56px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:40}
+.hdr-title{font-family:var(--serif);font-size:18px;color:var(--gold-l);letter-spacing:.06em}
+.hdr-right{margin-left:auto;display:flex;gap:8px}
+.hdr-nav{padding:6px 11px;border:1px solid rgba(255,255,255,.16);border-radius:6px;color:var(--gold-l);font-size:11px;text-decoration:none}
+#app{display:none}
+.wrap{max-width:920px;margin:0 auto;padding:18px 14px 60px}
+.phead{display:flex;align-items:center;margin-bottom:16px}
+.ptitle{font-family:var(--serif);font-size:22px;color:var(--gold-d)}
+.pdesc{font-size:11px;color:var(--ink3);margin-top:2px}
+.btn{border:none;border-radius:var(--r);padding:9px 16px;font-size:13px;font-weight:500}
+.bp{background:var(--gold-d);color:var(--cream)}
+.bg2{background:var(--cream2);color:var(--ink2);border:1px solid var(--border2)}
+.bd{background:#fff;color:var(--red);border:1px solid var(--cream3)}
+.badd{margin-left:auto}
+/* list */
+.vrow{display:flex;gap:12px;align-items:center;background:var(--white);border:1px solid var(--border);border-radius:var(--rl);padding:10px 12px;margin-bottom:10px;box-shadow:var(--shadow)}
+.vth{flex-shrink:0;width:120px;aspect-ratio:16/9;border-radius:8px;background:#2a2018 center/cover no-repeat;position:relative;overflow:hidden}
+.vth .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.4);font-size:24px}
+.vth .dur{position:absolute;right:4px;bottom:4px;background:rgba(24,17,10,.8);color:#fff;font-size:10px;font-family:var(--mono);padding:0 5px;border-radius:3px}
+.vmeta{flex:1;min-width:0}
+.vt{font-size:14px;font-weight:600;margin-bottom:2px}
+.vd{font-size:11px;color:var(--ink3);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.vtags{margin-top:4px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.tag{font-size:10px;padding:1px 7px;border-radius:10px}
+.tag-pub{background:#e5f2ec;color:var(--teal)}
+.tag-hid{background:#f6e7e3;color:var(--red)}
+.tag-ord{background:var(--cream2);color:var(--ink3);font-family:var(--mono)}
+.vacts{flex-shrink:0;display:flex;gap:6px}
+.abtn{font-size:11px;padding:6px 10px;border-radius:6px;border:1px solid var(--cream3);background:#fff}
+.abtn.edit{color:var(--gold-d)}
+.abtn.del{color:var(--red)}
+.empty{text-align:center;color:var(--ink3);padding:50px 20px;font-size:13px}
+/* modal */
+.mbg{position:fixed;inset:0;background:rgba(24,17,10,.52);z-index:100;display:none;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto}
+.mbg.open{display:flex}
+.modal{background:var(--white);border-radius:var(--rl);width:100%;max-width:540px;box-shadow:var(--shadow-lg);margin:auto}
+.mhead{display:flex;justify-content:space-between;align-items:center;padding:18px 20px 14px;border-bottom:1px solid var(--border)}
+.mtitle{font-family:var(--serif);font-size:19px;color:var(--gold-d)}
+.mx{background:none;border:none;font-size:22px;color:var(--ink3)}
+.mbody{padding:16px 20px}
+.fg{margin-bottom:14px}
+.fl{display:block;font-size:11px;color:var(--ink2);font-weight:600;margin-bottom:5px}
+.req{color:var(--red);margin-left:3px}
+.fi{width:100%;padding:10px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+textarea.fi{resize:vertical;min-height:72px;line-height:1.6}
+.frow{display:flex;gap:10px}
+.frow>.fg{flex:1}
+.hint{font-size:10px;color:var(--ink3);margin-top:4px;line-height:1.5}
+.cc{font-size:10px;color:var(--ink3);text-align:right;margin-top:3px}
+.cc.over{color:var(--red)}
+.thumbprev{margin-top:8px;width:100%;max-width:220px;aspect-ratio:16/9;border-radius:8px;background:#2a2018 center/cover no-repeat;border:1px solid var(--cream3);display:none}
+.inline-btn{margin-top:6px;font-size:11px;padding:6px 10px;border-radius:6px;border:1px solid var(--cream3);background:#fff;color:var(--gold-d)}
+.mfoot{display:flex;justify-content:space-between;gap:10px;padding:14px 20px 18px;border-top:1px solid var(--border)}
+#toasts{position:fixed;bottom:18px;right:18px;z-index:9999;display:flex;flex-direction:column;gap:6px}
+.toast{background:var(--ink);color:#fff;font-size:12px;padding:9px 14px;border-radius:8px;box-shadow:var(--shadow-lg);opacity:0;transform:translateY(8px);transition:.25s}
+.toast.show{opacity:1;transform:none}
+.toast.err{background:var(--red)}
+</style>
+</head>
+<body>
+
+<!-- ログイン -->
+<div id="login-screen">
+  <div class="lcard">
+    <div class="llogo">🎬</div>
+    <div class="lbrand">テキーラ道場</div>
+    <div class="lsub">360°動画 管理</div>
+    <label>メールアドレス</label>
+    <input type="email" id="lemail" autocomplete="username">
+    <label>パスワード</label>
+    <input type="password" id="lpass" autocomplete="current-password">
+    <div class="lerr" id="lerr"></div>
+    <button class="lbtn" id="lbtn">ログイン</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="hdr">
+    <div class="hdr-title">🎬 360°動画 管理</div>
+    <div class="hdr-right">
+      <a class="hdr-nav" href="/video360.html" target="_blank">公開ページ ↗</a>
+      <button class="hdr-nav" id="btn-logout" style="background:none">ログアウト</button>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="phead">
+      <div>
+        <div class="ptitle">360°動画</div>
+        <div class="pdesc">Vimeoに登録した動画を会員向けに公開・管理します</div>
+      </div>
+      <button class="btn bp badd" id="btn-add">＋ 新規登録</button>
+    </div>
+    <div id="list"></div>
+    <div class="empty" id="empty" style="display:none;">まだ動画が登録されていません。「＋ 新規登録」から追加してください。</div>
+  </div>
+</div>
+
+<!-- 編集モーダル -->
+<div class="mbg" id="m-edit">
+  <div class="modal">
+    <div class="mhead"><div class="mtitle" id="mt">動画を登録</div><button class="mx" data-close>✕</button></div>
+    <div class="mbody">
+      <div class="fg">
+        <label class="fl">タイトル<span class="req">*</span></label>
+        <input class="fi" id="f-title" placeholder="例：ラ・アルテーニャ蒸留所ツアー">
+      </div>
+      <div class="fg">
+        <label class="fl">Vimeo URL または 動画ID<span class="req">*</span></label>
+        <input class="fi" id="f-vimeo" placeholder="https://vimeo.com/123456789 または 123456789">
+        <button class="inline-btn" id="btn-fetch">Vimeoから情報を自動取得（サムネイル・時間・タイトル）</button>
+        <div class="hint">※ Vimeoで「特定ドメインのみ埋め込み」に設定した動画も、当サイト上では再生できます。自動取得はVimeoの公開設定によっては失敗するので、その場合は下記を手入力してください。</div>
+      </div>
+      <div class="frow">
+        <div class="fg">
+          <label class="fl">再生時間</label>
+          <input class="fi" id="f-dur" placeholder="例：3:45">
+        </div>
+        <div class="fg" style="max-width:120px">
+          <label class="fl">表示順</label>
+          <input class="fi" id="f-order" type="number" placeholder="1" style="font-family:var(--mono)">
+        </div>
+      </div>
+      <div class="fg">
+        <label class="fl">サムネイル画像URL</label>
+        <input class="fi" id="f-thumb" placeholder="https://i.vimeocdn.com/... など画像のURL">
+        <img class="thumbprev" id="thumbprev" alt="">
+      </div>
+      <div class="fg">
+        <label class="fl">概要説明（200文字まで）</label>
+        <textarea class="fi" id="f-desc" maxlength="200" placeholder="動画の内容を簡単に紹介..."></textarea>
+        <div class="cc" id="cc">0 / 200</div>
+      </div>
+      <div class="fg">
+        <label class="fl">公開状態</label>
+        <select class="fi" id="f-pub">
+          <option value="0">公開（会員に表示）</option>
+          <option value="1">非公開（下書き）</option>
+        </select>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn bd" id="btn-del" style="visibility:hidden">削除</button>
+      <div style="display:flex;gap:10px">
+        <button class="btn bg2" data-close>キャンセル</button>
+        <button class="btn bp" id="btn-save">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function gv(id){var e=g(id);return e?e.value.trim():'';}
+function sv(id,v){var e=g(id);if(e)e.value=(v==null?'':v);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function toast(msg,type){
+  var el=document.createElement('div'); el.className='toast'+(type?' '+type:''); el.textContent=msg;
+  g('toasts').appendChild(el);
+  requestAnimationFrame(function(){requestAnimationFrame(function(){el.classList.add('show');});});
+  setTimeout(function(){el.classList.remove('show');setTimeout(function(){el.remove();},300);},2800);
+}
+function vimeoIdOf(raw){
+  var s=String(raw||'').trim();
+  var m=s.match(/vimeo\.com\/(?:video\/)?(\d+)/); if(m) return m[1];
+  m=s.match(/(\d{6,})/); return m?m[1]:'';
+}
+
+var videos=[], editId=null;
+
+AuthRole.requireOwner(auth, function(user){
+  g('app').style.display='block';
+  loadVideos();
+}, function(){
+  g('login-screen').style.display='flex';
+});
+g('lbtn').addEventListener('click',function(){
+  auth.signInWithEmailAndPassword(gv('lemail'),g('lpass').value).catch(function(e){ g('lerr').textContent=e.message; });
+});
+g('lpass').addEventListener('keydown',function(e){ if(e.key==='Enter') g('lbtn').click(); });
+g('btn-logout').addEventListener('click',function(){ auth.signOut().then(function(){location.reload();}); });
+
+function loadVideos(){
+  db.collection('videos360').get().then(function(snap){
+    videos=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    videos.sort(function(a,b){
+      var ao=(a.order==null?9999:Number(a.order)), bo=(b.order==null?9999:Number(b.order));
+      if(ao!==bo) return ao-bo;
+      var at=a.createdAt&&a.createdAt.seconds?a.createdAt.seconds:0, bt=b.createdAt&&b.createdAt.seconds?b.createdAt.seconds:0;
+      return bt-at;
+    });
+    render();
+  }).catch(function(e){ toast('読み込み失敗: '+e.message,'err'); });
+}
+
+function render(){
+  var list=g('list');
+  if(!videos.length){ list.innerHTML=''; g('empty').style.display='block'; return; }
+  g('empty').style.display='none';
+  list.innerHTML=videos.map(function(v,i){
+    var pub=(v.visibility==='0'||v.visibility===0||v.visibility==null);
+    var th=v.thumbUrl
+      ? '<div class="vth" style="background-image:url(\''+esc(v.thumbUrl)+'\')">'
+      : '<div class="vth"><div class="ph">🎥</div>';
+    if(v.duration) th+='<div class="dur">'+esc(v.duration)+'</div>';
+    th+='</div>';
+    return '<div class="vrow">'+th
+      +'<div class="vmeta">'
+        +'<div class="vt">'+esc(v.title||'(無題)')+'</div>'
+        +(v.description?'<div class="vd">'+esc(v.description)+'</div>':'')
+        +'<div class="vtags">'
+          +'<span class="tag '+(pub?'tag-pub':'tag-hid')+'">'+(pub?'公開':'非公開')+'</span>'
+          +'<span class="tag tag-ord">順 '+(v.order==null?'—':esc(v.order))+'</span>'
+          +'<span class="tag tag-ord">ID '+esc(vimeoIdOf(v.vimeoId)||'—')+'</span>'
+        +'</div>'
+      +'</div>'
+      +'<div class="vacts">'
+        +'<button class="abtn edit" data-i="'+i+'">編集</button>'
+        +'<button class="abtn del" data-i="'+i+'">削除</button>'
+      +'</div>'
+    +'</div>';
+  }).join('');
+  Array.prototype.forEach.call(list.querySelectorAll('.abtn.edit'),function(b){ b.addEventListener('click',function(){ openEdit(videos[Number(b.dataset.i)]); }); });
+  Array.prototype.forEach.call(list.querySelectorAll('.abtn.del'),function(b){ b.addEventListener('click',function(){ delVideo(videos[Number(b.dataset.i)]); }); });
+}
+
+// ── モーダル ──
+function openM(){ g('m-edit').classList.add('open'); }
+function closeM(){ g('m-edit').classList.remove('open'); }
+Array.prototype.forEach.call(document.querySelectorAll('[data-close]'),function(b){ b.addEventListener('click',closeM); });
+g('m-edit').addEventListener('click',function(e){ if(e.target===g('m-edit')) closeM(); });
+
+g('btn-add').addEventListener('click',function(){ openEdit(null); });
+
+function openEdit(v){
+  editId=v?v.id:null;
+  g('mt').textContent=v?'動画を編集':'動画を登録';
+  g('btn-del').style.visibility=v?'visible':'hidden';
+  sv('f-title',v?v.title:'');
+  sv('f-vimeo',v?(v.vimeoId||''):'');
+  sv('f-dur',v?(v.duration||''):'');
+  sv('f-order',v&&v.order!=null?v.order:(videos.length+1));
+  sv('f-thumb',v?(v.thumbUrl||''):'');
+  sv('f-desc',v?(v.description||''):'');
+  sv('f-pub',v?(String(v.visibility==null?'0':v.visibility)):'0');
+  updateCC(); updateThumbPrev();
+  openM();
+}
+
+function updateCC(){
+  var n=(g('f-desc').value||'').length;
+  var el=g('cc'); el.textContent=n+' / 200'; el.classList.toggle('over',n>200);
+}
+g('f-desc').addEventListener('input',updateCC);
+function updateThumbPrev(){
+  var url=gv('f-thumb'), el=g('thumbprev');
+  if(url){ el.style.backgroundImage="url('"+url.replace(/'/g,"%27")+"')"; el.style.display='block'; }
+  else { el.style.display='none'; }
+}
+g('f-thumb').addEventListener('input',updateThumbPrev);
+
+// Vimeo oEmbed から情報を自動取得（公開/未制限のときに有効）
+g('btn-fetch').addEventListener('click',function(){
+  var id=vimeoIdOf(gv('f-vimeo'));
+  if(!id){ toast('先にVimeo URL / 動画IDを入力してください','err'); return; }
+  var btn=this; var orig=btn.textContent; btn.textContent='取得中…'; btn.disabled=true;
+  fetch('https://vimeo.com/api/oembed.json?url=https://vimeo.com/'+id+'&width=640')
+    .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(d){
+      if(d.thumbnail_url){ sv('f-thumb',d.thumbnail_url); updateThumbPrev(); }
+      if(d.duration&&!gv('f-dur')){ var s=Math.round(d.duration); sv('f-dur',Math.floor(s/60)+':'+String(s%60).padStart(2,'0')); }
+      if(d.title&&!gv('f-title')){ sv('f-title',d.title); }
+      toast('Vimeoから取得しました');
+    })
+    .catch(function(){ toast('自動取得できませんでした（非公開設定の可能性）。手入力してください','err'); })
+    .finally(function(){ btn.textContent=orig; btn.disabled=false; });
+});
+
+g('btn-save').addEventListener('click',function(){
+  var title=gv('f-title'), vimeo=gv('f-vimeo');
+  if(!title){ toast('タイトルを入力してください','err'); return; }
+  if(!vimeoIdOf(vimeo)){ toast('Vimeo URL または 動画ID が正しくありません','err'); return; }
+  var desc=(g('f-desc').value||'').slice(0,200);
+  var orderVal=gv('f-order'); orderVal=orderVal===''?null:(parseInt(orderVal,10)||0);
+  var data={
+    title:title, vimeoId:vimeo, duration:gv('f-dur')||null,
+    thumbUrl:gv('f-thumb')||null, description:desc||null,
+    order:orderVal, visibility:gv('f-pub')||'0',
+    updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+  };
+  var ref;
+  if(editId){ ref=db.collection('videos360').doc(editId).set(data,{merge:true}); }
+  else { data.createdAt=firebase.firestore.FieldValue.serverTimestamp(); ref=db.collection('videos360').add(data); }
+  g('btn-save').disabled=true;
+  ref.then(function(){ toast(editId?'更新しました':'登録しました'); closeM(); loadVideos(); })
+    .catch(function(e){ toast('保存失敗: '+e.message,'err'); })
+    .finally(function(){ g('btn-save').disabled=false; });
+});
+
+g('btn-del').addEventListener('click',function(){ if(editId){ var v=videos.find(function(x){return x.id===editId;}); closeM(); delVideo(v); } });
+function delVideo(v){
+  if(!v) return;
+  if(!confirm('「'+(v.title||'(無題)')+'」を削除しますか？この操作は取り消せません。')) return;
+  db.collection('videos360').doc(v.id).delete()
+    .then(function(){ toast('削除しました'); loadVideos(); })
+    .catch(function(e){ toast('削除失敗: '+e.message,'err'); });
+}
+</script>
+</body>
+</html>
