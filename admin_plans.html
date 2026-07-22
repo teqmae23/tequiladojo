@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>会員グレード管理 — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:"G-KMS18946JQ"
+};
+</script>
+<script src="/auth-role.js?v=20260714"></script>
+<script src="/member-plan.js?v=20260722"></script>
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;
+  --red:#b03020;--teal:#1a6e58;
+  --border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);
+  --shadow:0 1px 12px rgba(24,17,10,.07);--shadow-lg:0 6px 36px rgba(24,17,10,.13);
+  --r:8px;--rl:12px;
+  --serif:'Hiragino Mincho ProN','Yu Mincho',serif;
+  --sans:'Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif;
+  --mono:'SFMono-Regular',Consolas,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+button{cursor:pointer;font-family:var(--sans)}
+input,select{font-family:var(--sans)}
+#login-screen{display:none;min-height:100vh;align-items:center;justify-content:center;padding:24px}
+.lcard{width:100%;max-width:360px;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:40px 30px;box-shadow:var(--shadow-lg)}
+.llogo{text-align:center;font-size:40px;margin-bottom:6px}
+.lbrand{font-family:var(--serif);font-size:22px;color:var(--gold-d);letter-spacing:.1em;text-align:center}
+.lsub{text-align:center;font-size:10px;letter-spacing:.18em;color:var(--ink3);margin-bottom:24px}
+.lcard label{display:block;font-size:10px;color:var(--ink3);margin:12px 0 4px}
+.lcard input{width:100%;padding:11px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.lerr{min-height:16px;font-size:12px;color:var(--red);margin-top:8px;text-align:center}
+.lbtn{width:100%;margin-top:18px;padding:12px;background:var(--gold-d);color:var(--cream);border:none;border-radius:var(--r);font-size:13px}
+.hdr{background:var(--ink);padding:0 16px;height:56px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:40}
+.hdr-title{font-family:var(--serif);font-size:18px;color:var(--gold-l);letter-spacing:.06em}
+.hdr-right{margin-left:auto;display:flex;gap:8px}
+.hdr-nav{padding:6px 11px;border:1px solid rgba(255,255,255,.16);border-radius:6px;color:var(--gold-l);font-size:11px;text-decoration:none;background:none}
+#app{display:none}
+.wrap{max-width:960px;margin:0 auto;padding:18px 14px 60px}
+.sect{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shadow);padding:16px 16px 18px;margin-bottom:20px}
+.sect-head{display:flex;align-items:center;margin-bottom:12px}
+.sect-title{font-family:var(--serif);font-size:19px;color:var(--gold-d)}
+.sect-desc{font-size:11px;color:var(--ink3);margin-top:2px}
+.btn{border:none;border-radius:var(--r);padding:9px 15px;font-size:13px;font-weight:500}
+.bp{background:var(--gold-d);color:var(--cream)}
+.bg2{background:var(--cream2);color:var(--ink2);border:1px solid var(--border2)}
+.bd{background:#fff;color:var(--red);border:1px solid var(--cream3)}
+.badd{margin-left:auto}
+/* plan rows */
+.prow{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.plvl{flex-shrink:0;width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;color:#fff;background:var(--gold-d)}
+.pmeta{flex:1;min-width:0}
+.pname{font-size:15px;font-weight:700}
+.pprice{font-size:12px;color:var(--ink3);margin-top:1px}
+.pfeat{margin-top:6px;display:flex;gap:5px;flex-wrap:wrap}
+.fchip{font-size:10px;padding:2px 8px;border-radius:10px;background:var(--cream2);color:var(--ink2)}
+.fchip.off{opacity:.32;text-decoration:line-through}
+.ptag{font-size:10px;padding:1px 7px;border-radius:10px;margin-left:6px}
+.ptag.on{background:#e5f2ec;color:var(--teal)}
+.ptag.off{background:#f6e7e3;color:var(--red)}
+.pacts{flex-shrink:0;display:flex;gap:6px}
+.abtn{font-size:11px;padding:6px 10px;border-radius:6px;border:1px solid var(--cream3);background:#fff}
+.abtn.edit{color:var(--gold-d)}
+.abtn.del{color:var(--red)}
+.empty{text-align:center;color:var(--ink3);padding:30px 20px;font-size:13px}
+/* assign panel */
+.assign-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:11px;color:var(--ink2);font-weight:600}
+.field input,.field select{padding:9px 11px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+#assign-result{margin-top:14px;font-size:13px}
+.mcard{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-top:10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.mcard .mn{font-weight:700}
+.mcard .mid{font-family:var(--mono);font-size:12px;color:var(--ink3)}
+/* modal */
+.mbg{position:fixed;inset:0;background:rgba(24,17,10,.52);z-index:100;display:none;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto}
+.mbg.open{display:flex}
+.modal{background:var(--white);border-radius:var(--rl);width:100%;max-width:520px;box-shadow:var(--shadow-lg);margin:auto}
+.mhead{display:flex;justify-content:space-between;align-items:center;padding:16px 20px 12px;border-bottom:1px solid var(--border)}
+.mtitle{font-family:var(--serif);font-size:19px;color:var(--gold-d)}
+.mx{background:none;border:none;font-size:22px;color:var(--ink3)}
+.mbody{padding:16px 20px}
+.fg{margin-bottom:13px}
+.fl{display:block;font-size:11px;color:var(--ink2);font-weight:600;margin-bottom:5px}
+.req{color:var(--red);margin-left:3px}
+.fi{width:100%;padding:10px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.frow{display:flex;gap:10px}
+.frow>.fg{flex:1}
+.feat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.feat-toggle{display:flex;align-items:center;gap:8px;font-size:13px;padding:8px 10px;border:1px solid var(--cream3);border-radius:8px;background:var(--cream)}
+.feat-toggle input{width:16px;height:16px}
+.hint{font-size:10px;color:var(--ink3);margin-top:4px;line-height:1.5}
+.mfoot{display:flex;justify-content:space-between;gap:10px;padding:14px 20px 18px;border-top:1px solid var(--border)}
+#toasts{position:fixed;bottom:18px;right:18px;z-index:9999;display:flex;flex-direction:column;gap:6px}
+.toast{background:var(--ink);color:#fff;font-size:12px;padding:9px 14px;border-radius:8px;box-shadow:var(--shadow-lg);opacity:0;transform:translateY(8px);transition:.25s}
+.toast.show{opacity:1;transform:none}
+.toast.err{background:var(--red)}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="lcard">
+    <div class="llogo">🎫</div>
+    <div class="lbrand">テキーラ道場</div>
+    <div class="lsub">会員グレード管理</div>
+    <label>メールアドレス</label>
+    <input type="email" id="lemail" autocomplete="username">
+    <label>パスワード</label>
+    <input type="password" id="lpass" autocomplete="current-password">
+    <div class="lerr" id="lerr"></div>
+    <button class="lbtn" id="lbtn">ログイン</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="hdr">
+    <div class="hdr-title">🎫 会員グレード管理</div>
+    <div class="hdr-right">
+      <a class="hdr-nav" href="/admin.html">管理TOP</a>
+      <button class="hdr-nav" id="btn-logout">ログアウト</button>
+    </div>
+  </div>
+  <div class="wrap">
+
+    <!-- グレード定義 -->
+    <div class="sect">
+      <div class="sect-head">
+        <div>
+          <div class="sect-title">グレード定義</div>
+          <div class="sect-desc">会員グレード（無料/有料3種など）と、各グレードで解放する機能を設定します。</div>
+        </div>
+        <button class="btn bp badd" id="btn-add">＋ グレード追加</button>
+      </div>
+      <div id="plan-list"></div>
+      <div class="empty" id="plan-empty" style="display:none;">
+        まだグレードが未定義です。まず「無料会員（レベル0）」を作り、続けて有料グレードを追加してください。<br>
+        <span style="font-size:11px">※ グレード未定義の間は、会員ページは従来どおり全機能が表示されます。</span>
+      </div>
+    </div>
+
+    <!-- 会員へのグレード割当 -->
+    <div class="sect">
+      <div class="sect-head">
+        <div>
+          <div class="sect-title">会員グレードの割当・切替</div>
+          <div class="sect-desc">会員番号で検索して、手動でグレードを設定します（サブスク実装後は自動反映も可能）。</div>
+        </div>
+      </div>
+      <div class="assign-row">
+        <div class="field" style="flex:1;min-width:180px">
+          <label>会員番号（表示ID）</label>
+          <input id="q-member" placeholder="例：10023" onkeydown="if(event.key==='Enter')searchMember()">
+        </div>
+        <button class="btn bg2" onclick="searchMember()">検索</button>
+      </div>
+      <div id="assign-result"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- グレード編集モーダル -->
+<div class="mbg" id="m-plan">
+  <div class="modal">
+    <div class="mhead"><div class="mtitle" id="mt">グレードを追加</div><button class="mx" data-close>✕</button></div>
+    <div class="mbody">
+      <div class="frow">
+        <div class="fg" style="flex:2">
+          <label class="fl">グレード名<span class="req">*</span></label>
+          <input class="fi" id="f-name" placeholder="例：ゴールド会員">
+        </div>
+        <div class="fg" style="max-width:110px">
+          <label class="fl">レベル<span class="req">*</span></label>
+          <input class="fi" id="f-level" type="number" min="0" placeholder="0" style="font-family:var(--mono)">
+          <div class="hint">0=無料</div>
+        </div>
+      </div>
+      <div class="frow">
+        <div class="fg">
+          <label class="fl">価格表示</label>
+          <input class="fi" id="f-price" placeholder="例：¥1,000/月 または 無料">
+        </div>
+        <div class="fg" style="max-width:140px">
+          <label class="fl">バッジ色</label>
+          <input class="fi" id="f-color" type="color" value="#7a5610" style="padding:4px;height:40px">
+        </div>
+      </div>
+      <div class="fg">
+        <label class="fl">Stripe Price ID（定期課金・任意）</label>
+        <input class="fi" id="f-price-id" placeholder="price_xxx（サブスク実装フェーズで使用）">
+        <div class="hint">Stripeダッシュボードで作成した定期課金のPrice ID。今は空でもOK。</div>
+      </div>
+      <div class="fg">
+        <label class="fl">解放する機能</label>
+        <div class="feat-grid" id="feat-grid"></div>
+      </div>
+      <div class="fg">
+        <label class="fl">状態</label>
+        <select class="fi" id="f-active">
+          <option value="1">有効</option>
+          <option value="0">無効（非表示）</option>
+        </select>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn bd" id="btn-del" style="visibility:hidden">削除</button>
+      <div style="display:flex;gap:10px">
+        <button class="btn bg2" data-close>キャンセル</button>
+        <button class="btn bp" id="btn-save">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function gv(id){var e=g(id);return e?e.value.trim():'';}
+function sv(id,v){var e=g(id);if(e)e.value=(v==null?'':v);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function toast(msg,type){
+  var el=document.createElement('div'); el.className='toast'+(type?' '+type:''); el.textContent=msg;
+  g('toasts').appendChild(el);
+  requestAnimationFrame(function(){requestAnimationFrame(function(){el.classList.add('show');});});
+  setTimeout(function(){el.classList.remove('show');setTimeout(function(){el.remove();},300);},2800);
+}
+
+var plans=[], editId=null;
+
+AuthRole.requireOwner(auth, function(){ g('app').style.display='block'; loadPlans(); }, function(){ g('login-screen').style.display='flex'; });
+g('lbtn').addEventListener('click',function(){ auth.signInWithEmailAndPassword(gv('lemail'),g('lpass').value).catch(function(e){ g('lerr').textContent=e.message; }); });
+g('lpass').addEventListener('keydown',function(e){ if(e.key==='Enter') g('lbtn').click(); });
+g('btn-logout').addEventListener('click',function(){ auth.signOut().then(function(){location.reload();}); });
+
+function loadPlans(){
+  MemberPlan.loadPlans(db).then(function(arr){ plans=arr; renderPlans(); }).catch(function(e){ toast('読み込み失敗: '+e.message,'err'); });
+}
+
+function renderPlans(){
+  var list=g('plan-list');
+  if(!plans.length){ list.innerHTML=''; g('plan-empty').style.display='block'; return; }
+  g('plan-empty').style.display='none';
+  list.innerHTML=plans.map(function(p,i){
+    var feats=MemberPlan.FEATURES.map(function(f){
+      var on=!!(p.features&&p.features[f.key]);
+      return '<span class="fchip'+(on?'':' off')+'">'+f.icon+' '+esc(f.label)+'</span>';
+    }).join('');
+    var active=(p.active===undefined||p.active===1||p.active==='1'||p.active===true);
+    return '<div class="prow">'
+      +'<div class="plvl" style="background:'+esc(p.color||'#7a5610')+'">L'+esc(p.level==null?'?':p.level)+'</div>'
+      +'<div class="pmeta">'
+        +'<div class="pname">'+esc(p.name||'(無名)')
+          +'<span class="ptag '+(active?'on':'off')+'">'+(active?'有効':'無効')+'</span></div>'
+        +'<div class="pprice">'+esc(p.priceLabel||'—')+(p.stripePriceId?'　·　'+esc(p.stripePriceId):'')+'</div>'
+        +'<div class="pfeat">'+feats+'</div>'
+      +'</div>'
+      +'<div class="pacts">'
+        +'<button class="abtn edit" data-i="'+i+'">編集</button>'
+        +'<button class="abtn del" data-i="'+i+'">削除</button>'
+      +'</div>'
+    +'</div>';
+  }).join('');
+  Array.prototype.forEach.call(list.querySelectorAll('.abtn.edit'),function(b){ b.addEventListener('click',function(){ openEdit(plans[Number(b.dataset.i)]); }); });
+  Array.prototype.forEach.call(list.querySelectorAll('.abtn.del'),function(b){ b.addEventListener('click',function(){ delPlan(plans[Number(b.dataset.i)]); }); });
+}
+
+// ── モーダル ──
+function openM(){ g('m-plan').classList.add('open'); }
+function closeM(){ g('m-plan').classList.remove('open'); }
+Array.prototype.forEach.call(document.querySelectorAll('[data-close]'),function(b){ b.addEventListener('click',closeM); });
+g('m-plan').addEventListener('click',function(e){ if(e.target===g('m-plan')) closeM(); });
+g('btn-add').addEventListener('click',function(){ openEdit(null); });
+
+function buildFeatGrid(features){
+  g('feat-grid').innerHTML=MemberPlan.FEATURES.map(function(f){
+    var on=!!(features&&features[f.key]);
+    return '<label class="feat-toggle"><input type="checkbox" data-fk="'+f.key+'"'+(on?' checked':'')+'>'+f.icon+' '+esc(f.label)+'</label>';
+  }).join('');
+}
+
+function openEdit(p){
+  editId=p?p.id:null;
+  g('mt').textContent=p?'グレードを編集':'グレードを追加';
+  g('btn-del').style.visibility=p?'visible':'hidden';
+  sv('f-name',p?p.name:'');
+  sv('f-level',p&&p.level!=null?p.level:(plans.length?'':'0'));
+  sv('f-price',p?p.priceLabel:'');
+  sv('f-color',p&&p.color?p.color:'#7a5610');
+  sv('f-price-id',p?p.stripePriceId:'');
+  sv('f-active',p?(p.active===0||p.active==='0'||p.active===false?'0':'1'):'1');
+  buildFeatGrid(p?p.features:null);
+  openM();
+}
+
+g('btn-save').addEventListener('click',function(){
+  var name=gv('f-name');
+  if(!name){ toast('グレード名を入力してください','err'); return; }
+  var lvl=gv('f-level'); if(lvl===''){ toast('レベルを入力してください','err'); return; }
+  var features={};
+  Array.prototype.forEach.call(g('feat-grid').querySelectorAll('input[data-fk]'),function(cb){ features[cb.dataset.fk]=cb.checked; });
+  var data={
+    name:name, level:parseInt(lvl,10)||0, priceLabel:gv('f-price')||null,
+    color:gv('f-color')||null, stripePriceId:gv('f-price-id')||null,
+    features:features, active:(gv('f-active')==='0'?0:1),
+    order:0, updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+  };
+  var op;
+  if(editId){ op=db.collection('plans').doc(editId).set(data,{merge:true}); }
+  else { data.createdAt=firebase.firestore.FieldValue.serverTimestamp(); op=db.collection('plans').add(data); }
+  g('btn-save').disabled=true;
+  op.then(function(){ toast(editId?'更新しました':'追加しました'); closeM(); loadPlans(); })
+    .catch(function(e){ toast('保存失敗: '+e.message,'err'); })
+    .finally(function(){ g('btn-save').disabled=false; });
+});
+
+g('btn-del').addEventListener('click',function(){ if(editId){ var p=plans.find(function(x){return x.id===editId;}); closeM(); delPlan(p); } });
+function delPlan(p){
+  if(!p) return;
+  if(!confirm('グレード「'+(p.name||'')+'」を削除しますか？\n（このグレードを割り当てている会員は無料相当の表示になります）')) return;
+  db.collection('plans').doc(p.id).delete().then(function(){ toast('削除しました'); loadPlans(); }).catch(function(e){ toast('削除失敗: '+e.message,'err'); });
+}
+
+// ── 会員へのグレード割当 ──
+var foundMember=null;
+function searchMember(){
+  var q=gv('q-member');
+  g('assign-result').innerHTML='';
+  foundMember=null;
+  if(!q){ toast('会員番号を入力してください','err'); return; }
+  // 表示ID(displayId) または ドキュメントIDで検索
+  db.collection('members').where('displayId','==',q).limit(1).get().then(function(snap){
+    if(!snap.empty) return snap.docs[0];
+    return db.collection('members').doc(q).get().then(function(d){ return d.exists?d:null; });
+  }).then(function(doc){
+    if(!doc){ g('assign-result').innerHTML='<div class="empty">該当する会員が見つかりません。</div>'; return; }
+    foundMember=Object.assign({id:doc.id},doc.data());
+    renderAssign();
+  }).catch(function(e){ toast('検索失敗: '+e.message,'err'); });
+}
+
+function renderAssign(){
+  var m=foundMember; if(!m) return;
+  var eff=MemberPlan.effectivePlan(m, plans);
+  var opts='<option value="">（無料相当・未設定）</option>'+plans.map(function(p){
+    return '<option value="'+esc(p.id)+'"'+(m.plan===p.id?' selected':'')+'>L'+esc(p.level)+' '+esc(p.name)+'</option>';
+  }).join('');
+  g('assign-result').innerHTML=''
+    +'<div class="mcard">'
+      +'<div style="flex:1;min-width:160px">'
+        +'<div class="mn">'+esc(m.nickname||m.name||'(名称なし)')+'</div>'
+        +'<div class="mid">'+esc(m.displayId||m.id)+'</div>'
+        +'<div style="font-size:12px;color:var(--ink3);margin-top:4px">現在の有効グレード：<b>'+esc(eff?eff.name:'未定義')+'</b>'
+          +(m.subscriptionStatus?'　（サブスク:'+esc(m.subscriptionStatus)+'）':'')+'</div>'
+      +'</div>'
+      +'<div class="field" style="min-width:180px">'
+        +'<label>手動グレード割当</label>'
+        +'<select id="assign-plan">'+opts+'</select>'
+      +'</div>'
+      +'<button class="btn bp" onclick="saveAssign()" style="align-self:flex-end">設定を保存</button>'
+    +'</div>';
+}
+
+function saveAssign(){
+  if(!foundMember) return;
+  var val=g('assign-plan').value||null;
+  db.collection('members').doc(foundMember.id).set({plan:val},{merge:true})
+    .then(function(){ foundMember.plan=val; toast('グレードを設定しました'); renderAssign(); })
+    .catch(function(e){ toast('保存失敗: '+e.message,'err'); });
+}
+</script>
+</body>
+</html>
