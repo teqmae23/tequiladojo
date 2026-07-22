@@ -570,13 +570,25 @@ exports.stripeWebhook = functions
       const priceId = line && line.price && line.price.id;
       const subId = obj.subscription;
       const periodEnd = line && line.period && line.period.end;
-      const grade = PRICE_GRADE_MAP[priceId];
-      if (grade) {
+      // plans コレクションから priceId→level を動的解決（無ければ旧マップにフォールバック）
+      let grade = null;
+      let planId = null;
+      try {
+        const psnap = await db.collection('plans')
+          .where('stripePriceId', '==', priceId).limit(1).get();
+        if (!psnap.empty) {
+          grade = Number(psnap.docs[0].data().level) || 0;
+          planId = psnap.docs[0].id;
+        }
+      } catch (e) { /* ignore */ }
+      if (grade == null) grade = PRICE_GRADE_MAP[priceId];
+      if (grade != null) {
         const snap = await db.collection('members')
           .where('stripeCustomerId', '==', cid).limit(1).get();
         if (!snap.empty) {
           await snap.docs[0].ref.update({
             grade: grade,
+            subscriptionPlanId: planId,
             stripeSubscriptionId: subId,
             subscriptionStatus: 'active',
             subscriptionPeriodEnd: new Date(periodEnd * 1000),
@@ -597,6 +609,7 @@ exports.stripeWebhook = functions
       if (!snap.empty) {
         await snap.docs[0].ref.update({
           grade: 0,
+          subscriptionPlanId: null,
           stripeSubscriptionId: null,
           subscriptionStatus: 'canceled',
           subscriptionPeriodEnd: null,
@@ -605,6 +618,90 @@ exports.stripeWebhook = functions
     }
 
     res.json({ received: true });
+  });
+
+// ── サブスク Checkout / カスタマーポータル（会員向け・us-central1） ──
+const SUBSCRIPTION_ALLOWED_ORIGINS = [
+  'https://tequiladojo.web.app',
+  'https://tequiladojo.firebaseapp.com',
+];
+function safeSubOrigin(o) {
+  if (typeof o === 'string' && SUBSCRIPTION_ALLOWED_ORIGINS.indexOf(o) >= 0) return o;
+  return SUBSCRIPTION_ALLOWED_ORIGINS[0];
+}
+
+// 有料会員サブスクの申込 Checkout セッションを作成
+exports.createSubscriptionCheckout = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onCall(async (data, context) => {
+    if (!context.auth || context.auth.token.firebase.sign_in_provider === 'anonymous') {
+      throw new functions.https.HttpsError('unauthenticated', 'ログインが必要です');
+    }
+    const stripe = require('stripe')(stripeSecretKey.value());
+    const planId = data && data.planId;
+    if (!planId) throw new functions.https.HttpsError('invalid-argument', 'planId が必要です');
+    const origin = safeSubOrigin(data && data.origin);
+
+    const msnap = await db.collection('members')
+      .where('authUid', '==', context.auth.uid).limit(1).get();
+    if (msnap.empty) throw new functions.https.HttpsError('not-found', '会員情報が見つかりません');
+    const memberRef = msnap.docs[0].ref;
+    const member = msnap.docs[0].data();
+    const memberId = msnap.docs[0].id;
+
+    const pdoc = await db.collection('plans').doc(planId).get();
+    if (!pdoc.exists) throw new functions.https.HttpsError('not-found', 'プランが見つかりません');
+    const plan = pdoc.data();
+    if (!plan.stripePriceId) {
+      throw new functions.https.HttpsError('failed-precondition', 'このプランにはStripe Price IDが未設定です');
+    }
+
+    // Stripe顧客を用意（無ければ作成して保存）
+    let customerId = member.stripeCustomerId;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: member.email || member.authEmail || undefined,
+        name: member.name || '',
+        metadata: { memberId: memberId },
+      });
+      customerId = customer.id;
+      await memberRef.update({ stripeCustomerId: customerId });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      line_items: [{ price: plan.stripePriceId, quantity: 1 }],
+      client_reference_id: memberId,
+      metadata: { memberId: memberId, planId: planId, level: String(plan.level != null ? plan.level : '') },
+      success_url: origin + '/member_subscription.html?checkout=success',
+      cancel_url: origin + '/member_subscription.html?checkout=cancel',
+      allow_promotion_codes: true,
+    });
+    return { url: session.url };
+  });
+
+// 会員が自分でサブスクを管理・解約するためのカスタマーポータル
+exports.createCustomerPortal = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onCall(async (data, context) => {
+    if (!context.auth || context.auth.token.firebase.sign_in_provider === 'anonymous') {
+      throw new functions.https.HttpsError('unauthenticated', 'ログインが必要です');
+    }
+    const stripe = require('stripe')(stripeSecretKey.value());
+    const origin = safeSubOrigin(data && data.origin);
+    const msnap = await db.collection('members')
+      .where('authUid', '==', context.auth.uid).limit(1).get();
+    if (msnap.empty) throw new functions.https.HttpsError('not-found', '会員情報が見つかりません');
+    const member = msnap.docs[0].data();
+    if (!member.stripeCustomerId) {
+      throw new functions.https.HttpsError('failed-precondition', 'サブスク情報がありません');
+    }
+    const session = await stripe.billingPortal.sessions.create({
+      customer: member.stripeCustomerId,
+      return_url: origin + '/member_subscription.html',
+    });
+    return { url: session.url };
   });
 
 // ── 会員作成時に Stripe 顧客を作成 ──
