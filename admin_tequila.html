@@ -9,6 +9,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="/auth-role.js?v=20260714"></script>
+<script src="/bottle-weight.js?v=20260724"></script>
 
 <script>
 var FIREBASE_CONFIG = {
@@ -513,6 +514,24 @@ html.embed .mbg{background:transparent!important}
       <div class="frow">
         <div class="fg"><label class="fl">10ml単価（円）</label><input class="fi" id="bd-price" type="number" min="0" placeholder="120"></div>
         <div class="fg"><label class="fl">公開区分</label><select class="fs" id="bd-pub"><option value="0">0: OP（公開）</option><option value="1">1: CL（非公開）</option></select></div>
+      </div>
+      <hr class="fsep">
+      <div class="frow">
+        <div class="fg"><label class="fl">在庫状態</label>
+          <select class="fs" id="bd-status">
+            <option value="serving">提供中</option>
+            <option value="stock">在庫</option>
+            <option value="ended">終了</option>
+          </select>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">※ 提供中以外はメニュー非公開になります</div>
+        </div>
+        <div class="fg"><label class="fl">保管場所（在庫時）</label><input class="fi" id="bd-location" placeholder="例: バックバー上段 / 倉庫A"></div>
+      </div>
+      <div class="frow c4">
+        <div class="fg"><label class="fl">満載重量（g）</label><input class="fi" id="bd-fullweight" type="number" min="0" placeholder="例: 1180"></div>
+        <div class="fg"><label class="fl">空瓶重量（g）</label><input class="fi" id="bd-emptyweight" type="number" min="0" placeholder="算出可"></div>
+        <div class="fg" style="align-self:end"><button type="button" class="btn bs" onclick="calcEmptyWeight()" style="font-size:11px;padding:8px 10px">空瓶重量を算出</button></div>
+        <div class="fg"><label class="fl" style="font-size:10px;color:var(--muted)">満載重量・容量(ml)・ABVから算出（エタノール＋水の混合）</label></div>
       </div>
       <div class="frow">
         <div class="fg"><label class="fl">購入日</label><div style="display:flex;align-items:center;gap:4px;"><div class="date-group"><input class="fi dy" id="bd-buy-date-y" maxlength="4" placeholder="YYYY" style="width:52px;text-align:center"><span class="date-sep">/</span><input class="fi dm" id="bd-buy-date-m" maxlength="2" placeholder="MM" style="width:34px;text-align:center"><span class="date-sep">/</span><input class="fi dd" id="bd-buy-date-d" maxlength="2" placeholder="DD" style="width:34px;text-align:center"></div><input type="hidden" id="bd-buy-date"><button type="button" class="btn bs sm" style="white-space:nowrap;font-size:11px;padding:3px 7px;" onclick="setDateInputs('bd-buy-date',todayStr())">当日</button></div></div>
@@ -1316,7 +1335,7 @@ function renderBdata(){
       +'<td class="mono dim">'+(r.abv!==null&&r.abv!==undefined?parseFloat(r.abv).toFixed(1)+"%":"—")+'</td>'
       +'<td class="mono dim">'+(r.remaining||"—")+'</td>'
       +'<td class="mono" style="text-align:right">'+(r.price?("¥"+Number(r.price).toLocaleString()):"—")+'</td>'
-      +'<td>'+pubBadge+'</td>'
+      +'<td>'+(({serving:'',stock:'<span class="badge" style="background:#b8860b;color:#fff">在庫</span> ',ended:'<span class="badge bg-gray">終了</span> '})[r.status||'serving']||'')+pubBadge+(r.location?'<div style="font-size:9px;color:var(--ink3)">'+escD(r.location)+'</div>':'')+'</td>'
       +'<td><div class="acts"><button class="btn bs sm" data-edit-bdata="'+r.id+'">編集</button><button class="btn bs sm" data-copy-bdata="'+r.id+'">コピー</button><button class="btn bd sm" data-del="bottleData" data-del-id="'+r.id+'" data-del-label="ボトルデータ">削除</button></div></td></tr>';
   }).join("");
 }
@@ -1429,6 +1448,17 @@ function updateBdataKey(){
 }
 
 g("btn-open-bdata").addEventListener("click",function(){ openBdataModal(null); });
+// 満載重量・容量(ml)・ABV から空瓶重量(g)を算出（エタノール＋水の混合）
+function calcEmptyWeight(){
+  var full=parseFloat(gv("bd-fullweight"))||0;
+  var vol=parseFloat(gv("bd-vol"))||0;
+  var abv=parseFloat(gv("bd-abv"))||0;
+  if(!full||!vol){ toast("満載重量と容量(ml)を入力してください","err"); return; }
+  var ew=BottleWeight.emptyWeight(full,vol,abv);
+  if(ew<0){ toast("算出結果がマイナスです。満載重量・容量・ABVを確認してください","err"); return; }
+  sv("bd-emptyweight",ew);
+  toast("空瓶重量: "+ew+"g（内容物 "+Math.round(BottleWeight.contentWeight(vol,abv))+"g）","inf");
+}
 function openBdataModal(id){
   editId.bdata=id; g("mt-bdata").textContent=id?"ボトルデータ編集":"ボトルデータ登録";
   var swapBtn=g("btn-swap-bdata"); if(swapBtn) swapBtn.style.display=id?"inline-flex":"none";
@@ -1464,6 +1494,8 @@ function openBdataModal(id){
     fillBdClass(deriveClassId(r));
     sv("bd-lottype",r?String(r.lotType||1):"1"); sv("bd-lot",r?r.lotNo:"N/A"); sv("bd-vol",r?r.volume:750); sv("bd-remain",r?r.remaining:750);
     sv("bd-price",r?r.price:""); sv("bd-pub",r?r.visibility:"0");
+    sv("bd-status",r&&r.status?r.status:"serving"); sv("bd-location",r?r.location||"":"");
+    sv("bd-fullweight",r&&r.fullWeight!=null?r.fullWeight:""); sv("bd-emptyweight",r&&r.emptyWeight!=null?r.emptyWeight:"");
     setDateInputs("bd-buy-date",r?r.purchaseDate:""); setDateInputs("bd-start",r?r.serveStart:""); setDateInputs("bd-end",r?r.serveEnd:"");
     sv("bd-cost",r?r.cost:""); sv("bd-import",r?r.importType:"0"); sv("bd-domestic",r?String(r.domesticDist||"0"):"0");
     sv("bd-suffix",r?r.suffix||"":""); sv("bd-note",r?r.note||"":"");
@@ -1478,6 +1510,7 @@ function openBdataModal(id){
     var clsSel3=g("bd-class"); if(clsSel3) clsSel3.innerHTML='<option value="">—</option>'+cache.classes.map(function(cl){return '<option value="'+cl.id+'">'+cl.id+' '+(cl.classNameJa||cl.id)+'</option>';}).join("");
     sv("bd-lot","N/A"); sv("bd-vol",750); sv("bd-remain",750);
     sv("bd-price",""); sv("bd-pub","0");
+    sv("bd-status","serving"); sv("bd-location",""); sv("bd-fullweight",""); sv("bd-emptyweight","");
     setDateInputs("bd-buy-date",""); setDateInputs("bd-start",""); setDateInputs("bd-end","");
     sv("bd-suffix",""); sv("bd-note","");
     sv("bd-cost",""); sv("bd-import","0"); sv("bd-domestic","0");
@@ -1573,6 +1606,8 @@ function _fillBdataForm(r){
   sv("bd-remain",r.remaining!=null?r.remaining:750);
   sv("bd-price",r.price!=null?r.price:"");
   sv("bd-pub",r.visibility||"0");
+  sv("bd-status",r.status||"serving"); sv("bd-location",r.location||"");
+  sv("bd-fullweight",r.fullWeight!=null?r.fullWeight:""); sv("bd-emptyweight",r.emptyWeight!=null?r.emptyWeight:"");
   setDateInputs("bd-buy-date",""); setDateInputs("bd-start",""); setDateInputs("bd-end","");
   sv("bd-suffix",r.suffix||""); sv("bd-note",r.note||"");
   sv("bd-cost",r.cost!=null?r.cost:""); sv("bd-import",r.importType||"0");
@@ -1606,7 +1641,11 @@ g("btn-save-bdata").addEventListener("click",function(){
     classId:bdClassId, abv:bdAbv,
     production:bdProd, filtration:bdFlt, additive:b?b.additive||null:null,
     lotNo:gv("bd-lot")||"N/A", volume:parseInt(gv("bd-vol"))||750, remaining:parseInt(gv("bd-remain"))||750,
-    price:parseInt(gv("bd-price"))||null, visibility:gv("bd-pub")||"0",
+    price:parseInt(gv("bd-price"))||null,
+    status:gv("bd-status")||"serving", location:gv("bd-location")||null,
+    fullWeight:gv("bd-fullweight")!==""?parseInt(gv("bd-fullweight"))||0:null,
+    emptyWeight:gv("bd-emptyweight")!==""?parseInt(gv("bd-emptyweight"))||0:null,
+    visibility:(gv("bd-status")==="serving"?(gv("bd-pub")||"0"):"1"),
     purchaseDate:getDateFromInputs("bd-buy-date")||null, serveStart:getDateFromInputs("bd-start")||null, serveEnd:getDateFromInputs("bd-end")||null,
     cost:parseInt(gv("bd-cost"))||null, importType:gv("bd-import")||"0", domesticDist:gv("bd-domestic")||"0",
     lotType:parseInt(gv("bd-lottype")||"1")||1, note:gv("bd-note")||null
