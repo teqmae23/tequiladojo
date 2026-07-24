@@ -287,6 +287,40 @@ function writeServerJournal(op, col, docId, before, after, page) {
   }).catch(() => {});
 }
 
+// ── 会員本人のデポジット履歴を返す（depositData はスタッフ限定読み取りのため） ──
+exports.getMyDepositHistory = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    if (!context.auth || context.auth.token.firebase.sign_in_provider === 'anonymous') {
+      throw new functions.https.HttpsError('unauthenticated', 'ログインが必要です');
+    }
+    let memberId = null;
+    let memberData = null;
+    const preview = data && data.previewMemberId ? String(data.previewMemberId) : null;
+    if (preview) {
+      await assertStaff(context);
+      const mDoc = await db.collection('members').doc(preview).get();
+      if (!mDoc.exists) throw new functions.https.HttpsError('not-found', '会員が見つかりません');
+      memberId = mDoc.id; memberData = mDoc.data();
+    } else {
+      const snap = await db.collection('members').where('authUid', '==', context.auth.uid).limit(1).get();
+      if (snap.empty) throw new functions.https.HttpsError('not-found', '会員情報が見つかりません');
+      memberId = snap.docs[0].id; memberData = snap.docs[0].data();
+    }
+    const ds = await db.collection('depositData').where('memberId', '==', memberId).get();
+    const items = ds.docs.map((d) => {
+      const x = d.data();
+      return {
+        date: x.date || '', time: x.time || '',
+        amount: x.amount || 0,
+        balanceAfter: x.balanceAfter != null ? x.balanceAfter : null,
+        kind: x.kind || '', source: x.source || '',
+      };
+    });
+    items.sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+    const enabled = memberData.depositEnabled === 1 || memberData.depositEnabled === '1' || memberData.depositEnabled === true;
+    return { enabled, balance: Number(memberData.depositBalance || 0), items };
+  });
+
 exports.registerMember = functions.region('asia-northeast1')
   .https.onCall(async (data, context) => {
     const nickname = ((data && data.nickname) || '').trim();

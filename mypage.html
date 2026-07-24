@@ -296,6 +296,15 @@ select.fi{min-width:80px}
       </a>
     </div>
 
+    <!-- デポジット（前払金）: デポジット有効会員のみ表示 -->
+    <div id="deposit-section" style="display:none;margin-bottom:16px;">
+      <div class="sec-header">
+        <span class="sec-title">💰 デポジット</span>
+        <span class="sec-count" id="deposit-balance" style="margin-left:auto;font-size:15px;font-weight:700;color:#1a6640;">¥0</span>
+      </div>
+      <div id="deposit-hist" style="background:var(--white,#fff);border:1px solid rgba(160,130,100,.18);border-radius:10px;overflow:hidden;"></div>
+    </div>
+
     <!-- 来場リスト -->
     <div class="sec-header">
       <span class="sec-title">来場履歴</span>
@@ -577,6 +586,9 @@ async function initMyPage(user){
     // 会員区分バッジ
     updateMemBadge(memberDoc);
 
+    // デポジット（前払金）: 有効会員のみ残高＋履歴を表示
+    renderDepositSection(memberDoc, _previewMemberId);
+
     // 3. ブラインドマーク取得
     await loadBlindMarks();
 
@@ -597,6 +609,41 @@ async function initMyPage(user){
   }catch(e){
     console.error(e);
     document.getElementById('visit-list').innerHTML=`<div class="empty"><div class="empty-icon">⚠️</div>データの読み込みに失敗しました<br><small>${esc(e.message)}</small></div>`;
+  }
+}
+
+// ── デポジット履歴（有効会員のみ） ──
+function _yenMP(n){ return '¥'+(Number(n)||0).toLocaleString(); }
+function _fmtDMP(s){ return s&&s.length===6?('20'+s.slice(0,2)+'/'+s.slice(2,4)+'/'+s.slice(4,6)):(s||''); }
+function _fmtTMP(s){ return s&&s.length>=4?(s.slice(0,2)+':'+s.slice(2,4)):(s||''); }
+async function renderDepositSection(memberDoc, previewMemberId){
+  var sec=document.getElementById('deposit-section');
+  if(!sec) return;
+  var enabled=memberDoc&&(memberDoc.depositEnabled===1||memberDoc.depositEnabled==='1'||memberDoc.depositEnabled===true);
+  if(!enabled){ sec.style.display='none'; return; }
+  sec.style.display='block';
+  document.getElementById('deposit-balance').textContent=_yenMP(memberDoc.depositBalance||0);
+  var histEl=document.getElementById('deposit-hist');
+  histEl.innerHTML='<div class="loading" style="padding:16px">読み込み中...</div>';
+  try{
+    var req=previewMemberId?{previewMemberId:previewMemberId}:{};
+    var res=await fbFunctions.httpsCallable('getMyDepositHistory')(req);
+    var d=res.data||{};
+    if(typeof d.balance==='number') document.getElementById('deposit-balance').textContent=_yenMP(d.balance);
+    var items=d.items||[];
+    if(!items.length){ histEl.innerHTML='<div class="empty" style="padding:20px;text-align:center;color:#9a8470;font-size:13px">履歴はありません</div>'; return; }
+    histEl.innerHTML=items.map(function(r){
+      var plus=(Number(r.amount)||0)>=0;
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(160,130,100,.12)">'
+        +'<div style="flex:1;min-width:0">'
+          +'<div style="font-size:13px;font-weight:600">'+(plus?'入金（追加）':'支払・払戻')+(r.source==='checkout'?'　<span style="font-size:10px;color:#9a8470">会計</span>':'')+'</div>'
+          +'<div style="font-size:11px;color:#9a8470">'+esc(_fmtDMP(r.date))+' '+esc(_fmtTMP(r.time))+'</div>'
+        +'</div>'
+        +'<div style="font-family:monospace;font-weight:700;font-size:14px;color:'+(plus?'#1a6640':'#b03020')+'">'+(plus?'+':'')+_yenMP(r.amount)+'</div>'
+      +'</div>';
+    }).join('');
+  }catch(e){
+    histEl.innerHTML='<div class="empty" style="padding:16px;text-align:center;color:#9a8470;font-size:12px">履歴を取得できませんでした<br><span style="font-size:10px">'+esc(e.message||'')+'</span></div>';
   }
 }
 
