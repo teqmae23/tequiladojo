@@ -619,6 +619,19 @@ html.embed .mbg{background:transparent!important}
   </div>
 </div>
 
+<!-- 在庫から入れ替えモーダル -->
+<div class="mbg" id="m-stockswap">
+  <div class="modal" style="max-width:540px">
+    <div class="mhead"><div class="mtitle">↩ 在庫から入れ替え</div><button class="mx" data-close="m-stockswap">✕</button></div>
+    <div class="mbody">
+      <div id="ss-current" style="font-size:13px;margin-bottom:12px;padding:10px 12px;background:var(--cream2);border-radius:var(--r)"></div>
+      <div class="fl">入れ替える在庫ボトル（同一ボトルマスタ）</div>
+      <div id="ss-stock-list" style="margin-top:8px"></div>
+    </div>
+    <div class="mfoot"><button class="btn bg2" data-close="m-stockswap">キャンセル</button></div>
+  </div>
+</div>
+
 <div id="toasts"></div>
 
 <script>
@@ -1336,7 +1349,7 @@ function renderBdata(){
       +'<td class="mono dim">'+(r.remaining||"—")+'</td>'
       +'<td class="mono" style="text-align:right">'+(r.price?("¥"+Number(r.price).toLocaleString()):"—")+'</td>'
       +'<td>'+(({serving:'',stock:'<span class="badge" style="background:#b8860b;color:#fff">在庫</span> ',ended:'<span class="badge bg-gray">終了</span> '})[r.status||'serving']||'')+pubBadge+(r.location?'<div style="font-size:9px;color:var(--ink3)">'+escD(r.location)+'</div>':'')+'</td>'
-      +'<td><div class="acts"><button class="btn bs sm" data-edit-bdata="'+r.id+'">編集</button><button class="btn bs sm" data-copy-bdata="'+r.id+'">コピー</button><button class="btn bd sm" data-del="bottleData" data-del-id="'+r.id+'" data-del-label="ボトルデータ">削除</button></div></td></tr>';
+      +'<td><div class="acts">'+((r.status||'serving')==='serving'?'<button class="btn bs sm" style="color:var(--gold-d)" data-swap-stock="'+r.id+'" title="提供終了→在庫から入替">↩入替</button>':'')+'<button class="btn bs sm" data-edit-bdata="'+r.id+'">編集</button><button class="btn bs sm" data-copy-bdata="'+r.id+'">コピー</button><button class="btn bd sm" data-del="bottleData" data-del-id="'+r.id+'" data-del-label="ボトルデータ">削除</button></div></td></tr>';
   }).join("");
 }
 
@@ -1459,6 +1472,47 @@ function calcEmptyWeight(){
   sv("bd-emptyweight",ew);
   toast("空瓶重量: "+ew+"g（内容物 "+Math.round(BottleWeight.contentWeight(vol,abv))+"g）","inf");
 }
+// ── 提供終了→在庫から入れ替え（A-2） ──
+function openStockSwap(fromId){
+  var cur=cache.bdata.find(function(d){return d.id===fromId;});
+  if(!cur){ toast('ボトルが見つかりません','err'); return; }
+  var master=cur.bottleId||(cur.id||'').slice(0,12);
+  var stock=cache.bdata.filter(function(d){
+    return d.id!==fromId && d.status==='stock' && ((d.bottleId||(d.id||'').slice(0,12))===master);
+  });
+  g('ss-current').innerHTML='<b>提供終了にするボトル：</b><br>'+bdName(cur,'es')+' <span class="mono dim">('+escD(cur.id)+')</span> ／ 残量 '+(cur.remaining!=null?cur.remaining:0)+'ml';
+  if(!stock.length){
+    g('ss-stock-list').innerHTML='<div class="ec" style="padding:16px">同一ボトルマスタの在庫がありません。先に「在庫」状態のボトルを登録してください。</div>';
+  } else {
+    g('ss-stock-list').innerHTML=stock.map(function(s){
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px">'
+        +'<div style="flex:1;min-width:0"><div style="font-size:13px">'+bdName(s,'es')+'</div>'
+        +'<div style="font-size:11px;color:var(--ink3)" class="mono">'+escD(s.id)+' ／ '+(s.remaining!=null?s.remaining:(s.volume||0))+'ml'+(s.location?' ／ '+escD(s.location):'')+'</div></div>'
+        +'<button class="btn bp sm" data-do-swap="'+escD(fromId)+'|'+escD(s.id)+'">これに入替</button>'
+      +'</div>';
+    }).join('');
+  }
+  openM('m-stockswap');
+}
+function doStockSwap(fromId,toId){
+  if(!confirm('現在の提供ボトルを「終了」にし、選択した在庫ボトルを「提供中」にします。よろしいですか？')) return;
+  var today=todayStr();
+  var batch=db.batch();
+  batch.update(db.collection('bottleData').doc(fromId),{status:'ended',visibility:'1',serveEnd:today});
+  batch.update(db.collection('bottleData').doc(toId),{status:'serving',visibility:'0',serveStart:today});
+  batch.commit().then(function(){
+    toast('入れ替えました');
+    closeM('m-stockswap');
+    bumpAndRender('bottleData'); loadBdata();
+  }).catch(function(e){ toast('入れ替え失敗: '+e.message,'err'); });
+}
+document.addEventListener('click',function(e){
+  var sw=e.target.closest&&e.target.closest('[data-swap-stock]');
+  if(sw){ openStockSwap(sw.getAttribute('data-swap-stock')); return; }
+  var ds=e.target.closest&&e.target.closest('[data-do-swap]');
+  if(ds){ var p=(ds.getAttribute('data-do-swap')||'').split('|'); doStockSwap(p[0],p[1]); }
+});
+
 function openBdataModal(id){
   editId.bdata=id; g("mt-bdata").textContent=id?"ボトルデータ編集":"ボトルデータ登録";
   var swapBtn=g("btn-swap-bdata"); if(swapBtn) swapBtn.style.display=id?"inline-flex":"none";
