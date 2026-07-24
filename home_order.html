@@ -1973,8 +1973,7 @@ async function goStep2(){
   // 過去visitの場合、注文時間入力行を表示してプリセット
   const timeRow=document.getElementById('confirm-time-row');
   if(timeRow){
-    const vdp=flow.visits[0]?.id?.slice(0,6)||todayStr;
-    const isHist=/^\d{6}$/.test(vdp)&&vdp!==todayStr;
+    const isHist=isPastDateVisit(flow.visits[0]);
     timeRow.style.display=isHist?'block':'none';
     if(isHist&&flow.visits.length>0){
       const vis=flow.visits[0];
@@ -1998,6 +1997,26 @@ async function goStep2(){
 }
 
 // 確定
+// 現在の営業日（セッション基準・日跨ぎ耐性）。ページ読込時の todayStr に依存しない。
+function currentBizDate(){
+  if(currentSessionBT){
+    var d=AuthRole.businessDate(currentSessionBT.openTime,currentSessionBT.openDate);
+    if(d) return d;
+  }
+  return todayStr;
+}
+// 過去日（履歴）注文か判定。
+// ★ 現セッションのアクティブ来店（allVisits）に含まれる来店は、たとえ24時を過ぎても
+//   「当日注文」として扱う（nowBusinessTimeで 0:06→24:06 登録）。
+//   営業日が厳密に過去の来店のときのみ履歴（過去日）注文モードにする。
+function isPastDateVisit(v){
+  if(!v||!v.id) return false;
+  if(Array.isArray(allVisits)&&allVisits.some(function(x){return x.id===v.id;})) return false;
+  var vbd=v.visitDate||(v.id||'').slice(0,6)||'';
+  if(!/^\d{6}$/.test(vbd)) return false;
+  return vbd < currentBizDate();
+}
+
 async function confirmOrder(){
   if(!flow.visits.length||!flow.cart.length)return;
   const isBlind=document.getElementById('blind-check').checked;
@@ -2008,11 +2027,12 @@ async function confirmOrder(){
   //   来店」が誤って過去日注文と判定され、注文時刻が直前注文の時刻で埋められる等の
   //   不具合が起きるため、ここでは currentSessionBT の営業日を基準にする。
   //   来店側(checkin)は visitDate を営業日で保存しているので、それと比較する。
-  const bizDate=(currentSessionBT&&AuthRole.businessDate(currentSessionBT.openTime,currentSessionBT.openDate))||todayStr;
+  const bizDate=currentBizDate();
   const _v0=flow.visits[0]||{};
+  // ★現セッションのアクティブ来店は24時以降でも当日注文（履歴モードにしない）。
+  //   これにより 0:06 の注文も nowBusinessTime で 24:06 として登録される。
+  const isHistorical=isPastDateVisit(_v0);
   const visitBizDate=(_v0.visitDate||(_v0.id||'').slice(0,6)||bizDate);
-  // 現セッションの営業日と一致すれば当日注文。営業日が異なる場合のみ過去日（履歴）注文。
-  const isHistorical=(/^\d{6}$/.test(visitBizDate)&&visitBizDate!==bizDate);
   const useDate=isHistorical?visitBizDate:bizDate;
 
   // 注文時間: 過去日(履歴)注文はstep2の時間入力から取得、当日注文はnowBusinessTime
