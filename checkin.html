@@ -442,6 +442,8 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
             <option value="0">0: 現金</option>
             <option value="1">1: PayPay</option>
             <option value="3">3: PayPal</option>
+            <option value="5">5: ツケ</option>
+            <option value="6">6: デポジット</option>
             <option value="9">9: その他</option>
           </select>
         </div>
@@ -454,6 +456,34 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
             <option value="3">レシートと領収書</option>
           </select>
         </div>
+      </div>
+
+      <!-- デポジット・ツケ（支払者ひとり。複数人会計でも支払者は1名） -->
+      <div id="dep-tab-section" style="display:none;background:#eef5f1;border:1px solid #cfe3d9;border-radius:var(--r);padding:10px 12px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+          <span style="font-size:11px;font-weight:700;color:var(--teal)">デポジット / ツケ</span>
+          <span style="font-size:11px;color:var(--ink3)">支払者</span>
+          <select class="fs" id="co-payer" style="flex:1;min-width:140px;max-width:240px" onchange="onPayerChange()"></select>
+        </div>
+        <div id="co-deposit-row" style="display:none;margin-bottom:8px">
+          <div style="font-size:12px;color:var(--teal);margin-bottom:4px">デポジット（残高 <b id="co-dep-balance">¥0</b>）</div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <span style="font-size:12px">支払</span>
+            <input type="number" id="co-dep-pay" min="0" value="0" style="width:96px;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;text-align:right" oninput="recalcDepTab()">
+            <button type="button" class="btn bs sm" onclick="depPayFull()">全額</button>
+            <span style="font-size:12px;margin-left:10px">追加</span>
+            <input type="number" id="co-dep-add" min="0" value="0" style="width:96px;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;text-align:right" oninput="recalcDepTab()">
+            <span style="font-size:12px;color:var(--ink3)">円</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" id="co-tab-mode" onchange="recalcDepTab()" style="width:16px;height:16px"> ツケ払い（今回の会計を未収にする）</label>
+          <div id="co-tab-settle-wrap" style="display:none;align-items:center;gap:6px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px"><input type="checkbox" id="co-tab-settle-chk" onchange="onTabSettleToggle()" style="width:16px;height:16px"> ツケ残高 <b id="co-tab-balance" style="color:var(--red)">¥0</b> を清算</label>
+            <input type="number" id="co-tab-settle" min="0" value="0" style="width:96px;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;text-align:right" oninput="recalcDepTab()">
+          </div>
+        </div>
+        <div id="co-collect-note" style="font-size:12px;color:var(--ink);margin-top:8px;font-weight:600"></div>
       </div>
     </div>
     <div class="modal-foot" style="flex-wrap:wrap;gap:8px">
@@ -1854,7 +1884,9 @@ function recalcDiscount(){
     updateWarikanDiff();
   } else if(bulkCheckoutVisitKeys.length===1){
     warikanAmounts[bulkCheckoutVisitKeys[0]]=discounted;
-    g('m-checkout-save').disabled=false;
+    _warikanOk=true;
+    recalcDepTab();
+    refreshSaveButton();
   }
 }
 
@@ -1953,13 +1985,16 @@ function openBulkCheckout(directKeys){
 
     // 1人の場合は割り勘セクション非表示・確定ボタン即有効化
     var ws=g('warikan-section');
+    _warikanOk=true; _depTabOk=true;
     if(bulkCheckoutVisitKeys.length===1){
       if(ws) ws.style.display='none';
-      g('m-checkout-save').disabled=false;
     } else {
       if(ws) ws.style.display='block';
       renderWarikan(grandTotal);
     }
+    // デポジット/ツケUIを支払者候補に応じて用意
+    setupDepTab();
+    refreshSaveButton();
 
     // キャッシュ更新
     cache.orders=allOrders.filter(function(o){
@@ -2049,23 +2084,182 @@ function updateWarikanDiff(){
   if(diff===0){
     diffEl.textContent='残金: ¥0';
     diffEl.style.color='var(--teal)';
-    g('m-checkout-save').disabled=false;
+    _warikanOk=true;
   } else {
     diffEl.textContent='残金: '+(diff>0?'+':'')+'¥'+diff.toLocaleString();
     diffEl.style.color=diff>0?'var(--red)':'var(--ink2)';
-    g('m-checkout-save').disabled=true;
+    _warikanOk=false;
   }
+  // 割引で総額が変わるとデポジット/ツケの計算も変わるため再計算
+  recalcDepTab();
+  refreshSaveButton();
 }
 
 g('m-checkout-close').addEventListener('click',function(){ confirmClose('m-checkout'); });
 g('m-checkout-cancel').addEventListener('click',function(){ confirmClose('m-checkout'); });
+
+// ── デポジット・ツケ（会計連携） ─────────────────────────────────
+// 複数人会計でも「支払者は1名」。デポジット/ツケは支払者に対して総額ベースで適用。
+var _warikanOk=true, _depTabOk=true, _depTabApplied=false, _depTabParams=null;
+function _yen(n){ return '¥'+(Number(n)||0).toLocaleString(); }
+function refreshSaveButton(){ var b=g('m-checkout-save'); if(b) b.disabled=!(_warikanOk&&_depTabOk); }
+function _grandNow(){ return parseInt((g('co-grand-total').textContent||'0').replace(/[^0-9]/g,''))||0; }
+// 会計対象のうち会員（支払者候補）を集める
+function _payerCandidates(){
+  return bulkCheckoutVisitKeys.map(function(vk){
+    var v=cache.visits.find(function(x){return x.id===vk;});
+    if(!v||!v.memberId) return null;
+    var m=getMemberInfo(v.memberId);
+    if(!m) return null;
+    return {vk:vk, mid:m.id, name:(m.nickname||m.name||m.displayId||v.memberId)};
+  }).filter(Boolean);
+}
+function _currentPayer(){
+  var vk=g('co-payer')?g('co-payer').value:'';
+  var v=cache.visits.find(function(x){return x.id===vk;});
+  return v&&v.memberId?getMemberInfo(v.memberId):null;
+}
+function setupDepTab(){
+  _depTabApplied=false; _depTabParams=null;
+  var cands=_payerCandidates();
+  var sec=g('dep-tab-section');
+  g('co-dep-pay').value='0'; g('co-dep-add').value='0';
+  g('co-tab-mode').checked=false;
+  if(g('co-tab-settle-chk')) g('co-tab-settle-chk').checked=false;
+  g('co-tab-settle').value='0';
+  if(!cands.length){ sec.style.display='none'; _depTabOk=true; g('co-collect-note').textContent=''; return; }
+  sec.style.display='block';
+  var sel=g('co-payer');
+  sel.innerHTML=cands.map(function(c){ return '<option value="'+escHtml(c.vk)+'">'+escHtml(c.name)+'</option>'; }).join('');
+  sel.value=cands[0].vk;
+  onPayerChange();
+}
+function onPayerChange(){
+  var m=_currentPayer();
+  var depEnabled=m&&(m.depositEnabled===1||m.depositEnabled==='1'||m.depositEnabled===true);
+  var depBal=m?Number(m.depositBalance||0):0;
+  var tabBal=m?Number(m.tabBalance||0):0;
+  g('co-dep-balance').textContent=_yen(depBal);
+  g('co-tab-balance').textContent=_yen(tabBal);
+  g('co-deposit-row').style.display=depEnabled?'block':'none';
+  g('co-tab-settle-wrap').style.display=tabBal>0?'flex':'none';
+  g('co-dep-pay').value='0'; g('co-dep-add').value='0';
+  if(g('co-tab-settle-chk')) g('co-tab-settle-chk').checked=false;
+  g('co-tab-settle').value='0';
+  recalcDepTab();
+}
+function depPayFull(){
+  var m=_currentPayer(); if(!m) return;
+  g('co-dep-pay').value=Math.min(Number(m.depositBalance||0), _grandNow());
+  recalcDepTab();
+}
+function onTabSettleToggle(){
+  var m=_currentPayer();
+  var chk=g('co-tab-settle-chk');
+  g('co-tab-settle').value=(chk&&chk.checked)?(m?Number(m.tabBalance||0):0):'0';
+  recalcDepTab();
+}
+function recalcDepTab(){
+  var sec=g('dep-tab-section');
+  if(!sec||sec.style.display==='none'){ _depTabOk=true; refreshSaveButton(); return; }
+  var m=_currentPayer();
+  var depBal=m?Number(m.depositBalance||0):0;
+  var tabBal=m?Number(m.tabBalance||0):0;
+  var grand=_grandNow();
+  var tabMode=g('co-tab-mode').checked;
+  var depPayEl=g('co-dep-pay');
+  depPayEl.disabled=tabMode; if(tabMode) depPayEl.value='0';
+  var depPay=Math.max(0,parseInt(g('co-dep-pay').value)||0);
+  var depAdd=Math.max(0,parseInt(g('co-dep-add').value)||0);
+  var settleOn=g('co-tab-settle-chk')&&g('co-tab-settle-chk').checked;
+  var tabSettle=settleOn?Math.max(0,parseInt(g('co-tab-settle').value)||0):0;
+  var ok=true, err='';
+  if(depPay>depBal){ ok=false; err='デポジット残高不足'; }
+  else if(depPay>grand){ ok=false; err='デポジット支払が会計額を超えています'; }
+  else if(tabSettle>tabBal){ ok=false; err='清算額がツケ残高を超えています'; }
+  var note=g('co-collect-note');
+  if(!ok){
+    note.style.color='var(--red)'; note.textContent='⚠ '+err;
+  } else {
+    var billViaOther=tabMode?0:(grand-depPay);
+    var collectNow=billViaOther+depAdd+tabSettle;
+    var bd=[];
+    if(!tabMode) bd.push('本会計 '+_yen(grand)+(depPay>0?' − デポ '+_yen(depPay):''));
+    if(depAdd>0) bd.push('＋ 追加入金 '+_yen(depAdd));
+    if(tabSettle>0) bd.push('＋ ツケ清算 '+_yen(tabSettle));
+    var line='現金等で受取: '+_yen(collectNow)+(bd.length?'（'+bd.join(' ')+'）':'');
+    if(tabMode) line+='　／　ツケ計上: '+_yen(grand);
+    note.style.color='var(--ink)'; note.textContent=line;
+  }
+  _depTabOk=ok; refreshSaveButton();
+}
+function _gatherDepTab(){
+  var sec=g('dep-tab-section');
+  if(!sec||sec.style.display==='none') return {used:false};
+  var payerVk=g('co-payer')?g('co-payer').value:'';
+  var v=cache.visits.find(function(x){return x.id===payerVk;});
+  var grand=_grandNow();
+  var tabMode=g('co-tab-mode').checked;
+  var depPay=tabMode?0:Math.min(grand,Math.max(0,parseInt(g('co-dep-pay').value)||0));
+  var depAdd=Math.max(0,parseInt(g('co-dep-add').value)||0);
+  var settleOn=g('co-tab-settle-chk')&&g('co-tab-settle-chk').checked;
+  var tabSettle=settleOn?Math.max(0,parseInt(g('co-tab-settle').value)||0):0;
+  return {used:(depPay>0||depAdd>0||tabMode||tabSettle>0),
+          payerVk:payerVk, payerMid:v?v.memberId:null,
+          grand:grand, depPay:depPay, depAdd:depAdd, tabMode:tabMode, tabSettle:tabSettle};
+}
+// 支払者のデポジット/ツケ残高＋履歴をトランザクションで一貫更新
+function applyPayerDepTab(payerMid, grand, depPay, depAdd, tabMode, tabSettle){
+  var ref=db.collection('members').doc(payerMid);
+  var uid=(auth.currentUser&&auth.currentUser.uid)||null;
+  var d=todayStr6(), t=nowHHMMSS();
+  var FV=firebase.firestore.FieldValue;
+  return db.runTransaction(function(tx){
+    return tx.get(ref).then(function(snap){
+      if(!snap.exists) throw new Error('支払者の会員情報が見つかりません');
+      var dep=Number(snap.data().depositBalance||0);
+      var tab=Number(snap.data().tabBalance||0);
+      if(depPay>dep) throw new Error('デポジット残高が不足しています（残高'+dep+'円）');
+      if(tabSettle>tab) throw new Error('ツケ残高を超える清算です（残高'+tab+'円）');
+      var newDep=dep+depAdd-depPay;
+      var newTab=tab+(tabMode?grand:0)-tabSettle;
+      tx.update(ref,{depositBalance:newDep,tabBalance:newTab});
+      var runDep=dep;
+      if(depAdd>0){ runDep+=depAdd; tx.set(db.collection('depositData').doc(),{memberId:payerMid,date:d,time:t,amount:depAdd,balanceAfter:runDep,kind:'add',source:'checkout',note:'会計時入金',staffUid:uid,createdAt:FV.serverTimestamp()}); }
+      if(depPay>0){ runDep-=depPay; tx.set(db.collection('depositData').doc(),{memberId:payerMid,date:d,time:t,amount:-depPay,balanceAfter:runDep,kind:'pay',source:'checkout',note:'会計支払',staffUid:uid,createdAt:FV.serverTimestamp()}); }
+      var runTab=tab;
+      if(tabMode){ runTab+=grand; tx.set(db.collection('tabData').doc(),{memberId:payerMid,date:d,time:t,amount:grand,balanceAfter:runTab,kind:'add',source:'checkout',note:'ツケ払い',staffUid:uid,createdAt:FV.serverTimestamp()}); }
+      if(tabSettle>0){ runTab-=tabSettle; tx.set(db.collection('tabData').doc(),{memberId:payerMid,date:d,time:t,amount:-tabSettle,balanceAfter:runTab,kind:'settle',source:'checkout',note:'ツケ清算',staffUid:uid,createdAt:FV.serverTimestamp()}); }
+      return {newDep:newDep,newTab:newTab};
+    });
+  });
+}
 
 // お会計確定ボタンはonclickでも対応（disabledによるlistener無効化を回避）
 function doCheckoutSave(){
   var btn=g('m-checkout-save');
   if(btn && btn.disabled) return;
   if(!bulkCheckoutVisitKeys.length) return;
+
+  // デポジット/ツケ使用時は、先に支払者の残高をトランザクションで確定してから会計保存に進む
+  var _dt=_depTabApplied?_depTabParams:_gatherDepTab();
+  if(_dt.used && !_depTabApplied){
+    if(!_dt.payerMid){ toast('デポジット/ツケの支払者を選択してください','err'); return; }
+    if(btn) btn.disabled=true;
+    applyPayerDepTab(_dt.payerMid,_dt.grand,_dt.depPay,_dt.depAdd,_dt.tabMode,_dt.tabSettle).then(function(res){
+      var pm=cache.members.find(function(m){return m.id===_dt.payerMid;});
+      if(pm){ pm.depositBalance=res.newDep; pm.tabBalance=res.newTab; }
+      _depTabApplied=true; _depTabParams=_dt;
+      doCheckoutSave(); // 残高確定後に本処理を続行
+    }).catch(function(e){ toast('デポジット/ツケ処理に失敗: '+e.message,'err'); if(btn) btn.disabled=false; });
+    return;
+  }
+
   var payment=gv('co-payment')||'0';
+  if(_dt.used){
+    if(_dt.tabMode) payment='5';                                  // ツケ
+    else if(_dt.depPay>0 && _dt.depPay>=_dt.grand) payment='6';   // デポジット全額
+  }
   var receipt=gv('co-receipt')||'0';
   var now=nowHHMMSS();
   var alsoCheckout=g('co-also-checkout')&&g('co-also-checkout').checked;
@@ -2085,6 +2279,13 @@ function doCheckoutSave(){
       checkoutPayTime: now
     };
     if(alsoCheckout) updateData.checkoutTime=now;
+    // 支払者の来店には、デポジット/ツケの利用内訳を証跡として保存
+    if(_dt.used && visitKey===_dt.payerVk){
+      updateData.depositUsed=_dt.depPay||0;
+      updateData.depositAdded=_dt.depAdd||0;
+      updateData.tabAdded=_dt.tabMode?_dt.grand:0;
+      updateData.tabSettled=_dt.tabSettle||0;
+    }
     fbBatch.update(db.collection('visits').doc(visitKey), updateData);
     var v=cache.visits.find(function(x){ return x.id===visitKey; });
     _coJournal[visitKey]={
@@ -2175,6 +2376,7 @@ function doCheckoutSave(){
       writeJournal('update','visits',vk,j.before||null,j.after||null);
     });
     _adjJournal.forEach(function(a){ writeJournal('create','orders',a.id,null,a.data); });
+    _depTabApplied=false; _depTabParams=null;
     closeM('m-checkout');
     var msg=alsoCheckout
       ?'お会計・退場を確定しました（'+bulkCheckoutVisitKeys.length+'名）'
