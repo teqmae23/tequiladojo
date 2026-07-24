@@ -615,6 +615,19 @@ exports.stripeWebhook = functions
           subscriptionPeriodEnd: null,
         });
       }
+    } else if (event.type === 'checkout.session.completed') {
+      // 単発購入（セミナー等）の完了 → 購入記録を書き込み
+      const md = obj.metadata || {};
+      if (md.type === 'seminar' && md.memberId && md.seminarId) {
+        const pid = md.memberId + '_' + md.seminarId;
+        await db.collection('seminarPurchases').doc(pid).set({
+          memberId: md.memberId,
+          seminarId: md.seminarId,
+          amount: obj.amount_total || null,
+          stripeSessionId: obj.id,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
     }
 
     res.json({ received: true });
@@ -704,6 +717,122 @@ exports.createCustomerPortal = functions
       return_url: origin + '/member_subscription.html',
     });
     return { url: session.url };
+  });
+
+// ── 有料セミナー（動画）: 単発購入 / グレード連動 / 視聴アクセス ──
+
+// 会員の有効プランを解決（手動plan > 有効サブスクgrade > 無料）
+async function resolveMemberPlan(member) {
+  if (member.plan) {
+    const pd = await db.collection('plans').doc(member.plan).get();
+    if (pd.exists) return pd.data();
+  }
+  if (member.subscriptionStatus === 'active' && member.grade != null && member.grade !== '') {
+    const ps = await db.collection('plans').where('level', '==', Number(member.grade)).limit(1).get();
+    if (!ps.empty) return ps.docs[0].data();
+  }
+  return null;
+}
+
+// セミナーへのアクセス可否を判定
+async function memberHasSeminarAccess(memberId, member, seminar) {
+  const mode = seminar.accessMode || 'purchase';
+  if (mode === 'grade' || mode === 'both') {
+    const feature = seminar.requiredFeature || 'seminar';
+    const plan = await resolveMemberPlan(member);
+    if (plan && plan.features && plan.features[feature]) return true;
+  }
+  if (mode === 'purchase' || mode === 'both') {
+    const pd = await db.collection('seminarPurchases').doc(memberId + '_' + seminar.id).get();
+    if (pd.exists) return true;
+  }
+  return false;
+}
+
+async function requireMember(context) {
+  if (!context.auth || context.auth.token.firebase.sign_in_provider === 'anonymous') {
+    throw new functions.https.HttpsError('unauthenticated', 'ログインが必要です');
+  }
+  const msnap = await db.collection('members').where('authUid', '==', context.auth.uid).limit(1).get();
+  if (msnap.empty) throw new functions.https.HttpsError('not-found', '会員情報が見つかりません');
+  return { ref: msnap.docs[0].ref, id: msnap.docs[0].id, data: msnap.docs[0].data() };
+}
+
+// 単発セミナーの購入 Checkout（mode: payment）
+exports.createSeminarCheckout = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onCall(async (data, context) => {
+    const m = await requireMember(context);
+    const stripe = require('stripe')(stripeSecretKey.value());
+    const seminarId = data && data.seminarId;
+    if (!seminarId) throw new functions.https.HttpsError('invalid-argument', 'seminarId が必要です');
+    const origin = safeSubOrigin(data && data.origin);
+
+    const sdoc = await db.collection('seminars').doc(seminarId).get();
+    if (!sdoc.exists) throw new functions.https.HttpsError('not-found', 'セミナーが見つかりません');
+    const s = sdoc.data();
+
+    // 既に購入済みなら二重購入を防ぐ
+    const owned = await db.collection('seminarPurchases').doc(m.id + '_' + seminarId).get();
+    if (owned.exists) throw new functions.https.HttpsError('already-exists', '既に購入済みです');
+
+    let lineItem;
+    if (s.stripePriceId) {
+      lineItem = { price: s.stripePriceId, quantity: 1 };
+    } else if (s.price != null && Number(s.price) > 0) {
+      lineItem = {
+        price_data: { currency: 'jpy', product_data: { name: s.title || 'セミナー' }, unit_amount: Math.round(Number(s.price)) },
+        quantity: 1,
+      };
+    } else {
+      throw new functions.https.HttpsError('failed-precondition', 'このセミナーには価格が設定されていません');
+    }
+
+    let customerId = m.data.stripeCustomerId;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: m.data.email || m.data.authEmail || undefined,
+        name: m.data.name || '',
+        metadata: { memberId: m.id },
+      });
+      customerId = customer.id;
+      await m.ref.update({ stripeCustomerId: customerId });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer: customerId,
+      line_items: [lineItem],
+      client_reference_id: m.id,
+      metadata: { type: 'seminar', memberId: m.id, seminarId: seminarId },
+      success_url: origin + '/seminars.html?purchase=success',
+      cancel_url: origin + '/seminars.html?purchase=cancel',
+    });
+    return { url: session.url };
+  });
+
+// 視聴アクセス検証つきで vimeoId を返す（アクセス不可なら locked）
+exports.getSeminarVideo = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onCall(async (data, context) => {
+    const m = await requireMember(context);
+    const seminarId = data && data.seminarId;
+    if (!seminarId) throw new functions.https.HttpsError('invalid-argument', 'seminarId が必要です');
+    const sdoc = await db.collection('seminars').doc(seminarId).get();
+    if (!sdoc.exists) throw new functions.https.HttpsError('not-found', 'セミナーが見つかりません');
+    const s = Object.assign({ id: seminarId }, sdoc.data());
+    const ok = await memberHasSeminarAccess(m.id, m.data, s);
+    if (!ok) return { locked: true };
+    const src = await db.collection('seminarSources').doc(seminarId).get();
+    return { vimeoId: src.exists ? (src.data().vimeoId || '') : '' };
+  });
+
+// 会員が購入済みのセミナーID一覧（UI表示用）
+exports.getMyPurchasedSeminars = functions
+  .https.onCall(async (data, context) => {
+    const m = await requireMember(context);
+    const snap = await db.collection('seminarPurchases').where('memberId', '==', m.id).get();
+    return { ids: snap.docs.map((d) => d.data().seminarId) };
   });
 
 // ── 会員作成時に Stripe 顧客を作成 ──
