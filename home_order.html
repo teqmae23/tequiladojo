@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Noto+Sans+JP:wght@400;500;700&family=DM+Mono&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="/auth-role.js?v=20260714"></script>
+<script src="/bottle-weight.js?v=20260724"></script>
 <script>window.JOURNAL_PAGE='home_order';</script>
 <script src="/journal.js?v=20260706"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
@@ -115,6 +116,18 @@ input,select{font-family:var(--sans)}
 #gift-modal-overlay{display:none;position:fixed;inset:0;background:rgba(24,17,10,.65);z-index:600;align-items:center;justify-content:center;padding:16px}
 #gift-modal-overlay.open{display:flex}
 #gift-modal-panel{background:var(--white);border-radius:var(--rl);width:100%;max-width:460px;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-lg)}
+#keep-modal-overlay{display:none;position:fixed;inset:0;background:rgba(24,17,10,.6);z-index:610;align-items:center;justify-content:center;padding:16px}
+#keep-modal-overlay.open{display:flex}
+#keep-modal-panel{background:var(--white);border-radius:var(--rl);width:100%;max-width:480px;max-height:86vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-lg)}
+.keep-row{display:flex;gap:10px;align-items:center;border:1px solid var(--border);border-radius:var(--r);padding:9px 11px;margin-bottom:8px}
+.keep-row .kn{flex:1;min-width:0}
+.keep-row .kn .knm{font-size:14px;font-weight:600;color:var(--ink)}
+.keep-row .kn .ksub{font-size:11px;color:var(--ink3);margin-top:2px}
+.keep-chip{display:inline-block;font-size:10px;background:var(--cream2);color:var(--ink2);border-radius:10px;padding:1px 7px;margin:2px 4px 0 0}
+.keep-mine{border-color:var(--gold);background:rgba(200,146,30,.05)}
+.keep-remain{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--teal);white-space:nowrap}
+.keep-fl{display:block;font-size:11px;color:var(--ink2);font-weight:500;margin-bottom:4px}
+.keep-fi{width:100%;padding:9px 11px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream);color:var(--ink)}
 .gift-recipient-item{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none}
 .gift-recipient-item:hover{background:var(--cream2)}
 .gift-recipient-item.selected{background:#fdf8ea}
@@ -602,6 +615,17 @@ body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-
   </div>
 </div>
 
+<!-- ボトルキープ モーダル -->
+<div id="keep-modal-overlay">
+  <div id="keep-modal-panel">
+    <div style="padding:14px 16px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+      <div id="keep-modal-title" style="font-size:15px;font-weight:600;color:var(--gold-d);flex:1">🍾 ボトルキープ</div>
+      <button class="btn bs sm" onclick="closeKeepModal()">✕ 閉じる</button>
+    </div>
+    <div id="keep-modal-body" style="overflow-y:auto;flex:1;padding:14px 16px"></div>
+  </div>
+</div>
+
 <!-- 数量モーダル -->
 <div id="qty-modal">
   <div id="qty-panel">
@@ -659,6 +683,7 @@ let currentSessionBT=null; // 営業時刻用セッション情報
 let isPopupMode=false;
 let blindResultsSet=new Set();
 let masterData={tequila:[],other:[],misc:[],set:[],cocktail:[],subMaterials:[]};
+let keepBottlesData=[], stockBottlesData=[];
 let blindMarks=[];
 let flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false};
 let resultTarget=null;
@@ -812,7 +837,7 @@ async function init(){
 
 // ━━━ マスタ ━━━
 async function loadMasters(){
-  const [membSnap_arr,blindSnap,bottleSnap,miscSnap,setSnap,otherSnap,cocktailSnap,subMatSnap]=await Promise.all([
+  const [membSnap_arr,blindSnap,bottleSnap,miscSnap,setSnap,otherSnap,cocktailSnap,subMatSnap,keepSnap]=await Promise.all([
     // publicProfilesとmembersを両方取得（移行期）
     Promise.all([db.collection('publicProfiles').get(),db.collection('members').get()]),
     db.collection('blindMarks').get(),
@@ -821,7 +846,8 @@ async function loadMasters(){
     db.collection('setProducts').get(),
     db.collection('otherBottles').get(),
     db.collection('cocktailMaster').get(),
-    db.collection('subMaterials').get()
+    db.collection('subMaterials').get(),
+    db.collection('keepBottles').get()
   ]);
   allMembers={};
   // membersを正とする（publicProfilesは参照しない）
@@ -842,6 +868,12 @@ async function loadMasters(){
   cocktailSnap.forEach(d=>masterData.cocktail.push({id:d.id,...d.data()}));
   masterData.subMaterials=[];
   subMatSnap.forEach(d=>masterData.subMaterials.push({id:d.id,...d.data()}));
+  // キープボトル（利用可能なもの＝ステータスが終了以外）
+  keepBottlesData=[];
+  keepSnap.forEach(d=>{const v=d.data();if(v.status!=='ended')keepBottlesData.push({id:d.id,...v});});
+  // 在庫ボトル（新規購入キープ用）
+  stockBottlesData=[];
+  bottleSnap.forEach(d=>{const v=d.data();if(v.status==='stock')stockBottlesData.push({id:d.id,...v});});
 }
 
 // ━━━ 当日データ ━━━
@@ -1503,7 +1535,12 @@ function filterProducts(){
       return(a.bottleEs||a.bottleJa||a.name||'').localeCompare(b.bottleEs||b.bottleJa||b.name||'');
     });
   }
-  if(!items.length){c.innerHTML='<div class="empty">該当なし</div>';return;}
+  // その他タブの末尾に固定「ボトルキープ」タイルを表示
+  const keepTile=(currentPTab==='misc'&&!q)?`<div class="product-item" style="background:#2a1f14;border:1px solid #7a5c2e" onclick="openKeepFlow()">
+      <div><div class="product-item-name">🍾 ボトルキープ</div><div class="product-item-sub">利用・購入・終了</div></div>
+      <span class="product-item-price">▸</span>
+    </div>`:'';
+  if(!items.length){c.innerHTML=keepTile||'<div class="empty">該当なし</div>';return;}
   c.innerHTML=items.slice(0,200).map(i=>{
     const isTequila=i.type==='tequila';
     const isOther=i.type==='other';
@@ -1515,7 +1552,7 @@ function filterProducts(){
       <div><div class="product-item-name">${esc(name)}</div>${sub?`<div class="product-item-sub">${esc(sub)}</div>`:''}</div>
       <span class="product-item-price">${esc(price)}</span>
     </div>`;
-  }).join('');
+  }).join('')+keepTile;
 }
 
 // ── ブラインドマーク自動割り当て ──
@@ -1924,6 +1961,269 @@ function saveCartQty(idx,val){
   renderCart();
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  ボトルキープ（利用 / 購入 / 終了）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+let _keepView='menu', _keepUseTarget=null, _keepBuyUsers=[];
+function _keepName(k){return k.bottleEs||k.bottleJa||k.bottleEsBase||k.bottleJaBase||k.name||'(無名)';}
+function _memberLabel(id){const m=allMembers[id];return m?(m.nickname||m.name||m.displayId||id):id;}
+function _memberDispId(id){const m=allMembers[id];return m?(m.displayId||id):id;}
+function _memberByDisplay(q){for(const id in allMembers){const m=allMembers[id];if(String(m.displayId==null?'':m.displayId)===q||id===q)return Object.assign({id},m);}return null;}
+function _visitMemberIds(){return flow.visits.map(v=>v.memberId).filter(Boolean);}
+function _keepDate(){return (currentSessionBT&&AuthRole.businessDate(currentSessionBT.openTime,currentSessionBT.openDate))||todayStr;}
+function _keepTime(){return AuthRole.nowBusinessTime(currentSessionBT&&currentSessionBT.openTime);}
+
+function openKeepFlow(){_keepView='menu';_keepUseTarget=null;renderKeepModal();document.getElementById('keep-modal-overlay').classList.add('open');}
+function closeKeepModal(){document.getElementById('keep-modal-overlay').classList.remove('open');}
+function keepGoView(v){_keepView=v;_keepUseTarget=null;if(v==='buy'){_keepBuyUsers=_visitMemberIds().slice();}renderKeepModal();}
+function keepBackMenu(){_keepView='menu';_keepUseTarget=null;renderKeepModal();}
+
+function renderKeepModal(){
+  const body=document.getElementById('keep-modal-body');
+  const title=document.getElementById('keep-modal-title');
+  // ── メニュー ──
+  if(_keepView==='menu'){
+    title.textContent='🍾 ボトルキープ';
+    body.innerHTML=`<div style="display:flex;flex-direction:column;gap:10px;padding:4px 0">
+      <button class="btn bp btn-full" style="padding:16px;font-size:14px" onclick="keepGoView('use')">🥃 利用（キープボトルから飲む）</button>
+      <button class="btn bt btn-full" style="padding:16px;font-size:14px" onclick="keepGoView('buy')">🆕 購入（在庫から新規キープ）</button>
+      <button class="btn bd btn-full" style="padding:16px;font-size:14px" onclick="keepGoView('end')">🚫 終了（キープを終了する）</button>
+    </div>`;
+    return;
+  }
+  const backBtn=`<button class="btn bs sm" style="margin-bottom:12px" onclick="keepBackMenu()">← 戻る</button>`;
+  // ── 利用 ──
+  if(_keepView==='use'){
+    if(!_keepUseTarget){
+      title.textContent='🥃 キープ利用';
+      const mine=new Set(_visitMemberIds());
+      const list=keepBottlesData.filter(k=>k.status!=='ended').slice().sort((a,b)=>{
+        const ao=(a.userMemberIds||[]).some(u=>mine.has(u))?0:1;
+        const bo=(b.userMemberIds||[]).some(u=>mine.has(u))?0:1;
+        if(ao!==bo)return ao-bo;
+        return _keepName(a).localeCompare(_keepName(b));
+      });
+      const rows=list.length?list.map(k=>{
+        const isMine=(k.userMemberIds||[]).some(u=>mine.has(u));
+        const users=(k.userMemberIds||[]).map(u=>`<span class="keep-chip">${esc(_memberLabel(u))}</span>`).join('')||'<span class="keep-chip" style="color:var(--red)">利用者未登録</span>';
+        return `<div class="keep-row${isMine?' keep-mine':''}">
+          <div class="kn"><div class="knm">${esc(_keepName(k))}${isMine?' <span class="keep-chip" style="background:var(--gold);color:#fff">来場者</span>':''}</div>
+            <div class="ksub">${esc(k.abv!=null?k.abv+'% ':'')}${esc(k.volume?k.volume+'ml ':'')}${k.location?'・'+esc(k.location):''}</div>
+            <div style="margin-top:3px">${users}</div></div>
+          <div style="text-align:right"><div class="keep-remain">${k.remaining!=null?k.remaining:'—'}<span style="font-size:10px;color:var(--ink3)">ml</span></div>
+            <button class="btn bp sm" style="margin-top:5px" onclick="keepSelectUse('${esc(k.id)}')">利用</button></div>
+        </div>`;
+      }).join(''):'<div style="text-align:center;color:var(--ink3);padding:30px 10px;font-size:13px">利用できるキープボトルがありません</div>';
+      body.innerHTML=backBtn+rows;
+      return;
+    }
+    // 重量測定サブビュー
+    const k=_keepUseTarget;
+    title.textContent='🥃 '+_keepName(k)+' 利用開始';
+    const prevW=k.lastWeight!=null?k.lastWeight:null;
+    body.innerHTML=backBtn+`
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px">${esc(_keepName(k))}</div>
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:12px">前回残量: ${k.remaining!=null?k.remaining+'ml':'—'} ／ 前回重量: ${prevW!=null?prevW+'g':'—'} ／ 空瓶 ${k.emptyWeight!=null?k.emptyWeight+'g':'未登録'} ・ ${k.abv!=null?k.abv+'%':'—'}</div>
+      <div style="margin-bottom:12px"><label class="keep-fl">今回のボトル重量（g）</label>
+        <input class="keep-fi" id="keep-meas-weight" type="number" min="0" placeholder="測定値" style="font-family:var(--mono)" oninput="keepCalcMeas()"></div>
+      <div id="keep-meas-note" style="font-size:11px;color:var(--teal);min-height:16px;margin-bottom:12px"></div>
+      <div style="margin-bottom:6px"><label class="keep-fl">記録する値</label>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border2);border-radius:var(--r);margin-bottom:6px;font-size:13px"><input type="radio" name="keep-meas-choice" value="now" checked> 今回値を採用（測定した重量で更新）</label>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px"><input type="radio" name="keep-meas-choice" value="prev"${prevW==null?' disabled':''}> 前回値のまま（${prevW!=null?prevW+'g':'記録なし'}）</label></div>
+      <button class="btn bp btn-full" style="margin-top:8px;padding:13px" onclick="confirmUseKeep()">この内容で利用開始（¥0でカート追加）</button>`;
+    return;
+  }
+  // ── 購入 ──
+  if(_keepView==='buy'){
+    title.textContent='🆕 キープ購入';
+    if(!stockBottlesData.length){
+      body.innerHTML=backBtn+'<div style="text-align:center;color:var(--ink3);padding:30px 10px;font-size:13px">在庫（status=stock）のボトルがありません。<br>ボトルデータ管理で在庫ボトルを登録してください。</div>';
+      return;
+    }
+    const opts=stockBottlesData.map(b=>`<option value="${esc(b.id)}">${esc(_keepName(b))} (${esc(b.id)}) / 残${b.remaining!=null?b.remaining:(b.volume||0)}ml</option>`).join('');
+    body.innerHTML=backBtn+`
+      <div style="margin-bottom:11px"><label class="keep-fl">在庫ボトル<span style="color:var(--red)">*</span></label>
+        <select class="keep-fi" id="keep-buy-stock" onchange="keepBuyStockChange()"><option value="">在庫ボトルを選択…</option>${opts}</select></div>
+      <div style="display:flex;gap:10px;margin-bottom:11px">
+        <div style="flex:1"><label class="keep-fl">販売価格（円）<span style="color:var(--red)">*</span></label><input class="keep-fi" id="keep-buy-price" type="number" min="0" placeholder="手入力" style="font-family:var(--mono)"></div>
+        <div style="flex:1"><label class="keep-fl">保管場所</label><input class="keep-fi" id="keep-buy-location" placeholder="例: キープ棚A-3"></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:6px">
+        <div style="flex:1"><label class="keep-fl">初回重量（g・任意）</label><input class="keep-fi" id="keep-buy-weight" type="number" min="0" placeholder="測定値" style="font-family:var(--mono)" oninput="keepBuyCalc()"></div>
+        <div style="flex:1"><label class="keep-fl">残量（ml）</label><input class="keep-fi" id="keep-buy-remain" type="number" min="0" style="font-family:var(--mono)"></div>
+      </div>
+      <div id="keep-buy-note" style="font-size:11px;color:var(--ink3);min-height:15px;margin-bottom:10px"></div>
+      <div style="margin-bottom:10px"><label class="keep-fl">利用者会員</label>
+        <div id="keep-buy-users" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px"></div>
+        <div style="display:flex;gap:6px"><input class="keep-fi" id="keep-buy-userinput" placeholder="会員番号を入力" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();keepBuyAddUser();}"><button class="btn bs" onclick="keepBuyAddUser()">追加</button></div></div>
+      <button class="btn bt btn-full" style="margin-top:8px;padding:13px" onclick="buyKeep()">この内容で購入（会計に追加）</button>`;
+    keepBuyRenderUsers();
+    return;
+  }
+  // ── 終了 ──
+  if(_keepView==='end'){
+    title.textContent='🚫 キープ終了';
+    const list=keepBottlesData.filter(k=>k.status!=='ended');
+    const rows=list.length?list.map(k=>{
+      const users=(k.userMemberIds||[]).map(u=>`<span class="keep-chip">${esc(_memberLabel(u))}</span>`).join('');
+      return `<div class="keep-row">
+        <div class="kn"><div class="knm">${esc(_keepName(k))}</div>
+          <div class="ksub">残${k.remaining!=null?k.remaining:'—'}ml ${k.location?'・'+esc(k.location):''}</div>
+          <div style="margin-top:3px">${users}</div></div>
+        <button class="btn bd sm" onclick="endKeepFromOrder('${esc(k.id)}')">終了</button>
+      </div>`;
+    }).join(''):'<div style="text-align:center;color:var(--ink3);padding:30px 10px;font-size:13px">終了できるキープボトルがありません</div>';
+    body.innerHTML=backBtn+rows;
+    return;
+  }
+}
+
+function keepSelectUse(id){_keepUseTarget=keepBottlesData.find(k=>k.id===id)||null;renderKeepModal();}
+function keepCalcMeas(){
+  const k=_keepUseTarget;if(!k)return;
+  const w=parseFloat((document.getElementById('keep-meas-weight')||{}).value)||0;
+  const note=document.getElementById('keep-meas-note');
+  if(w>0&&k.emptyWeight!=null){
+    const ml=BottleWeight.remainingMl(w,k.emptyWeight,k.abv||0);
+    note.textContent='→ 残量 '+ml+'ml（空瓶'+k.emptyWeight+'g・'+(k.abv||0)+'%）';
+  }else if(w>0){
+    note.textContent='※ 空瓶重量が未登録のため残量mlは前回値を維持します。';
+  }else{note.textContent='';}
+}
+async function confirmUseKeep(){
+  const k=_keepUseTarget;if(!k)return;
+  const measured=parseFloat((document.getElementById('keep-meas-weight')||{}).value);
+  const choiceEl=document.querySelector('input[name="keep-meas-choice"]:checked');
+  const choice=choiceEl?choiceEl.value:'now';
+  let chosenWeight=(choice==='now')?(isNaN(measured)?null:measured):(k.lastWeight!=null?k.lastWeight:null);
+  if(choice==='now'&&!(measured>0)){showToast('今回のボトル重量を入力してください','error');return;}
+  let newRemaining=k.remaining!=null?k.remaining:null;
+  if(chosenWeight!=null&&chosenWeight>0&&k.emptyWeight!=null){
+    newRemaining=BottleWeight.remainingMl(chosenWeight,k.emptyWeight,k.abv||0);
+  }
+  const FV=firebase.firestore.FieldValue;
+  const uid=(auth.currentUser&&auth.currentUser.uid)||null;
+  try{
+    const b=db.batch();
+    const upd={updatedAt:FV.serverTimestamp()};
+    if(chosenWeight!=null)upd.lastWeight=chosenWeight;
+    if(newRemaining!=null)upd.remaining=newRemaining;
+    b.set(db.collection('keepBottles').doc(k.id),upd,{merge:true});
+    b.set(db.collection('keepBottleLog').doc(),{
+      keepBottleId:k.id,type:'use',date:_keepDate(),time:_keepTime(),
+      memberId:(_visitMemberIds()[0]||null),weight:chosenWeight,remainingMl:newRemaining,amount:0,
+      note:'利用開始（'+(choice==='now'?'今回値':'前回値')+'）',staffUid:uid,createdAt:FV.serverTimestamp()
+    });
+    await b.commit();
+  }catch(e){showToast('キープ更新に失敗しました: '+e.message,'error');return;}
+  // メモリ側も更新
+  if(chosenWeight!=null)k.lastWeight=chosenWeight;
+  if(newRemaining!=null)k.remaining=newRemaining;
+  // ¥0のカート行を追加
+  flow.cart.push({productId:k.id,productName:'🍾 '+_keepName(k)+' 利用',productType:'keep',qty:1,unit:'回',unitPrice:0,blindMarkId:null,keepBottleId:k.id});
+  renderCart();
+  document.getElementById('btn-to-step2').disabled=false;
+  closeKeepModal();
+  showToast('キープ利用をカートに追加しました（¥0）','info');
+}
+
+// ── 購入 ──
+function _keepStockById(id){return stockBottlesData.find(b=>b.id===id);}
+function keepBuyStockChange(){
+  const b=_keepStockById((document.getElementById('keep-buy-stock')||{}).value);
+  const rem=document.getElementById('keep-buy-remain');
+  if(b&&rem)rem.value=(b.remaining!=null?b.remaining:(b.volume||0));
+  keepBuyCalc();
+}
+function keepBuyCalc(){
+  const b=_keepStockById((document.getElementById('keep-buy-stock')||{}).value);
+  const w=parseFloat((document.getElementById('keep-buy-weight')||{}).value)||0;
+  const note=document.getElementById('keep-buy-note');
+  const rem=document.getElementById('keep-buy-remain');
+  if(b&&w>0&&b.emptyWeight!=null){
+    const ml=BottleWeight.remainingMl(w,b.emptyWeight,b.abv||0);
+    if(rem)rem.value=ml;
+    if(note)note.textContent='重量から残量を算出: '+ml+'ml（空瓶'+b.emptyWeight+'g・'+(b.abv||0)+'%）';
+  }else if(w>0){
+    if(note)note.textContent='※ 在庫ボトルに空瓶重量が未登録のため、残量mlは手入力してください。';
+  }else if(note){note.textContent='';}
+}
+function keepBuyRenderUsers(){
+  const box=document.getElementById('keep-buy-users');if(!box)return;
+  box.innerHTML=_keepBuyUsers.length?_keepBuyUsers.map((u,i)=>`<span class="keep-chip" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:3px 9px">${esc(_memberLabel(u))} <span style="color:var(--ink3);font-size:10px">${esc(_memberDispId(u))}</span> <button style="background:none;border:none;color:var(--red);font-size:14px;line-height:1;padding:0;cursor:pointer" onclick="keepBuyRemoveUser(${i})">×</button></span>`).join(''):'<span style="font-size:11px;color:var(--ink3)">未登録</span>';
+}
+function keepBuyAddUser(){
+  const inp=document.getElementById('keep-buy-userinput');if(!inp)return;
+  const q=(inp.value||'').trim();if(!q)return;
+  const m=_memberByDisplay(q);
+  if(!m){showToast('該当する会員が見つかりません: '+q,'error');return;}
+  if(_keepBuyUsers.indexOf(m.id)>=0){inp.value='';return;}
+  _keepBuyUsers.push(m.id);inp.value='';keepBuyRenderUsers();
+}
+function keepBuyRemoveUser(i){_keepBuyUsers.splice(i,1);keepBuyRenderUsers();}
+async function buyKeep(){
+  const b=_keepStockById((document.getElementById('keep-buy-stock')||{}).value);
+  if(!b){showToast('在庫ボトルを選択してください','error');return;}
+  const priceStr=(document.getElementById('keep-buy-price')||{}).value;
+  const price=parseInt(priceStr);
+  if(priceStr===''||!(price>=0)){showToast('販売価格を入力してください','error');return;}
+  const weightStr=(document.getElementById('keep-buy-weight')||{}).value;
+  const weight=weightStr!==''?(parseInt(weightStr)||0):null;
+  const remainStr=(document.getElementById('keep-buy-remain')||{}).value;
+  const remain=remainStr!==''?(parseInt(remainStr)||0):(b.remaining!=null?b.remaining:(b.volume||0));
+  const location=((document.getElementById('keep-buy-location')||{}).value||'').trim();
+  const FV=firebase.firestore.FieldValue;
+  const uid=(auth.currentUser&&auth.currentUser.uid)||null;
+  const keepRef=db.collection('keepBottles').doc();
+  const keepData={
+    bottleId:b.bottleId||(b.id||'').slice(0,12),
+    bottleEs:b.bottleEs||b.bottleEsBase||null,bottleJa:b.bottleJa||b.bottleJaBase||null,
+    classId:b.classId||null,abv:b.abv!=null?b.abv:null,volume:b.volume!=null?b.volume:null,
+    emptyWeight:b.emptyWeight!=null?b.emptyWeight:null,
+    remaining:remain,lastWeight:weight,
+    purchasePrice:price,userMemberIds:_keepBuyUsers.slice(),
+    status:'active',location:location||null,note:null,
+    sourceBottleDataId:b.id,purchaseDate:_keepDate(),createdAt:FV.serverTimestamp()
+  };
+  try{
+    const batch=db.batch();
+    batch.set(keepRef,keepData);
+    batch.update(db.collection('bottleData').doc(b.id),{status:'ended',visibility:'1'});
+    batch.set(db.collection('keepBottleLog').doc(),{
+      keepBottleId:keepRef.id,type:'purchase',date:_keepDate(),time:_keepTime(),
+      memberId:_keepBuyUsers[0]||null,weight:weight,remainingMl:remain,amount:price,
+      note:'注文画面から購入',staffUid:uid,createdAt:FV.serverTimestamp()
+    });
+    await batch.commit();
+  }catch(e){showToast('キープ購入に失敗しました: '+e.message,'error');return;}
+  // メモリ更新: 在庫から除外し、キープへ追加
+  stockBottlesData=stockBottlesData.filter(x=>x.id!==b.id);
+  keepBottlesData.push(Object.assign({id:keepRef.id},keepData));
+  // 会計へ課金行を追加
+  flow.cart.push({productId:keepRef.id,productName:'🍾 '+_keepName(b)+' ボトル購入',productType:'keepbuy',qty:1,unit:'本',unitPrice:price,blindMarkId:null,keepBottleId:keepRef.id});
+  renderCart();
+  document.getElementById('btn-to-step2').disabled=false;
+  closeKeepModal();
+  showToast('キープ購入を会計に追加しました（¥'+price.toLocaleString()+'）','info');
+}
+
+// ── 終了 ──
+async function endKeepFromOrder(id){
+  const k=keepBottlesData.find(x=>x.id===id);if(!k)return;
+  if(!confirm(_keepName(k)+' のキープを終了しますか？（履歴に「終了」を記録します）'))return;
+  const FV=firebase.firestore.FieldValue;
+  const uid=(auth.currentUser&&auth.currentUser.uid)||null;
+  try{
+    const batch=db.batch();
+    batch.update(db.collection('keepBottles').doc(id),{status:'ended',endDate:_keepDate(),updatedAt:FV.serverTimestamp()});
+    batch.set(db.collection('keepBottleLog').doc(),{keepBottleId:id,type:'end',date:_keepDate(),time:_keepTime(),note:'注文画面から終了',staffUid:uid,createdAt:FV.serverTimestamp()});
+    await batch.commit();
+  }catch(e){showToast('キープ終了に失敗しました: '+e.message,'error');return;}
+  keepBottlesData=keepBottlesData.filter(x=>x.id!==id);
+  renderKeepModal();
+  showToast('キープを終了しました','info');
+}
+
 // STEP2（バリデーション付き）
 async function goStep2(){
   if(!flow.cart.length)return;
@@ -2128,7 +2428,8 @@ async function confirmOrder(){
           blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:isPopupMode?3:1,
           ...(isCocktail?{baseProductCode:item._baseProductCode,baseProductType:item._baseProductType||null,baseSpiritMl:(item._baseSpiritMl||0)*(item.qty||1)}:{}),
           ...(isGift?{isGiftPayer:true,giftCount,giftTo:flow.giftTo}:{}),
-          ...(item.setGroupId?{setGroupId:item.setGroupId,setName:item.setName,setId:item.setId}:{})
+          ...(item.setGroupId?{setGroupId:item.setGroupId,setName:item.setName,setId:item.setId}:{}),
+          ...(item.keepBottleId?{keepBottleId:item.keepBottleId}:{})
         };
         fsBatch.set(db.collection('orders').doc(docId),data);
         journalEntries.push({docId,data});
