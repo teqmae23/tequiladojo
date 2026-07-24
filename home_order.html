@@ -920,7 +920,12 @@ async function loadTodayData(){
     bmap[key].push(g);
   });
   allBatchGroups=Object.entries(bmap).map(([bid,groups])=>{
-    const served=groups[0].served; // 同一batchは同じserved
+    // 本来は同一batch=同一servedだが、万一 未提供(1)/ブラインド未確定(2) が
+    // 混在した場合でも取りこぼさないよう、未提供側を優先して表示する。
+    // （未提供の注文が提供済みバッチに埋もれて、そのまま一括提供済みに流される事故を防止）
+    const served=groups.some(g=>g.served===1)?1
+                :groups.some(g=>g.served===2)?2
+                :groups[0].served;
     const isBlind=groups.some(g=>g.isBlind);
     const hasResult=groups.every(g=>!g.isBlind||g.hasResult);
     const orderTime=groups[0].orderTime;
@@ -1997,12 +2002,21 @@ async function confirmOrder(){
   if(!flow.visits.length||!flow.cart.length)return;
   const isBlind=document.getElementById('blind-check').checked;
 
-  // 過去visitへの追加注文かを判定（visitIdの先頭6文字がtodayStrと異なれば過去日）
-  const visitDatePrefix=flow.visits[0]?.id?.slice(0,6)||todayStr;
-  const useDate=(/^\d{6}$/.test(visitDatePrefix)&&visitDatePrefix!==todayStr)?visitDatePrefix:todayStr;
-  const isHistorical=(useDate!==todayStr);
+  // 過去visitへの追加注文かを判定。
+  // ★日跨ぎ（24時以降）バグ対策: 営業日は毎回セッションから算出する。
+  //   todayStr はページ読込時の一度きりの値で、深夜に暦日へずれると「同一営業日の
+  //   来店」が誤って過去日注文と判定され、注文時刻が直前注文の時刻で埋められる等の
+  //   不具合が起きるため、ここでは currentSessionBT の営業日を基準にする。
+  //   来店側(checkin)は visitDate を営業日で保存しているので、それと比較する。
+  const bizDate=(currentSessionBT&&AuthRole.businessDate(currentSessionBT.openTime,currentSessionBT.openDate))||todayStr;
+  const _v0=flow.visits[0]||{};
+  const visitBizDate=(_v0.visitDate||(_v0.id||'').slice(0,6)||bizDate);
+  // 現セッションの営業日と一致すれば当日注文。営業日が異なる場合のみ過去日（履歴）注文。
+  const isHistorical=(/^\d{6}$/.test(visitBizDate)&&visitBizDate!==bizDate);
+  const useDate=isHistorical?visitBizDate:bizDate;
 
-  // 注文時間: 過去visitはstep2の時間入力から取得、当日はnowBusinessTime
+  // 注文時間: 過去日(履歴)注文はstep2の時間入力から取得、当日注文はnowBusinessTime
+  //           （nowBusinessTimeは開店が午後で現在が午前なら24h+表記で日跨ぎ対応）
   let orderTime;
   if(isHistorical){
     const tv=(document.getElementById('confirm-order-time')||{}).value||'';
