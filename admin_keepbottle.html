@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>キープボトル管理 — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:"G-KMS18946JQ"
+};
+</script>
+<script src="/auth-role.js?v=20260714"></script>
+<script src="/bottle-weight.js?v=20260724"></script>
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;
+  --red:#b03020;--teal:#1a6e58;
+  --border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);
+  --shadow:0 1px 12px rgba(24,17,10,.07);--shadow-lg:0 6px 36px rgba(24,17,10,.13);
+  --r:8px;--rl:12px;
+  --serif:'Hiragino Mincho ProN','Yu Mincho',serif;
+  --sans:'Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif;
+  --mono:'SFMono-Regular',Consolas,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+button{cursor:pointer;font-family:var(--sans)} input,select{font-family:var(--sans)}
+#login-screen{display:none;min-height:100vh;align-items:center;justify-content:center;padding:24px}
+.lcard{width:100%;max-width:360px;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:40px 30px;box-shadow:var(--shadow-lg)}
+.llogo{text-align:center;font-size:40px;margin-bottom:6px}
+.lbrand{font-family:var(--serif);font-size:22px;color:var(--gold-d);letter-spacing:.1em;text-align:center}
+.lsub{text-align:center;font-size:10px;letter-spacing:.18em;color:var(--ink3);margin-bottom:24px}
+.lcard label{display:block;font-size:10px;color:var(--ink3);margin:12px 0 4px}
+.lcard input{width:100%;padding:11px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.lerr{min-height:16px;font-size:12px;color:var(--red);margin-top:8px;text-align:center}
+.lbtn{width:100%;margin-top:18px;padding:12px;background:var(--gold-d);color:var(--cream);border:none;border-radius:var(--r);font-size:13px}
+.hdr{background:var(--ink);padding:0 16px;height:56px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:40}
+.hdr-title{font-family:var(--serif);font-size:18px;color:var(--gold-l);letter-spacing:.06em}
+.hdr-right{margin-left:auto;display:flex;gap:8px}
+.hdr-nav{padding:6px 11px;border:1px solid rgba(255,255,255,.16);border-radius:6px;color:var(--gold-l);font-size:11px;text-decoration:none;background:none}
+#app{display:none}
+.wrap{max-width:940px;margin:0 auto;padding:18px 14px 60px}
+.phead{display:flex;align-items:center;margin-bottom:14px}
+.ptitle{font-family:var(--serif);font-size:22px;color:var(--gold-d)}
+.pdesc{font-size:11px;color:var(--ink3);margin-top:2px}
+.btn{border:none;border-radius:var(--r);padding:9px 15px;font-size:13px;font-weight:500}
+.bp{background:var(--gold-d);color:var(--cream)} .bg2{background:var(--cream2);color:var(--ink2);border:1px solid var(--border2)}
+.bt{background:var(--teal);color:#fff} .bd{background:#fff;color:var(--red);border:1px solid var(--cream3)}
+.badd{margin-left:auto}
+.filterrow{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.krow{display:flex;gap:12px;align-items:center;background:var(--white);border:1px solid var(--border);border-radius:var(--rl);padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow)}
+.krow.ended{opacity:.6}
+.kmain{flex:1;min-width:0}
+.kname{font-size:15px;font-weight:700}
+.kmeta{font-size:11px;color:var(--ink3);margin-top:2px}
+.kusers{margin-top:5px;display:flex;gap:5px;flex-wrap:wrap}
+.uchip{font-size:10px;background:var(--cream2);color:var(--ink2);border-radius:10px;padding:2px 8px}
+.kremain{flex-shrink:0;text-align:right;min-width:90px}
+.kremain .rv{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--teal)}
+.kremain .rl{font-size:10px;color:var(--ink3)}
+.tag{font-size:10px;padding:1px 7px;border-radius:10px}
+.tag-active{background:#e5f2ec;color:var(--teal)} .tag-ended{background:#f0f0ee;color:#777}
+.kacts{flex-shrink:0;display:flex;flex-direction:column;gap:5px}
+.abtn{font-size:11px;padding:6px 10px;border-radius:6px;border:1px solid var(--cream3);background:#fff}
+.abtn.edit{color:var(--gold-d)} .abtn.hist{color:var(--teal)}
+.empty{text-align:center;color:var(--ink3);padding:40px 20px;font-size:13px}
+/* modal */
+.mbg{position:fixed;inset:0;background:rgba(24,17,10,.52);z-index:100;display:none;align-items:flex-start;justify-content:center;padding:24px 16px;overflow-y:auto}
+.mbg.open{display:flex}
+.modal{background:var(--white);border-radius:var(--rl);width:100%;max-width:560px;box-shadow:var(--shadow-lg);margin:auto}
+.mhead{display:flex;justify-content:space-between;align-items:center;padding:16px 20px 12px;border-bottom:1px solid var(--border)}
+.mtitle{font-family:var(--serif);font-size:19px;color:var(--gold-d)} .mx{background:none;border:none;font-size:22px;color:var(--ink3)}
+.mbody{padding:16px 20px}
+.fg{margin-bottom:13px} .fl{display:block;font-size:11px;color:var(--ink2);font-weight:600;margin-bottom:5px} .req{color:var(--red);margin-left:3px}
+.fi{width:100%;padding:10px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.frow{display:flex;gap:10px} .frow>.fg{flex:1}
+.hint{font-size:10px;color:var(--ink3);margin-top:4px;line-height:1.5}
+.userbox{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.userbox .uchip{display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 10px}
+.userbox .uchip button{background:none;border:none;color:var(--red);font-size:14px;line-height:1;padding:0}
+.mfoot{display:flex;justify-content:space-between;gap:10px;padding:14px 20px 18px;border-top:1px solid var(--border)}
+.htbl{width:100%;border-collapse:collapse;font-size:12px}
+.htbl th,.htbl td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--cream2)}
+.htbl th{font-size:10px;color:var(--ink3)}
+#toasts{position:fixed;bottom:18px;right:18px;z-index:9999;display:flex;flex-direction:column;gap:6px}
+.toast{background:var(--ink);color:#fff;font-size:12px;padding:9px 14px;border-radius:8px;box-shadow:var(--shadow-lg);opacity:0;transform:translateY(8px);transition:.25s}
+.toast.show{opacity:1;transform:none} .toast.err{background:var(--red)}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="lcard">
+    <div class="llogo">🍾</div>
+    <div class="lbrand">テキーラ道場</div>
+    <div class="lsub">キープボトル管理</div>
+    <label>メールアドレス</label><input type="email" id="lemail" autocomplete="username">
+    <label>パスワード</label><input type="password" id="lpass" autocomplete="current-password">
+    <div class="lerr" id="lerr"></div>
+    <button class="lbtn" id="lbtn">ログイン</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="hdr">
+    <div class="hdr-title">🍾 キープボトル管理</div>
+    <div class="hdr-right">
+      <a class="hdr-nav" href="/admin_deposit.html">デポジット・ツケ</a>
+      <a class="hdr-nav" href="/admin.html">管理TOP</a>
+      <button class="hdr-nav" id="btn-logout">ログアウト</button>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="phead">
+      <div><div class="ptitle">キープボトル</div><div class="pdesc">在庫からキープを登録し、利用者会員・残量・履歴を管理します。</div></div>
+      <button class="btn bp badd" id="btn-new">＋ 在庫からキープ登録</button>
+    </div>
+    <div class="filterrow">
+      <label style="font-size:12px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="f-show-ended" onchange="renderList()"> 終了も表示</label>
+      <input class="fi" id="f-search" placeholder="ボトル名・会員番号で絞り込み" style="max-width:260px" oninput="renderList()">
+    </div>
+    <div id="list"></div>
+    <div class="empty" id="empty" style="display:none;">キープボトルがありません。「＋ 在庫からキープ登録」から追加してください。</div>
+  </div>
+</div>
+
+<!-- 登録モーダル -->
+<div class="mbg" id="m-new">
+  <div class="modal">
+    <div class="mhead"><div class="mtitle">在庫からキープ登録</div><button class="mx" data-close="m-new">✕</button></div>
+    <div class="mbody">
+      <div class="fg"><label class="fl">在庫ボトル<span class="req">*</span></label>
+        <select class="fi" id="n-stock" onchange="onStockChange()"><option value="">在庫ボトルを選択…</option></select>
+        <div class="hint">ボトルデータで「在庫」状態のボトルが対象です。</div>
+      </div>
+      <div class="frow">
+        <div class="fg"><label class="fl">販売価格（円）<span class="req">*</span></label><input class="fi" id="n-price" type="number" min="0" placeholder="購入時に手入力" style="font-family:var(--mono)"></div>
+        <div class="fg"><label class="fl">保管場所</label><input class="fi" id="n-location" placeholder="例: キープ棚 A-3"></div>
+      </div>
+      <div class="frow">
+        <div class="fg"><label class="fl">初回重量（g・任意）</label><input class="fi" id="n-weight" type="number" min="0" placeholder="測定値" style="font-family:var(--mono)" oninput="onNewWeight()"></div>
+        <div class="fg"><label class="fl">残量（ml）</label><input class="fi" id="n-remain" type="number" min="0" style="font-family:var(--mono)"></div>
+      </div>
+      <div class="hint" id="n-weightnote"></div>
+      <div class="fg">
+        <label class="fl">利用者会員</label>
+        <div class="userbox" id="n-users"></div>
+        <div style="display:flex;gap:6px"><input class="fi" id="n-user-input" placeholder="会員番号を入力" style="max-width:180px" onkeydown="if(event.key==='Enter'){event.preventDefault();addUser('n');}"><button class="btn bg2" onclick="addUser('n')">追加</button></div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <div></div>
+      <div style="display:flex;gap:10px"><button class="btn bg2" data-close="m-new">キャンセル</button><button class="btn bp" id="btn-create">登録</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 編集モーダル -->
+<div class="mbg" id="m-edit">
+  <div class="modal">
+    <div class="mhead"><div class="mtitle" id="mt-edit">キープ編集</div><button class="mx" data-close="m-edit">✕</button></div>
+    <div class="mbody">
+      <div id="e-name" style="font-size:14px;font-weight:700;margin-bottom:10px"></div>
+      <div class="frow">
+        <div class="fg"><label class="fl">残量（ml）</label><input class="fi" id="e-remain" type="number" min="0" style="font-family:var(--mono)"></div>
+        <div class="fg"><label class="fl">最終重量（g）</label><input class="fi" id="e-weight" type="number" min="0" style="font-family:var(--mono)"></div>
+        <div class="fg"><label class="fl">販売価格（円）</label><input class="fi" id="e-price" type="number" min="0" style="font-family:var(--mono)"></div>
+      </div>
+      <div class="frow">
+        <div class="fg"><label class="fl">保管場所</label><input class="fi" id="e-location"></div>
+        <div class="fg"><label class="fl">状態</label><select class="fi" id="e-status"><option value="active">利用中</option><option value="ended">終了</option></select></div>
+      </div>
+      <div class="fg"><label class="fl">備考</label><input class="fi" id="e-note"></div>
+      <div class="fg">
+        <label class="fl">利用者会員</label>
+        <div class="userbox" id="e-users"></div>
+        <div style="display:flex;gap:6px"><input class="fi" id="e-user-input" placeholder="会員番号を入力" style="max-width:180px" onkeydown="if(event.key==='Enter'){event.preventDefault();addUser('e');}"><button class="btn bg2" onclick="addUser('e')">追加</button></div>
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn bd" id="btn-end" onclick="endKeep()">キープ終了</button>
+      <div style="display:flex;gap:10px"><button class="btn bg2" data-close="m-edit">キャンセル</button><button class="btn bp" id="btn-save">保存</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 履歴モーダル -->
+<div class="mbg" id="m-hist">
+  <div class="modal">
+    <div class="mhead"><div class="mtitle">利用履歴</div><button class="mx" data-close="m-hist">✕</button></div>
+    <div class="mbody"><div id="hist-body"></div></div>
+    <div class="mfoot"><div></div><button class="btn bg2" data-close="m-hist">閉じる</button></div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function gv(id){var e=g(id);return e?e.value.trim():'';}
+function sv(id,v){var e=g(id);if(e)e.value=(v==null?'':v);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function yen(n){return '¥'+(Number(n)||0).toLocaleString();}
+function toast(msg,type){var el=document.createElement('div');el.className='toast'+(type?' '+type:'');el.textContent=msg;g('toasts').appendChild(el);requestAnimationFrame(function(){requestAnimationFrame(function(){el.classList.add('show');});});setTimeout(function(){el.classList.remove('show');setTimeout(function(){el.remove();},300);},2800);}
+function nowDate(){var d=new Date();return String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');}
+function nowTime(){var d=new Date();return String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0')+String(d.getSeconds()).padStart(2,'0');}
+function fmtDate(s){return s&&s.length===6?('20'+s.slice(0,2)+'/'+s.slice(2,4)+'/'+s.slice(4,6)):(s||'');}
+function fmtTime(s){return s&&s.length>=4?(s.slice(0,2)+':'+s.slice(2,4)):(s||'');}
+function bdNameOf(o){return (o.bottleEs||o.bottleEsBase||o.bottleJa||o.bottleJaBase||o.name||'(無名)');}
+
+var keeps=[], stockBottles=[], memberMap={}, memberByDisplay={};
+var newUsers=[], editUsers=[], editKeep=null;
+
+AuthRole.requireStaff(auth, function(){ g('app').style.display='block'; loadAll(); }, function(){ g('login-screen').style.display='flex'; });
+g('lbtn').addEventListener('click',function(){ auth.signInWithEmailAndPassword(gv('lemail'),g('lpass').value).catch(function(e){ g('lerr').textContent=e.message; }); });
+g('lpass').addEventListener('keydown',function(e){ if(e.key==='Enter') g('lbtn').click(); });
+g('btn-logout').addEventListener('click',function(){ auth.signOut().then(function(){location.reload();}); });
+Array.prototype.forEach.call(document.querySelectorAll('[data-close]'),function(b){ b.addEventListener('click',function(){ g(b.getAttribute('data-close')).classList.remove('open'); }); });
+Array.prototype.forEach.call(document.querySelectorAll('.mbg'),function(m){ m.addEventListener('click',function(e){ if(e.target===m) m.classList.remove('open'); }); });
+
+function loadAll(){
+  Promise.all([
+    db.collection('keepBottles').get(),
+    db.collection('bottleData').get(),
+    db.collection('members').get()
+  ]).then(function(res){
+    keeps=res[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    stockBottles=res[1].docs.map(function(d){return Object.assign({id:d.id},d.data());}).filter(function(b){return b.status==='stock';});
+    memberMap={}; memberByDisplay={};
+    res[2].docs.forEach(function(d){ var m=Object.assign({id:d.id},d.data()); memberMap[d.id]=m; if(m.displayId) memberByDisplay[String(m.displayId)]=m; });
+    fillStockSelect();
+    renderList();
+  }).catch(function(e){ toast('読み込み失敗: '+e.message,'err'); });
+}
+function memberName(id){ var m=memberMap[id]; return m?(m.nickname||m.name||m.displayId||id):id; }
+function memberDisplayId(id){ var m=memberMap[id]; return m?(m.displayId||id):id; }
+
+function renderList(){
+  var showEnded=g('f-show-ended').checked;
+  var q=gv('f-search').toLowerCase();
+  var list=keeps.filter(function(k){
+    if(!showEnded && k.status==='ended') return false;
+    if(q){
+      var hay=(bdNameOf(k)+' '+(k.userMemberIds||[]).map(function(u){return memberDisplayId(u)+' '+memberName(u);}).join(' ')).toLowerCase();
+      if(hay.indexOf(q)<0) return false;
+    }
+    return true;
+  });
+  list.sort(function(a,b){ var sa=a.status==='ended'?1:0, sb=b.status==='ended'?1:0; if(sa!==sb)return sa-sb; return (b.purchaseDate||'').localeCompare(a.purchaseDate||''); });
+  if(!list.length){ g('list').innerHTML=''; g('empty').style.display='block'; return; }
+  g('empty').style.display='none';
+  g('list').innerHTML=list.map(function(k,i){
+    var idx=keeps.indexOf(k);
+    var users=(k.userMemberIds||[]).map(function(u){return '<span class="uchip">'+esc(memberName(u))+'</span>';}).join('');
+    var ended=k.status==='ended';
+    return '<div class="krow'+(ended?' ended':'')+'">'
+      +'<div class="kmain">'
+        +'<div class="kname">'+esc(bdNameOf(k))+' <span class="tag '+(ended?'tag-ended':'tag-active')+'">'+(ended?'終了':'利用中')+'</span></div>'
+        +'<div class="kmeta">'+esc(k.abv!=null?k.abv+'% ':'')+esc(k.volume?k.volume+'ml ':'')+'・ '+yen(k.purchasePrice)+' ・ '+esc(fmtDate(k.purchaseDate))+(k.location?' ・ '+esc(k.location):'')+'</div>'
+        +'<div class="kusers">'+(users||'<span class="uchip" style="color:var(--red)">利用者未登録</span>')+'</div>'
+      +'</div>'
+      +'<div class="kremain"><div class="rv">'+(k.remaining!=null?k.remaining:'—')+'</div><div class="rl">ml 残量'+(k.lastWeight?' / '+k.lastWeight+'g':'')+'</div></div>'
+      +'<div class="kacts"><button class="abtn edit" data-edit="'+idx+'">編集</button><button class="abtn hist" data-hist="'+idx+'">履歴</button></div>'
+    +'</div>';
+  }).join('');
+  Array.prototype.forEach.call(g('list').querySelectorAll('[data-edit]'),function(b){ b.addEventListener('click',function(){ openEdit(keeps[Number(b.dataset.edit)]); }); });
+  Array.prototype.forEach.call(g('list').querySelectorAll('[data-hist]'),function(b){ b.addEventListener('click',function(){ openHist(keeps[Number(b.dataset.hist)]); }); });
+}
+
+// ── 利用者チップUI ──
+function renderUsers(which){
+  var arr=which==='n'?newUsers:editUsers;
+  g(which+'-users').innerHTML=arr.length?arr.map(function(u,i){
+    return '<span class="uchip">'+esc(memberName(u))+' <span style="color:var(--ink3);font-size:10px">'+esc(memberDisplayId(u))+'</span> <button onclick="removeUser(\''+which+'\','+i+')">×</button></span>';
+  }).join(''):'<span style="font-size:11px;color:var(--ink3)">未登録</span>';
+}
+function addUser(which){
+  var inpId=which+'-user-input';
+  var q=gv(inpId);
+  if(!q) return;
+  var m=memberByDisplay[q]||memberMap[q];
+  if(!m){ toast('該当する会員が見つかりません: '+q,'err'); return; }
+  var arr=which==='n'?newUsers:editUsers;
+  if(arr.indexOf(m.id)>=0){ toast('既に追加済みです','inf'); sv(inpId,''); return; }
+  arr.push(m.id); sv(inpId,''); renderUsers(which);
+}
+function removeUser(which,i){ var arr=which==='n'?newUsers:editUsers; arr.splice(i,1); renderUsers(which); }
+
+// ── 在庫からキープ登録 ──
+function fillStockSelect(){
+  g('n-stock').innerHTML='<option value="">在庫ボトルを選択…</option>'+stockBottles.map(function(b){
+    return '<option value="'+esc(b.id)+'">'+esc(bdNameOf(b))+' ('+esc(b.id)+') / 残'+(b.remaining!=null?b.remaining:(b.volume||0))+'ml</option>';
+  }).join('');
+}
+function _stockById(id){ return stockBottles.find(function(b){return b.id===id;}); }
+function onStockChange(){
+  var b=_stockById(gv('n-stock'));
+  if(!b){ sv('n-remain',''); return; }
+  sv('n-remain', b.remaining!=null?b.remaining:(b.volume||0));
+  onNewWeight();
+}
+function onNewWeight(){
+  var b=_stockById(gv('n-stock'));
+  var w=parseInt(gv('n-weight'))||0;
+  var note=g('n-weightnote');
+  if(b && w>0 && b.emptyWeight!=null){
+    var ml=BottleWeight.remainingMl(w, b.emptyWeight, b.abv||0);
+    sv('n-remain', ml);
+    note.textContent='重量から残量を算出: '+ml+'ml（空瓶'+b.emptyWeight+'g・'+(b.abv||0)+'%）';
+  } else if(w>0){
+    note.textContent='※ 在庫ボトルに空瓶重量が未登録のため、残量mlは手入力してください。';
+  } else { note.textContent=''; }
+}
+g('btn-new').addEventListener('click',function(){
+  newUsers=[]; sv('n-stock',''); sv('n-price',''); sv('n-location',''); sv('n-weight',''); sv('n-remain','');
+  g('n-weightnote').textContent=''; renderUsers('n');
+  fillStockSelect();
+  g('m-new').classList.add('open');
+});
+g('btn-create').addEventListener('click',function(){
+  var b=_stockById(gv('n-stock'));
+  if(!b){ toast('在庫ボトルを選択してください','err'); return; }
+  var price=parseInt(gv('n-price')); if(!(price>=0)||gv('n-price')===''){ toast('販売価格を入力してください','err'); return; }
+  var weight=gv('n-weight')!==''?parseInt(gv('n-weight'))||0:null;
+  var remain=gv('n-remain')!==''?parseInt(gv('n-remain'))||0:(b.remaining!=null?b.remaining:b.volume||0);
+  var keepRef=db.collection('keepBottles').doc();
+  var uid=(auth.currentUser&&auth.currentUser.uid)||null;
+  var FV=firebase.firestore.FieldValue;
+  var keepData={
+    bottleId:b.bottleId||(b.id||'').slice(0,12),
+    bottleEs:b.bottleEs||b.bottleEsBase||null, bottleJa:b.bottleJa||b.bottleJaBase||null,
+    classId:b.classId||null, abv:b.abv!=null?b.abv:null, volume:b.volume!=null?b.volume:null,
+    emptyWeight:b.emptyWeight!=null?b.emptyWeight:null,
+    remaining:remain, lastWeight:weight,
+    purchasePrice:price, userMemberIds:newUsers.slice(),
+    status:'active', location:gv('n-location')||null, note:null,
+    sourceBottleDataId:b.id, purchaseDate:nowDate(), createdAt:FV.serverTimestamp()
+  };
+  var batch=db.batch();
+  batch.set(keepRef, keepData);
+  // 在庫ボトルは終了（キープへ移行）
+  batch.update(db.collection('bottleData').doc(b.id), {status:'ended', visibility:'1'});
+  // 履歴（購入）
+  batch.set(db.collection('keepBottleLog').doc(), {
+    keepBottleId:keepRef.id, type:'purchase', date:nowDate(), time:nowTime(),
+    memberId:newUsers[0]||null, weight:weight, remainingMl:remain, amount:price,
+    note:'在庫からキープ登録', staffUid:uid, createdAt:FV.serverTimestamp()
+  });
+  g('btn-create').disabled=true;
+  batch.commit().then(function(){ toast('キープを登録しました'); g('m-new').classList.remove('open'); loadAll(); })
+    .catch(function(e){ toast('登録失敗: '+e.message,'err'); })
+    .finally(function(){ g('btn-create').disabled=false; });
+});
+
+// ── 編集 ──
+function openEdit(k){
+  editKeep=k; editUsers=(k.userMemberIds||[]).slice();
+  g('e-name').textContent=bdNameOf(k)+'（'+(k.abv!=null?k.abv+'% ':'')+(k.volume?k.volume+'ml':'')+'）';
+  sv('e-remain',k.remaining!=null?k.remaining:''); sv('e-weight',k.lastWeight!=null?k.lastWeight:'');
+  sv('e-price',k.purchasePrice!=null?k.purchasePrice:''); sv('e-location',k.location||''); sv('e-status',k.status||'active'); sv('e-note',k.note||'');
+  renderUsers('e');
+  g('m-edit').classList.add('open');
+}
+g('btn-save').addEventListener('click',function(){
+  if(!editKeep) return;
+  var data={
+    remaining:gv('e-remain')!==''?parseInt(gv('e-remain'))||0:null,
+    lastWeight:gv('e-weight')!==''?parseInt(gv('e-weight'))||0:null,
+    purchasePrice:gv('e-price')!==''?parseInt(gv('e-price'))||0:null,
+    location:gv('e-location')||null, status:gv('e-status')||'active', note:gv('e-note')||null,
+    userMemberIds:editUsers.slice(),
+    updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+  };
+  g('btn-save').disabled=true;
+  db.collection('keepBottles').doc(editKeep.id).set(data,{merge:true})
+    .then(function(){ toast('保存しました'); g('m-edit').classList.remove('open'); loadAll(); })
+    .catch(function(e){ toast('保存失敗: '+e.message,'err'); })
+    .finally(function(){ g('btn-save').disabled=false; });
+});
+function endKeep(){
+  if(!editKeep) return;
+  if(!confirm('このキープを終了しますか？（履歴に「終了」を記録します）')) return;
+  var uid=(auth.currentUser&&auth.currentUser.uid)||null;
+  var FV=firebase.firestore.FieldValue;
+  var batch=db.batch();
+  batch.update(db.collection('keepBottles').doc(editKeep.id), {status:'ended', endDate:nowDate(), updatedAt:FV.serverTimestamp()});
+  batch.set(db.collection('keepBottleLog').doc(), {keepBottleId:editKeep.id, type:'end', date:nowDate(), time:nowTime(), note:'キープ終了', staffUid:uid, createdAt:FV.serverTimestamp()});
+  batch.commit().then(function(){ toast('キープを終了しました'); g('m-edit').classList.remove('open'); loadAll(); })
+    .catch(function(e){ toast('失敗: '+e.message,'err'); });
+}
+
+// ── 履歴（閲覧・修正） ──
+var TYPE_LABEL={purchase:'購入',use:'利用',measure:'計測',end:'終了',adjust:'調整'};
+function openHist(k){
+  editKeep=k;
+  g('hist-body').innerHTML='<div class="empty">読み込み中...</div>';
+  g('m-hist').classList.add('open');
+  db.collection('keepBottleLog').where('keepBottleId','==',k.id).get().then(function(snap){
+    var rows=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    rows.sort(function(a,b){ return (b.date+b.time).localeCompare(a.date+a.time); });
+    if(!rows.length){ g('hist-body').innerHTML='<div class="empty">履歴はありません</div>'; return; }
+    g('hist-body').innerHTML='<table class="htbl"><thead><tr><th>日付</th><th>時刻</th><th>種別</th><th>利用者</th><th style="text-align:right">残量ml</th><th style="text-align:right">重量g</th><th>備考</th><th></th></tr></thead><tbody>'
+      +rows.map(function(r){
+        return '<tr><td>'+esc(fmtDate(r.date))+'</td><td>'+esc(fmtTime(r.time))+'</td>'
+          +'<td>'+esc(TYPE_LABEL[r.type]||r.type||'')+'</td>'
+          +'<td>'+esc(r.memberId?memberName(r.memberId):'')+'</td>'
+          +'<td style="text-align:right;font-family:var(--mono)">'+(r.remainingMl!=null?r.remainingMl:'—')+'</td>'
+          +'<td style="text-align:right;font-family:var(--mono)">'+(r.weight!=null?r.weight:'—')+'</td>'
+          +'<td>'+esc(r.note||'')+'</td>'
+          +'<td><button class="abtn" data-editlog="'+esc(r.id)+'" data-r=\''+esc(JSON.stringify({remainingMl:r.remainingMl,weight:r.weight,note:r.note}))+'\'>修正</button></td></tr>';
+      }).join('')+'</tbody></table>';
+    Array.prototype.forEach.call(g('hist-body').querySelectorAll('[data-editlog]'),function(b){
+      b.addEventListener('click',function(){ editLog(b.getAttribute('data-editlog'), JSON.parse(b.getAttribute('data-r'))); });
+    });
+  }).catch(function(e){ g('hist-body').innerHTML='<div class="empty">取得失敗: '+esc(e.message)+'</div>'; });
+}
+function editLog(logId, cur){
+  var ml=prompt('残量(ml)を修正', cur.remainingMl!=null?cur.remainingMl:'');
+  if(ml===null) return;
+  var w=prompt('重量(g)を修正', cur.weight!=null?cur.weight:'');
+  if(w===null) return;
+  var note=prompt('備考', cur.note||'');
+  if(note===null) return;
+  var upd={ remainingMl:ml!==''?parseInt(ml)||0:null, weight:w!==''?parseInt(w)||0:null, note:note||null, editedAt:firebase.firestore.FieldValue.serverTimestamp() };
+  db.collection('keepBottleLog').doc(logId).set(upd,{merge:true}).then(function(){ toast('履歴を修正しました'); openHist(editKeep); })
+    .catch(function(e){ toast('修正失敗: '+e.message,'err'); });
+}
+</script>
+</body>
+</html>
