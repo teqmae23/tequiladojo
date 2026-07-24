@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>デポジット・ツケ管理 — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:"G-KMS18946JQ"
+};
+</script>
+<script src="/auth-role.js?v=20260714"></script>
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;
+  --red:#b03020;--teal:#1a6e58;--blue:#1565c0;
+  --border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);
+  --shadow:0 1px 12px rgba(24,17,10,.07);--shadow-lg:0 6px 36px rgba(24,17,10,.13);
+  --r:8px;--rl:12px;
+  --serif:'Hiragino Mincho ProN','Yu Mincho',serif;
+  --sans:'Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif;
+  --mono:'SFMono-Regular',Consolas,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+button{cursor:pointer;font-family:var(--sans)} input,select{font-family:var(--sans)}
+#login-screen{display:none;min-height:100vh;align-items:center;justify-content:center;padding:24px}
+.lcard{width:100%;max-width:360px;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:40px 30px;box-shadow:var(--shadow-lg)}
+.llogo{text-align:center;font-size:40px;margin-bottom:6px}
+.lbrand{font-family:var(--serif);font-size:22px;color:var(--gold-d);letter-spacing:.1em;text-align:center}
+.lsub{text-align:center;font-size:10px;letter-spacing:.18em;color:var(--ink3);margin-bottom:24px}
+.lcard label{display:block;font-size:10px;color:var(--ink3);margin:12px 0 4px}
+.lcard input{width:100%;padding:11px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.lerr{min-height:16px;font-size:12px;color:var(--red);margin-top:8px;text-align:center}
+.lbtn{width:100%;margin-top:18px;padding:12px;background:var(--gold-d);color:var(--cream);border:none;border-radius:var(--r);font-size:13px}
+.hdr{background:var(--ink);padding:0 16px;height:56px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:40}
+.hdr-title{font-family:var(--serif);font-size:18px;color:var(--gold-l);letter-spacing:.06em}
+.hdr-right{margin-left:auto;display:flex;gap:8px}
+.hdr-nav{padding:6px 11px;border:1px solid rgba(255,255,255,.16);border-radius:6px;color:var(--gold-l);font-size:11px;text-decoration:none;background:none}
+#app{display:none}
+.wrap{max-width:820px;margin:0 auto;padding:18px 14px 60px}
+.sect{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shadow);padding:16px;margin-bottom:18px}
+.sect-title{font-family:var(--serif);font-size:18px;color:var(--gold-d);margin-bottom:10px}
+.searchrow{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:11px;color:var(--ink2);font-weight:600}
+.field input,.field select{padding:9px 11px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.btn{border:none;border-radius:var(--r);padding:9px 15px;font-size:13px;font-weight:500}
+.bp{background:var(--gold-d);color:var(--cream)} .bg2{background:var(--cream2);color:var(--ink2);border:1px solid var(--border2)}
+.bt{background:var(--teal);color:#fff} .bb{background:var(--blue);color:#fff} .bd{background:#fff;color:var(--red);border:1px solid var(--cream3)}
+.mcard{border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:14px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.mcard .mn{font-weight:700;font-size:15px} .mcard .mid{font-family:var(--mono);font-size:12px;color:var(--ink3)}
+.tabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--cream3)}
+.tabbtn{padding:8px 14px;border:none;background:none;color:var(--ink3);font-size:13px;font-weight:600;border-bottom:2px solid transparent}
+.tabbtn.on{color:var(--gold-d);border-bottom-color:var(--gold-d)}
+.panel{display:none} .panel.on{display:block}
+.balance-box{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+.bstat{background:var(--cream2);border-radius:10px;padding:12px 16px;min-width:150px}
+.bstat .bl{font-size:11px;color:var(--ink3)} .bstat .bv{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--ink)}
+.bstat.dep .bv{color:var(--teal)} .bstat.tab .bv{color:var(--red)}
+.opline{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;padding:12px;background:var(--cream2);border-radius:10px}
+.toggle{display:flex;align-items:center;gap:8px;font-size:13px}
+.hist{margin-top:8px}
+.hist h4{font-size:12px;color:var(--ink3);margin-bottom:6px}
+.htbl{width:100%;border-collapse:collapse;font-size:12px}
+.htbl th,.htbl td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--cream2)}
+.htbl th{font-size:10px;color:var(--ink3);font-weight:600}
+.htbl td.amt{font-family:var(--mono);text-align:right;font-weight:700}
+.amt.plus{color:var(--teal)} .amt.minus{color:var(--red)}
+.hint{font-size:11px;color:var(--ink3);margin-top:6px;line-height:1.6}
+.empty{text-align:center;color:var(--ink3);padding:24px;font-size:12px}
+.soon{text-align:center;color:var(--ink3);padding:40px 20px;font-size:14px}
+#toasts{position:fixed;bottom:18px;right:18px;z-index:9999;display:flex;flex-direction:column;gap:6px}
+.toast{background:var(--ink);color:#fff;font-size:12px;padding:9px 14px;border-radius:8px;box-shadow:var(--shadow-lg);opacity:0;transform:translateY(8px);transition:.25s}
+.toast.show{opacity:1;transform:none} .toast.err{background:var(--red)}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="lcard">
+    <div class="llogo">💰</div>
+    <div class="lbrand">テキーラ道場</div>
+    <div class="lsub">デポジット・ツケ管理</div>
+    <label>メールアドレス</label>
+    <input type="email" id="lemail" autocomplete="username">
+    <label>パスワード</label>
+    <input type="password" id="lpass" autocomplete="current-password">
+    <div class="lerr" id="lerr"></div>
+    <button class="lbtn" id="lbtn">ログイン</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="hdr">
+    <div class="hdr-title">💰 デポジット・ツケ管理</div>
+    <div class="hdr-right">
+      <a class="hdr-nav" href="/admin.html">管理TOP</a>
+      <button class="hdr-nav" id="btn-logout">ログアウト</button>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="sect">
+      <div class="sect-title">会員検索</div>
+      <div class="searchrow">
+        <div class="field" style="flex:1;min-width:180px">
+          <label>会員番号（表示ID）</label>
+          <input id="q-member" placeholder="例：10023" onkeydown="if(event.key==='Enter')searchMember()">
+        </div>
+        <button class="btn bg2" onclick="searchMember()">検索</button>
+      </div>
+      <div id="member-area"></div>
+    </div>
+
+    <div class="sect" id="detail-sect" style="display:none">
+      <div class="tabs">
+        <button class="tabbtn on" data-tab="deposit" onclick="showTab('deposit')">デポジット（前払金）</button>
+        <button class="tabbtn" data-tab="tab" onclick="showTab('tab')">ツケ（未収）</button>
+        <button class="tabbtn" data-tab="bottle" onclick="showTab('bottle')">ボトルキープ</button>
+      </div>
+
+      <!-- デポジット -->
+      <div class="panel on" id="panel-deposit">
+        <div class="opline" style="align-items:center">
+          <label class="toggle"><input type="checkbox" id="dep-enabled" onchange="toggleDepositEnabled()"> デポジットを有効にする（会計画面にデポジット支払を表示）</label>
+        </div>
+        <div class="balance-box">
+          <div class="bstat dep"><div class="bl">デポジット残高</div><div class="bv" id="dep-balance">¥0</div></div>
+        </div>
+        <div class="opline">
+          <div class="field" style="max-width:150px"><label>入金（追加）金額（円）</label><input id="dep-add" type="number" min="1" placeholder="5000" style="font-family:var(--mono)"></div>
+          <button class="btn bt" onclick="depositAdd()">＋ 入金</button>
+          <div class="field" style="max-width:150px;margin-left:14px"><label>払戻・手動減算（円）</label><input id="dep-sub" type="number" min="1" placeholder="0" style="font-family:var(--mono)"></div>
+          <button class="btn bd" onclick="depositSub()">− 減算</button>
+        </div>
+        <div class="hint">※ 入金は残高に加算し履歴に「＋（追加）」で記録。減算は払戻・訂正用で「−（支払/払戻）」で記録します。会計画面からのデポジット支払も同じ履歴に記録されます。</div>
+        <div class="hist">
+          <h4>デポジット履歴</h4>
+          <div id="dep-hist"></div>
+        </div>
+      </div>
+
+      <!-- ツケ -->
+      <div class="panel" id="panel-tab">
+        <div class="balance-box">
+          <div class="bstat tab"><div class="bl">ツケ残高（未収）</div><div class="bv" id="tab-balance">¥0</div></div>
+        </div>
+        <div class="opline">
+          <div class="field" style="max-width:150px"><label>ツケ追加（円）</label><input id="tab-add" type="number" min="1" placeholder="3000" style="font-family:var(--mono)"></div>
+          <button class="btn bd" onclick="tabAdd()">＋ ツケ追加</button>
+          <div class="field" style="max-width:150px;margin-left:14px"><label>清算（円）</label><input id="tab-settle" type="number" min="1" placeholder="0" style="font-family:var(--mono)"></div>
+          <button class="btn bt" onclick="tabSettle()">− 清算</button>
+          <button class="btn bg2" onclick="tabSettleAll()" style="margin-left:6px">全額清算</button>
+        </div>
+        <div class="hint">※ ツケ追加は残高に加算し「＋（ツケ追加）」で記録、清算は残高から減算し「−（清算）」で記録します。会計画面のツケ払い／清算も同じ履歴に記録されます。</div>
+        <div class="hist">
+          <h4>ツケ履歴</h4>
+          <div id="tab-hist"></div>
+        </div>
+      </div>
+
+      <!-- ボトルキープ -->
+      <div class="panel" id="panel-bottle">
+        <div class="soon">🍾 ボトルキープ管理は準備中です（デポジット・ツケの次に実装予定）。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function gv(id){var e=g(id);return e?e.value.trim():'';}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function yen(n){return '¥'+(Number(n)||0).toLocaleString();}
+function toast(msg,type){var el=document.createElement('div');el.className='toast'+(type?' '+type:'');el.textContent=msg;g('toasts').appendChild(el);requestAnimationFrame(function(){requestAnimationFrame(function(){el.classList.add('show');});});setTimeout(function(){el.classList.remove('show');setTimeout(function(){el.remove();},300);},2800);}
+function nowDate(){var d=new Date();return String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');}
+function nowTime(){var d=new Date();return String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0')+String(d.getSeconds()).padStart(2,'0');}
+function fmtDate(s){return s&&s.length===6?('20'+s.slice(0,2)+'/'+s.slice(2,4)+'/'+s.slice(4,6)):(s||'');}
+function fmtTime(s){return s&&s.length>=4?(s.slice(0,2)+':'+s.slice(2,4)):(s||'');}
+
+var member=null;
+
+AuthRole.requireStaff(auth, function(){ g('app').style.display='block'; }, function(){ g('login-screen').style.display='flex'; });
+g('lbtn').addEventListener('click',function(){ auth.signInWithEmailAndPassword(gv('lemail'),g('lpass').value).catch(function(e){ g('lerr').textContent=e.message; }); });
+g('lpass').addEventListener('keydown',function(e){ if(e.key==='Enter') g('lbtn').click(); });
+g('btn-logout').addEventListener('click',function(){ auth.signOut().then(function(){location.reload();}); });
+
+function showTab(t){
+  ['deposit','tab','bottle'].forEach(function(x){
+    g('panel-'+x).classList.toggle('on', x===t);
+    document.querySelector('.tabbtn[data-tab="'+x+'"]').classList.toggle('on', x===t);
+  });
+}
+
+function searchMember(){
+  var q=gv('q-member');
+  g('member-area').innerHTML=''; g('detail-sect').style.display='none'; member=null;
+  if(!q){ toast('会員番号を入力してください','err'); return; }
+  db.collection('members').where('displayId','==',q).limit(1).get().then(function(snap){
+    if(!snap.empty) return snap.docs[0];
+    return db.collection('members').doc(q).get().then(function(d){ return d.exists?d:null; });
+  }).then(function(doc){
+    if(!doc){ g('member-area').innerHTML='<div class="empty">該当する会員が見つかりません。</div>'; return; }
+    member=Object.assign({id:doc.id},doc.data());
+    renderMember();
+  }).catch(function(e){ toast('検索失敗: '+e.message,'err'); });
+}
+
+function renderMember(){
+  if(!member) return;
+  g('member-area').innerHTML='<div class="mcard">'
+    +'<div style="flex:1;min-width:160px"><div class="mn">'+esc(member.nickname||member.name||'(名称なし)')+'</div>'
+    +'<div class="mid">'+esc(member.displayId||member.id)+'</div></div>'
+    +'<div style="font-size:12px;color:var(--ink3)">デポジット残高 <b style="color:var(--teal)">'+yen(member.depositBalance)+'</b>　/　ツケ残高 <b style="color:var(--red)">'+yen(member.tabBalance)+'</b></div>'
+  +'</div>';
+  g('detail-sect').style.display='block';
+  g('dep-enabled').checked=(member.depositEnabled===1||member.depositEnabled==='1'||member.depositEnabled===true);
+  g('dep-balance').textContent=yen(member.depositBalance);
+  g('tab-balance').textContent=yen(member.tabBalance);
+  loadHistory();
+}
+
+function loadHistory(){
+  db.collection('depositData').where('memberId','==',member.id).get().then(function(snap){
+    var rows=snap.docs.map(function(d){return d.data();});
+    rows.sort(function(a,b){ return (b.date+b.time).localeCompare(a.date+a.time); });
+    renderHist('dep-hist', rows, ['追加','支払/払戻']);
+  }).catch(function(){ g('dep-hist').innerHTML='<div class="empty">履歴を取得できませんでした</div>'; });
+  db.collection('tabData').where('memberId','==',member.id).get().then(function(snap){
+    var rows=snap.docs.map(function(d){return d.data();});
+    rows.sort(function(a,b){ return (b.date+b.time).localeCompare(a.date+a.time); });
+    renderHist('tab-hist', rows, ['ツケ追加','清算']);
+  }).catch(function(){ g('tab-hist').innerHTML='<div class="empty">履歴を取得できませんでした</div>'; });
+}
+
+function renderHist(elId, rows, labels){
+  if(!rows.length){ g(elId).innerHTML='<div class="empty">履歴はありません</div>'; return; }
+  g(elId).innerHTML='<table class="htbl"><thead><tr><th>日付</th><th>時刻</th><th>区分</th><th style="text-align:right">金額</th><th style="text-align:right">残高</th><th>備考</th></tr></thead><tbody>'
+    +rows.map(function(r){
+      var plus=(Number(r.amount)||0)>=0;
+      return '<tr><td>'+esc(fmtDate(r.date))+'</td><td>'+esc(fmtTime(r.time))+'</td>'
+        +'<td>'+(plus?labels[0]:labels[1])+(r.source==='checkout'?'（会計）':'')+'</td>'
+        +'<td class="amt '+(plus?'plus':'minus')+'">'+(plus?'+':'')+yen(r.amount)+'</td>'
+        +'<td class="amt">'+(r.balanceAfter!=null?yen(r.balanceAfter):'—')+'</td>'
+        +'<td style="color:var(--ink3)">'+esc(r.note||'')+'</td></tr>';
+    }).join('')+'</tbody></table>';
+}
+
+// ── 残高更新の共通処理（トランザクションで members とレッジャーを一貫更新） ──
+function applyLedger(collection, balanceField, delta, kind, note){
+  var ref=db.collection('members').doc(member.id);
+  var ledgerRef=db.collection(collection).doc();
+  var uid=(auth.currentUser&&auth.currentUser.uid)||null;
+  return db.runTransaction(function(tx){
+    return tx.get(ref).then(function(snap){
+      if(!snap.exists) throw new Error('会員が見つかりません');
+      var cur=Number(snap.data()[balanceField]||0);
+      var next=cur+delta;
+      var upd={}; upd[balanceField]=next;
+      tx.update(ref, upd);
+      tx.set(ledgerRef, {
+        memberId:member.id, date:nowDate(), time:nowTime(),
+        amount:delta, balanceAfter:next, kind:kind, source:'admin',
+        note:note||null, staffUid:uid,
+        createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
+      return next;
+    });
+  });
+}
+
+function depositAdd(){
+  var amt=parseInt(gv('dep-add'),10)||0;
+  if(amt<=0){ toast('入金額を入力してください','err'); return; }
+  applyLedger('depositData','depositBalance',amt,'add').then(function(next){
+    member.depositBalance=next; g('dep-add').value=''; renderMember(); toast('入金しました（'+yen(amt)+'）');
+  }).catch(function(e){ toast('失敗: '+e.message,'err'); });
+}
+function depositSub(){
+  var amt=parseInt(gv('dep-sub'),10)||0;
+  if(amt<=0){ toast('減算額を入力してください','err'); return; }
+  if(amt>(Number(member.depositBalance)||0) && !confirm('残高（'+yen(member.depositBalance)+'）を超える減算です。実行しますか？')) return;
+  applyLedger('depositData','depositBalance',-amt,'pay').then(function(next){
+    member.depositBalance=next; g('dep-sub').value=''; renderMember(); toast('減算しました（'+yen(amt)+'）');
+  }).catch(function(e){ toast('失敗: '+e.message,'err'); });
+}
+function toggleDepositEnabled(){
+  var on=g('dep-enabled').checked;
+  db.collection('members').doc(member.id).set({depositEnabled:on?1:0},{merge:true}).then(function(){
+    member.depositEnabled=on?1:0; toast(on?'デポジットを有効にしました':'デポジットを無効にしました');
+  }).catch(function(e){ toast('失敗: '+e.message,'err'); g('dep-enabled').checked=!on; });
+}
+
+function tabAdd(){
+  var amt=parseInt(gv('tab-add'),10)||0;
+  if(amt<=0){ toast('ツケ金額を入力してください','err'); return; }
+  applyLedger('tabData','tabBalance',amt,'add').then(function(next){
+    member.tabBalance=next; g('tab-add').value=''; renderMember(); toast('ツケを追加しました（'+yen(amt)+'）');
+  }).catch(function(e){ toast('失敗: '+e.message,'err'); });
+}
+function tabSettle(){
+  var amt=parseInt(gv('tab-settle'),10)||0;
+  if(amt<=0){ toast('清算額を入力してください','err'); return; }
+  if(amt>(Number(member.tabBalance)||0) && !confirm('ツケ残高（'+yen(member.tabBalance)+'）を超える清算です。実行しますか？')) return;
+  applyLedger('tabData','tabBalance',-amt,'settle').then(function(next){
+    member.tabBalance=next; g('tab-settle').value=''; renderMember(); toast('清算しました（'+yen(amt)+'）');
+  }).catch(function(e){ toast('失敗: '+e.message,'err'); });
+}
+function tabSettleAll(){
+  var bal=Number(member.tabBalance)||0;
+  if(bal<=0){ toast('ツケ残高はありません','inf'); return; }
+  if(!confirm('ツケ残高 '+yen(bal)+' を全額清算します。よろしいですか？')) return;
+  applyLedger('tabData','tabBalance',-bal,'settle','全額清算').then(function(next){
+    member.tabBalance=next; renderMember(); toast('全額清算しました（'+yen(bal)+'）');
+  }).catch(function(e){ toast('失敗: '+e.message,'err'); });
+}
+</script>
+</body>
+</html>
