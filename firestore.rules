@@ -86,6 +86,9 @@ service cloud.firestore {
     // 本人分・公開情報のみ取得する
     match /visits/{id}        { allow read, write: if isStaff(); }
     match /orders/{id}        { allow read, write: if isStaff(); }
+    // 会員セルフ来店リクエスト（QR）。会員の作成・会員/スタッフの読取・承認は
+    // Cloud Functions（requestCheckin）とスタッフ画面が担うため、直接操作はスタッフのみ。
+    match /checkinRequests/{id} { allow read, write: if isStaff(); }
     // デポジット(前払金)・ツケ(未収)の入出金履歴: スタッフのみ。
     // 会員本人のマイページ履歴表示は Cloud Function 経由（残高は members ドキュメントから本人が読める）。
     match /depositData/{id}   { allow read, write: if isStaff(); }
@@ -109,6 +112,12 @@ service cloud.firestore {
 
     // ── 設定: memberCounter の採番はスタッフ（checkinのゲスト採番）と
     //    Functions（registerMember）のみ。realSeq巻き戻しは禁止 ──
+    // 来店QRトークン: 会員には読ませない（読めると物理来店なしにリクエスト偽装可能）。
+    // 表示はスタッフのみ、再発行は Cloud Function（rotateCheckinToken）が行う。
+    match /settings/checkinConfig {
+      allow read: if isStaff();
+      allow write: if isOwner();
+    }
     match /settings/memberCounter {
       allow read: if isStaff();
       allow create: if isStaff();

@@ -1005,3 +1005,222 @@ exports.forceVerifyEmail = functions
       throw new functions.https.HttpsError('not-found', e.message);
     }
   });
+
+// ═══════════════════════════════════════════════════════════════════
+//  会員セルフ来店（QR）＆ オンライン注文
+//  visits/orders はスタッフ限定書き込みのため、会員操作はここ経由で行う。
+// ═══════════════════════════════════════════════════════════════════
+
+// 認証済み会員本人を authUid から解決する
+async function resolveMember(context) {
+  if (!context.auth || context.auth.token.firebase.sign_in_provider === 'anonymous') {
+    throw new functions.https.HttpsError('unauthenticated', 'ログインが必要です');
+  }
+  const snap = await db.collection('members')
+    .where('authUid', '==', context.auth.uid).limit(1).get();
+  if (snap.empty) throw new functions.https.HttpsError('not-found', '会員情報が見つかりません');
+  return { id: snap.docs[0].id, data: snap.docs[0].data() };
+}
+
+// 現在の店頭ステータス（open判定・営業日）を取得
+async function getStoreState() {
+  const ss = await db.collection('storeStatus').doc('current').get();
+  if (!ss.exists) return { open: false, sessionDate: null };
+  const d = ss.data();
+  return { open: d.status === 'open', sessionDate: d.sessionDate || null };
+}
+
+// 会員の「未退場」来店を営業日で探す（realId・旧displayId両対応）
+async function findActiveVisit(member, sessionDate) {
+  if (!sessionDate) return null;
+  const idSet = [member.id];
+  if (member.data.displayId) idSet.push(String(member.data.displayId));
+  if (member.data.memberId) idSet.push(String(member.data.memberId));
+  let visitKey = null;
+  for (const mid of [...new Set(idSet)]) {
+    const vs = await db.collection('visits')
+      .where('memberId', '==', mid).where('visitDate', '==', sessionDate).get();
+    vs.forEach((d) => { if (!d.data().checkoutTime) visitKey = d.id; });
+  }
+  return visitKey;
+}
+
+// ── 店舗来店QRトークンの再発行（スタッフ） ──
+exports.rotateCheckinToken = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    await assertStaff(context);
+    const token = 'CK' + Math.random().toString(36).slice(2, 10).toUpperCase()
+      + Date.now().toString(36).toUpperCase();
+    await db.collection('settings').doc('checkinConfig').set({
+      token, updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return { ok: true, token };
+  });
+
+// ── 会員のセルフ来店リクエスト（来店QRスキャン） ──
+// トークン照合＋開店中チェックの上、承認待ちリクエストを作成する。
+// 実際の来店確定・来店時刻はスタッフ承認時に確定する。
+exports.requestCheckin = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    const member = await resolveMember(context);
+    const raw = (data && data.token ? String(data.token) : '').trim();
+    // URL形式（...?checkin=xxx）で渡された場合はクエリを抽出
+    let token = raw;
+    const m = raw.match(/[?&]checkin=([^&\s]+)/);
+    if (m) token = decodeURIComponent(m[1]);
+
+    const cfg = await db.collection('settings').doc('checkinConfig').get();
+    const validToken = cfg.exists ? (cfg.data().token || '') : '';
+    if (!validToken) {
+      throw new functions.https.HttpsError('failed-precondition', '来店QRが未設定です。スタッフにお知らせください。');
+    }
+    if (!token || token !== validToken) {
+      throw new functions.https.HttpsError('invalid-argument', '来店QRが正しくありません。店舗のQRを読み取ってください。');
+    }
+    const store = await getStoreState();
+    if (!store.open) {
+      throw new functions.https.HttpsError('failed-precondition', '現在は営業時間外です。');
+    }
+    // 既に来店中（承認済み・未退場）なら成功として返す
+    const active = await findActiveVisit(member, store.sessionDate);
+    if (active) return { ok: true, status: 'checkedin', visitKey: active };
+    // 承認待ちの重複を防ぐ
+    const existReq = await db.collection('checkinRequests')
+      .where('memberId', '==', member.id)
+      .where('sessionDate', '==', store.sessionDate)
+      .where('status', '==', 'pending').limit(1).get();
+    if (!existReq.empty) return { ok: true, status: 'pending', requestId: existReq.docs[0].id };
+
+    const name = member.data.nickname || member.data.name || member.data.displayId || member.id;
+    const ref = await db.collection('checkinRequests').add({
+      memberId: member.id,
+      memberName: name,
+      displayId: member.data.displayId || member.data.memberId || null,
+      sessionDate: store.sessionDate,
+      status: 'pending',
+      source: 'qr',
+      requestedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { ok: true, status: 'pending', requestId: ref.id };
+  });
+
+// ── 会員の現在の来店状況（注文可否判定用） ──
+exports.getMyVisitStatus = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    const member = await resolveMember(context);
+    const store = await getStoreState();
+    const visitKey = store.open ? await findActiveVisit(member, store.sessionDate) : null;
+    let pending = false;
+    if (store.open && store.sessionDate) {
+      const pr = await db.collection('checkinRequests')
+        .where('memberId', '==', member.id)
+        .where('sessionDate', '==', store.sessionDate)
+        .where('status', '==', 'pending').limit(1).get();
+      pending = !pr.empty;
+    }
+    return {
+      storeOpen: store.open,
+      sessionDate: store.sessionDate,
+      checkedIn: !!visitKey,
+      visitKey: visitKey || null,
+      pending,
+      memberId: member.id,
+      memberName: member.data.nickname || member.data.name || member.id,
+    };
+  });
+
+// ── 会員のオンライン注文（来店確定者のみ） ──
+// 商品マスタをサーバー側で検証し価格を確定して orders を作成する。
+exports.placeMemberOrder = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    const member = await resolveMember(context);
+    const items = (data && Array.isArray(data.items)) ? data.items : [];
+    if (!items.length) throw new functions.https.HttpsError('invalid-argument', '注文内容がありません');
+    if (items.length > 30) throw new functions.https.HttpsError('invalid-argument', '一度に注文できる品数を超えています');
+
+    const store = await getStoreState();
+    if (!store.open) throw new functions.https.HttpsError('failed-precondition', '現在は営業時間外です');
+    if (!store.sessionDate) throw new functions.https.HttpsError('failed-precondition', '営業セッションが確認できません');
+    const visitKey = await findActiveVisit(member, store.sessionDate);
+    if (!visitKey) {
+      throw new functions.https.HttpsError('failed-precondition',
+        '来店登録が必要です。店舗のQRから来店手続きを行い、スタッフの承認をお待ちください。');
+    }
+
+    // 商品マスタ検証・価格算出（テキーラ／その他ドリンクのみ）
+    const ALLOWED = { tequila: 'bottleData', other: 'otherBottles', misc: 'miscProducts' };
+    const resolved = [];
+    for (const it of items) {
+      const pt = String(it.productType || '');
+      const pid = String(it.productId || '');
+      if (!ALLOWED[pt]) throw new functions.https.HttpsError('invalid-argument', '注文できない商品種別です: ' + pt);
+      if (!pid) throw new functions.https.HttpsError('invalid-argument', '商品IDがありません');
+      const doc = await db.collection(ALLOWED[pt]).doc(pid).get();
+      if (!doc.exists) throw new functions.https.HttpsError('not-found', '商品が見つかりません');
+      const p = doc.data();
+      const isMl = (pt === 'tequila' || pt === 'other');
+      let qty = Math.round(Number(it.qty || 0));
+      if (isMl) {
+        if (!(qty > 0) || qty > 500) throw new functions.https.HttpsError('invalid-argument', 'ml数が不正です');
+      } else {
+        if (!(qty > 0) || qty > 99) throw new functions.https.HttpsError('invalid-argument', '数量が不正です');
+      }
+      if (pt === 'tequila') {
+        const vis = p.visibility;
+        const orderable = (vis === '0' || vis === 0 || vis === false || vis === undefined || vis === null);
+        if (!orderable) throw new functions.https.HttpsError('failed-precondition', 'この商品は現在注文できません');
+      }
+      const unitPrice = Number(p.price != null ? p.price
+        : (p.unitPrice != null ? p.unitPrice : (p.price10 != null ? p.price10 : 0))) || 0;
+      const name = (pt === 'tequila')
+        ? (p.bottleEs || p.bottleEsBase || p.bottleJa || p.name || pid)
+        : (pt === 'other')
+          ? (p.bottleEn || p.bottleName || p.name || p.bottleJa || pid)
+          : (p.name || p.productName || pid);
+      resolved.push({ productType: pt, productId: pid, qty, unit: isMl ? 'ml' : '個', unitPrice, productName: name });
+    }
+
+    // 注文時刻（営業時間・日跨ぎは24h+表記に合わせる）
+    let openHHMM = null;
+    try {
+      const sess = await db.collection('sessions').where('date', '==', store.sessionDate).limit(1).get();
+      if (!sess.empty) {
+        const ot = String(sess.docs[0].data().openTime || '');
+        if (ot.length >= 4) openHHMM = parseInt(ot.slice(0, 4), 10);
+      }
+    } catch (e) { /* noop */ }
+    const jd = new Date(Date.now() + 9 * 3600 * 1000); // JST
+    let oh = jd.getUTCHours(); const omin = jd.getUTCMinutes(); const osec = jd.getUTCSeconds();
+    if (openHHMM != null && (oh * 100 + omin) < openHHMM) oh += 24;
+    const orderTime = String(oh).padStart(2, '0') + String(omin).padStart(2, '0') + String(osec).padStart(2, '0');
+
+    // orderGroupId 採番（会員の来店内で連番）・batchId は本注文で一意
+    const vkOrders = await db.collection('orders').where('visitKey', '==', visitKey).get();
+    let maxG = 0;
+    vkOrders.forEach((d) => {
+      const g = d.data().orderGroupId || '';
+      const n = parseInt(g.slice(visitKey.length), 10) || 0;
+      if (n > maxG) maxG = n;
+    });
+    const orderGroupId = visitKey + String(maxG + 1).padStart(2, '0');
+    const batchId = store.sessionDate + 'M' + Date.now().toString(36).slice(-5).toUpperCase();
+
+    const batch = db.batch();
+    const created = [];
+    resolved.forEach((r, i) => {
+      const ref = db.collection('orders').doc();
+      const od = {
+        orderDate: store.sessionDate, orderTime,
+        customerId: member.id, visitKey, orderGroupId, batchId,
+        itemSeq: i + 1, productCode: r.productId, productName: r.productName,
+        productType: r.productType, qty: r.qty, unit: r.unit, unitPrice: r.unitPrice,
+        blindId: 0, blindMarkId: null, served: 1, source: 'online',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      batch.set(ref, od);
+      created.push({ id: ref.id, data: od });
+    });
+    await batch.commit();
+    created.forEach((c) => writeServerJournal('create', 'orders', c.id, null, c.data, 'placeMemberOrder'));
+    return { ok: true, count: created.length, orderGroupId, batchId };
+  });
