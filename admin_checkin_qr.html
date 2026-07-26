@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>来店QR — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:"G-KMS18946JQ"
+};
+</script>
+<script src="/auth-role.js?v=20260714"></script>
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;
+  --red:#b03020;--teal:#1a6e58;
+  --border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);
+  --shadow-lg:0 6px 36px rgba(24,17,10,.13);
+  --r:8px;--rl:12px;
+  --serif:'Hiragino Mincho ProN','Yu Mincho',serif;
+  --sans:'Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif;
+  --mono:'SFMono-Regular',Consolas,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+button{cursor:pointer;font-family:var(--sans)}
+#login-screen{display:none;min-height:100vh;align-items:center;justify-content:center;padding:24px}
+.lcard{width:100%;max-width:360px;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:40px 30px;box-shadow:var(--shadow-lg)}
+.llogo{text-align:center;font-size:40px;margin-bottom:6px}
+.lbrand{font-family:var(--serif);font-size:22px;color:var(--gold-d);letter-spacing:.1em;text-align:center}
+.lsub{text-align:center;font-size:10px;letter-spacing:.18em;color:var(--ink3);margin-bottom:24px}
+.lcard label{display:block;font-size:10px;color:var(--ink3);margin:12px 0 4px}
+.lcard input{width:100%;padding:11px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.lerr{min-height:16px;font-size:12px;color:var(--red);margin-top:8px;text-align:center}
+.lbtn{width:100%;margin-top:18px;padding:12px;background:var(--gold-d);color:var(--cream);border:none;border-radius:var(--r);font-size:13px}
+.hdr{background:var(--ink);padding:0 16px;height:56px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:40}
+.hdr-title{font-family:var(--serif);font-size:18px;color:var(--gold-l);letter-spacing:.06em}
+.hdr-right{margin-left:auto;display:flex;gap:8px}
+.hdr-nav{padding:6px 11px;border:1px solid rgba(255,255,255,.16);border-radius:6px;color:var(--gold-l);font-size:11px;text-decoration:none;background:none}
+#app{display:none}
+.wrap{max-width:560px;margin:0 auto;padding:24px 16px 60px;text-align:center}
+.ptitle{font-family:var(--serif);font-size:24px;color:var(--gold-d);margin-bottom:4px}
+.pdesc{font-size:12px;color:var(--ink3);margin-bottom:20px;line-height:1.6}
+.qcard{background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:28px 20px;box-shadow:var(--shadow-lg);display:inline-block;min-width:280px}
+.qcard .qcap{font-family:var(--serif);font-size:20px;color:var(--gold-d);margin-bottom:4px}
+.qcard .qsub{font-size:12px;color:var(--ink3);margin-bottom:18px}
+#qrbox{display:flex;align-items:center;justify-content:center;min-height:220px}
+#qrbox canvas,#qrbox img{width:220px!important;height:220px!important}
+.qhint{font-size:12px;color:var(--ink2);margin-top:16px;line-height:1.6}
+.tokline{font-size:11px;color:var(--ink3);font-family:var(--mono);margin-top:10px;word-break:break-all}
+.btnrow{display:flex;gap:10px;justify-content:center;margin-top:22px;flex-wrap:wrap}
+.btn{border:none;border-radius:var(--r);padding:11px 18px;font-size:13px;font-weight:500}
+.bp{background:var(--gold-d);color:var(--cream)}
+.bg2{background:var(--cream2);color:var(--ink2);border:1px solid var(--border2)}
+.bd{background:var(--white);color:var(--red);border:1px solid var(--cream3)}
+.msg{min-height:18px;font-size:12px;margin-top:12px}
+@media print{
+  .hdr,.btnrow,.hdr-right,.qhint{display:none!important}
+  body{background:#fff}
+  .qcard{border:none;box-shadow:none}
+}
+#toasts{position:fixed;bottom:18px;right:18px;z-index:9999;display:flex;flex-direction:column;gap:6px}
+.toast{background:var(--ink);color:#fff;font-size:12px;padding:9px 14px;border-radius:8px;box-shadow:var(--shadow-lg)}
+.toast.err{background:var(--red)}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="lcard">
+    <div class="llogo">📷</div>
+    <div class="lbrand">テキーラ道場</div>
+    <div class="lsub">来店QR</div>
+    <label>メールアドレス</label><input type="email" id="lemail" autocomplete="username">
+    <label>パスワード</label><input type="password" id="lpass" autocomplete="current-password">
+    <div class="lerr" id="lerr"></div>
+    <button class="lbtn" id="lbtn">ログイン</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="hdr">
+    <div class="hdr-title">📷 来店QR</div>
+    <div class="hdr-right">
+      <a class="hdr-nav" href="/checkin.html">来場者一覧</a>
+      <a class="hdr-nav" href="/admin.html">管理TOP</a>
+      <button class="hdr-nav" id="btn-logout">ログアウト</button>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="ptitle">来店QR</div>
+    <div class="pdesc">このQRを店頭に掲示してください。会員が会員ページの「来店する」から読み取ると、<br>来場者一覧に承認待ちとして表示されます。</div>
+    <div class="qcard">
+      <div class="qcap">🍾 テキーラ道場</div>
+      <div class="qsub">スマホで読み取って来店登録</div>
+      <div id="qrbox"><div style="color:var(--ink3);font-size:13px">読み込み中…</div></div>
+      <div class="qhint">会員ページ →「📷 来店する」からQRを読み取り</div>
+      <div class="tokline" id="tokline"></div>
+    </div>
+    <div class="btnrow">
+      <button class="btn bp" onclick="window.print()">🖨️ 印刷</button>
+      <button class="btn bd" id="btn-rotate">🔄 QRを再発行</button>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+var fbFunctions=firebase.app().functions('asia-northeast1');
+function g(id){return document.getElementById(id);}
+function toast(msg,type){var el=document.createElement('div');el.className='toast'+(type?' '+type:'');el.textContent=msg;g('toasts').appendChild(el);setTimeout(function(){el.remove();},2800);}
+
+AuthRole.requireStaff(auth, function(){ g('app').style.display='block'; loadToken(); }, function(){ g('login-screen').style.display='flex'; });
+g('lbtn').addEventListener('click',function(){ auth.signInWithEmailAndPassword((g('lemail').value||'').trim(),g('lpass').value).catch(function(e){ g('lerr').textContent=e.message; }); });
+g('lpass').addEventListener('keydown',function(e){ if(e.key==='Enter') g('lbtn').click(); });
+g('btn-logout').addEventListener('click',function(){ auth.signOut().then(function(){location.reload();}); });
+
+function renderQR(token){
+  var box=g('qrbox'); box.innerHTML='';
+  var url=window.location.origin+'/member.html?checkin='+encodeURIComponent(token);
+  new QRCode(box, { text:url, width:220, height:220, correctLevel:QRCode.CorrectLevel.M });
+  g('tokline').textContent=url;
+}
+
+function loadToken(){
+  db.collection('settings').doc('checkinConfig').get().then(function(snap){
+    var token=snap.exists?(snap.data().token||''):'';
+    if(token){ renderQR(token); }
+    else{
+      g('qrbox').innerHTML='<div style="color:var(--ink3);font-size:13px;padding:20px">QRが未発行です。<br>「🔄 QRを再発行」を押して発行してください。</div>';
+      g('tokline').textContent='';
+    }
+  }).catch(function(e){ g('msg').textContent='読み込み失敗: '+e.message; g('msg').style.color='var(--red)'; });
+}
+
+g('btn-rotate').addEventListener('click',function(){
+  if(!confirm('来店QRを再発行しますか？\n※以前のQR（掲示物）は無効になります。')) return;
+  var btn=g('btn-rotate'); btn.disabled=true;
+  g('msg').style.color='var(--ink3)'; g('msg').textContent='再発行中...';
+  fbFunctions.httpsCallable('rotateCheckinToken')({}).then(function(res){
+    var token=res.data&&res.data.token;
+    renderQR(token);
+    g('msg').style.color='var(--teal)'; g('msg').textContent='✓ 新しいQRを発行しました。店頭の掲示を更新してください。';
+    toast('QRを再発行しました');
+  }).catch(function(e){
+    g('msg').style.color='var(--red)'; g('msg').textContent='再発行失敗: '+((e&&e.message)||e);
+  }).finally(function(){ btn.disabled=false; });
+});
+</script>
+</body>
+</html>

@@ -138,6 +138,15 @@ input,select{font-family:var(--sans)}
     <div class="sec-header">
       <span class="sec-title">📋 会員メニュー</span>
     </div>
+    <div class="nav-card nav-card-checkin" id="checkin-card" onclick="openCheckinScanner()" style="cursor:pointer;background:linear-gradient(135deg,#1a6e58,#2b9b7d)">
+      <div>
+        <div class="nav-card-title">📷 来店する</div>
+        <div class="nav-card-desc" id="checkin-card-desc">店舗の来店QRを読み取って来店登録</div>
+      </div>
+      <span class="nav-card-chev">›</span>
+    </div>
+    <div id="checkin-status" style="display:none;margin:-6px 2px 12px;font-size:13px;padding:9px 12px;border-radius:10px"></div>
+
     <a href="/mypage.html" class="nav-card nav-card-mypage">
       <div>
         <div class="nav-card-title">🥃 会員マイページ</div>
@@ -155,7 +164,7 @@ input,select{font-family:var(--sans)}
     <a href="/menu.html" class="nav-card nav-card-menu" data-feature="menu">
       <div>
         <div class="nav-card-title">📖 オンラインメニュー</div>
-        <div class="nav-card-desc">テキーラ・カクテル等のメニューを閲覧</div>
+        <div class="nav-card-desc">テキーラ等のメニュー閲覧・来店中はここから注文</div>
       </div>
       <span class="nav-card-chev">›</span>
     </a>
@@ -195,7 +204,20 @@ input,select{font-family:var(--sans)}
   </div>
 </div>
 
+<!-- 来店QRスキャナ -->
+<div id="checkin-scanner" style="display:none;position:fixed;inset:0;z-index:2000;background:#0b0b0b;flex-direction:column;align-items:center;justify-content:center;padding:16px">
+  <div style="color:#fff;font-size:15px;font-weight:600;margin-bottom:12px">📷 来店QRを読み取り</div>
+  <div style="position:relative;width:100%;max-width:420px;aspect-ratio:1/1;border-radius:16px;overflow:hidden;background:#000">
+    <video id="cs-video" playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
+    <div style="position:absolute;inset:12%;border:3px solid rgba(255,255,255,.85);border-radius:14px;box-shadow:0 0 0 100vmax rgba(0,0,0,.25)"></div>
+  </div>
+  <canvas id="cs-canvas" style="display:none"></canvas>
+  <div id="cs-msg" style="color:#e6e6e6;font-size:13px;margin-top:14px;text-align:center;min-height:20px;max-width:420px">店舗の来店QRを枠内に収めてください</div>
+  <button onclick="closeCheckinScanner()" style="margin-top:16px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.35);color:#fff;font-size:14px;padding:10px 24px;border-radius:10px;cursor:pointer">閉じる</button>
+</div>
+
 <!-- Firebase SDK 10.12.0 -->
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -309,6 +331,121 @@ async function initMemberPage(user){
     // 失敗時はフェイルオープン（素の表示を維持）
     console.warn('plan gate skipped:', e&&e.message);
   }
+  // 来店QR（?checkin=トークン）で開いた場合は自動で来店リクエスト
+  try{
+    var _qp=new URLSearchParams(window.location.search);
+    var _ckToken=_qp.get('checkin');
+    if(_ckToken){
+      history.replaceState({},document.title,window.location.pathname);
+      await submitCheckin(_ckToken);
+    }
+  }catch(e){ console.warn('auto checkin skipped:', e&&e.message); }
+  refreshVisitStatus();
+}
+
+// ─── 来店状況の表示更新 ───
+async function refreshVisitStatus(){
+  var box=document.getElementById('checkin-status');
+  var desc=document.getElementById('checkin-card-desc');
+  try{
+    var res=await fbFunctions.httpsCallable('getMyVisitStatus')({});
+    var s=res.data||{};
+    if(!box) return;
+    if(s.checkedIn){
+      box.style.display='block'; box.style.background='#e0f0eb'; box.style.color='#1a6e58';
+      box.innerHTML='✅ 来店中です。<a href="/menu.html" style="color:#155a48;font-weight:600;text-decoration:underline">オンラインメニューから注文</a>できます。';
+      if(desc) desc.textContent='来店中です（オンライン注文が可能）';
+    }else if(s.pending){
+      box.style.display='block'; box.style.background='#fdf6e3'; box.style.color='#a37b16';
+      box.textContent='⏳ 来店リクエストを送信しました。スタッフの承認をお待ちください。';
+      if(desc) desc.textContent='承認待ち — スタッフが承認すると来店確定します';
+    }else if(!s.storeOpen){
+      box.style.display='block'; box.style.background='#f0efec'; box.style.color='#777';
+      box.textContent='現在は営業時間外です。';
+      if(desc) desc.textContent='店舗の来店QRを読み取って来店登録';
+    }else{
+      box.style.display='none';
+      if(desc) desc.textContent='店舗の来店QRを読み取って来店登録';
+    }
+  }catch(e){
+    if(box) box.style.display='none';
+    console.warn('visit status skipped:', e&&(e.message||e.code));
+  }
+}
+
+// ─── 来店リクエスト送信 ───
+async function submitCheckin(token){
+  var box=document.getElementById('checkin-status');
+  if(box){ box.style.display='block'; box.style.background='#eef2f6'; box.style.color='#333'; box.textContent='来店リクエストを送信中...'; }
+  try{
+    var res=await fbFunctions.httpsCallable('requestCheckin')({token:token});
+    var st=(res.data&&res.data.status)||'pending';
+    if(st==='checkedin'){
+      if(box){ box.style.background='#e0f0eb'; box.style.color='#1a6e58'; box.innerHTML='✅ 既に来店中です。<a href="/menu.html" style="color:#155a48;font-weight:600;text-decoration:underline">注文はこちら</a>'; }
+    }else{
+      if(box){ box.style.background='#fdf6e3'; box.style.color='#a37b16'; box.textContent='⏳ 来店リクエストを送信しました。スタッフの承認をお待ちください。'; }
+    }
+    setTimeout(refreshVisitStatus, 1500);
+    return true;
+  }catch(e){
+    var msg=(e&&e.message)||'来店登録に失敗しました';
+    if(box){ box.style.background='#fae8e4'; box.style.color='#8c2818'; box.textContent='⚠️ '+msg; }
+    return false;
+  }
+}
+
+// ─── QRスキャナ ───
+var _csStream=null, _csRAF=null, _csBusy=false;
+function openCheckinScanner(){
+  var el=document.getElementById('checkin-scanner');
+  var msg=document.getElementById('cs-msg');
+  if(typeof jsQR==='undefined'){
+    // jsQR未読込時は手入力にフォールバック
+    var t=prompt('来店QRの読み取りに対応していません。QRのコードを入力してください。');
+    if(t) submitCheckin(t.trim());
+    return;
+  }
+  el.style.display='flex';
+  if(msg) msg.textContent='カメラを起動中...';
+  navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}).then(function(stream){
+    _csStream=stream;
+    var v=document.getElementById('cs-video');
+    v.srcObject=stream; v.setAttribute('playsinline',true); v.play();
+    if(msg) msg.textContent='店舗の来店QRを枠内に収めてください';
+    _csBusy=false;
+    _csRAF=requestAnimationFrame(scanTick);
+  }).catch(function(e){
+    if(msg) msg.textContent='カメラを起動できませんでした（'+(e.name||e.message)+'）';
+    var t=prompt('カメラが使えません。QRのコードを入力してください。');
+    if(t){ closeCheckinScanner(); submitCheckin(t.trim()); }
+  });
+}
+function scanTick(){
+  var v=document.getElementById('cs-video');
+  if(!v||!_csStream){ return; }
+  if(v.readyState===v.HAVE_ENOUGH_DATA && !_csBusy){
+    var c=document.getElementById('cs-canvas');
+    c.width=v.videoWidth; c.height=v.videoHeight;
+    var ctx=c.getContext('2d');
+    ctx.drawImage(v,0,0,c.width,c.height);
+    try{
+      var img=ctx.getImageData(0,0,c.width,c.height);
+      var code=jsQR(img.data,img.width,img.height,{inversionAttempts:'dontInvert'});
+      if(code&&code.data){
+        _csBusy=true;
+        var msg=document.getElementById('cs-msg'); if(msg) msg.textContent='QRを読み取りました。処理中...';
+        closeCheckinScanner();
+        submitCheckin(String(code.data).trim());
+        return;
+      }
+    }catch(e){ /* フレーム処理エラーは無視して継続 */ }
+  }
+  _csRAF=requestAnimationFrame(scanTick);
+}
+function closeCheckinScanner(){
+  if(_csRAF){ cancelAnimationFrame(_csRAF); _csRAF=null; }
+  if(_csStream){ _csStream.getTracks().forEach(function(t){ t.stop(); }); _csStream=null; }
+  var el=document.getElementById('checkin-scanner'); if(el) el.style.display='none';
 }
 
 function applyPlanGate(member, plans){

@@ -574,9 +574,10 @@ function calcTequila(orders){
 }
 
 // ── キャッシュ ──────────────────────────────────────────────────
-var cache = { visits:[], allVisits:[], members:[], orders:[], blindMarks:[], sessions:[] };
+var cache = { visits:[], allVisits:[], members:[], orders:[], blindMarks:[], sessions:[], checkinRequests:[] };
 var currentSession = null; // 現在のセッション（openTime, date）
 var currentCheckoutVisitKey = null;
+var _checkinReqUnsub = null; // QR来店リクエストのリスナー解除関数
 
 // ── 認証 ───────────────────────────────────────────────────────
 AuthRole.requireStaff(auth,
@@ -587,6 +588,7 @@ AuthRole.requireStaff(auth,
     var d=new Date(); var wdays=['日','月','火','水','木','金','土'];
     g('today-date').textContent='本日: 20'+todayStr6().slice(0,2)+'年'+todayStr6().slice(2,4)+'月'+todayStr6().slice(4,6)+'日（'+wdays[d.getDay()]+'）';
     loadAll();
+    subscribeCheckinRequests();
   },
   function(){
     g('login-screen').style.display='flex';
@@ -727,6 +729,98 @@ function toggleRetired(el){
   }
 }
 
+// ── QR来店リクエスト（承認待ち）のライブ購読 ──
+function subscribeCheckinRequests(){
+  if(_checkinReqUnsub) return;
+  try{
+    _checkinReqUnsub=db.collection('checkinRequests').where('status','==','pending')
+      .onSnapshot(function(snap){
+        cache.checkinRequests=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+        renderVisitorList();
+      }, function(err){ console.warn('checkinRequests listen error:', err.message); });
+  }catch(e){ console.warn('subscribeCheckinRequests failed:', e.message); }
+}
+
+// 当日セッションの承認待ちリクエストのみ返す
+function pendingCheckinsForToday(){
+  var today=todayStr6();
+  return (cache.checkinRequests||[]).filter(function(r){
+    return r.status==='pending' && (!r.sessionDate || r.sessionDate===today);
+  }).sort(function(a,b){
+    var ta=a.requestedAt&&a.requestedAt.seconds?a.requestedAt.seconds:0;
+    var tb=b.requestedAt&&b.requestedAt.seconds?b.requestedAt.seconds:0;
+    return ta-tb;
+  });
+}
+
+function renderPendingCheckins(){
+  var list=pendingCheckinsForToday();
+  if(!list.length) return '';
+  var rows=list.map(function(r){
+    var mem=getMemberInfo(r.memberId);
+    var name=r.memberName||(mem&&(mem.nickname||mem.name))||r.memberId;
+    var disp=r.displayId||(mem&&(mem.displayId||mem.memberId))||'';
+    return '<div class="vis-card" style="padding:0;border:1px solid #cfa63a;background:#fdf6e3">'
+      +'<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;min-width:0">'
+      +'<span style="font-size:10px;background:#cfa63a;color:#fff;border-radius:4px;padding:2px 6px;flex-shrink:0">QR来店</span>'
+      +'<span style="font-size:14px;font-weight:600;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+(disp?' <span style="font-size:11px;color:var(--ink3);font-family:var(--mono)">'+escHtml(String(disp))+'</span>':'')+'</span>'
+      +'<button class="btn bp sm" data-approve-checkin="'+escHtml(r.id)+'" style="padding:4px 10px;font-size:11px;flex-shrink:0">✅ 承認</button>'
+      +'<button class="btn bs sm" data-reject-checkin="'+escHtml(r.id)+'" style="padding:4px 8px;font-size:11px;color:var(--red);flex-shrink:0">却下</button>'
+      +'</div></div>';
+  }).join('');
+  return '<div style="font-size:11px;font-weight:600;color:#a37b16;letter-spacing:.08em;margin-bottom:8px;padding-left:4px">🔔 QR来店の承認待ち（'+list.length+'名）</div>'+rows;
+}
+
+// 承認: 来店を確定（来店時刻＝承認時刻）
+async function approveCheckinRequest(reqId){
+  var req=(cache.checkinRequests||[]).find(function(r){ return r.id===reqId; });
+  if(!req){ toast('リクエストが見つかりません','err'); return; }
+  var today=req.sessionDate||todayStr6();
+  // 既に来店中ならスキップ（重複防止）
+  var alreadyIn=cache.visits.find(function(v){ return v.memberId===req.memberId && !v.checkoutTime; });
+  if(alreadyIn){
+    await db.collection('checkinRequests').doc(reqId).update({status:'approved',visitKey:alreadyIn.id,approvedAt:firebase.firestore.FieldValue.serverTimestamp()}).catch(function(){});
+    toast(req.memberName+'は既に来店中です','inf');
+    return;
+  }
+  try{
+    var time=nowHHMM(); // 承認時刻＝実際の来店時刻
+    var seq=await calcNextSeq(today);
+    var visitKey=today+pad(seq,2);
+    var _ck=await db.collection('visits').doc(visitKey).get();
+    while(_ck.exists){ seq++; if(seq>99) seq=1; visitKey=today+pad(seq,2); _ck=await db.collection('visits').doc(visitKey).get(); }
+    var vdata={visitDate:today,visitTime:time,seq:seq,memberId:req.memberId,checkinGroupId:null,
+      referredBy:null,source:'qr',tequilaAmount:0,amount:0,payment:'0',receiptIssued:'0',checkoutTime:null};
+    var batch=db.batch();
+    batch.set(db.collection('visits').doc(visitKey),vdata);
+    var memSnap=await db.collection('members').doc(req.memberId).get();
+    if(memSnap.exists){
+      var curCount=memSnap.data().visitCount||0;
+      batch.update(db.collection('members').doc(req.memberId),{visitCount:curCount+1});
+      writeJournal('update','members',req.memberId,{visitCount:curCount},{visitCount:curCount+1});
+    }
+    batch.update(db.collection('checkinRequests').doc(reqId),{status:'approved',visitKey:visitKey,
+      approvedAt:firebase.firestore.FieldValue.serverTimestamp(),approvedBy:(auth.currentUser&&auth.currentUser.uid)||null});
+    await batch.commit();
+    writeJournal('create','visits',visitKey,null,vdata);
+    var newV=Object.assign({id:visitKey},vdata);
+    cache.visits.push(newV); cache.allVisits.push(newV);
+    var mm=cache.members.find(function(m){return m.id===req.memberId;}); if(mm) mm.visitCount=(mm.visitCount||0)+1;
+    toast(req.memberName+'の来店を承認しました（'+fmtHHMM(time)+'）');
+    renderVisitorList();
+  }catch(e){ toast('承認失敗: '+e.message,'err'); }
+}
+
+async function rejectCheckinRequest(reqId){
+  var req=(cache.checkinRequests||[]).find(function(r){ return r.id===reqId; });
+  if(!confirm((req?req.memberName:'この')+'来店リクエストを却下しますか？')) return;
+  try{
+    await db.collection('checkinRequests').doc(reqId).update({status:'rejected',
+      rejectedAt:firebase.firestore.FieldValue.serverTimestamp(),rejectedBy:(auth.currentUser&&auth.currentUser.uid)||null});
+    toast('却下しました','inf');
+  }catch(e){ toast('却下失敗: '+e.message,'err'); }
+}
+
 function renderVisitorList(){
   var el=g('visitor-list');
 
@@ -752,12 +846,15 @@ function renderVisitorList(){
     return (b.checkoutTime||'').localeCompare(a.checkoutTime||'');
   });
 
-  if(!cache.visits.length && !done.length){
+  var pendingHtml=renderPendingCheckins();
+
+  if(!cache.visits.length && !done.length && !pendingHtml){
     el.innerHTML='<div class="empty">本日の来場者はいません</div>';
     return;
   }
 
   var html='';
+  if(pendingHtml){ html+=pendingHtml+'<div style="height:14px"></div>'; }
   if(active.length){
     html+='<div style="font-size:11px;font-weight:500;color:var(--ink3);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;padding-left:4px">来場中（'+active.length+'名）</div>';
     active.forEach(function(v){ html+=renderVisCard(v,'active'); });
@@ -792,6 +889,12 @@ function renderVisitorList(){
   }
   el.innerHTML=html;
 
+  el.querySelectorAll('[data-approve-checkin]').forEach(function(btn){
+    btn.addEventListener('click',function(){ btn.disabled=true; approveCheckinRequest(btn.dataset.approveCheckin); });
+  });
+  el.querySelectorAll('[data-reject-checkin]').forEach(function(btn){
+    btn.addEventListener('click',function(){ rejectCheckinRequest(btn.dataset.rejectCheckin); });
+  });
   el.querySelectorAll('[data-orders-visit]').forEach(function(btn){
     btn.addEventListener('click',function(){ openOrdersModal(btn.dataset.ordersVisit, btn.dataset.ordersName); });
   });
