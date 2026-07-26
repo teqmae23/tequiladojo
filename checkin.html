@@ -27,6 +27,7 @@ var FIREBASE_CONFIG = {
 };
 </script>
 <script src="/auth-role.js?v=20260714"></script>
+<script src="/bottle-weight.js?v=20260724"></script>
 <script>window.JOURNAL_PAGE='checkin';</script>
 <script src="/journal.js?v=20260706"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -485,6 +486,13 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
         </div>
         <div id="co-collect-note" style="font-size:12px;color:var(--ink);margin-top:8px;font-weight:600"></div>
       </div>
+
+      <!-- キープボトル 会計時の終了重量計測（利用したキープごとに1回・同時会計は共有） -->
+      <div id="keep-checkout-section" style="display:none;background:#fdf6ea;border:1px solid #e6d3ad;border-radius:var(--r);padding:10px 12px;margin-bottom:10px">
+        <div style="font-size:11px;font-weight:700;color:var(--gold-d);margin-bottom:6px">🍾 キープボトル 終了重量の計測</div>
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">今回利用したキープボトルの現在の重量（g）を計測して入力してください。残量・消費量を記録します（未入力ならスキップ）。</div>
+        <div id="keep-checkout-list"></div>
+      </div>
     </div>
     <div class="modal-foot" style="flex-wrap:wrap;gap:8px">
       <button class="btn bs" style="flex:1;min-width:80px" id="m-checkout-cancel">キャンセル</button>
@@ -574,7 +582,7 @@ function calcTequila(orders){
 }
 
 // ── キャッシュ ──────────────────────────────────────────────────
-var cache = { visits:[], allVisits:[], members:[], orders:[], blindMarks:[], sessions:[] };
+var cache = { visits:[], allVisits:[], members:[], orders:[], blindMarks:[], sessions:[], keepBottles:[] };
 var currentSession = null; // 現在のセッション（openTime, date）
 var currentCheckoutVisitKey = null;
 
@@ -629,7 +637,10 @@ function loadAll(){
     db.collection('memberPrivate').get().then(function(snap){
       cache.memberNotes={};
       snap.docs.forEach(function(d){ var ns=(d.data().noteShort||'').trim(); if(ns) cache.memberNotes[d.id]=ns; });
-    }).catch(function(){ cache.memberNotes={}; })
+    }).catch(function(){ cache.memberNotes={}; }),
+    db.collection('keepBottles').get().then(function(snap){
+      cache.keepBottles=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    }).catch(function(){ cache.keepBottles=[]; })
   ]).then(function(results){
     var visitsSnap=results[2];   // 0:members 1:blindMarks 2:visits 3:orders 4:session 5:sessions 6:memberPrivate
     var session=results[4];
@@ -919,8 +930,8 @@ function openOrdersModal(visitKey, visitorName){
   var totalAmt=calcAmount(orders);
   var totalTq=calcTequila(orders);
 
-  var TYPE_LABEL={'tequila':'テキーラ','other':'他酒','misc':'その他','adjustment':'調整'};
-  var TYPE_BG={'tequila':'background:#fdf0d0;color:#7a5610','other':'background:#E6F1FB;color:#0C447C','misc':'background:#e0f0eb;color:#1a6e58','adjustment':'background:#f0f0ee;color:#555'};
+  var TYPE_LABEL={'tequila':'テキーラ','other':'他酒','misc':'その他','adjustment':'調整','keep':'キープ利用','keepbuy':'キープ購入'};
+  var TYPE_BG={'tequila':'background:#fdf0d0;color:#7a5610','other':'background:#E6F1FB;color:#0C447C','misc':'background:#e0f0eb;color:#1a6e58','adjustment':'background:#f0f0ee;color:#555','keep':'background:#f6ead2;color:#7a5610','keepbuy':'background:#f6ead2;color:#7a5610'};
   var ol=g('orders-list');
   if(!orders.length){
     ol.innerHTML='<div style="font-size:12px;color:var(--ink3);padding:12px;text-align:center;background:var(--cream2);border-radius:var(--r)">注文記録なし</div>';
@@ -1909,8 +1920,8 @@ function openBulkCheckout(directKeys){
 
     var personsHtml='';
     var grandTotal=0;
-    var TYPE_LABEL={'tequila':'テキーラ','other':'他酒','misc':'その他','adjustment':'調整'};
-    var TYPE_BG={'tequila':'background:#fdf0d0;color:#7a5610','other':'background:#E6F1FB;color:#0C447C','misc':'background:#e0f0eb;color:#1a6e58','adjustment':'background:#f0f0ee;color:#555'};
+    var TYPE_LABEL={'tequila':'テキーラ','other':'他酒','misc':'その他','adjustment':'調整','keep':'キープ利用','keepbuy':'キープ購入'};
+    var TYPE_BG={'tequila':'background:#fdf0d0;color:#7a5610','other':'background:#E6F1FB;color:#0C447C','misc':'background:#e0f0eb;color:#1a6e58','adjustment':'background:#f0f0ee;color:#555','keep':'background:#f6ead2;color:#7a5610','keepbuy':'background:#f6ead2;color:#7a5610'};
 
     warikanAmounts={};
 
@@ -1994,6 +2005,8 @@ function openBulkCheckout(directKeys){
     }
     // デポジット/ツケUIを支払者候補に応じて用意
     setupDepTab();
+    // キープボトル 終了重量計測UIを用意（利用したキープごとに1回）
+    renderKeepCheckout(allOrders);
     refreshSaveButton();
 
     // キャッシュ更新
@@ -2097,6 +2110,59 @@ function updateWarikanDiff(){
 
 g('m-checkout-close').addEventListener('click',function(){ confirmClose('m-checkout'); });
 g('m-checkout-cancel').addEventListener('click',function(){ confirmClose('m-checkout'); });
+
+// ── キープボトル 会計時の終了重量計測 ───────────────────────────
+// 利用したキープボトルごとに1回だけ計測（同時会計は共有）。
+var _keepCheckoutList=[]; // [{keepBottleId, visitKeys:[]}]
+function _keepBottleById(id){ return cache.keepBottles.find(function(k){ return k.id===id; }); }
+function _keepNameOf(k,fallback){ return k?(k.bottleEs||k.bottleEsBase||k.bottleJa||k.bottleJaBase||k.name||fallback):fallback; }
+function renderKeepCheckout(allOrders){
+  var sec=g('keep-checkout-section'); var box=g('keep-checkout-list');
+  _keepCheckoutList=[];
+  if(!sec||!box) return;
+  var map={}; // keepBottleId → {ids:{visitKey:1}}
+  (allOrders||[]).forEach(function(o){
+    if(o.served===0) return;
+    if(o.productType!=='keep' || !o.keepBottleId) return;
+    var vk=o.visitKey||o.visitId;
+    if(bulkCheckoutVisitKeys.indexOf(vk)<0) return;
+    if(!map[o.keepBottleId]) map[o.keepBottleId]={ids:{}};
+    map[o.keepBottleId].ids[vk]=1;
+  });
+  var keys=Object.keys(map);
+  if(!keys.length){ sec.style.display='none'; box.innerHTML=''; return; }
+  sec.style.display='block';
+  box.innerHTML=keys.map(function(kid){
+    var k=_keepBottleById(kid);
+    var name=_keepNameOf(k,kid);
+    var prevRemain=k&&k.remaining!=null?k.remaining:null;
+    var empty=k&&k.emptyWeight!=null?k.emptyWeight:null;
+    var abv=k&&k.abv!=null?k.abv:0;
+    _keepCheckoutList.push({keepBottleId:kid, visitKeys:Object.keys(map[kid].ids)});
+    return '<div style="border:1px solid #e6d3ad;border-radius:var(--r);padding:8px 10px;margin-bottom:6px;background:#fffdf8">'
+      +'<div style="font-size:13px;font-weight:600;margin-bottom:4px">🍾 '+escHtml(name)+'</div>'
+      +'<div style="font-size:11px;color:var(--ink3);margin-bottom:6px">前回残量: '+(prevRemain!=null?prevRemain+'ml':'—')+' ／ 空瓶: '+(empty!=null?empty+'g':'未登録')+' ・ '+(abv||0)+'%</div>'
+      +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+        +'<span style="font-size:12px">終了重量</span>'
+        +'<input type="number" min="0" id="keep-co-weight-'+escHtml(kid)+'" placeholder="計測値(g)" style="width:110px;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;text-align:right;font-family:var(--mono)" oninput="keepCoCalc(\''+escHtml(kid)+'\')">'
+        +'<span style="font-size:12px;color:var(--ink3)">g</span>'
+        +'<span id="keep-co-note-'+escHtml(kid)+'" style="font-size:11px;color:var(--teal)"></span>'
+      +'</div>'
+    +'</div>';
+  }).join('');
+}
+function keepCoCalc(kid){
+  var k=_keepBottleById(kid); if(!k) return;
+  var inp=g('keep-co-weight-'+kid); var note=g('keep-co-note-'+kid);
+  var w=inp?(parseFloat(inp.value)||0):0;
+  if(w>0 && k.emptyWeight!=null){
+    var ml=BottleWeight.remainingMl(w, k.emptyWeight, k.abv||0);
+    var used=(k.remaining!=null)?(k.remaining-ml):null;
+    if(note) note.textContent='→ 残'+ml+'ml'+(used!=null?'（今回消費 '+(used>0?used:0)+'ml）':'');
+  }else if(w>0){
+    if(note) note.textContent='※ 空瓶重量が未登録のため残量mlは算出できません（重量のみ記録）';
+  }else if(note){ note.textContent=''; }
+}
 
 // ── デポジット・ツケ（会計連携） ─────────────────────────────────
 // 複数人会計でも「支払者は1名」。デポジット/ツケは支払者に対して総額ベースで適用。
@@ -2333,6 +2399,34 @@ function doCheckoutSave(){
     }
   });
 
+  // キープボトル 終了重量の記録（計測入力があったもののみ・利用したキープごとに1回）
+  var _keepJournal=[];
+  var _FV=firebase.firestore.FieldValue;
+  var _keepStaffUid=(auth.currentUser&&auth.currentUser.uid)||null;
+  (_keepCheckoutList||[]).forEach(function(kc){
+    var inp=g('keep-co-weight-'+kc.keepBottleId);
+    if(!inp||inp.value==='') return;
+    var w=parseInt(inp.value); if(!(w>=0)) return;
+    var k=_keepBottleById(kc.keepBottleId);
+    var empty=(k&&k.emptyWeight!=null)?k.emptyWeight:null;
+    var abv=(k&&k.abv!=null)?k.abv:0;
+    var newRemain=(empty!=null)?BottleWeight.remainingMl(w,empty,abv):(k?k.remaining:null);
+    var kUpd={lastWeight:w, updatedAt:_FV.serverTimestamp()};
+    if(newRemain!=null) kUpd.remaining=newRemain;
+    fbBatch.set(db.collection('keepBottles').doc(kc.keepBottleId), kUpd, {merge:true});
+    // 代表利用者（会計対象のうち会員である最初の来店）
+    var payerMid=null;
+    for(var _vi=0;_vi<kc.visitKeys.length;_vi++){ var _vv=cache.visits.find(function(x){return x.id===kc.visitKeys[_vi];}); if(_vv&&_vv.memberId){ payerMid=_vv.memberId; break; } }
+    var _logRef=db.collection('keepBottleLog').doc();
+    var _logData={ keepBottleId:kc.keepBottleId, type:'checkout', date:todayStr6(), time:now,
+      memberId:payerMid, weight:w, remainingMl:newRemain, amount:0, note:'会計時 終了重量計測',
+      staffUid:_keepStaffUid, createdAt:_FV.serverTimestamp() };
+    fbBatch.set(_logRef, _logData);
+    _keepJournal.push({id:_logRef.id, data:_logData});
+    // メモリ更新
+    if(k){ k.lastWeight=w; if(newRemain!=null) k.remaining=newRemain; }
+  });
+
   // お会計確定時にmembersのtotalAmount・totalTequilaを更新
   // 再会計（checkoutPayTime設定済み）の場合は前回計上分を差し引いて二重加算を防ぐ
   var memberUpdateBatch=db.batch();
@@ -2376,6 +2470,7 @@ function doCheckoutSave(){
       writeJournal('update','visits',vk,j.before||null,j.after||null);
     });
     _adjJournal.forEach(function(a){ writeJournal('create','orders',a.id,null,a.data); });
+    _keepJournal.forEach(function(k){ writeJournal('create','keepBottleLog',k.id,null,k.data); });
     _depTabApplied=false; _depTabParams=null;
     closeM('m-checkout');
     var msg=alsoCheckout
