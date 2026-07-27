@@ -31,7 +31,7 @@ SHOPS = {
   "liquorsato":  {"name": "サトー酒店",       "platform": "eccube",  "base": "https://liquor-sato.com", "list_path": "/cart/products/list", "category_id": 42},
   "youshuchiga": {"name": "洋酒専門店 千雅",  "platform": "colorme", "base": "https://youshuchiga.shop-pro.jp", "cbid": 1181170, "csid": 0},
   "chagata":     {"name": "ちゃがたパーク",   "platform": "colorme", "base": "https://www.chagata.com", "cbid": 2444445, "csid": 4},
-  "mukawa":      {"name": "ムカワスピリット", "platform": "colorme", "base": "https://mukawa-spirit.com", "cbid": None, "csid": 0},
+  "mukawa":      {"name": "武川蒸留酒販売",   "platform": "colorme", "base": "https://mukawa-spirit.com", "cbid": 2163597, "csid": 0},
   "biccamera":   {"name": "ビックカメラ",     "platform": "disabled", "base": "https://www.biccamera.com",
                   "note": "大規模・bot対策が強くカテゴリ構造も独自のため保留。必要なら個別対応。"},
 }
