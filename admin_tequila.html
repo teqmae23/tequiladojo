@@ -343,9 +343,9 @@ html.embed .mbg{background:transparent!important}
           </div>
         </div>
         <div class="tw" id="tbl-bdata-wrap"><table id="tbl-bdata">
-          <colgroup><col style="width:110px"><col><col><col style="width:50px"><col style="width:44px"><col style="width:50px"><col style="width:60px"><col style="width:40px"><col style="width:86px"></colgroup>
-          <thead><tr><th>ボトルデータID</th><th>Name (Es)</th><th>ブランド名(NOM)</th><th>容量</th><th>ABV</th><th>残量</th><th>10ml単価</th><th>公開</th><th>✏️ レコード操作</th></tr></thead>
-          <tbody id="tb-bdata"><tr><td colspan="9" class="ec">読み込み中...</td></tr></tbody>
+          <colgroup><col style="width:110px"><col><col><col style="width:50px"><col style="width:44px"><col style="width:50px"><col style="width:60px"><col style="width:96px"><col style="width:40px"><col style="width:86px"></colgroup>
+          <thead><tr><th>ボトルデータID</th><th>Name (Es)</th><th>ブランド名(NOM)</th><th>容量</th><th>ABV</th><th>残量</th><th>10ml単価</th><th>参考相場</th><th>公開</th><th>✏️ レコード操作</th></tr></thead>
+          <tbody id="tb-bdata"><tr><td colspan="10" class="ec">読み込み中...</td></tr></tbody>
         </table></div>
         <div id="tree-bdata" style="display:none;padding:12px 14px"></div>
       </div>
@@ -737,7 +737,7 @@ function bdName(item, lang){
 }
 
 // ── キャッシュ ──────────────────────────────────────────────────
-var cache={distilleries:[],brands:[],classes:[],bottles:[],bdata:[]};
+var cache={distilleries:[],brands:[],classes:[],bottles:[],bdata:[],market:{}};
 var editId={brand:null,klass:null,bottle:null,bdata:null};
 var sortState={};
 
@@ -1313,13 +1313,36 @@ g("btn-migrate-bottles").addEventListener("click",function(){
 setCnt("bdata","—");
 
 function loadBdata(){
-  db.collection("bottleData").get()
-    .then(function(snap){
-      cache.bdata=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
-      setCnt("bdata",cache.bdata.length);
-      renderBdata();
-    })
-    .catch(function(e){ toast("読込失敗(bottleData): "+e.message,"err"); });
+  Promise.all([
+    db.collection("bottleData").get(),
+    db.collection("marketPrices").get().catch(function(){ return {docs:[]}; })
+  ]).then(function(res){
+    cache.bdata=res[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    setCnt("bdata",cache.bdata.length);
+    // 参考市場価格: bottleId(=bottleDataのdoc ID) 別に、750ml換算が最安の1件を採用
+    cache.market={};
+    res[1].docs.forEach(function(d){
+      var m=d.data(); var bid=m.bottleId; if(!bid) return;
+      var p750=Number(m.price750||m.price||0);
+      var cur=cache.market[bid];
+      if(!cur || (p750 && p750<Number(cur.price750||cur.price||1e12))) cache.market[bid]=m;
+    });
+    renderBdata();
+  }).catch(function(e){ toast("読込失敗(bottleData): "+e.message,"err"); });
+}
+
+// 参考市場価格セル（管理画面のみ）
+function marketCell(bottleId){
+  var m=cache.market[bottleId];
+  if(!m) return '<span class="dim">—</span>';
+  var price=Number(m.price750||m.price||0);
+  var inStock=(m.availability==='在庫あり');
+  var stockDot=m.availability?('<span style="color:'+(inStock?'#1a6e58':'#b03020')+';font-size:10px">●</span> '+escD(m.availability)):'';
+  var assumed=m.volAssumed?'≈':'';
+  var label=(m.shopName||m.shop||'市場');
+  var body='<div style="font-family:var(--mono);font-weight:600">'+assumed+'¥'+price.toLocaleString()+'<span style="font-size:9px;color:var(--ink3)">/750ml</span></div>'
+    +'<div style="font-size:9px;color:var(--ink3)">'+escD(label)+(stockDot?' ・ '+stockDot:'')+'</div>';
+  return m.url?('<a href="'+escD(m.url)+'" target="_blank" rel="noopener" style="text-decoration:none;color:inherit" title="'+escD(m.name||'')+'">'+body+'</a>'):body;
 }
 
 function renderBdata(){
@@ -1336,7 +1359,7 @@ function renderBdata(){
   });
   list=applySortToList(list,"bdata");
   var tb=g("tb-bdata");
-  if(!list.length){ tb.innerHTML='<tr><td colspan="9" class="ec">データがありません</td></tr>'; return; }
+  if(!list.length){ tb.innerHTML='<tr><td colspan="10" class="ec">データがありません</td></tr>'; return; }
   tb.innerHTML=list.map(function(r){
     var br=cache.brands.find(function(b){return b.id===r.brandId;});
     var brName=br?(br.brandEs||"")+"("+(r.bottleId?r.bottleId.slice(0,4):r.brandId?r.brandId.slice(0,4):"")+")":(r.brandId||"—");
@@ -1348,6 +1371,7 @@ function renderBdata(){
       +'<td class="mono dim">'+(r.abv!==null&&r.abv!==undefined?parseFloat(r.abv).toFixed(1)+"%":"—")+'</td>'
       +'<td class="mono dim">'+(r.remaining||"—")+'</td>'
       +'<td class="mono" style="text-align:right">'+(r.price?("¥"+Number(r.price).toLocaleString()):"—")+'</td>'
+      +'<td style="text-align:right">'+marketCell(r.id)+'</td>'
       +'<td>'+(({serving:'',stock:'<span class="badge" style="background:#b8860b;color:#fff">在庫</span> ',ended:'<span class="badge bg-gray">終了</span> '})[r.status||'serving']||'')+pubBadge+(r.location?'<div style="font-size:9px;color:var(--ink3)">'+escD(r.location)+'</div>':'')+'</td>'
       +'<td><div class="acts">'+((r.status||'serving')==='serving'?'<button class="btn bs sm" style="color:var(--gold-d)" data-swap-stock="'+r.id+'" title="提供終了→在庫から入替">↩入替</button>':'')+'<button class="btn bs sm" data-edit-bdata="'+r.id+'">編集</button><button class="btn bs sm" data-copy-bdata="'+r.id+'">コピー</button><button class="btn bd sm" data-del="bottleData" data-del-id="'+r.id+'" data-del-label="ボトルデータ">削除</button></div></td></tr>';
   }).join("");
