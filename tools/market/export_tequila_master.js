@@ -3,7 +3,6 @@
 //   （firebase-admin は ~/functions/node_modules を利用。認証は Cloud Shell の ADC）
 const admin = require('firebase-admin');
 const fs = require('fs');
-const os = require('os');
 admin.initializeApp({ projectId: 'tequiladojo' });
 const db = admin.firestore();
 function esc(s){ s=String(s==null?'':s); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
@@ -21,7 +20,6 @@ function esc(s){ s=String(s==null?'':s); return /[",\n]/.test(s)?'"'+s.replace(/
       price10:(b.price!=null?b.price:(b.unitPrice!=null?b.unitPrice:'')),shown}); });
   const cols=['id','bottleId','bottleEs','bottleJa','bottleEn','nom','brandId','brandJa','brandEs','classId','abv','price10','shown'];
   const out=[cols.join(',')].concat(rows.map(r=>cols.map(c=>esc(r[c])).join(','))).join('\n');
-  const dest = os.homedir() + '/tequiladojo_master.csv';
-  fs.writeFileSync(dest, '﻿'+out);
-  console.log(`書き出し完了: ${dest}  総${rows.length}件（掲載中 ${rows.filter(r=>r.shown).length}件）`);
+  fs.writeFileSync('tequiladojo_master.csv', '﻿'+out);
+  console.log(`書き出し完了: ${process.cwd()}/tequiladojo_master.csv  総${rows.length}件（掲載中 ${rows.filter(r=>r.shown).length}件）`);
 })().catch(e=>{console.error('失敗:',e.message);process.exit(1);});
