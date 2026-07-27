@@ -48,7 +48,8 @@ CLASS_RULES = [
 NONDRINK_RE = re.compile(r"教科書|グラス|Tシャツ|ステッカー|ジガー|メジャーカップ|コースター|グッズ|書籍|"
                          r"チケット|試飲券|キャップ|ボトルホルダ|ポスター|タンブラー|マグ|エプロン|パーカー|book|"
                          r"ラッピング|包装|カレンダー|ドリップバッグ|珈琲|コーヒー|お猪口|おちょこ|ぐい呑|升\b|マドラー|"
-                         r"ポアラー|保冷|巾着|レシピ|冊子|DVD|ギフトボックス|化粧箱|手帳|ノート|ステッカー|トートバッグ", re.I)
+                         r"ポアラー|保冷|巾着|レシピ|冊子|DVD|ギフトボックス|化粧箱|手帳|ノート|ステッカー|トートバッグ|"
+                         r"送料|配送|クール便|代引|ラッピング料|手数料|のし|熨斗", re.I)
 # ColorMe等のサイドバー/ランキング枠を除外するための ancestor id/class パターン
 SIDEBAR_RE = re.compile(r"sidebar|side_a|side_b|_side|side_|ranking|rank_|recommend|osusume|pickup|"
                         r"history|checkitem|relation|relate|footer|header|breadcrumb|topicpath", re.I)
