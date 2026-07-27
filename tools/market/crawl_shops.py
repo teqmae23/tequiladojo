@@ -27,11 +27,11 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 SHOPS = {
   "musashiya":   {"name": "武蔵屋",           "platform": "eccube",  "base": "https://store.musashiya-net.co.jp", "list_path": "/products/list", "category_id": 72},
   "wazawaza":    {"name": "テキーラムーチョ", "platform": "shopify", "base": "https://wazawaza.jp", "collections": ["all"]},
-  "kinemon":     {"name": "酒商金右衛門",     "platform": "shopify", "base": "https://kinemon.shop", "collections": ["all"]},
+  "kinemon":     {"name": "酒商金右衛門",     "platform": "shopify", "base": "https://kinemon.shop", "collections": ["all"], "only_tequila": True},
   "liquorsato":  {"name": "サトー酒店",       "platform": "eccube",  "base": "https://liquor-sato.com", "list_path": "/cart/products/list", "category_id": 42},
   "youshuchiga": {"name": "洋酒専門店 千雅",  "platform": "colorme", "base": "https://youshuchiga.shop-pro.jp", "cbid": 1181170, "csid": 0},
   "chagata":     {"name": "ちゃがたパーク",   "platform": "colorme", "base": "https://www.chagata.com", "cbid": 2444445, "csid": 4},
-  "mukawa":      {"name": "ムカワスピリット", "platform": "colorme", "base": "https://mukawa-spirit.com", "cbid": None, "csid": 0},
+  "mukawa":      {"name": "武川蒸留酒販売",   "platform": "colorme", "base": "https://mukawa-spirit.com", "cbid": 2163597, "csid": 0},
   "biccamera":   {"name": "ビックカメラ",     "platform": "disabled", "base": "https://www.biccamera.com",
                   "note": "大規模・bot対策が強くカテゴリ構造も独自のため保留。必要なら個別対応。"},
 }
@@ -46,7 +46,13 @@ CLASS_RULES = [
     ("Blanco",     r"ブランコ|シルバー|プラタ|blanco|silver|plata"),
 ]
 NONDRINK_RE = re.compile(r"教科書|グラス|Tシャツ|ステッカー|ジガー|メジャーカップ|コースター|グッズ|書籍|"
-                         r"チケット|試飲券|キャップ|ボトルホルダ|ポスター|タンブラー|マグ|エプロン|パーカー|book", re.I)
+                         r"チケット|試飲券|キャップ|ボトルホルダ|ポスター|タンブラー|マグ|エプロン|パーカー|book|"
+                         r"ラッピング|包装|カレンダー|ドリップバッグ|珈琲|コーヒー|お猪口|おちょこ|ぐい呑|升\b|マドラー|"
+                         r"ポアラー|保冷|巾着|レシピ|冊子|DVD|ギフトボックス|化粧箱|手帳|ノート|ステッカー|トートバッグ", re.I)
+# ColorMe等のサイドバー/ランキング枠を除外するための ancestor id/class パターン
+SIDEBAR_RE = re.compile(r"sidebar|side_a|side_b|_side|side_|ranking|rank_|recommend|osusume|pickup|"
+                        r"history|checkitem|relation|relate|footer|header|breadcrumb|topicpath", re.I)
+RANK_NAME_RE = re.compile(r"^\s*No\.?\s*\d")
 SET_RE = re.compile(r"セット|飲み比べ|ギフトBOX|詰め合わせ|アソート")
 VOL_RE = re.compile(r"(\d{2,4})\s*ml|(\d(?:\.\d+)?)\s*[lL](?![a-z])", re.I)
 
@@ -96,9 +102,13 @@ def robots_ok(session, base, path):
     return True
 
 # ── パーサ（純関数・テスト可能） ──
-def parse_shopify(data, base):
+TEQ_TYPE_RE = re.compile(r"テキーラ|tequila", re.I)
+def parse_shopify(data, base, only_tequila=False):
     out = []
     for p in (data.get("products") or []):
+        if only_tequila:
+            hay = (p.get("product_type") or "") + " " + " ".join(p.get("tags") or []) + " " + (p.get("title") or "")
+            if not TEQ_TYPE_RE.search(hay): continue
         variants = p.get("variants") or []
         prices = []
         for v in variants:
@@ -112,13 +122,21 @@ def parse_shopify(data, base):
                     "url": base + "/products/" + handle})
     return out
 
-def _parse_by_detail_links(html, base, detail_re):
-    """EC-CUBE / ColorMe 共通: 詳細リンクを起点に名前＋価格を近傍から拾う。"""
+def _in_sidebar(a):
+    for anc in a.parents:
+        idc = ((anc.get("id") or "") + " " + " ".join(anc.get("class") or [])).strip()
+        if idc and SIDEBAR_RE.search(idc): return True
+    return False
+
+def _parse_by_detail_links(html, base, detail_re, exclude_sidebar=False):
+    """EC-CUBE / ColorMe 共通: 詳細リンクを起点に名前＋価格を近傍から拾う。
+    exclude_sidebar=True でサイドバー/ランキング枠のリンクを除外（ColorMe用）。"""
     soup = BeautifulSoup(html, "html.parser")
     items = {}
     for a in soup.find_all("a", href=True):
         mm = detail_re.search(a["href"])
         if not mm: continue
+        if exclude_sidebar and _in_sidebar(a): continue
         pid = mm.group(1)
         cont = a
         for _ in range(5):
@@ -130,6 +148,7 @@ def _parse_by_detail_links(html, base, detail_re):
         if not name:
             h = cont.select_one(".product_name,.item_name,.goods_name,.ec-shelfGrid__title,h3,h4,p")
             if h: name = h.get_text(strip=True)
+        if exclude_sidebar and RANK_NAME_RE.match(name): continue  # 「No.3 …」等のランキング枠を除外
         txt = cont.get_text(" ", strip=True)
         prices = [int(m.group(1).replace(",", "")) for m in re.finditer(r"(?:¥|￥)\s*([0-9][0-9,]*)|([0-9][0-9,]*)\s*円", txt) if m.group(1)]
         prices += [int(m.group(2).replace(",", "")) for m in re.finditer(r"(?:¥|￥)\s*([0-9][0-9,]*)|([0-9][0-9,]*)\s*円", txt) if m.group(2)]
@@ -158,11 +177,12 @@ def crawl_shop(session, key, cfg, delay, max_pages, debug):
                 if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
                 if debug and page == 1: open(f"{key}_dump.json", "w", encoding="utf-8").write(r.text)
                 data = r.json()
-                prods = parse_shopify(data, base)
-                if not prods: break
+                rawprods = data.get("products") or []
+                if not rawprods: break
+                prods = parse_shopify(data, base, only_tequila=cfg.get("only_tequila", False))
                 raw += prods
                 print(f"[{key}] {handle} p{page}: {len(prods)}件（累計{len(raw)}）", file=sys.stderr)
-                if len(data.get("products") or []) < 250: break
+                if len(rawprods) < 250: break
                 time.sleep(delay)
     elif plat == "eccube":
         robots_ok(session, base, cfg["list_path"])
@@ -190,7 +210,7 @@ def crawl_shop(session, key, cfg, delay, max_pages, debug):
             r = session.get(url, timeout=30)
             if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
             if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(r.text)
-            items = _parse_by_detail_links(r.text, base, DETAIL_RE_COLORME)
+            items = _parse_by_detail_links(r.text, base, DETAIL_RE_COLORME, exclude_sidebar=True)
             new = [x for x in items if x["id"] not in seen]
             for x in new: seen.add(x["id"])
             print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
