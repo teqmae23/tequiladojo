@@ -84,19 +84,30 @@ button{cursor:pointer;font-family:var(--sans)} input,select,textarea{font-family
       </div>
     </div>
 
+    <!-- 目次（大番号＋内容）→ 章を自動生成 -->
+    <div class="card" id="toc-card" style="display:none">
+      <h2>目次（章）</h2>
+      <p class="muted" style="margin-bottom:8px">大番号（章番号）と内容（タイトル）を入力。「主文」は目次でなく冒頭に表示。<b>「目次を保存＆章を生成」</b>で章が自動生成されます（既存の本文は保持）。</p>
+      <div id="toc-container"></div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn bg mini" id="btn-add-toc">＋ 章（目次行）</button>
+        <button class="btn bp" id="btn-gen-ch">目次を保存＆章を生成</button>
+        <button class="btn bg mini" id="btn-add-front" style="margin-left:auto">＋ 主文（冒頭）を作成</button>
+      </div>
+    </div>
+
     <!-- 章一覧 -->
     <div class="card" id="ch-list-card" style="display:none">
-      <h2>章</h2>
+      <h2>章を編集</h2>
       <div id="ch-chips"></div>
-      <button class="btn bg mini" id="btn-new-ch" style="margin-top:6px">＋ 章を追加</button>
-      <span class="muted" style="margin-left:8px">「主文」にすると目次でなく冒頭に表示されます。</span>
+      <span class="muted">章は上の「目次」から生成されます。ここで章を選んで本文（節）を編集します。</span>
     </div>
 
     <!-- 章編集 -->
     <div class="card" id="ch-edit" style="display:none">
       <h2 id="ch-edit-title">章編集</h2>
       <div class="row2">
-        <div class="fg" style="width:90px;margin:0"><label>章番号</label><input class="fi" id="c-num" placeholder="6"></div>
+        <div class="fg" style="width:90px;margin:0"><label>大番号（章番号）</label><input class="fi" id="c-num" placeholder="6"></div>
         <div class="fg" style="width:90px;margin:0"><label>並び順</label><input class="fi" id="c-order" type="number" value="0"></div>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="c-front"> 主文（冒頭表示）</label>
       </div>
@@ -107,9 +118,9 @@ button{cursor:pointer;font-family:var(--sans)} input,select,textarea{font-family
         <div></div>
       </div>
       <div style="border-top:1px solid var(--cream3);margin:8px 0;padding-top:8px">
-        <b style="font-size:13px">本文（行）</b>
+        <b style="font-size:13px">本文（節）</b>
         <button class="btn bg mini" id="btn-add-head" style="margin-left:8px">＋ 見出し</button>
-        <button class="btn bg mini" id="btn-add-text">＋ 対訳行</button>
+        <button class="btn bg mini" id="btn-add-text">＋ 節（中番号・小番号）</button>
         <button class="btn bg mini" id="btn-add-table">＋ 表（画像）</button>
       </div>
       <div id="rows-container"></div>
@@ -134,7 +145,7 @@ g('lbtn').addEventListener('click',function(){ auth.signInWithEmailAndPassword((
 g('lpass').addEventListener('keydown',function(e){ if(e.key==='Enter') g('lbtn').click(); });
 g('btn-logout').addEventListener('click',function(){ auth.signOut().then(function(){location.reload();}); });
 
-var docs=[], curDoc=null, chapters=[], curCh=null, curRows=[];
+var docs=[], curDoc=null, chapters=[], curCh=null, curRows=[], curTocRows=[];
 
 function loadDocs(){
   db.collection('libraryDocs').get().then(function(snap){
@@ -156,11 +167,57 @@ g('btn-new-doc').addEventListener('click',function(){
 function selectDoc(id){
   curDoc=id; curCh=null; curRows=[];
   var d=docs.find(function(x){return x.id===id;})||{};
-  g('doc-meta').style.display='block'; g('ch-list-card').style.display='block'; g('ch-edit').style.display='none';
+  g('doc-meta').style.display='block'; g('toc-card').style.display='block'; g('ch-list-card').style.display='block'; g('ch-edit').style.display='none';
   g('meta-id').textContent='（'+id+'）';
   g('m-title').value=d.title||''; g('m-sub').value=d.subtitle||''; g('m-order').value=d.order||1; g('m-pub').checked=!!d.published;
+  curTocRows=(d.toc||[]).map(function(t){return Object.assign({},t);});
+  renderToc();
   loadDocs(); loadChapters();
 }
+
+// ── 目次エディタ ──
+function renderToc(){
+  var c=g('toc-container');
+  c.innerHTML=curTocRows.length?curTocRows.map(function(t,i){
+    return '<div class="rowcard toc-row" data-i="'+i+'" style="padding:8px">'
+      +'<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">'
+      +'<div style="width:90px"><div class="lbl">大番号</div><input class="fi t-num" value="'+esc(t.num||'')+'" placeholder="6"></div>'
+      +'<div style="flex:1;min-width:140px"><div class="lbl">内容（ES）</div><input class="fi t-es" value="'+esc(t.titleEs||'')+'"></div>'
+      +'<div style="flex:1;min-width:140px"><div class="lbl">内容（日本語）</div><input class="fi t-ja" value="'+esc(t.titleJa||'')+'"></div>'
+      +'<button class="btn bg mini" data-up="'+i+'">↑</button><button class="btn bg mini" data-down="'+i+'">↓</button>'
+      +'<button class="btn bd mini" data-del="'+i+'">削除</button>'
+      +'</div></div>';
+  }).join(''):'<div class="muted">目次行がありません。「＋ 章（目次行）」で追加してください。</div>';
+  c.querySelectorAll('[data-del]').forEach(function(b){ b.addEventListener('click',function(){ syncToc(); curTocRows.splice(+b.dataset.del,1); renderToc(); }); });
+  c.querySelectorAll('[data-up]').forEach(function(b){ b.addEventListener('click',function(){ syncToc(); var i=+b.dataset.up; if(i>0){ var t=curTocRows[i-1];curTocRows[i-1]=curTocRows[i];curTocRows[i]=t; } renderToc(); }); });
+  c.querySelectorAll('[data-down]').forEach(function(b){ b.addEventListener('click',function(){ syncToc(); var i=+b.dataset.down; if(i<curTocRows.length-1){ var t=curTocRows[i+1];curTocRows[i+1]=curTocRows[i];curTocRows[i]=t; } renderToc(); }); });
+}
+function syncToc(){
+  var out=[];
+  g('toc-container').querySelectorAll('.toc-row').forEach(function(card){
+    out.push({num:(card.querySelector('.t-num').value||'').trim(),titleEs:card.querySelector('.t-es').value||'',titleJa:card.querySelector('.t-ja').value||''});
+  });
+  curTocRows=out;
+}
+function chKey(num){ return 'c'+String(num).trim().replace(/[^A-Za-z0-9]+/g,'_').replace(/^_+|_+$/g,''); }
+g('btn-add-toc').addEventListener('click',function(){ syncToc(); curTocRows.push({num:'',titleEs:'',titleJa:''}); renderToc(); });
+g('btn-add-front').addEventListener('click',function(){
+  if(!curDoc) return;
+  db.collection('libraryDocs').doc(curDoc).collection('chapters').doc('front').set(
+    {num:'',titleEs:'',titleEn:'',titleJa:'主文',isFront:true,order:0,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .then(function(){ toast('主文を作成'); loadChapters(); selectCh('front'); });
+});
+g('btn-gen-ch').addEventListener('click',function(){
+  if(!curDoc) return; syncToc();
+  var rows=curTocRows.filter(function(t){return (t.num||'').trim();});
+  var save=db.collection('libraryDocs').doc(curDoc).set({toc:curTocRows,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});
+  var proms=rows.map(function(t,i){
+    return db.collection('libraryDocs').doc(curDoc).collection('chapters').doc(chKey(t.num)).set(
+      {num:t.num.trim(),titleEs:t.titleEs||'',titleJa:t.titleJa||'',isFront:false,order:(i+1)*10,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});
+  });
+  Promise.all([save].concat(proms)).then(function(){ toast('目次を保存し章を'+rows.length+'件生成しました'); loadChapters(); })
+    .catch(function(e){ toast('生成失敗: '+e.message,'err'); });
+});
 g('btn-save-meta').addEventListener('click',function(){
   if(!curDoc) return;
   db.collection('libraryDocs').doc(curDoc).set({title:(g('m-title').value||'').trim(),subtitle:(g('m-sub').value||'').trim(),order:parseInt(g('m-order').value)||1,published:g('m-pub').checked,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
@@ -177,12 +234,6 @@ function loadChapters(){
     g('ch-chips').querySelectorAll('[data-ch]').forEach(function(el){ el.addEventListener('click',function(){ selectCh(el.dataset.ch); }); });
   });
 }
-g('btn-new-ch').addEventListener('click',function(){
-  if(!curDoc) return;
-  var ref=db.collection('libraryDocs').doc(curDoc).collection('chapters').doc();
-  ref.set({num:'',titleEs:'',titleEn:'',titleJa:'新しい章',isFront:false,order:(chapters.length+1)*10,rows:[],updatedAt:firebase.firestore.FieldValue.serverTimestamp()})
-    .then(function(){ toast('章を追加'); loadChapters(); selectCh(ref.id); });
-});
 function selectCh(chId){
   curCh=chId;
   var c=chapters.find(function(x){return x.id===chId;})||{};
@@ -190,7 +241,11 @@ function selectCh(chId){
   g('ch-edit-title').textContent='章編集：'+((c.num||'')+' '+(c.titleJa||''));
   g('c-num').value=c.num||''; g('c-order').value=c.order||0; g('c-front').checked=!!c.isFront;
   g('c-tes').value=c.titleEs||''; g('c-ten').value=c.titleEn||''; g('c-tja').value=c.titleJa||'';
-  curRows=(c.rows||[]).map(function(r){return Object.assign({},r);});
+  curRows=(c.rows||[]).map(function(r){
+    var o=Object.assign({},r);
+    if(o.t!=='head'&&o.t!=='table'&&o.t!=='sec') o.t='sec'; // 旧 text 行 → 節
+    return o;
+  });
   renderRows();
   loadChapters();
   g('ch-edit').scrollIntoView({behavior:'smooth'});
@@ -200,7 +255,8 @@ function selectCh(chId){
 function renderRows(){
   var c=g('rows-container');
   c.innerHTML=curRows.map(function(r,i){
-    var head='<div class="rhead"><b>#'+(i+1)+'</b> '+(r.t==='table'?'表（画像）':'対訳行')
+    var label=r.t==='table'?'表（画像）':(r.t==='head'?'見出し':'節');
+    var head='<div class="rhead"><b>#'+(i+1)+'</b> '+label
       +'<span class="sp"></span>'
       +'<button class="btn bg mini" data-up="'+i+'">↑</button><button class="btn bg mini" data-down="'+i+'">↓</button>'
       +'<button class="btn bd mini" data-del="'+i+'">削除</button></div>';
@@ -217,7 +273,12 @@ function renderRows(){
         +'<div class="grid4"><div><div class="lbl">表のキャプション</div><textarea class="r-caption" style="min-height:40px">'+esc(r.caption||'')+'</textarea></div>'
         +'<div><div class="lbl">解説</div><textarea class="r-note">'+esc(r.note||'')+'</textarea></div></div></div>';
     }
-    return '<div class="rowcard" data-i="'+i+'" data-type="text">'+head
+    return '<div class="rowcard" data-i="'+i+'" data-type="sec">'+head
+      +'<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">'
+      +'<div style="width:90px"><div class="lbl">中番号</div><input class="fi r-mid" style="background:var(--white)" value="'+esc(r.mid||'')+'" placeholder="36"></div>'
+      +'<div style="width:90px"><div class="lbl">小番号</div><input class="fi r-sub" style="background:var(--white)" value="'+esc(r.sub||'')+'" placeholder="3"></div>'
+      +'<div style="flex:1;min-width:160px"><div class="lbl">見出し（任意）</div><input class="fi r-title" style="background:var(--white)" value="'+esc(r.title||'')+'" placeholder="Tequila reposado"></div>'
+      +'</div>'
       +'<div class="grid4">'
       +'<div><div class="lbl">ES 原文</div><textarea class="r-es">'+esc(r.es||'')+'</textarea></div>'
       +'<div><div class="lbl">English</div><textarea class="r-en">'+esc(r.en||'')+'</textarea></div>'
@@ -239,7 +300,7 @@ function syncRows(){
     }else if(card.dataset.type==='table'){
       out.push({t:'table',img:card.querySelector('.r-img').value||'',caption:card.querySelector('.r-caption').value||'',note:card.querySelector('.r-note').value||''});
     }else{
-      out.push({t:'text',es:card.querySelector('.r-es').value||'',en:card.querySelector('.r-en').value||'',ja:card.querySelector('.r-ja').value||'',note:card.querySelector('.r-note').value||''});
+      out.push({t:'sec',mid:(card.querySelector('.r-mid').value||'').trim(),sub:(card.querySelector('.r-sub').value||'').trim(),title:(card.querySelector('.r-title').value||'').trim(),es:card.querySelector('.r-es').value||'',en:card.querySelector('.r-en').value||'',ja:card.querySelector('.r-ja').value||'',note:card.querySelector('.r-note').value||''});
     }
   });
   curRows=out;
@@ -256,7 +317,7 @@ function uploadImg(fileInput){
   }).catch(function(e){ st.textContent='失敗: '+e.message; });
 }
 g('btn-add-head').addEventListener('click',function(){ syncRows(); curRows.push({t:'head',text:''}); renderRows(); });
-g('btn-add-text').addEventListener('click',function(){ syncRows(); curRows.push({t:'text',es:'',en:'',ja:'',note:''}); renderRows(); });
+g('btn-add-text').addEventListener('click',function(){ syncRows(); curRows.push({t:'sec',mid:'',sub:'',title:'',es:'',en:'',ja:'',note:''}); renderRows(); });
 g('btn-add-table').addEventListener('click',function(){ syncRows(); curRows.push({t:'table',img:'',caption:'',note:''}); renderRows(); });
 
 g('btn-save-ch').addEventListener('click',function(){
