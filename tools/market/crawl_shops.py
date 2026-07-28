@@ -48,7 +48,8 @@ CLASS_RULES = [
 NONDRINK_RE = re.compile(r"教科書|グラス|Tシャツ|ステッカー|ジガー|メジャーカップ|コースター|グッズ|書籍|"
                          r"チケット|試飲券|キャップ|ボトルホルダ|ポスター|タンブラー|マグ|エプロン|パーカー|book|"
                          r"ラッピング|包装|カレンダー|ドリップバッグ|珈琲|コーヒー|お猪口|おちょこ|ぐい呑|升\b|マドラー|"
-                         r"ポアラー|保冷|巾着|レシピ|冊子|DVD|ギフトボックス|化粧箱|手帳|ノート|ステッカー|トートバッグ", re.I)
+                         r"ポアラー|保冷|巾着|レシピ|冊子|DVD|ギフトボックス|化粧箱|手帳|ノート|ステッカー|トートバッグ|"
+                         r"送料|配送|クール便|代引|ラッピング料|手数料|のし|熨斗", re.I)
 # ColorMe等のサイドバー/ランキング枠を除外するための ancestor id/class パターン
 SIDEBAR_RE = re.compile(r"sidebar|side_a|side_b|_side|side_|ranking|rank_|recommend|osusume|pickup|"
                         r"history|checkitem|relation|relate|footer|header|breadcrumb|topicpath", re.I)
@@ -122,6 +123,16 @@ def parse_shopify(data, base, only_tequila=False):
                     "url": base + "/products/" + handle})
     return out
 
+_PRICE_RE = re.compile(r"(?:¥|￥)\s*([0-9][0-9,]*)|([0-9][0-9,]*)\s*円")
+def _extract_prices(txt):
+    vals = []
+    for m in _PRICE_RE.finditer(txt or ""):
+        g = m.group(1) or m.group(2)
+        if g:
+            try: vals.append(int(g.replace(",", "")))
+            except ValueError: pass
+    return vals
+
 def _in_sidebar(a):
     for anc in a.parents:
         idc = ((anc.get("id") or "") + " " + " ".join(anc.get("class") or [])).strip()
@@ -149,10 +160,14 @@ def _parse_by_detail_links(html, base, detail_re, exclude_sidebar=False):
             h = cont.select_one(".product_name,.item_name,.goods_name,.ec-shelfGrid__title,h3,h4,p")
             if h: name = h.get_text(strip=True)
         if exclude_sidebar and RANK_NAME_RE.match(name): continue  # 「No.3 …」等のランキング枠を除外
-        txt = cont.get_text(" ", strip=True)
-        prices = [int(m.group(1).replace(",", "")) for m in re.finditer(r"(?:¥|￥)\s*([0-9][0-9,]*)|([0-9][0-9,]*)\s*円", txt) if m.group(1)]
-        prices += [int(m.group(2).replace(",", "")) for m in re.finditer(r"(?:¥|￥)\s*([0-9][0-9,]*)|([0-9][0-9,]*)\s*円", txt) if m.group(2)]
-        price = max(prices) if prices else None
+        # 価格: 商品コンテナに無ければ、価格が現れるまで最小限だけ上位へ辿る（他商品を巻き込まない範囲）
+        price = None
+        node = cont
+        for _ in range(4):
+            ps = _extract_prices(node.get_text(" ", strip=True))
+            if ps: price = max(ps); break
+            if node.parent is None: break
+            node = node.parent
         url = urllib.parse.urljoin(base + "/", a["href"])
         prev = items.get(pid)
         if prev is None or (not prev["name"] and name) or (prev.get("price") is None and price is not None):

@@ -236,6 +236,7 @@ html.embed .mbg{background:transparent!important}
       <button class="tab" data-page="bottles">ボトルマスタ <span class="cnt" id="cnt-bottles">—</span></button>
       <button class="tab" data-page="bdata">ボトルデータ <span class="cnt" id="cnt-bdata">—</span></button>
       <button class="tab" data-page="market">相場照合 <span class="cnt" id="cnt-market">—</span></button>
+      <button class="tab" data-page="compare">相場比較 <span class="cnt" id="cnt-compare">—</span></button>
     </div>
   </div>
 
@@ -367,6 +368,24 @@ html.embed .mbg{background:transparent!important}
           <colgroup><col><col style="width:80px"><col style="width:92px"><col style="width:70px"><col style="width:82px"><col style="width:210px"></colgroup>
           <thead><tr><th>銘柄（武蔵屋）</th><th>クラス</th><th>相場/750ml</th><th>在庫</th><th>種別</th><th>操作</th></tr></thead>
           <tbody id="tb-market"><tr><td colspan="6" class="ec">「相場照合」タブを開くと読み込みます</td></tr></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- 相場比較ページ -->
+    <div class="page" id="page-compare">
+      <div class="phead"><div><div class="ptitle">相場比較</div><div class="pdesc">ボトルごとに各ネットショップの価格（750ml換算）を並べて比較。最安を強調表示。</div></div><button class="btn bs" id="btn-compare-reload">↻ 再読み込み</button></div>
+      <div class="card">
+        <div class="toolbar">
+          <div class="sbox" style="max-width:240px"><input type="text" id="s-cmp" placeholder="ボトル名で検索..."></div>
+          <select class="fsel" id="f-cmp-class"><option value="">全クラス</option></select>
+          <label style="font-size:12px;display:flex;align-items:center;gap:5px"><input type="checkbox" id="f-cmp-instock"> 在庫ありのみ</label>
+          <select class="fsel" id="f-cmp-sort"><option value="name">名前順</option><option value="cheap">最安が安い順</option><option value="spread">価格差が大きい順</option><option value="nshop">掲載店数が多い順</option></select>
+          <span style="margin-left:auto;font-size:11px;color:var(--ink3)" id="cmp-count"></span>
+        </div>
+        <div class="tw" id="tbl-compare-wrap"><table id="tbl-compare">
+          <thead><tr id="cmp-head"></tr></thead>
+          <tbody id="tb-compare"><tr><td class="ec">「相場比較」タブを開くと読み込みます</td></tr></tbody>
         </table></div>
       </div>
     </div>
@@ -814,6 +833,11 @@ document.querySelector('[data-page="market"]').addEventListener("click",function
   if(!cache.brands.length) loadCol("brands");
   if(!cache.classes.length) loadCol("classes");
   loadMarketStaging();
+});
+document.querySelector('[data-page="compare"]').addEventListener("click",function(){
+  if(!cache.classes.length) loadCol("classes");
+  if(!cache.bdata.length || !cache.marketAll){ loadBdata(); }  // loadBdata が終わると renderCompare を呼ぶ
+  else renderCompare();
 });
 
 // ── データ読み込み ──────────────────────────────────────────────
@@ -1360,14 +1384,16 @@ function loadBdata(){
     cache.bdata=res[0].docs.map(function(d){return Object.assign({id:d.id},d.data());});
     setCnt("bdata",cache.bdata.length);
     // 参考市場価格: bottleId(=bottleDataのdoc ID) 別に、750ml換算が最安の1件を採用
-    cache.market={};
+    cache.market={}; cache.marketAll=[];
     res[1].docs.forEach(function(d){
-      var m=d.data(); var bid=m.bottleId; if(!bid) return;
+      var m=Object.assign({_id:d.id},d.data()); var bid=m.bottleId; if(!bid) return;
+      cache.marketAll.push(m);
       var p750=Number(m.price750||m.price||0);
       var cur=cache.market[bid];
       if(!cur || (p750 && p750<Number(cur.price750||cur.price||1e12))) cache.market[bid]=m;
     });
     renderBdata();
+    if(g('page-compare') && g('page-compare').classList.contains('active')) renderCompare();
   }).catch(function(e){ toast("読込失敗(bottleData): "+e.message,"err"); });
 }
 
@@ -1384,6 +1410,88 @@ function marketCell(bottleId){
     +'<div style="font-size:9px;color:var(--ink3)">'+escD(label)+(stockDot?' ・ '+stockDot:'')+'</div>';
   return m.url?('<a href="'+escD(m.url)+'" target="_blank" rel="noopener" style="text-decoration:none;color:inherit" title="'+escD(m.name||'')+'">'+body+'</a>'):body;
 }
+
+// ══════════════════ 相場比較（marketPrices 横断） ══════════════════
+var CMP_SHOP_ORDER=['musashiya','wazawaza','kinemon','liquorsato','youshuchiga','chagata','mukawa'];
+var CMP_CLASS_LABEL={'1':'Blanco','2':'Joven/Gold','3':'Reposado','4':'Anejo','5':'ExtraAnejo'};
+function _cmpBottle(bid){ return (cache.bdata||[]).find(function(r){return r.id===bid;}); }
+function _cmpClassLabel(bid){
+  var r=_cmpBottle(bid); if(!r) return '';
+  var cid=(typeof deriveClassId==='function')?deriveClassId(r):(r.classId||'');
+  cid=String(cid||''); return cid.length>=2?(CMP_CLASS_LABEL[cid[1]]||''):'';
+}
+function _cmpShopsPresent(){
+  var set={}; (cache.marketAll||[]).forEach(function(m){ set[m.shop]=m.shopName||m.shop; });
+  var keys=Object.keys(set);
+  keys.sort(function(a,b){ var ia=CMP_SHOP_ORDER.indexOf(a),ib=CMP_SHOP_ORDER.indexOf(b); ia=ia<0?99:ia; ib=ib<0?99:ib; return ia-ib||a.localeCompare(b); });
+  return keys.map(function(k){ return {shop:k,name:set[k]}; });
+}
+function renderCompare(){
+  if(!g('tb-compare')) return;
+  var fcls=g('f-cmp-class');
+  if(fcls && fcls.options.length<=1){
+    fcls.innerHTML='<option value="">全クラス</option>'+Object.keys(CMP_CLASS_LABEL).map(function(d){return '<option value="'+CMP_CLASS_LABEL[d]+'">'+CMP_CLASS_LABEL[d]+'</option>';}).join('');
+  }
+  var shops=_cmpShopsPresent();
+  var instock=g('f-cmp-instock')&&g('f-cmp-instock').checked;
+  var q=(g('s-cmp')||{value:''}).value.toLowerCase();
+  var fc=gv('f-cmp-class');
+  var map={};
+  (cache.marketAll||[]).forEach(function(m){
+    var bid=m.bottleId; if(!bid) return;
+    if(instock && m.availability!=='在庫あり') return;
+    (map[bid]=map[bid]||{})[m.shop]=m;
+  });
+  var rows=Object.keys(map).map(function(bid){
+    var byShop=map[bid]; var r=_cmpBottle(bid);
+    var first=byShop[Object.keys(byShop)[0]];
+    var name=(r?(bdName(r,'es')||bdName(r,'ja')):'')||first.teqBottleJa||bid;
+    var priced=Object.keys(byShop).map(function(s){return Number(byShop[s].price750||byShop[s].price||0);}).filter(function(x){return x>0;});
+    var cheapest=priced.length?Math.min.apply(null,priced):null;
+    var maxp=priced.length?Math.max.apply(null,priced):null;
+    return {bid:bid,name:name,cls:_cmpClassLabel(bid),byShop:byShop,cheapest:cheapest,
+            spread:(maxp&&cheapest)?(maxp-cheapest):0,nshop:Object.keys(byShop).length};
+  });
+  rows=rows.filter(function(row){
+    if(q && (row.name||'').toLowerCase().indexOf(q)<0) return false;
+    if(fc && row.cls!==fc) return false;
+    return true;
+  });
+  var sort=gv('f-cmp-sort')||'name';
+  rows.sort(function(a,b){
+    if(sort==='cheap') return (a.cheapest||1e12)-(b.cheapest||1e12);
+    if(sort==='spread') return (b.spread||0)-(a.spread||0);
+    if(sort==='nshop') return (b.nshop||0)-(a.nshop||0)||(a.name||'').localeCompare(b.name||'');
+    return (a.name||'').localeCompare(b.name||'');
+  });
+  setCnt('compare',rows.length);
+  var cc=g('cmp-count'); if(cc) cc.textContent=rows.length+' ボトル ・ '+shops.length+'店';
+  g('cmp-head').innerHTML='<th style="min-width:150px">ボトル</th><th style="width:70px">クラス</th>'
+    +shops.map(function(s){return '<th style="width:92px;text-align:right">'+escD(s.name)+'</th>';}).join('')
+    +'<th style="width:82px;text-align:right">最安</th>';
+  var tb=g('tb-compare');
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="'+(shops.length+3)+'" class="ec">該当なし（取り込み済みの相場がありません）</td></tr>'; return; }
+  tb.innerHTML=rows.slice(0,500).map(function(row){
+    var cells=shops.map(function(s){
+      var m=row.byShop[s.shop];
+      if(!m) return '<td style="text-align:right;color:var(--ink3)">—</td>';
+      var p=Number(m.price750||m.price||0);
+      var isMin=(p===row.cheapest && p>0);
+      var inStock=(m.availability==='在庫あり');
+      var dot=m.availability?('<span style="color:'+(inStock?'#1a6e58':'#b03020')+';font-size:9px">●</span>'):'';
+      var inner='<span class="mono" style="font-weight:'+(isMin?'700':'400')+'">¥'+p.toLocaleString()+'</span> '+dot;
+      var cell=m.url?('<a href="'+escD(m.url)+'" target="_blank" rel="noopener" style="color:inherit;text-decoration:none" title="'+escD(m.name||'')+'">'+inner+'</a>'):inner;
+      return '<td style="text-align:right'+(isMin?';background:#fdf0d0':'')+'">'+cell+'</td>';
+    }).join('');
+    var nameCell='<div style="font-size:12px">'+escD(row.name)+'</div><div class="mono" style="font-size:9px;color:var(--ink3)">'+escD(row.bid)+'</div>';
+    return '<tr><td>'+nameCell+'</td><td>'+escD(row.cls||'—')+'</td>'+cells
+      +'<td style="text-align:right;font-weight:700;color:var(--gold-d)" class="mono">'+(row.cheapest?'¥'+row.cheapest.toLocaleString():'—')+'</td></tr>';
+  }).join('');
+}
+['s-cmp'].forEach(function(id){var e=g(id);if(e)e.addEventListener('input',renderCompare);});
+['f-cmp-class','f-cmp-sort'].forEach(function(id){var e=g(id);if(e)e.addEventListener('change',renderCompare);});
+if(g('f-cmp-instock')) g('f-cmp-instock').addEventListener('change',renderCompare);
+if(g('btn-compare-reload')) g('btn-compare-reload').addEventListener('click',function(){ loadBdata(); });
 
 // ══════════════════ 相場照合（marketStaging） ══════════════════
 var _MK_CLASS_DIGIT={Blanco:'1','Joven/Gold':'2',Reposado:'3',Anejo:'4',ExtraAnejo:'5'};
