@@ -364,10 +364,16 @@ html.embed .mbg{background:transparent!important}
           <select class="fsel" id="f-mk-status"><option value="pending">保留中のみ</option><option value="">すべて</option><option value="linked">紐付け済</option><option value="registered">登録済</option><option value="ignored">対象外</option></select>
           <span style="margin-left:auto;font-size:11px;color:var(--ink3)" id="mk-count"></span>
         </div>
+        <div id="mk-bulkbar" style="display:none;align-items:center;gap:10px;background:#fdf6ea;border:1px solid #e6d3ad;border-radius:var(--r);padding:8px 12px;margin-bottom:10px;font-size:12px;color:#7a5610">
+          <span id="mk-sel-count">0 銘柄選択中</span>
+          <button class="btn bp sm" id="btn-mk-bulk-link">まとめて紐付け</button>
+          <button class="btn bd sm" id="btn-mk-bulk-ign">まとめて対象外</button>
+          <button class="btn bs sm" id="btn-mk-bulk-clear" style="margin-left:auto">選択解除</button>
+        </div>
         <div class="tw"><table id="tbl-market">
-          <colgroup><col><col style="width:80px"><col style="width:100px"><col style="width:60px"><col style="width:82px"><col style="width:280px"></colgroup>
-          <thead><tr><th>銘柄（店舗横断）</th><th>クラス</th><th>相場/750ml</th><th>在庫</th><th>種別</th><th>操作</th></tr></thead>
-          <tbody id="tb-market"><tr><td colspan="6" class="ec">「相場照合」タブを開くと読み込みます</td></tr></tbody>
+          <colgroup><col style="width:34px"><col><col style="width:80px"><col style="width:100px"><col style="width:60px"><col style="width:82px"><col style="width:280px"></colgroup>
+          <thead><tr><th style="text-align:center"><input type="checkbox" id="mk-selall" title="表示中を全選択"></th><th>銘柄（店舗横断）</th><th>クラス</th><th>相場/750ml</th><th>在庫</th><th>種別</th><th>操作</th></tr></thead>
+          <tbody id="tb-market"><tr><td colspan="7" class="ec">「相場照合」タブを開くと読み込みます</td></tr></tbody>
         </table></div>
       </div>
     </div>
@@ -1504,10 +1510,21 @@ if(g('btn-compare-reload')) g('btn-compare-reload').addEventListener('click',fun
 
 // ══════════════════ 相場照合（marketStaging） ══════════════════
 var _MK_CLASS_DIGIT={Blanco:'1','Joven/Gold':'2',Reposado:'3',Anejo:'4',ExtraAnejo:'5'};
+var _MK_DIGIT_CLASS={'1':'Blanco','2':'Joven/Gold','3':'Reposado','4':'Anejo','5':'ExtraAnejo'};
+// 紐付け先ボトルのclassIdから相場照合クラス（classGuessトークン）を導出
+// キャッシュ未反映（登録直後）の場合はbottleId 12桁の8〜9桁目をclassIdとして使用
+function _classGuessFromBottleId(bottleId){
+  var b=cache.bottles.find(function(x){return x.id===bottleId;});
+  var cid=(b&&b.classId)||(String(bottleId||'').length>=9?String(bottleId).slice(7,9):'');
+  if(!cid||cid.length<2) return '';
+  if(cid[0]==='1') return 'Cristalino';
+  return _MK_DIGIT_CLASS[cid[1]]||'';
+}
 var _reconTarget=null;       // 紐付けモーダルの対象
 var _reconcileContext=null;  // 在庫登録フロー {stagingId, staging}
 var _masterReconContext=null;// マスタ登録フロー {stagings:[...]}（複数店まとめ）
 var _mkGroups=[];            // renderMarketで構築するグループ配列
+var _mkSel={};               // 複数選択（グループkey→true）
 
 // 店舗横断で同一銘柄をまとめるための正規化キー
 function _normName(s){
@@ -1565,9 +1582,12 @@ function renderMarket(){
   });
   groups.sort(function(a,b){ return (b.minPrice||0)-(a.minPrice||0); });
   _mkGroups=groups;
+  // 選択状態を現在のグループ（保留ありのみ選択可）に整理
+  var validKeys={}; groups.forEach(function(gr){ if(gr.anyPending) validKeys[gr.key]=true; });
+  Object.keys(_mkSel).forEach(function(k){ if(!validKeys[k]) delete _mkSel[k]; });
   var cnt=g('mk-count'); if(cnt) cnt.textContent=groups.length+' 銘柄 / '+list.length+' 品 ・ 保留 '+_pendingCount();
   var tb=g('tb-market');
-  if(!groups.length){ tb.innerHTML='<tr><td colspan="6" class="ec">該当なし</td></tr>'; return; }
+  if(!groups.length){ tb.innerHTML='<tr><td colspan="7" class="ec">該当なし</td></tr>'; _mkUpdateBulkBar(); return; }
   tb.innerHTML=groups.slice(0,300).map(function(gr,idx){
     var nm=gr.url?('<a href="'+escD(gr.url)+'" target="_blank" rel="noopener" style="color:inherit">'+escD(gr.name||'—')+'</a>'):escD(gr.name||'—');
     var pills=gr.shops.map(function(s){
@@ -1578,13 +1598,17 @@ function renderMarket(){
       return '<span class="badge '+col+'" style="margin:1px 3px 1px 0;font-size:10px">'+escD(lbl)+'</span>';
     }).join('');
     var stock=gr.shops.some(function(s){return s.availability;})?('<span style="color:'+(gr.inStock?'#1a6e58':'#b03020')+'">●</span>'):'—';
+    var chk=gr.anyPending
+      ? '<input type="checkbox" class="mk-chk" data-mk-chk="'+idx+'"'+(_mkSel[gr.key]?' checked':'')+'>'
+      : '';
     var acts= gr.anyPending
       ? '<button class="btn bs sm" data-mk-link="'+idx+'">紐付け</button>'
         +'<button class="btn bs sm" style="color:var(--gold-d)" data-mk-master="'+idx+'">マスタ登録</button>'
         +'<button class="btn bs sm" data-mk-stock="'+idx+'">在庫登録</button>'
         +'<button class="btn bd sm" data-mk-ign="'+idx+'">対象外</button>'
       : '<button class="btn bs sm" data-mk-reset="'+idx+'">保留に戻す</button>';
-    return '<tr'+(gr.anyPending?'':' style="opacity:.55"')+'><td style="font-size:12px">'+nm
+    return '<tr'+(gr.anyPending?'':' style="opacity:.55"')+'><td style="text-align:center">'+chk+'</td>'
+      +'<td style="font-size:12px">'+nm
       +'<div style="margin-top:3px">'+pills+'</div></td>'
       +'<td>'+escD(gr.classGuess||'—')+'</td>'
       +'<td class="mono" style="text-align:right">'+(gr.minPrice?'最安 ¥'+gr.minPrice.toLocaleString():'—')+'</td>'
@@ -1592,18 +1616,62 @@ function renderMarket(){
       +'<td>'+mkReasonBadge(gr.reason)+'</td>'
       +'<td><div class="acts">'+acts+'</div></td></tr>';
   }).join('');
+  _mkUpdateBulkBar();
+}
+// 選択（複数チェック＆一括）
+function _mkSelectedGroups(){ return _mkGroups.filter(function(gr){ return gr.anyPending && _mkSel[gr.key]; }); }
+function _mkSelectedPending(){ var out=[]; _mkSelectedGroups().forEach(function(gr){ gr.pending.forEach(function(s){ out.push(s); }); }); return out; }
+function _mkUpdateBulkBar(){
+  var bar=g('mk-bulkbar'); if(!bar) return;
+  var groups=_mkSelectedGroups(), items=_mkSelectedPending();
+  if(!groups.length){ bar.style.display='none'; var sa=g('mk-selall'); if(sa){sa.checked=false;sa.indeterminate=false;} return; }
+  bar.style.display='flex';
+  g('mk-sel-count').textContent=groups.length+' 銘柄 / '+items.length+' 品を選択中';
+  // 全選択チェックの状態
+  var selectable=_mkGroups.filter(function(gr){return gr.anyPending;});
+  var sa=g('mk-selall');
+  if(sa){ sa.checked=selectable.length>0&&groups.length===selectable.length; sa.indeterminate=groups.length>0&&groups.length<selectable.length; }
 }
 ['s-mk'].forEach(function(id){ var e=g(id); if(e) e.addEventListener('input',renderMarket); });
 ['f-mk-reason','f-mk-class','f-mk-status'].forEach(function(id){ var e=g(id); if(e) e.addEventListener('change',renderMarket); });
 if(g('btn-market-reload')) g('btn-market-reload').addEventListener('click',loadMarketStaging);
 if(g('tb-market')) g('tb-market').addEventListener('click',function(e){
-  var t=e.target.closest('[data-mk-link],[data-mk-master],[data-mk-stock],[data-mk-ign],[data-mk-reset]'); if(!t) return;
+  var t=e.target.closest('[data-mk-chk],[data-mk-link],[data-mk-master],[data-mk-stock],[data-mk-ign],[data-mk-reset]'); if(!t) return;
+  if(t.dataset.mkChk!=null){ var gr=_group(+t.dataset.mkChk); if(gr){ if(t.checked) _mkSel[gr.key]=true; else delete _mkSel[gr.key]; _mkUpdateBulkBar(); } return; }
   if(t.dataset.mkLink!=null) openMarketLinkGroup(+t.dataset.mkLink);
   else if(t.dataset.mkMaster!=null) startMasterRegisterGroup(+t.dataset.mkMaster);
   else if(t.dataset.mkStock!=null) startStockRegisterGroup(+t.dataset.mkStock);
   else if(t.dataset.mkIgn!=null) setStagingStatusGroup(+t.dataset.mkIgn,'ignored');
   else if(t.dataset.mkReset!=null) setStagingStatusGroup(+t.dataset.mkReset,'pending');
 });
+if(g('mk-selall')) g('mk-selall').addEventListener('change',function(){
+  var on=this.checked;
+  _mkGroups.forEach(function(gr){ if(gr.anyPending){ if(on) _mkSel[gr.key]=true; else delete _mkSel[gr.key]; } });
+  renderMarket();
+});
+if(g('btn-mk-bulk-clear')) g('btn-mk-bulk-clear').addEventListener('click',function(){ _mkSel={}; renderMarket(); });
+if(g('btn-mk-bulk-ign')) g('btn-mk-bulk-ign').addEventListener('click',function(){ setStagingStatusBulk('ignored'); });
+if(g('btn-mk-bulk-link')) g('btn-mk-bulk-link').addEventListener('click',openMarketLinkBulk);
+// 選択した複数銘柄の保留分を、1つの既存ボトルへまとめて紐付け
+function openMarketLinkBulk(){
+  var groups=_mkSelectedGroups(); if(!groups.length){ toast('銘柄を選択してください','err'); return; }
+  var pending=_mkSelectedPending(); if(!pending.length) return;
+  var minPrice=pending.reduce(function(m,s){var p=Number(s.price750||s.price||0);return (p&&(!m||p<m))?p:m;},0);
+  _reconTarget={ name:'選択'+groups.length+'銘柄', classGuess:'', pending:pending, minPrice:minPrice };
+  g('mk-link-target').innerHTML='<b>'+escD('選択 '+groups.length+' 銘柄 / '+pending.length+' 品')+'</b>　'+(minPrice?'最安 ¥'+minPrice.toLocaleString()+'/750ml':'')+'　<span style="color:var(--ink3)">まとめて1つのボトルへ紐付け</span>';
+  sv('mk-link-search', (pending[0]&&(pending[0].brandGuess||pending[0].name))||'');
+  renderLinkResults(); openM('m-market-link');
+}
+function setStagingStatusBulk(status){
+  var pending=_mkSelectedPending(); if(!pending.length){ toast('銘柄を選択してください','err'); return; }
+  if(status==='ignored' && !confirm('選択した '+pending.length+' 品を対象外にしますか？')) return;
+  var batch=db.batch(), now=firebase.firestore.FieldValue.serverTimestamp();
+  pending.forEach(function(s){ batch.set(db.collection('marketStaging').doc(s.id),{status:status,updatedAt:now},{merge:true}); });
+  batch.commit().then(function(){
+    pending.forEach(function(s){ s.status=status; });
+    _mkSel={}; setCnt('market',_pendingCount()); renderMarket();
+  }).catch(function(e){ toast('更新失敗: '+e.message,'err'); });
+}
 function _group(idx){ return _mkGroups[idx]; }
 // グループ内の対象staging（pending中）。resetは全件対象。
 function _groupTargets(gr,all){ return all?gr.shops:gr.pending; }
@@ -1648,8 +1716,10 @@ if(g('mk-link-results')) g('mk-link-results').addEventListener('click',function(
 });
 function _marketDocFromStaging(s, bottleId, extra){
   var r=cache.bdata.find(function(x){return x.id===bottleId;})||{};
+  var bm=cache.bottles.find(function(x){return x.id===bottleId;})||{};
   return Object.assign({
     shop:s.shop||'musashiya', shopName:s.shopName||'武蔵屋', bottleId:bottleId,
+    classId:bm.classId||'', classGuess:s.classGuess||_classGuessFromBottleId(bottleId),
     teqBottleJa:bdName(r,'ja')||'', teqBrandJa:'',
     name:s.name||'', price:(s.price!=null&&s.price!==''?Number(s.price):null),
     price750:(s.price750!=null&&s.price750!==''?Number(s.price750):null),
@@ -1661,13 +1731,16 @@ function _marketDocFromStaging(s, bottleId, extra){
 function doMarketLinkGroup(gr, bottleId){
   var targets=gr.pending||[]; if(!targets.length){ closeM('m-market-link'); return; }
   var batch=db.batch(), now=firebase.firestore.FieldValue.serverTimestamp();
+  var cg=_classGuessFromBottleId(bottleId);
   targets.forEach(function(s){
     var shop=s.shop||'musashiya';
     batch.set(db.collection('marketPrices').doc(shop+'__'+bottleId), _marketDocFromStaging(s,bottleId), {merge:true});
-    batch.set(db.collection('marketStaging').doc(s.id), {status:'linked',linkedBottleId:bottleId,updatedAt:now}, {merge:true});
+    var upd={status:'linked',linkedBottleId:bottleId,updatedAt:now};
+    if(!s.classGuess&&cg) upd.classGuess=cg; // クラス不明時のみ紐付け先ボトルのクラスで補完
+    batch.set(db.collection('marketStaging').doc(s.id), upd, {merge:true});
   });
   batch.commit().then(function(){
-    targets.forEach(function(s){ s.status='linked'; s.linkedBottleId=bottleId; });
+    targets.forEach(function(s){ s.status='linked'; s.linkedBottleId=bottleId; if(!s.classGuess&&cg) s.classGuess=cg; });
     toast(targets.length+'店を紐付けました'); closeM('m-market-link');
     setCnt('market',_pendingCount()); renderMarket(); loadBdata();
   }).catch(function(e){ toast('紐付け失敗: '+e.message,'err'); });
@@ -1694,13 +1767,16 @@ function afterBdataSaved(newId){
   var ctx=_reconcileContext; _reconcileContext=null;
   var targets=ctx.stagings||[]; if(!targets.length) return;
   var batch=db.batch(), now=firebase.firestore.FieldValue.serverTimestamp();
+  var cg=_classGuessFromBottleId(newId);
   targets.forEach(function(s){
     var shop=s.shop||'musashiya';
     batch.set(db.collection('marketPrices').doc(shop+'__'+newId), _marketDocFromStaging(s,newId,{matchType:'registered'}), {merge:true});
-    batch.set(db.collection('marketStaging').doc(s.id), {status:'registered',linkedBottleId:newId,updatedAt:now}, {merge:true});
+    var upd={status:'registered',linkedBottleId:newId,updatedAt:now};
+    if(!s.classGuess&&cg) upd.classGuess=cg;
+    batch.set(db.collection('marketStaging').doc(s.id), upd, {merge:true});
   });
   batch.commit().then(function(){
-    targets.forEach(function(s){ s.status='registered'; s.linkedBottleId=newId; });
+    targets.forEach(function(s){ s.status='registered'; s.linkedBottleId=newId; if(!s.classGuess&&cg) s.classGuess=cg; });
     toast('在庫登録＋'+targets.length+'店の相場を紐付けました'); setCnt('market',_pendingCount()); renderMarket();
   }).catch(function(e){ toast('相場紐付け失敗: '+e.message,'err'); });
 }
@@ -1721,13 +1797,16 @@ function afterMasterRegistered(newBottleId){
   var ctx=_masterReconContext; _masterReconContext=null;
   var targets=ctx.stagings||[]; if(!targets.length) return;
   var batch=db.batch(), now=firebase.firestore.FieldValue.serverTimestamp();
+  var cg=_classGuessFromBottleId(newBottleId);
   targets.forEach(function(s){
     var shop=s.shop||'musashiya';
     batch.set(db.collection('marketPrices').doc(shop+'__'+newBottleId), _marketDocFromStaging(s,newBottleId,{matchType:'registered'}), {merge:true});
-    batch.set(db.collection('marketStaging').doc(s.id), {status:'registered',linkedBottleId:newBottleId,updatedAt:now}, {merge:true});
+    var upd={status:'registered',linkedBottleId:newBottleId,updatedAt:now};
+    if(!s.classGuess&&cg) upd.classGuess=cg;
+    batch.set(db.collection('marketStaging').doc(s.id), upd, {merge:true});
   });
   batch.commit().then(function(){
-    targets.forEach(function(s){ s.status='registered'; s.linkedBottleId=newBottleId; });
+    targets.forEach(function(s){ s.status='registered'; s.linkedBottleId=newBottleId; if(!s.classGuess&&cg) s.classGuess=cg; });
     toast('マスタ登録＋'+targets.length+'店の相場を紐付けました'); setCnt('market',_pendingCount()); renderMarket();
   }).catch(function(e){ toast('相場紐付け失敗: '+e.message,'err'); });
 }
