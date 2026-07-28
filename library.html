@@ -38,6 +38,19 @@ img{-webkit-user-drag:none;user-drag:none}
 .toc .num{font-family:var(--serif);color:var(--gold-d);font-weight:700;min-width:26px}
 .toc .tj{font-size:14px;font-weight:600}
 .toc .te{font-size:11px;color:var(--ink3)}
+.toc a.toc-big{background:var(--cream2)}
+.toc a.toc-big .num{font-size:15px}
+.toc a.toc-mid{padding-left:40px}
+.toc a.toc-mid .num{min-width:44px;font-weight:600;font-size:12px}
+.toc a.toc-sub{padding-left:66px;background:#fffef9}
+.toc a.toc-sub .num{min-width:60px;font-weight:400;font-size:11px;color:var(--ink3)}
+.toc a.toc-mid .tj,.toc a.toc-sub .tj{font-size:12px;font-weight:500}
+.frontlinks{display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
+.frontlink{display:flex;align-items:baseline;gap:10px;background:var(--white);border:1px solid var(--border2);border-radius:var(--r);padding:12px 14px;text-decoration:none;color:inherit}
+.frontlink:hover{border-color:var(--gold)}
+.frontlink .fj{font-size:14px;font-weight:600;color:var(--gold-d)}
+.frontlink .fe{font-size:11px;color:var(--ink3)}
+.frontlink .arw{margin-left:auto;color:var(--ink3)}
 .langbar{display:none;gap:6px;margin:0 0 12px;flex-wrap:wrap}
 .langbar button{border:1px solid var(--border2);background:var(--white);color:var(--ink2);border-radius:20px;padding:6px 14px;font-size:12px;cursor:pointer}
 .langbar button.on{background:var(--gold-d);color:var(--cream);border-color:var(--gold-d)}
@@ -141,22 +154,38 @@ function renderDoc(docId){
     chs.sort(function(a,b){return (a.order||0)-(b.order||0);});
     var front=chs.filter(function(c){return c.isFront;});
     var toc=chs.filter(function(c){return !c.isFront;});
+    var docQ='/library_chapter.html?doc='+encodeURIComponent(docId)+'&ch=';
     var html='<div class="pgtitle">'+esc(doc.title||docId)+'</div>'+(doc.subtitle?'<div class="pgsub">'+esc(doc.subtitle)+'</div>':'');
+    // 分類なし文書（冒頭文・CONSIDERANDO・PREFACIO 等）＝各ページへのリンク
     if(front.length){
-      html+='<div class="sec-h">主文</div>'+langBar()+'<div class="rowsBody lang-ja" id="rowsBody">';
-      front.forEach(function(c){ html+=rowsHtml(c.rows); });
+      html+='<div class="sec-h">序文</div><div class="frontlinks">';
+      front.forEach(function(c){
+        html+='<a class="frontlink" href="'+docQ+encodeURIComponent(c.id)+'">'
+          +'<span><span class="fj">'+esc(c.titleJa||c.titleEs||'—')+'</span>'
+          +(c.titleEs&&(c.titleJa)?'<div class="fe">'+esc(c.titleEs)+'</div>':'')+'</span><span class="arw">›</span></a>';
+      });
       html+='</div>';
     }
+    // 目次（大→中→小のツリー。中小は各章内の節へアンカーリンク）
     html+='<div class="sec-h">目次</div><div class="toc">';
     if(!toc.length) html+='<div class="empty">章がまだありません。</div>';
     else toc.forEach(function(c){
-      html+='<a href="/library_chapter.html?doc='+encodeURIComponent(docId)+'&ch='+encodeURIComponent(c.id)+'">'
-        +'<span class="num">'+esc(c.num||'')+'</span><span><span class="tj">'+esc(c.titleJa||c.titleEs||'—')+'</span>'
-        +(c.titleEs?'<div class="te">'+esc(c.titleEs)+'</div>':'')+'</span></a>';
+      var chUrl=docQ+encodeURIComponent(c.id);
+      html+='<a class="toc-big" href="'+chUrl+'"><span class="num">'+esc(c.num||'')+'</span>'
+        +'<span><span class="tj">'+esc(c.titleJa||c.titleEs||'—')+'</span>'
+        +(c.titleEs&&c.titleJa?'<div class="te">'+esc(c.titleEs)+'</div>':'')+'</span></a>';
+      (c.rows||[]).forEach(function(r){
+        if(r.t!=='sec'||!r.mid) return;
+        var sub=r.sub&&String(r.sub).length;
+        var n=[c.num,r.mid,r.sub].filter(Boolean).join('.');
+        var anchor='s-'+esc(r.mid)+(r.sub?('-'+esc(r.sub)):'');
+        var tEs=r.titleEs||r.title||'', tJa=r.titleJa||'';
+        html+='<a class="'+(sub?'toc-sub':'toc-mid')+'" href="'+chUrl+'#'+anchor+'">'
+          +'<span class="num">'+esc(n)+'</span><span class="tj">'+esc(tJa||tEs||'—')+'</span></a>';
+      });
     });
     html+='</div>';
     g('content').innerHTML=html;
-    bindLangBar();
   }).catch(function(e){ g('content').innerHTML='<div class="empty">読み込みに失敗しました: '+esc(e.message)+'</div>'; });
 }
 </script>
