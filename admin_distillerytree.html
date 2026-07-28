@@ -125,6 +125,13 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
 .lvl-brand .level-badge{background:var(--c-brand);}
 .lvl-bottle .level-badge{background:var(--c-bottle);}
 .lvl-bdata .level-badge{background:var(--c-bdata);}
+/* 非表示ブランド（ツリー上のみ表示。他画面では非表示） */
+.tree-node.brand-hidden>.tree-row{opacity:.5;}
+.tree-node.brand-hidden>.tree-row .tree-name{text-decoration:line-through;}
+.badge-hidden{display:inline-block;font-size:9px;font-weight:700;color:#fff;background:#b03020;border-radius:3px;padding:1px 5px;margin-left:6px;vertical-align:middle;}
+.act-hide{font-size:10px;color:#b03020;background:#fff;border:1px solid var(--cream3);border-radius:3px;padding:2px 6px;white-space:nowrap;cursor:pointer;}
+.act-hide:hover{border-color:#b03020;}
+.act-hide.on{color:#1a6e58;} .act-hide.on:hover{border-color:#1a6e58;}
 /* 整合性チェック */
 #audit-panel{background:#fff;border-bottom:1px solid var(--cream3);padding:10px 14px;display:none;flex-shrink:0;max-height:320px;overflow-y:auto;}
 .audit-summary{font-size:12px;color:var(--ink2);margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
@@ -535,6 +542,18 @@ function deleteRecord(col, docId, label){
   }).catch(function(e){ alert('削除失敗: '+e.message); });
 }
 
+// ブランドの非表示/表示を切替（このツリー画面のみ操作可。非表示は他画面で削除同等）
+function toggleBrandHidden(brand){
+  var next=!brand.hidden;
+  if(next && !confirm('ブランド「'+(brand.brandEs||brand.brandJa||brand.id)+'」を非表示にします。\nこのツリー画面以外（管理一覧・会員ページ等）では表示されなくなります（削除同等）。\nよろしいですか？')) return;
+  db.collection('brands').doc(brand.id).set({hidden:next,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .then(function(){
+      brand.hidden=next;
+      var arr=getArr('brands'); var t=arr.find(function(r){return r.id===brand.id;}); if(t) t.hidden=next;
+      buildTree(); renderTree();
+    }).catch(function(e){ alert('更新失敗: '+e.message); });
+}
+
 // ── ツリー描画 ────────────────────────────────────────────────────────
 var nomFilterVal='';
 var openState={};
@@ -560,7 +579,7 @@ function withSuffix(name, sfx){
 
 function makeRow(lv, r, stateKey, hasChildren){
   var node=document.createElement('div');
-  node.className='tree-node lvl-'+lv.key;
+  node.className='tree-node lvl-'+lv.key+((lv.key==='brand'&&r.hidden)?' brand-hidden':'');
 
   var row=document.createElement('div');
   row.className='tree-row';
@@ -604,6 +623,13 @@ function makeRow(lv, r, stateKey, hasChildren){
     n2Span.className='tree-name2';
     n2Span.textContent=n2;
     infoDiv.appendChild(n2Span);
+  }
+  if(lv.key==='brand' && r.hidden){
+    var hb=document.createElement('span');
+    hb.className='badge-hidden';
+    hb.textContent='非表示';
+    hb.title='他画面では非表示（削除同等）。ここで再表示できます。';
+    infoDiv.appendChild(hb);
   }
 
   row.appendChild(infoDiv);
@@ -661,6 +687,14 @@ function makeRow(lv, r, stateKey, hasChildren){
     btAddA.textContent='＋BT';
     btAddA.title='このブランドの新規ボトルマスタを登録';
     acts.appendChild(btAddA);
+
+    // 非表示/表示トグル（この画面のみ操作可。非表示ブランドは他画面で削除同等に扱う）
+    var hideBtn=document.createElement('button');
+    hideBtn.className='act-hide'+(r.hidden?' on':'');
+    hideBtn.textContent=r.hidden?'表示':'非表示';
+    hideBtn.title=r.hidden?'再表示する（他画面にも出るようになります）':'非表示にする（他画面では削除同等・表示されません）';
+    (function(rec){ hideBtn.addEventListener('click',function(e){ e.stopPropagation(); toggleBrandHidden(rec); }); })(r);
+    acts.appendChild(hideBtn);
   }
 
   if(lv.canDup){
