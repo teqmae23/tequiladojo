@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>テキーラ書庫 — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;
+  --border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);
+  --r:10px;--rl:14px;--sans:'Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif;--serif:'Hiragino Mincho ProN',serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh;-webkit-user-select:none;-moz-user-select:none;user-select:none}
+img{-webkit-user-drag:none;user-drag:none}
+#gate{min-height:100vh;display:flex;align-items:center;justify-content:center;color:var(--ink3);font-size:14px}
+#app{display:none}
+.topbar{background:var(--ink);padding:10px 16px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:20}
+.top-back{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.3);color:#fff;font-size:12px;padding:6px 12px;border-radius:8px;cursor:pointer;text-decoration:none}
+.top-brand{font-family:var(--serif);font-size:16px;color:var(--gold-l);letter-spacing:.06em}
+.wrap{max-width:1100px;margin:0 auto;padding:20px 16px 60px}
+.pgtitle{font-family:var(--serif);font-size:22px;color:var(--gold-d);margin-bottom:4px}
+.pgsub{font-size:12px;color:var(--ink3);margin-bottom:20px}
+.doc-card{display:block;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:16px 18px;margin-bottom:12px;text-decoration:none;color:inherit;box-shadow:0 1px 8px rgba(24,17,10,.05)}
+.doc-card:hover{border-color:var(--gold)}
+.doc-card .t{font-size:15px;font-weight:700;color:var(--gold-d)}
+.doc-card .s{font-size:12px;color:var(--ink3);margin-top:3px}
+.sec-h{font-family:var(--serif);font-size:16px;color:var(--gold-d);margin:22px 0 10px;border-bottom:2px solid var(--cream3);padding-bottom:5px}
+.toc{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden}
+.toc a{display:flex;gap:10px;align-items:baseline;padding:11px 14px;border-bottom:1px solid var(--cream2);text-decoration:none;color:var(--ink)}
+.toc a:last-child{border-bottom:none}
+.toc a:hover{background:var(--cream2)}
+.toc .num{font-family:var(--serif);color:var(--gold-d);font-weight:700;min-width:26px}
+.toc .tj{font-size:14px;font-weight:600}
+.toc .te{font-size:11px;color:var(--ink3)}
+.langbar{display:none;gap:6px;margin:0 0 12px;flex-wrap:wrap}
+.langbar button{border:1px solid var(--border2);background:var(--white);color:var(--ink2);border-radius:20px;padding:6px 14px;font-size:12px;cursor:pointer}
+.langbar button.on{background:var(--gold-d);color:var(--cream);border-color:var(--gold-d)}
+.colhead{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;padding:6px 0;border-bottom:2px solid var(--cream3);font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.04em}
+.row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;padding:11px 0;border-bottom:1px solid var(--cream2)}
+.cell{font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word}
+.cell.note{color:var(--gold-d);background:#fffdf6;border-radius:6px;padding:6px 8px}
+.row-table{display:block;text-align:center;padding:14px 0;border-bottom:1px solid var(--cream2)}
+.row-table .tcap{font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:8px}
+.row-table img{max-width:100%;border:1px solid var(--border2);border-radius:8px}
+.row-table .tnote{max-width:760px;margin:8px auto 0;text-align:left;font-size:12px;color:var(--gold-d);background:#fffdf6;border-radius:6px;padding:6px 10px}
+.empty{text-align:center;color:var(--ink3);padding:40px 16px;font-size:13px}
+@media(max-width:820px){
+  .colhead{display:none}
+  .row{grid-template-columns:1fr;gap:0}
+  .cell{display:none;padding:2px 0}
+  .lang-es .cell.es,.lang-en .cell.en,.lang-ja .cell.ja,.lang-note .cell.note{display:block}
+  .langbar{display:flex}
+}
+</style>
+</head>
+<body>
+<div id="gate">読み込み中…</div>
+<div id="app">
+  <div class="topbar"><a class="top-back" id="backBtn" href="/member.html">← 戻る</a><span class="top-brand">📚 テキーラ書庫</span></div>
+  <div class="wrap" id="content"></div>
+</div>
+<script>
+firebase.initializeApp({apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",authDomain:"tequiladojo.firebaseapp.com",projectId:"tequiladojo",storageBucket:"tequiladojo.firebasestorage.app",messagingSenderId:"56663296233",appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"});
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function fmt(s){return esc(s).replace(/\n/g,'<br>');}
+function qp(k){return new URLSearchParams(location.search).get(k);}
+// 複製制限（できる範囲のソフト制限）
+document.addEventListener('contextmenu',function(e){e.preventDefault();});
+['copy','cut','dragstart'].forEach(function(ev){document.addEventListener(ev,function(e){e.preventDefault();});});
+
+auth.onAuthStateChanged(function(user){
+  if(!user){ location.replace('/member.html'); return; }
+  g('gate').style.display='none'; g('app').style.display='block';
+  var doc=qp('doc');
+  if(doc) renderDoc(doc); else renderList();
+});
+
+function renderList(){
+  g('backBtn').href='/member.html';
+  db.collection('libraryDocs').where('published','==',true).get().then(function(snap){
+    var docs=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    docs.sort(function(a,b){return (a.order||0)-(b.order||0);});
+    var html='<div class="pgtitle">テキーラ書庫</div><div class="pgsub">テキーラの規格・資料を対訳と解説で読む書庫です。</div>';
+    if(!docs.length){ html+='<div class="empty">公開中の文書はまだありません。</div>'; }
+    else html+=docs.map(function(d){
+      return '<a class="doc-card" href="/library.html?doc='+encodeURIComponent(d.id)+'"><div class="t">'+esc(d.title||d.id)+'</div>'+(d.subtitle?'<div class="s">'+esc(d.subtitle)+'</div>':'')+'</a>';
+    }).join('');
+    g('content').innerHTML=html;
+  }).catch(function(e){ g('content').innerHTML='<div class="empty">読み込みに失敗しました: '+esc(e.message)+'</div>'; });
+}
+
+function langBar(){
+  return '<div class="langbar" id="langbar">'
+    +'<button data-l="es">ES原文</button><button data-l="en">英語</button>'
+    +'<button class="on" data-l="ja">日本語</button><button data-l="note">解説</button></div>';
+}
+function bindLangBar(){
+  var bar=g('langbar'), body=g('rowsBody'); if(!bar||!body) return;
+  body.className='rowsBody lang-ja';
+  bar.addEventListener('click',function(e){
+    var b=e.target.closest('button[data-l]'); if(!b) return;
+    bar.querySelectorAll('button').forEach(function(x){x.classList.remove('on');}); b.classList.add('on');
+    body.className='rowsBody lang-'+b.dataset.l;
+  });
+}
+function rowsHtml(rows){
+  return '<div class="colhead"><div>ES 原文</div><div>English</div><div>日本語</div><div>解説</div></div>'
+    +(rows||[]).map(function(r){
+      if(r.t==='table'){
+        return '<div class="row-table">'+(r.caption?'<div class="tcap">'+esc(r.caption)+'</div>':'')
+          +(r.img?'<img src="'+esc(r.img)+'" alt="">':'')
+          +(r.note?'<div class="tnote"><b>解説:</b> '+fmt(r.note)+'</div>':'')+'</div>';
+      }
+      return '<div class="row"><div class="cell es">'+fmt(r.es)+'</div><div class="cell en">'+fmt(r.en)+'</div>'
+        +'<div class="cell ja">'+fmt(r.ja)+'</div><div class="cell note">'+fmt(r.note)+'</div></div>';
+    }).join('');
+}
+
+function renderDoc(docId){
+  g('backBtn').href='/library.html';
+  Promise.all([
+    db.collection('libraryDocs').doc(docId).get(),
+    db.collection('libraryDocs').doc(docId).collection('chapters').get()
+  ]).then(function(res){
+    var doc=res[0].exists?res[0].data():null;
+    if(!doc || !doc.published){ g('content').innerHTML='<div class="empty">この文書は公開されていません。</div>'; return; }
+    var chs=res[1].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    chs.sort(function(a,b){return (a.order||0)-(b.order||0);});
+    var front=chs.filter(function(c){return c.isFront;});
+    var toc=chs.filter(function(c){return !c.isFront;});
+    var html='<div class="pgtitle">'+esc(doc.title||docId)+'</div>'+(doc.subtitle?'<div class="pgsub">'+esc(doc.subtitle)+'</div>':'');
+    if(front.length){
+      html+='<div class="sec-h">主文</div>'+langBar()+'<div class="rowsBody lang-ja" id="rowsBody">';
+      front.forEach(function(c){ html+=rowsHtml(c.rows); });
+      html+='</div>';
+    }
+    html+='<div class="sec-h">目次</div><div class="toc">';
+    if(!toc.length) html+='<div class="empty">章がまだありません。</div>';
+    else toc.forEach(function(c){
+      html+='<a href="/library_chapter.html?doc='+encodeURIComponent(docId)+'&ch='+encodeURIComponent(c.id)+'">'
+        +'<span class="num">'+esc(c.num||'')+'</span><span><span class="tj">'+esc(c.titleJa||c.titleEs||'—')+'</span>'
+        +(c.titleEs?'<div class="te">'+esc(c.titleEs)+'</div>':'')+'</span></a>';
+    });
+    html+='</div>';
+    g('content').innerHTML=html;
+    bindLangBar();
+  }).catch(function(e){ g('content').innerHTML='<div class="empty">読み込みに失敗しました: '+esc(e.message)+'</div>'; });
+}
+</script>
+</body>
+</html>
