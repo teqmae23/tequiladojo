@@ -1585,7 +1585,7 @@ function renderMarket(){
   // 選択状態を現在のグループ（保留ありのみ選択可）に整理
   var validKeys={}; groups.forEach(function(gr){ if(gr.anyPending) validKeys[gr.key]=true; });
   Object.keys(_mkSel).forEach(function(k){ if(!validKeys[k]) delete _mkSel[k]; });
-  var cnt=g('mk-count'); if(cnt) cnt.textContent=groups.length+' 銘柄 / '+list.length+' 品 ・ 保留 '+_pendingCount();
+  var cnt=g('mk-count'); if(cnt) cnt.textContent=groups.length+' 銘柄（'+list.length+' 店舗価格）・ 保留 '+_pendingCount();
   var tb=g('tb-market');
   if(!groups.length){ tb.innerHTML='<tr><td colspan="7" class="ec">該当なし</td></tr>'; _mkUpdateBulkBar(); return; }
   tb.innerHTML=groups.slice(0,300).map(function(gr,idx){
@@ -1626,7 +1626,7 @@ function _mkUpdateBulkBar(){
   var groups=_mkSelectedGroups(), items=_mkSelectedPending();
   if(!groups.length){ bar.style.display='none'; var sa=g('mk-selall'); if(sa){sa.checked=false;sa.indeterminate=false;} return; }
   bar.style.display='flex';
-  g('mk-sel-count').textContent=groups.length+' 銘柄 / '+items.length+' 品を選択中';
+  g('mk-sel-count').textContent=groups.length+' 銘柄（'+items.length+' 店舗の価格）を選択中';
   // 全選択チェックの状態
   var selectable=_mkGroups.filter(function(gr){return gr.anyPending;});
   var sa=g('mk-selall');
@@ -1701,17 +1701,17 @@ function openMarketLinkBulk(){
   var groups=_mkSelectedGroups(); if(!groups.length){ toast('銘柄を選択してください','err'); return; }
   var pending=_mkSelectedPending(); if(!pending.length) return;
   var minPrice=pending.reduce(function(m,s){var p=Number(s.price750||s.price||0);return (p&&(!m||p<m))?p:m;},0);
-  _reconTarget={ name:'選択'+groups.length+'銘柄', classGuess:'', pending:pending, minPrice:minPrice };
-  g('mk-link-target').innerHTML='<b>'+escD('選択 '+groups.length+' 銘柄 / '+pending.length+' 品')+'</b>　'+(minPrice?'最安 ¥'+minPrice.toLocaleString()+'/750ml':'')+'　<span style="color:var(--ink3)">まとめて1つのボトルへ紐付け</span>';
+  _reconTarget={ name:'選択'+groups.length+'銘柄', classGuess:'', pending:pending, minPrice:minPrice, _bulk:true, _groupCount:groups.length };
+  g('mk-link-target').innerHTML='<b>'+escD('選択 '+groups.length+' 銘柄（'+pending.length+' 店舗の価格）')+'</b>　'+(minPrice?'最安 ¥'+minPrice.toLocaleString()+'/750ml':'')+'<br><span style="color:var(--red)">下で選んだ1つのボトルに、これら全てをまとめて紐付けます（別商品を混ぜないよう注意）。</span>';
   sv('mk-link-search', (pending[0]&&(pending[0].brandGuess||pending[0].name))||'');
   renderLinkResults(); openM('m-market-link');
 }
 function setStagingStatusBulk(status){
   var pending=_mkSelectedPending(); if(!pending.length){ toast('銘柄を選択してください','err'); return; }
-  if(status==='ignored' && !confirm('選択した '+pending.length+' 品を対象外にしますか？')) return;
-  var batch=db.batch(), now=firebase.firestore.FieldValue.serverTimestamp();
-  pending.forEach(function(s){ batch.set(db.collection('marketStaging').doc(s.id),{status:status,updatedAt:now},{merge:true}); });
-  batch.commit().then(function(){
+  if(status==='ignored' && !confirm('選択した '+pending.length+' 店舗の価格を対象外にしますか？')) return;
+  var now=firebase.firestore.FieldValue.serverTimestamp();
+  var ops=pending.map(function(s){ return {ref:db.collection('marketStaging').doc(s.id), data:{status:status,updatedAt:now}}; });
+  _commitOps(ops).then(function(){
     pending.forEach(function(s){ s.status=status; });
     _mkSel={}; setCnt('market',_pendingCount()); renderMarket();
   }).catch(function(e){ toast('更新失敗: '+e.message,'err'); });
@@ -1774,21 +1774,45 @@ function _marketDocFromStaging(s, bottleId, extra){
     source:s.source||'musashiya_scrape', updatedAt:firebase.firestore.FieldValue.serverTimestamp()
   }, extra||{});
 }
+// Firestoreバッチ上限(500オペ)を超えないよう分割コミットする
+// ops: [{ref, data}]（すべて set(merge:true)）。順次コミットしてPromiseを返す
+function _commitOps(ops){
+  var i=0;
+  function step(){
+    if(i>=ops.length) return Promise.resolve();
+    var b=db.batch();
+    ops.slice(i,i+450).forEach(function(o){ b.set(o.ref, o.data, {merge:true}); });
+    i+=450;
+    return b.commit().then(step);
+  }
+  return step();
+}
 // グループ内の保留分を、選んだ既存ボトルへまとめて紐付け（店ごとにmarketPrices）
 function doMarketLinkGroup(gr, bottleId){
   var targets=gr.pending||[]; if(!targets.length){ closeM('m-market-link'); return; }
-  var batch=db.batch(), now=firebase.firestore.FieldValue.serverTimestamp();
+  var bt=cache.bottles.find(function(x){return x.id===bottleId;})||{};
+  var btName=bt.bottleEs||bt.bottleJa||bottleId;
+  // まとめて紐付け（複数銘柄選択）時は、誤って別商品を1つのボトルへ紐付けないよう確認
+  if(gr._bulk){
+    var names=[]; targets.forEach(function(s){ var n=(s.name||'').trim(); if(n&&names.indexOf(n)<0) names.push(n); });
+    var list=names.slice(0,8).map(function(n){return '・'+n;}).join('\n')+(names.length>8?'\n…他'+(names.length-8)+'件':'');
+    var warn=(gr._groupCount>1)?'\n\n⚠ 異なる銘柄が'+gr._groupCount+'件含まれています。同一商品か必ず確認してください。':'';
+    if(!confirm('次の '+targets.length+' 店舗の価格を すべて\n「'+btName+'」\nに紐付けます。\n\n'+list+warn+'\n\nよろしいですか？')) return;
+  }
+  var now=firebase.firestore.FieldValue.serverTimestamp();
   var cg=_classGuessFromBottleId(bottleId);
+  var ops=[];
   targets.forEach(function(s){
     var shop=s.shop||'musashiya';
-    batch.set(db.collection('marketPrices').doc(shop+'__'+bottleId), _marketDocFromStaging(s,bottleId), {merge:true});
+    ops.push({ref:db.collection('marketPrices').doc(shop+'__'+bottleId), data:_marketDocFromStaging(s,bottleId)});
     var upd={status:'linked',linkedBottleId:bottleId,updatedAt:now};
     if(!s.classGuess&&cg) upd.classGuess=cg; // クラス不明時のみ紐付け先ボトルのクラスで補完
-    batch.set(db.collection('marketStaging').doc(s.id), upd, {merge:true});
+    ops.push({ref:db.collection('marketStaging').doc(s.id), data:upd});
   });
-  batch.commit().then(function(){
+  _commitOps(ops).then(function(){
     targets.forEach(function(s){ s.status='linked'; s.linkedBottleId=bottleId; if(!s.classGuess&&cg) s.classGuess=cg; });
-    toast(targets.length+'店を紐付けました'); closeM('m-market-link');
+    if(gr._bulk) _mkSel={}; // まとめて紐付け後は選択を明示クリア（チェック残り防止）
+    toast(targets.length+'件を紐付けました'); closeM('m-market-link');
     setCnt('market',_pendingCount()); renderMarket(); loadBdata();
   }).catch(function(e){ toast('紐付け失敗: '+e.message,'err'); });
 }
