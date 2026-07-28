@@ -1504,6 +1504,16 @@ if(g('btn-compare-reload')) g('btn-compare-reload').addEventListener('click',fun
 
 // ══════════════════ 相場照合（marketStaging） ══════════════════
 var _MK_CLASS_DIGIT={Blanco:'1','Joven/Gold':'2',Reposado:'3',Anejo:'4',ExtraAnejo:'5'};
+var _MK_DIGIT_CLASS={'1':'Blanco','2':'Joven/Gold','3':'Reposado','4':'Anejo','5':'ExtraAnejo'};
+// 紐付け先ボトルのclassIdから相場照合クラス（classGuessトークン）を導出
+// キャッシュ未反映（登録直後）の場合はbottleId 12桁の8〜9桁目をclassIdとして使用
+function _classGuessFromBottleId(bottleId){
+  var b=cache.bottles.find(function(x){return x.id===bottleId;});
+  var cid=(b&&b.classId)||(String(bottleId||'').length>=9?String(bottleId).slice(7,9):'');
+  if(!cid||cid.length<2) return '';
+  if(cid[0]==='1') return 'Cristalino';
+  return _MK_DIGIT_CLASS[cid[1]]||'';
+}
 var _reconTarget=null;       // 紐付けモーダルの対象
 var _reconcileContext=null;  // 在庫登録フロー {stagingId, staging}
 var _masterReconContext=null;// マスタ登録フロー {stagings:[...]}（複数店まとめ）
@@ -1648,8 +1658,10 @@ if(g('mk-link-results')) g('mk-link-results').addEventListener('click',function(
 });
 function _marketDocFromStaging(s, bottleId, extra){
   var r=cache.bdata.find(function(x){return x.id===bottleId;})||{};
+  var bm=cache.bottles.find(function(x){return x.id===bottleId;})||{};
   return Object.assign({
     shop:s.shop||'musashiya', shopName:s.shopName||'武蔵屋', bottleId:bottleId,
+    classId:bm.classId||'', classGuess:s.classGuess||_classGuessFromBottleId(bottleId),
     teqBottleJa:bdName(r,'ja')||'', teqBrandJa:'',
     name:s.name||'', price:(s.price!=null&&s.price!==''?Number(s.price):null),
     price750:(s.price750!=null&&s.price750!==''?Number(s.price750):null),
@@ -1661,13 +1673,16 @@ function _marketDocFromStaging(s, bottleId, extra){
 function doMarketLinkGroup(gr, bottleId){
   var targets=gr.pending||[]; if(!targets.length){ closeM('m-market-link'); return; }
   var batch=db.batch(), now=firebase.firestore.FieldValue.serverTimestamp();
+  var cg=_classGuessFromBottleId(bottleId);
   targets.forEach(function(s){
     var shop=s.shop||'musashiya';
     batch.set(db.collection('marketPrices').doc(shop+'__'+bottleId), _marketDocFromStaging(s,bottleId), {merge:true});
-    batch.set(db.collection('marketStaging').doc(s.id), {status:'linked',linkedBottleId:bottleId,updatedAt:now}, {merge:true});
+    var upd={status:'linked',linkedBottleId:bottleId,updatedAt:now};
+    if(!s.classGuess&&cg) upd.classGuess=cg; // クラス不明時のみ紐付け先ボトルのクラスで補完
+    batch.set(db.collection('marketStaging').doc(s.id), upd, {merge:true});
   });
   batch.commit().then(function(){
-    targets.forEach(function(s){ s.status='linked'; s.linkedBottleId=bottleId; });
+    targets.forEach(function(s){ s.status='linked'; s.linkedBottleId=bottleId; if(!s.classGuess&&cg) s.classGuess=cg; });
     toast(targets.length+'店を紐付けました'); closeM('m-market-link');
     setCnt('market',_pendingCount()); renderMarket(); loadBdata();
   }).catch(function(e){ toast('紐付け失敗: '+e.message,'err'); });
@@ -1694,13 +1709,16 @@ function afterBdataSaved(newId){
   var ctx=_reconcileContext; _reconcileContext=null;
   var targets=ctx.stagings||[]; if(!targets.length) return;
   var batch=db.batch(), now=firebase.firestore.FieldValue.serverTimestamp();
+  var cg=_classGuessFromBottleId(newId);
   targets.forEach(function(s){
     var shop=s.shop||'musashiya';
     batch.set(db.collection('marketPrices').doc(shop+'__'+newId), _marketDocFromStaging(s,newId,{matchType:'registered'}), {merge:true});
-    batch.set(db.collection('marketStaging').doc(s.id), {status:'registered',linkedBottleId:newId,updatedAt:now}, {merge:true});
+    var upd={status:'registered',linkedBottleId:newId,updatedAt:now};
+    if(!s.classGuess&&cg) upd.classGuess=cg;
+    batch.set(db.collection('marketStaging').doc(s.id), upd, {merge:true});
   });
   batch.commit().then(function(){
-    targets.forEach(function(s){ s.status='registered'; s.linkedBottleId=newId; });
+    targets.forEach(function(s){ s.status='registered'; s.linkedBottleId=newId; if(!s.classGuess&&cg) s.classGuess=cg; });
     toast('在庫登録＋'+targets.length+'店の相場を紐付けました'); setCnt('market',_pendingCount()); renderMarket();
   }).catch(function(e){ toast('相場紐付け失敗: '+e.message,'err'); });
 }
@@ -1721,13 +1739,16 @@ function afterMasterRegistered(newBottleId){
   var ctx=_masterReconContext; _masterReconContext=null;
   var targets=ctx.stagings||[]; if(!targets.length) return;
   var batch=db.batch(), now=firebase.firestore.FieldValue.serverTimestamp();
+  var cg=_classGuessFromBottleId(newBottleId);
   targets.forEach(function(s){
     var shop=s.shop||'musashiya';
     batch.set(db.collection('marketPrices').doc(shop+'__'+newBottleId), _marketDocFromStaging(s,newBottleId,{matchType:'registered'}), {merge:true});
-    batch.set(db.collection('marketStaging').doc(s.id), {status:'registered',linkedBottleId:newBottleId,updatedAt:now}, {merge:true});
+    var upd={status:'registered',linkedBottleId:newBottleId,updatedAt:now};
+    if(!s.classGuess&&cg) upd.classGuess=cg;
+    batch.set(db.collection('marketStaging').doc(s.id), upd, {merge:true});
   });
   batch.commit().then(function(){
-    targets.forEach(function(s){ s.status='registered'; s.linkedBottleId=newBottleId; });
+    targets.forEach(function(s){ s.status='registered'; s.linkedBottleId=newBottleId; if(!s.classGuess&&cg) s.classGuess=cg; });
     toast('マスタ登録＋'+targets.length+'店の相場を紐付けました'); setCnt('market',_pendingCount()); renderMarket();
   }).catch(function(e){ toast('相場紐付け失敗: '+e.message,'err'); });
 }
