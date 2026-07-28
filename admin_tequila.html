@@ -355,7 +355,7 @@ html.embed .mbg{background:transparent!important}
 
     <!-- 相場照合ページ -->
     <div class="page" id="page-market">
-      <div class="phead"><div><div class="ptitle">相場照合（未紐付け）</div><div class="pdesc">6店の未紐付け相場を銘柄ごとにまとめて表示。<b>マスタ登録</b>で未取扱いでも日本流通品としてボトルマスタ化／<b>在庫登録</b>で在庫化／既存ボトルへ紐付けできます。</div></div><button class="btn bs" id="btn-market-reload">↻ 再読み込み</button></div>
+      <div class="phead"><div><div class="ptitle">相場照合（未紐付け）</div><div class="pdesc">6店の未紐付け相場を銘柄ごとにまとめて表示。<b>マスタ登録</b>で未取扱いでも日本流通品としてボトルマスタ化／<b>在庫登録</b>で在庫化／既存ボトルへ紐付けできます。紐付け先は<b>ボトルマスタ(12桁)</b>です（ボトルデータが無くマスタだけのものも紐付け可）。</div></div><div style="display:flex;gap:8px"><button class="btn bs" id="btn-market-migrate" title="過去にボトルデータIDへ紐付けた相場をマスタIDへ貼り直します">⇄ マスタIDへ移行</button><button class="btn bs" id="btn-market-reload">↻ 再読み込み</button></div></div>
       <div class="card">
         <div class="toolbar">
           <div class="sbox" style="max-width:240px"><input type="text" id="s-mk" placeholder="銘柄名で検索..."></div>
@@ -1429,7 +1429,7 @@ function marketCell(bottleId){
 // ══════════════════ 相場比較（marketPrices 横断） ══════════════════
 var CMP_SHOP_ORDER=['musashiya','wazawaza','kinemon','liquorsato','youshuchiga','chagata','mukawa'];
 var CMP_CLASS_LABEL={'1':'Blanco','2':'Joven/Gold','3':'Reposado','4':'Anejo','5':'ExtraAnejo'};
-function _cmpBottle(bid){ return (cache.bdata||[]).find(function(r){return r.id===bid;}); }
+function _cmpBottle(bid){ return (cache.bottles||[]).find(function(r){return r.id===bid;}) || (cache.bdata||[]).find(function(r){return r.id===bid;}); }
 function _cmpClassLabel(bid){
   var r=_cmpBottle(bid); if(!r) return '';
   var cid=(typeof deriveClassId==='function')?deriveClassId(r):(r.classId||'');
@@ -1635,6 +1635,50 @@ function _mkUpdateBulkBar(){
 ['s-mk'].forEach(function(id){ var e=g(id); if(e) e.addEventListener('input',renderMarket); });
 ['f-mk-reason','f-mk-class','f-mk-status'].forEach(function(id){ var e=g(id); if(e) e.addEventListener('change',renderMarket); });
 if(g('btn-market-reload')) g('btn-market-reload').addEventListener('click',loadMarketStaging);
+if(g('btn-market-migrate')) g('btn-market-migrate').addEventListener('click',migrateMarketToMaster);
+// 既存の相場紐付け（ボトルデータID宛て）をボトルマスタID(12桁)へ貼り直す一括移行
+function migrateMarketToMaster(){
+  if(!cache.bdata||!cache.bdata.length){ toast('ボトルデータ未読込です。少し待ってから再実行してください','err'); loadBdata(); return; }
+  if(!confirm('既存の相場紐付けを、ボトルデータID → ボトルマスタID(12桁) へ貼り直します。\n（マスタが分かるものだけ移行。既にマスタIDのものはそのまま）\n実行しますか？')) return;
+  var isMaster=function(x){ return /^\d{12}$/.test(String(x||'')); };
+  var bdById={}; (cache.bdata||[]).forEach(function(r){ bdById[r.id]=r; });
+  var btById={}; (cache.bottles||[]).forEach(function(b){ btById[b.id]=b; });
+  toast('移行中…');
+  db.collection('marketPrices').get().then(function(snap){
+    var ops=[], migrated=0, already=0, unmapped=0;
+    snap.docs.forEach(function(d){
+      var m=d.data();
+      var sep=d.id.indexOf('__');
+      var shop=m.shop||(sep>=0?d.id.slice(0,sep):'');
+      var bid=m.bottleId||(sep>=0?d.id.slice(sep+2):'');
+      if(isMaster(bid)){ already++; return; }
+      var bd=bdById[bid]; var master=bd&&isMaster(bd.bottleId)?bd.bottleId:'';
+      if(!master){ unmapped++; return; }
+      var bt=btById[master]||{};
+      var data=Object.assign({},m,{bottleId:master, classId:bt.classId||m.classId||'',
+        classGuess:m.classGuess||_classGuessFromBottleId(master),
+        teqBottleJa:bt.bottleJa||bt.bottleEs||m.teqBottleJa||'',
+        updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+      ops.push({type:'set', ref:db.collection('marketPrices').doc(shop+'__'+master), data:data});
+      ops.push({type:'del', ref:db.collection('marketPrices').doc(d.id)});
+      migrated++;
+    });
+    // marketStaging.linkedBottleId も T番号→マスタへ更新
+    (cache.staging||[]).forEach(function(s){
+      if(s.linkedBottleId && !isMaster(s.linkedBottleId)){
+        var bd=bdById[s.linkedBottleId];
+        if(bd&&isMaster(bd.bottleId)) ops.push({type:'set', ref:db.collection('marketStaging').doc(s.id), data:{linkedBottleId:bd.bottleId}});
+      }
+    });
+    if(!migrated){ toast('移行対象はありません（既にマスタID: '+already+'件 / 未対応: '+unmapped+'件）'); return; }
+    (function run(i){
+      if(i>=ops.length){ toast('移行完了：'+migrated+'件を貼り直し（既存マスタ '+already+' / bdata不明 '+unmapped+'）'); loadBdata(); loadMarketStaging(); return; }
+      var b=db.batch();
+      ops.slice(i,i+400).forEach(function(o){ if(o.type==='del') b.delete(o.ref); else b.set(o.ref,o.data,{merge:true}); });
+      b.commit().then(function(){ run(i+400); }).catch(function(e){ toast('移行失敗: '+e.message,'err'); });
+    })(0);
+  }).catch(function(e){ toast('移行読込失敗: '+e.message,'err'); });
+}
 if(g('tb-market')) g('tb-market').addEventListener('click',function(e){
   var t=e.target.closest('[data-mk-chk],[data-mk-link],[data-mk-master],[data-mk-stock],[data-mk-ign],[data-mk-reset]'); if(!t) return;
   if(t.dataset.mkChk!=null){ var gr=_group(+t.dataset.mkChk); if(gr){ if(t.checked) _mkSel[gr.key]=true; else delete _mkSel[gr.key]; _mkUpdateBulkBar(); } return; }
@@ -1697,16 +1741,20 @@ function openMarketLinkGroup(idx){
 function renderLinkResults(){
   var q=(gv('mk-link-search')||'').toLowerCase();
   var box=g('mk-link-results');
-  var list=!q?[]:cache.bdata.filter(function(r){
-    var hay=((r.bottleEs||'')+' '+(r.bottleJa||'')+' '+(r.bottleEsBase||'')+' '+(r.bottleJaBase||'')+' '+(r.bottleId||r.id)).toLowerCase();
+  // 相場はボトルマスタ(12桁)へ紐付ける（ボトルデータが無くマスタだけのものも対象）
+  var list=!q?[]:cache.bottles.filter(function(b){
+    var br=cache.brands.find(function(x){return x.id===b.brandId;});
+    var hay=((b.bottleEs||'')+' '+(b.bottleJa||'')+' '+(b.id||'')+' '+(br?(br.brandEs||'')+' '+(br.brandJa||''):'')).toLowerCase();
     return hay.indexOf(q)>=0;
   }).slice(0,40);
-  if(!list.length){ box.innerHTML='<div style="padding:12px;font-size:12px;color:var(--ink3)">検索語を入力すると候補が出ます</div>'; return; }
-  box.innerHTML=list.map(function(r){
+  if(!list.length){ box.innerHTML='<div style="padding:12px;font-size:12px;color:var(--ink3)">検索語を入力するとボトルマスタ候補が出ます</div>'; return; }
+  box.innerHTML=list.map(function(b){
+    var br=cache.brands.find(function(x){return x.id===b.brandId;});
+    var brName=br?(br.brandEs||br.brandJa||''):'';
     return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border)">'
-      +'<div style="flex:1;min-width:0"><div style="font-size:13px">'+escD(bdName(r,'es')||r.id)+'</div>'
-      +'<div style="font-size:10px;color:var(--ink3)" class="mono">'+escD(r.id)+' ・ '+escD(bdName(r,'ja')||'')+'</div></div>'
-      +'<button class="btn bp sm" data-link-to="'+escD(r.id)+'">紐付け</button></div>';
+      +'<div style="flex:1;min-width:0"><div style="font-size:13px">'+escD(b.bottleEs||b.bottleJa||b.id)+'</div>'
+      +'<div style="font-size:10px;color:var(--ink3)" class="mono">'+escD(b.id)+(brName?' ・ '+escD(brName):'')+(b.bottleJa?' ・ '+escD(b.bottleJa):'')+'</div></div>'
+      +'<button class="btn bp sm" data-link-to="'+escD(b.id)+'">紐付け</button></div>';
   }).join('');
 }
 if(g('mk-link-search')) g('mk-link-search').addEventListener('input',renderLinkResults);
@@ -1715,12 +1763,11 @@ if(g('mk-link-results')) g('mk-link-results').addEventListener('click',function(
   doMarketLinkGroup(_reconTarget, t.dataset.linkTo);
 });
 function _marketDocFromStaging(s, bottleId, extra){
-  var r=cache.bdata.find(function(x){return x.id===bottleId;})||{};
   var bm=cache.bottles.find(function(x){return x.id===bottleId;})||{};
   return Object.assign({
     shop:s.shop||'musashiya', shopName:s.shopName||'武蔵屋', bottleId:bottleId,
     classId:bm.classId||'', classGuess:s.classGuess||_classGuessFromBottleId(bottleId),
-    teqBottleJa:bdName(r,'ja')||'', teqBrandJa:'',
+    teqBottleJa:bm.bottleJa||bm.bottleEs||'', teqBrandJa:'',
     name:s.name||'', price:(s.price!=null&&s.price!==''?Number(s.price):null),
     price750:(s.price750!=null&&s.price750!==''?Number(s.price750):null),
     availability:s.availability||'', url:s.url||'', matchType:'manual', confidence:'manual',
@@ -1762,12 +1809,13 @@ function startStockRegisterGroup(idx){
     hint.innerHTML='🔗 相場照合から在庫登録：<b>'+escD(gr.name||'')+'</b>'+(gr.minPrice?'（最安 ¥'+gr.minPrice.toLocaleString()+'/750ml）':'')
       +'<br>NOM・ブランド・ボトルマスタを選んで登録すると、保存後に'+gr.pending.length+'店の参考相場を自動で紐付けます。'; }
 }
-function afterBdataSaved(newId){
+// 在庫登録時：相場はボトルデータIDではなく親のボトルマスタID(12桁)へ紐付ける
+function afterBdataSaved(masterId){
   if(!_reconcileContext) return;
   var ctx=_reconcileContext; _reconcileContext=null;
   var targets=ctx.stagings||[]; if(!targets.length) return;
   var batch=db.batch(), now=firebase.firestore.FieldValue.serverTimestamp();
-  var cg=_classGuessFromBottleId(newId);
+  var newId=masterId, cg=_classGuessFromBottleId(newId);
   targets.forEach(function(s){
     var shop=s.shop||'musashiya';
     batch.set(db.collection('marketPrices').doc(shop+'__'+newId), _marketDocFromStaging(s,newId,{matchType:'registered'}), {merge:true});
@@ -1837,7 +1885,7 @@ function renderBdata(){
       +'<td class="mono dim">'+(r.abv!==null&&r.abv!==undefined?parseFloat(r.abv).toFixed(1)+"%":"—")+'</td>'
       +'<td class="mono dim">'+(r.remaining||"—")+'</td>'
       +'<td class="mono" style="text-align:right">'+(r.price?("¥"+Number(r.price).toLocaleString()):"—")+'</td>'
-      +'<td style="text-align:right">'+marketCell(r.id)+'</td>'
+      +'<td style="text-align:right">'+((cache.market&&cache.market[r.bottleId])?marketCell(r.bottleId):marketCell(r.id))+'</td>'
       +'<td>'+(({serving:'',stock:'<span class="badge" style="background:#b8860b;color:#fff">在庫</span> ',ended:'<span class="badge bg-gray">終了</span> '})[r.status||'serving']||'')+pubBadge+(r.location?'<div style="font-size:9px;color:var(--ink3)">'+escD(r.location)+'</div>':'')+'</td>'
       +'<td><div class="acts">'+((r.status||'serving')==='serving'?'<button class="btn bs sm" style="color:var(--gold-d)" data-swap-stock="'+r.id+'" title="提供終了→在庫から入替">↩入替</button>':'')+'<button class="btn bs sm" data-edit-bdata="'+r.id+'">編集</button><button class="btn bs sm" data-copy-bdata="'+r.id+'">コピー</button><button class="btn bd sm" data-del="bottleData" data-del-id="'+r.id+'" data-del-label="ボトルデータ">削除</button></div></td></tr>';
   }).join("");
@@ -2199,7 +2247,7 @@ g("btn-save-bdata").addEventListener("click",function(){
     cost:parseInt(gv("bd-cost"))||null, importType:gv("bd-import")||"0", domesticDist:gv("bd-domestic")||"0",
     lotType:parseInt(gv("bd-lottype")||"1")||1, note:gv("bd-note")||null
   },{merge:true})
-  .then(function(){ toast(editId.bdata?"ボトルデータを更新しました":"ボトルデータを登録しました"); _embedSaved=true; closeM("m-bdata"); bumpAndRender("bottleData"); loadBdata(); afterBdataSaved(id); })
+  .then(function(){ toast(editId.bdata?"ボトルデータを更新しました":"ボトルデータを登録しました"); _embedSaved=true; closeM("m-bdata"); bumpAndRender("bottleData"); loadBdata(); afterBdataSaved(bottleId); })
   .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
