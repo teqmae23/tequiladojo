@@ -1721,14 +1721,33 @@ function _group(idx){ return _mkGroups[idx]; }
 function _groupTargets(gr,all){ return all?gr.shops:gr.pending; }
 function setStagingStatusGroup(idx,status){
   var gr=_group(idx); if(!gr) return;
-  var targets=_groupTargets(gr, status==='pending');
+  var unlink=(status==='pending');            // 保留に戻す＝紐付け解除（参考相場も削除）
+  var targets=_groupTargets(gr, unlink);
   if(!targets.length) return;
-  if(status==='ignored' && !confirm((gr.name||'')+'（'+targets.length+'店）を対象外にしますか？')) return;
-  var batch=db.batch(), now=firebase.firestore.FieldValue.serverTimestamp();
-  targets.forEach(function(s){ batch.set(db.collection('marketStaging').doc(s.id),{status:status,updatedAt:now},{merge:true}); });
-  batch.commit().then(function(){
-    targets.forEach(function(s){ s.status=status; });
-    setCnt('market',_pendingCount()); renderMarket();
+  var linked=targets.filter(function(s){return s.linkedBottleId;});
+  if(status==='ignored'){
+    if(!confirm((gr.name||'')+'（'+targets.length+'店）を対象外にしますか？')) return;
+  }else{
+    var msg=linked.length
+      ? (gr.name||'')+' の紐付けを解除し、参考相場（marketPrices '+linked.length+'件）も削除して保留に戻します。\nよろしいですか？'
+      : (gr.name||'')+'（'+targets.length+'店）を保留に戻しますか？';
+    if(!confirm(msg)) return;
+  }
+  var now=firebase.firestore.FieldValue.serverTimestamp();
+  var ops=[];
+  targets.forEach(function(s){
+    if(unlink && s.linkedBottleId){
+      var shop=s.shop||'musashiya';
+      ops.push({ref:db.collection('marketPrices').doc(shop+'__'+s.linkedBottleId), del:true}); // 誤紐付けの参考相場を削除
+    }
+    var upd={status:status,updatedAt:now};
+    if(unlink) upd.linkedBottleId=firebase.firestore.FieldValue.delete();
+    ops.push({ref:db.collection('marketStaging').doc(s.id), data:upd});
+  });
+  _commitOps(ops).then(function(){
+    targets.forEach(function(s){ s.status=status; if(unlink) delete s.linkedBottleId; });
+    toast(unlink&&linked.length?('紐付けを解除しました（相場'+linked.length+'件削除）'):'更新しました');
+    setCnt('market',_pendingCount()); renderMarket(); if(unlink&&linked.length) loadBdata();
   }).catch(function(e){ toast('更新失敗: '+e.message,'err'); });
 }
 // 既存ボトルへ紐付け（グループの保留分をまとめて）
@@ -1775,13 +1794,13 @@ function _marketDocFromStaging(s, bottleId, extra){
   }, extra||{});
 }
 // Firestoreバッチ上限(500オペ)を超えないよう分割コミットする
-// ops: [{ref, data}]（すべて set(merge:true)）。順次コミットしてPromiseを返す
+// ops: [{ref, data}]（set merge） または [{ref, del:true}]（delete）。順次コミット
 function _commitOps(ops){
   var i=0;
   function step(){
     if(i>=ops.length) return Promise.resolve();
     var b=db.batch();
-    ops.slice(i,i+450).forEach(function(o){ b.set(o.ref, o.data, {merge:true}); });
+    ops.slice(i,i+450).forEach(function(o){ if(o.del) b.delete(o.ref); else b.set(o.ref, o.data, {merge:true}); });
     i+=450;
     return b.commit().then(step);
   }
