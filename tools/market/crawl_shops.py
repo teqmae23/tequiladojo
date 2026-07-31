@@ -513,8 +513,10 @@ def write_final(key, raw):
         w = csv.DictWriter(f, fieldnames=cols); w.writeheader()
         for r in rows: w.writerow(r)
     priced = [r["price_750ml"] for r in rows if r["price_750ml"] != ""]
+    cur = SHOPS.get(key, {}).get("currency", "JPY")
+    sym = {"JPY": "¥", "USD": "$", "EUR": "€", "GBP": "£"}.get(cur, cur + " ")
     print(f"  → {out}: {len(rows)}件 / 価格{len([r for r in rows if r['price_yen']!=''])} / "
-          f"750ml換算{len(priced)}" + (f" 最安¥{min(priced):,}〜最高¥{max(priced):,}" if priced else ""))
+          f"750ml換算{len(priced)}" + (f" 最安{sym}{min(priced):,}〜最高{sym}{max(priced):,}" if priced else ""))
     return len(rows)
 
 def probe_shop(session, key, cfg):
