@@ -429,7 +429,7 @@ html.embed .mbg{background:transparent!important}
 
     <!-- 海外価格比較ページ -->
     <div class="page" id="page-intlcmp">
-      <div class="phead"><div><div class="ptitle">海外価格比較 <span class="pcnt" id="pcnt-intlcmp">—</span></div><div class="pdesc">海外店の同一ボトルを束ねて最安値を比較。<b>道場銘柄はマスタIDで確実に集約</b>、未マッチ品は名称の近似で集約（参考）。行クリックで店別内訳。¥は参考換算レート（概算）。</div></div><button class="btn bs" id="btn-intlcmp-reload">↻ 再読み込み</button></div>
+      <div class="phead"><div><div class="ptitle">海外価格比較 <span class="pcnt" id="pcnt-intlcmp">—</span></div><div class="pdesc">海外店の同一ボトルを束ねて最安値を比較（マッチ/未マッチ・語順・容量・大小文字・チルダ違いを統合）。<b>最安/最高は在庫のある店のみ</b>で集計。行クリックで店別内訳（容量・度数・実売）。¥は参考換算レート（概算）。</div></div><button class="btn bs" id="btn-intlcmp-reload">↻ 再読み込み</button></div>
       <div class="card">
         <div class="toolbar">
           <div class="sbox" style="max-width:240px"><input type="text" id="s-intlcmp" placeholder="銘柄名で検索..."></div>
@@ -437,7 +437,8 @@ html.embed .mbg{background:transparent!important}
           <label style="font-size:12px;display:flex;align-items:center;gap:5px"><input type="checkbox" id="f-intlcmp-multi" checked> 2店以上のみ</label>
           <label style="font-size:12px;display:flex;align-items:center;gap:5px"><input type="checkbox" id="f-intlcmp-dojo"> 道場のみ</label>
           <select class="fsel" id="f-intlcmp-sort"><option value="shops">店数が多い順</option><option value="cheap">最安順</option><option value="spread">価格差が大きい順</option><option value="name">名前順</option></select>
-          <span style="margin-left:auto;font-size:11px;color:var(--ink3)" id="intlcmp-count"></span>
+          <span style="margin-left:auto;font-size:10px;color:var(--ink3)" id="intlcmp-fx"></span>
+          <span style="font-size:11px;color:var(--ink3)" id="intlcmp-count"></span>
         </div>
         <div class="tw" id="intlcmp-tw"><table id="tbl-intlcmp">
           <colgroup><col><col style="width:78px"><col style="width:52px"><col style="width:104px"><col style="width:104px"><col style="width:88px"><col style="width:52px"></colgroup>
@@ -970,32 +971,61 @@ function _cmpCore(name){
   s.split(/[^a-z0-9]+/).forEach(function(t){ if(t.length>=2 && !/^\d+ml$/.test(t)) uniq[t]=1; });
   return Object.keys(uniq).sort().join('');   // 語順非依存にするため一意化＋ソート
 }
+// 表示用ラベル: 容量(750ml等)を除去。
+function _cleanLabel(name){
+  return String(name||'').replace(/(\d+(?:\.\d+)?)\s*(ml|cl|l|liter|litre)\b/gi,' ').replace(/\s{2,}/g,' ').trim();
+}
+function _inStock(av){ return /在庫あり|in ?stock|available|true/i.test(String(av||'')); }
 function _intlGroups(){
-  var g0={};
+  // 価格ありのテキーラのみ抽出。各アイテムに core(名称核) と bid(道場bottleId) を付与。
+  var items=[];
   (cache.intl||[]).forEach(function(m){
     var p=Number(m.price750!=null&&m.price750!==''?m.price750:m.price);
     if(!isFinite(p)||p<=0) return;                    // 価格なしは比較対象外
-    var key=(m.matched&&m.bottleId)?('m:'+m.bottleId):('n:'+_cmpCore(m.name));
-    if(!key||key==='n:') return;
-    var grp=g0[key]||(g0[key]={key:key,matched:!!(m.matched&&m.bottleId),bottleId:m.bottleId||'',label:'',cls:m.classGuess||'',shops:{}});
-    if(m.matched&&m.matchedName&&!grp.label) grp.label=m.matchedName;
-    if(!grp.label) grp.label=m.name||'';
-    if(!grp.cls && m.classGuess) grp.cls=m.classGuess;
-    var rec={shop:m.shop,shopName:m.shopName||m.shop,price:p,cur:m.currency||'USD',jpy:_toJpy(p,m.currency),url:m.url||'',avail:m.availability||''};
-    var s=grp.shops[m.shop];
-    if(!s || rec.jpy<s.jpy) grp.shops[m.shop]=rec;      // 同店で複数サイズがあれば最安を採用
+    var core=_cmpCore(m.name), bid=(m.matched&&m.bottleId)?String(m.bottleId):'';
+    if(!core && !bid) return;
+    items.push({m:m,p:p,core:core,bid:bid});
   });
-  return Object.keys(g0).map(function(k){
-    var grp=g0[k]; var arr=Object.keys(grp.shops).map(function(s){return grp.shops[s];});
-    arr.sort(function(a,b){return a.jpy-b.jpy;});
-    grp.list=arr; grp.n=arr.length;
-    grp.min=arr.length?arr[0].jpy:null; grp.max=arr.length?arr[arr.length-1].jpy:null;
+  // union-find: 「同じ名称核」または「同じbottleId」を1グループへ統合
+  //   → 同一ボトルが マッチ店/未マッチ店 で割れる問題を解消（例: 道場マッチ有無で別行だったもの）。
+  var parent={};
+  function find(k){ if(parent[k]===undefined){parent[k]=k;return k;} var r=k; while(parent[r]!==r)r=parent[r]; while(parent[k]!==r){var n=parent[k];parent[k]=r;k=n;} return r; }
+  function union(a,b){ var ra=find(a),rb=find(b); if(ra!==rb) parent[ra]=rb; }
+  items.forEach(function(x,i){ find('i:'+i); if(x.core) union('i:'+i,'c:'+x.core); if(x.bid) union('i:'+i,'b:'+x.bid); });
+  var comp={};
+  items.forEach(function(x,i){ var r=find('i:'+i); (comp[r]||(comp[r]=[])).push(x); });
+  return Object.keys(comp).map(function(rk){
+    var arr=comp[rk], bottleId='', matchedName='', cls='', shops={};
+    arr.forEach(function(x){ var m=x.m;
+      if(x.bid){ if(!bottleId) bottleId=x.bid; if(m.matchedName && !matchedName) matchedName=m.matchedName; }
+      if(!cls && m.classGuess) cls=m.classGuess;
+      var rec={shop:m.shop,shopName:m.shopName||m.shop,price750:x.p,
+        priceActual:(m.price!=null&&m.price!==''?Number(m.price):null),cur:m.currency||'USD',
+        jpy:_toJpy(x.p,m.currency),vol:(m.volumeMl!=null&&m.volumeMl!==''?Number(m.volumeMl):null),
+        abv:(m.abv!=null&&m.abv!==''?Number(m.abv):null),inStock:_inStock(m.availability),
+        url:m.url||'',avail:m.availability||''};
+      var s=shops[m.shop];
+      if(!s || rec.jpy<s.jpy) shops[m.shop]=rec;        // 同店で複数サイズは750ml換算の最安を採用
+    });
+    // ラベル: 道場名(クリーン) > 各店名の最短クリーン名
+    var label=_cleanLabel(matchedName);
+    if(!label){ arr.forEach(function(x){ var cl=_cleanLabel(x.m.name); if(cl && (!label || cl.length<label.length)) label=cl; }); }
+    var list=Object.keys(shops).map(function(s){return shops[s];});
+    list.sort(function(a,b){return a.jpy-b.jpy;});
+    var stocked=list.filter(function(r){return r.inStock;});
+    var base=stocked.length?stocked:list;               // 最安/最高は【在庫店のみ】（全滅時のみ全店にフォールバック）
+    var grp={matched:!!bottleId,bottleId:bottleId,label:label||'',cls:cls,shops:shops,
+      list:list,n:list.length,stockN:stocked.length};
+    grp.min=base.length?base[0].jpy:null; grp.max=base.length?base[base.length-1].jpy:null;
     grp.spread=(grp.min!=null&&grp.max!=null)?(grp.max-grp.min):0;
+    grp.cheapJpy=grp.min;                               // 詳細で最安(在庫店)行をハイライトする基準
     return grp;
   });
 }
 function renderIntlCmp(){
   if(!g('tb-intlcmp')) return;
+  var fx=g('intlcmp-fx');
+  if(fx) fx.textContent='換算レート '+Object.keys(FX).filter(function(c){return c!=='JPY';}).map(function(c){return _curSym(c)+'1=¥'+FX[c];}).join(' / ');
   var clsSel=g('f-intlcmp-cls');
   if(clsSel && clsSel.options.length<=1){
     var cset={}; (cache.intl||[]).forEach(function(m){ if(m.classGuess) cset[m.classGuess]=1; });
@@ -1026,25 +1056,32 @@ function renderIntlCmp(){
     var min=gr.min!=null?('¥'+gr.min.toLocaleString()):'—';
     var max=gr.max!=null?('¥'+gr.max.toLocaleString()):'—';
     var spread=gr.spread?('¥'+gr.spread.toLocaleString()):'—';
-    var det=gr.list.map(function(r,j){
+    var cntCell=gr.n+(gr.stockN<gr.n?('<span class="dim" style="font-size:9px"> 在'+gr.stockN+'</span>'):'');
+    var head='<tr class="dim" style="font-size:10px"><td style="padding:2px 8px 2px 26px">店</td><td style="text-align:right">容量</td><td style="text-align:right">度数</td><td style="text-align:right">実売</td><td style="text-align:right">750ml(≈¥)</td><td style="text-align:center">在庫</td></tr>';
+    var det=gr.list.map(function(r){
       var link=r.url?('<a href="'+escD(r.url)+'" target="_blank" rel="noopener">'+escD(r.shopName)+'</a>'):escD(r.shopName);
-      var inStock=/在庫あり|in ?stock|available|true/i.test(String(r.avail||''));
-      var stk=r.avail?('<span style="color:'+(inStock?'#1a6e58':'#b03020')+'">●</span>'):'';
-      return '<tr><td style="padding:3px 8px 3px 26px;font-size:11px">'+link+'</td>'
-        +'<td class="mono" style="text-align:right;font-size:11px">'+_curSym(r.cur)+Number(r.price).toLocaleString()+'</td>'
-        +'<td class="mono" style="text-align:right;font-size:11px'+(j===0?';color:#1a6e58;font-weight:700':'')+'">≈¥'+(r.jpy!=null?r.jpy.toLocaleString():'—')+'</td>'
+      var stk=r.avail?('<span style="color:'+(r.inStock?'#1a6e58':'#b03020')+'">●</span>'):'<span class="dim">?</span>';
+      var vol=(r.vol!=null)?(r.vol+'ml'):'—';
+      var abv=(r.abv!=null)?(r.abv+'%'):'—';
+      var actual=(r.priceActual!=null)?(_curSym(r.cur)+r.priceActual.toLocaleString()):'—';
+      var hi=(r.inStock && r.jpy===gr.cheapJpy);
+      return '<tr'+(hi?' style="background:#eafaf3"':'')+'><td style="padding:3px 8px 3px 26px;font-size:11px">'+link+'</td>'
+        +'<td class="dim" style="text-align:right;font-size:11px">'+vol+'</td>'
+        +'<td class="dim" style="text-align:right;font-size:11px">'+abv+'</td>'
+        +'<td class="mono" style="text-align:right;font-size:11px">'+actual+'</td>'
+        +'<td class="mono" style="text-align:right;font-size:11px'+(hi?';color:#1a6e58;font-weight:700':'')+'">≈¥'+(r.jpy!=null?r.jpy.toLocaleString():'—')+'</td>'
         +'<td style="text-align:center">'+stk+'</td></tr>';
     }).join('');
     return '<tr class="cmp-row" data-i="'+i+'" style="cursor:pointer">'
       +'<td style="font-size:12px"><span class="cmp-caret dim" style="font-size:9px">▶</span> '+escD(gr.label||'')+'</td>'
       +'<td class="dim" style="font-size:11px">'+escD(gr.cls||'')+'</td>'
-      +'<td style="text-align:center;font-weight:700">'+gr.n+'</td>'
+      +'<td style="text-align:center;font-weight:700">'+cntCell+'</td>'
       +'<td class="mono" style="text-align:right;color:#1a6e58;font-weight:700">'+min+'</td>'
       +'<td class="mono" style="text-align:right">'+max+'</td>'
       +'<td class="mono" style="text-align:right;font-size:11px">'+spread+'</td>'
       +'<td style="text-align:center">'+badge+'</td></tr>'
       +'<tr class="cmp-det" data-i="'+i+'" style="display:none"><td colspan="7" style="padding:0;background:var(--cream2)">'
-      +'<table style="width:100%;border-collapse:collapse"><colgroup><col><col style="width:104px"><col style="width:104px"><col style="width:52px"></colgroup>'+det+'</table></td></tr>';
+      +'<table style="width:100%;border-collapse:collapse"><colgroup><col><col style="width:60px"><col style="width:56px"><col style="width:88px"><col style="width:100px"><col style="width:44px"></colgroup>'+head+det+'</table></td></tr>';
   }).join('');
 }
 if(g('tb-intlcmp')) g('tb-intlcmp').addEventListener('click',function(e){

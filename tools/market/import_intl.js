@@ -87,7 +87,7 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
     return { ref: db.collection('marketIntl').doc(SHOP + '__' + it.id), data: {
       shop: SHOP, shopName, country: SHOP_COUNTRY[SHOP] || '', currency: it.currency || 'USD',
       name: it.name || '', brandGuess: it.brand_guess || '', classGuess: it.class_guess || '',
-      price: num(it.price_yen), price750: num(it.price_750ml), volumeMl: num(it.volume_ml),
+      price: num(it.price_yen), price750: num(it.price_750ml), volumeMl: num(it.volume_ml), abv: num(it.abv),
       availability: it.availability || '', url: it.url || '',
       bottleId: m ? m.bottleId : '', matched: !!m, matchedName: m ? m.es : '',
       source: 'crawl-intl', updatedAt: FV.serverTimestamp()
