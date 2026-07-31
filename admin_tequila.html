@@ -98,6 +98,8 @@ input,select,textarea{font-family:var(--sans)}
 /* 相場照合：見出し行を固定（内部スクロール） */
 #mk-tw{max-height:calc(100vh - 250px);overflow:auto}
 #mk-tw thead th{position:sticky;top:0;background:var(--white);z-index:3;box-shadow:inset 0 -1px 0 var(--border2)}
+#intl-tw{max-height:calc(100vh - 250px);overflow:auto}
+#intl-tw thead th{position:sticky;top:0;background:var(--white);z-index:3;box-shadow:inset 0 -1px 0 var(--border2)}
 #mk-bulkbar{min-height:42px}
 table{width:100%;border-collapse:collapse;font-size:12px}
 thead tr{border-bottom:1px solid var(--border2)}
@@ -242,6 +244,7 @@ html.embed .mbg{background:transparent!important}
       <button class="tab" data-page="bdata">ボトルデータ <span class="cnt" id="cnt-bdata">—</span></button>
       <button class="tab" data-page="market">相場照合 <span class="cnt" id="cnt-market">—</span></button>
       <button class="tab" data-page="compare">相場比較 <span class="cnt" id="cnt-compare">—</span></button>
+      <button class="tab" data-page="intl">海外相場 <span class="cnt" id="cnt-intl">—</span></button>
     </div>
   </div>
 
@@ -397,6 +400,25 @@ html.embed .mbg{background:transparent!important}
         <div class="tw" id="tbl-compare-wrap"><table id="tbl-compare">
           <thead><tr id="cmp-head"></tr></thead>
           <tbody id="tb-compare"><tr><td class="ec">「相場比較」タブを開くと読み込みます</td></tr></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <!-- 海外相場ページ（全件表示・道場にあるものはマーク） -->
+    <div class="page" id="page-intl">
+      <div class="phead"><div><div class="ptitle">海外相場 <span class="pcnt" id="pcnt-intl">—</span></div><div class="pdesc">海外店で収集した全銘柄を表示（マスタ紐付けは任意）。<b>道場にある銘柄はマーク＋リンク</b>。取り込みは Cloud Shell の <code>import_intl.js</code>。</div></div><button class="btn bs" id="btn-intl-reload">↻ 再読み込み</button></div>
+      <div class="card">
+        <div class="toolbar">
+          <div class="sbox" style="max-width:240px"><input type="text" id="s-intl" placeholder="銘柄名で検索..."></div>
+          <select class="fsel" id="f-intl-shop"><option value="">全店</option></select>
+          <label style="font-size:12px;display:flex;align-items:center;gap:5px"><input type="checkbox" id="f-intl-dojo"> 道場にあるもののみ</label>
+          <select class="fsel" id="f-intl-sort"><option value="shop">店舗順</option><option value="cheap">750ml換算 安い順</option><option value="name">名前順</option></select>
+          <span style="margin-left:auto;font-size:11px;color:var(--ink3)" id="intl-count"></span>
+        </div>
+        <div class="tw" id="intl-tw"><table id="tbl-intl">
+          <colgroup><col style="width:120px"><col><col style="width:96px"><col style="width:96px"><col style="width:64px"><col style="width:120px"></colgroup>
+          <thead><tr><th>店</th><th>銘柄</th><th>価格</th><th>750ml換算</th><th>在庫</th><th>道場</th></tr></thead>
+          <tbody id="tb-intl"><tr><td colspan="6" class="ec">「海外相場」タブを開くと読み込みます</td></tr></tbody>
         </table></div>
       </div>
     </div>
@@ -804,7 +826,7 @@ function bdName(item, lang){
 }
 
 // ── キャッシュ ──────────────────────────────────────────────────
-var cache={distilleries:[],brands:[],classes:[],bottles:[],bdata:[],market:{},staging:[]};
+var cache={distilleries:[],brands:[],classes:[],bottles:[],bdata:[],market:{},staging:[],intl:[]};
 var editId={brand:null,klass:null,bottle:null,bdata:null};
 var sortState={};
 
@@ -853,6 +875,60 @@ document.querySelector('[data-page="compare"]').addEventListener("click",functio
   if(!cache.bdata.length || !cache.marketAll){ loadBdata(); }  // loadBdata が終わると renderCompare を呼ぶ
   else renderCompare();
 });
+document.querySelector('[data-page="intl"]').addEventListener("click",function(){ loadMarketIntl(); });
+
+// ══════════════════ 海外相場（marketIntl・全件表示） ══════════════════
+function loadMarketIntl(){
+  db.collection('marketIntl').get().then(function(snap){
+    cache.intl=snap.docs.map(function(d){return Object.assign({_id:d.id},d.data());});
+    setCnt('intl',cache.intl.length);
+    var shopSel=g('f-intl-shop');
+    if(shopSel && shopSel.options.length<=1){
+      var shops={}; cache.intl.forEach(function(m){ if(m.shop) shops[m.shop]=m.shopName||m.shop; });
+      shopSel.innerHTML='<option value="">全店</option>'+Object.keys(shops).sort().map(function(s){return '<option value="'+escD(s)+'">'+escD(shops[s])+'</option>';}).join('');
+    }
+    renderIntl();
+  }).catch(function(e){ toast('海外相場 読込失敗: '+e.message,'err'); });
+}
+function _intlCur(m){ return ({USD:'$',EUR:'€',GBP:'£',JPY:'¥'})[m.currency||'USD']||((m.currency||'')+' '); }
+function renderIntl(){
+  if(!g('tb-intl')) return;
+  var q=(g('s-intl')||{value:''}).value.toLowerCase();
+  var shop=gv('f-intl-shop'), dojo=g('f-intl-dojo')&&g('f-intl-dojo').checked, sort=gv('f-intl-sort')||'shop';
+  var list=(cache.intl||[]).filter(function(m){
+    if(shop && m.shop!==shop) return false;
+    if(dojo && !m.matched) return false;
+    if(q && (m.name||'').toLowerCase().indexOf(q)<0) return false;
+    return true;
+  });
+  list.sort(function(a,b){
+    if(sort==='cheap') return (Number(a.price750||a.price||1e15))-(Number(b.price750||b.price||1e15));
+    if(sort==='name') return (a.name||'').localeCompare(b.name||'');
+    return (a.shopName||a.shop||'').localeCompare(b.shopName||b.shop||'')||(Number(a.price750||0)-Number(b.price750||0));
+  });
+  var matchedN=list.filter(function(m){return m.matched;}).length;
+  var cc=g('intl-count'); if(cc) cc.textContent=list.length+' 件（道場マッチ '+matchedN+'）';
+  var tb=g('tb-intl');
+  if(!list.length){ tb.innerHTML='<tr><td colspan="6" class="ec">該当なし（取り込み済みの海外相場がありません。Cloud Shell で import_intl.js を実行）</td></tr>'; return; }
+  tb.innerHTML=list.slice(0,600).map(function(m){
+    var cur=_intlCur(m);
+    var price=(m.price!=null&&m.price!=='')?(cur+Number(m.price).toLocaleString()):'—';
+    var p750=(m.price750!=null&&m.price750!=='')?(cur+Number(m.price750).toLocaleString()):'—';
+    var inStock=/在庫あり|in ?stock|available|true/i.test(String(m.availability||''));
+    var stock=m.availability?('<span style="color:'+(inStock?'#1a6e58':'#b03020')+'">●</span>'):'—';
+    var nm=m.url?('<a href="'+escD(m.url)+'" target="_blank" rel="noopener" style="color:inherit">'+escD(m.name||'')+'</a>'):escD(m.name||'');
+    var dojo=(m.matched&&m.bottleId)?('<a class="badge bg-teal" href="admin_tequila.html?tab=bottles&edit='+escD(m.bottleId)+'" target="_blank" style="text-decoration:none" title="'+escD(m.matchedName||'')+'">🥃道場</a>'):'<span class="dim">—</span>';
+    return '<tr><td style="font-size:11px">'+escD(m.shopName||m.shop||'')+'</td>'
+      +'<td style="font-size:12px">'+nm+(m.classGuess?' <span class="dim" style="font-size:10px">'+escD(m.classGuess)+'</span>':'')+'</td>'
+      +'<td class="mono" style="text-align:right">'+price+'</td>'
+      +'<td class="mono" style="text-align:right">'+p750+'</td>'
+      +'<td style="text-align:center">'+stock+'</td>'
+      +'<td>'+dojo+'</td></tr>';
+  }).join('');
+}
+['s-intl'].forEach(function(id){ var e=g(id); if(e) e.addEventListener('input',renderIntl); });
+['f-intl-shop','f-intl-dojo','f-intl-sort'].forEach(function(id){ var e=g(id); if(e) e.addEventListener('change',renderIntl); });
+if(g('btn-intl-reload')) g('btn-intl-reload').addEventListener('click',loadMarketIntl);
 
 // ── データ読み込み ──────────────────────────────────────────────
 function renderMeta(col){
