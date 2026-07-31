@@ -60,7 +60,15 @@ REPO=<repoのパス> NODE_PATH=~/functions/node_modules \
 ## 海外店（intl）— 全件表示・紐付けは任意
 海外の酒販は「マスタに無くても全件収集・表示、道場にあるものだけ紐付け＋マーク」の方針。
 
-対象（`crawl_shops.py` の `intl:True`）: oldtowntequila / siptequila / sftequilashop / hiproof（Shopify想定）、klwines（独自・要個別対応）。
+対象（`crawl_shops.py` の `intl:True`）。`--intl --probe` の実測結果で分類:
+- **✓ Shopify・取込済み（11店）**: siptequila / sftequilashop / hiproof / remedy / delmesa / uptown / chips / elcerrito / kegnbottles(kegnbottle.com) / hedonism(英) / montagave(アガベ専門→`only_tequila:False`で全商品)
+- **disabled（products.json 404・非Shopify基盤／要個別パーサ）**: oldtowntequila / hitime / frootbat
+- **disabled（非Shopify・独自基盤／要個別パーサ）**: klwines(403) / totalwine(403) / masterofmalt(429) / whiskyexchange(403) / maisonduwhisky(404) / whiskysite(404)
+- **disabled（DNS不可・正URL未確認）**: thirdbase / ludwig / beverlyhills / roadrunner
+
+> `base` は推測ドメインを含む。まず `--intl --probe` で「✓Shopify / ✗非Shopify / 到達失敗」を確認する。
+> probe は crawler と同じ `/collections/all/products.json` を優先し、ダメなら root `/products.json` も試す。
+> ✓なら crawl、✗や誤URLは SHOPS の `base`/`platform` を修正してから再実行。通貨は各店 `currency`（USD/GBP/EUR）で CSV に出力・表示。
 
 ```bash
 # 1) 基盤(Shopify)判定：まず疎通と products.json 対応を確認
@@ -78,5 +86,10 @@ cd ~/functions && node <repo>/tools/market/import_intl.js --shop oldtowntequila
 ```
 
 - Firestore: `marketIntl/{shop}__{itemId}`（全件）。`matched:true`＋`bottleId` は道場にある銘柄。
-- 表示: `admin_tequila`「海外相場」タブ（全件・店/検索/道場のみ絞り込み。道場銘柄はマーク＋リンク）。
+- 道場マッチは import_intl.js の2段階照合: ①マスタ名の連続部分一致 → ②トークン全一致（語順・語間挿入を吸収、
+  アクセント畳込み済。ガード: マスタ語数>=2＋有効8文字以上）。クラス語は区別トークンとして温存し誤マッチを防ぐ。
+- 表示:
+  - `admin_tequila`「海外相場」タブ … 全件（店/検索/道場のみ絞り込み。道場銘柄はマーク＋リンク）。
+  - `admin_tequila`「海外比較」タブ … 同一ボトルを束ねて店舗横断で価格比較。道場銘柄は `bottleId` で確実に集約、
+    未マッチ品は名称核（容量/tequila語を除去）で近似集約。行クリックで店別内訳。通貨混在は参考レート(`FX`)で¥概算。
 - `--probe` が「非Shopify」を返した店（klwines 等）は products.json 非対応のため、構造を見て個別パーサを追加（後続対応）。

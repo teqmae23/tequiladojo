@@ -13,8 +13,20 @@ const shopArgIdx = process.argv.indexOf('--shop');
 const SHOP = shopArgIdx >= 0 ? process.argv[shopArgIdx + 1] : null;
 if (!SHOP) { console.error('使い方: node import_intl.js --shop <key>'); process.exit(1); }
 
-const SHOP_NAMES = { oldtowntequila:'Old Town Tequila', siptequila:'Sip Tequila', sftequilashop:'SF Tequila Shop', hiproof:'Hi Proof', klwines:'K&L Wines' };
-const SHOP_COUNTRY = { oldtowntequila:'US', siptequila:'US', sftequilashop:'US', hiproof:'US', klwines:'US' };
+const SHOP_NAMES = {
+  oldtowntequila:'Old Town Tequila', siptequila:'Sip Tequila', sftequilashop:'SF Tequila Shop', hiproof:'Hi Proof', klwines:'K&L Wines',
+  remedy:'Remedy Liquor', delmesa:'Del Mesa Liquor', uptown:'Uptown Spirits', thirdbase:'Third Base Market & Spirits',
+  hitime:'Hi-Time Wine Cellars', montagave:'Montagave', chips:'Chips Liquor', frootbat:'Froot Bat', kegnbottles:'Keg N Bottle',
+  hedonism:'Hedonism Wines', totalwine:'Total Wine & More', masterofmalt:'Master of Malt', whiskyexchange:'The Whisky Exchange',
+  maisonduwhisky:'La Maison du Whisky', whiskysite:'Whiskysite.nl',
+  ludwig:'Ludwig Fine Wine', beverlyhills:'Beverly Hills Liquor & Wine', elcerrito:'El Cerrito Liquor', roadrunner:'Road Runner Spirits'
+};
+const SHOP_COUNTRY = {
+  oldtowntequila:'US', siptequila:'US', sftequilashop:'US', hiproof:'US', klwines:'US',
+  remedy:'US', delmesa:'US', uptown:'US', thirdbase:'US', hitime:'US', montagave:'US', chips:'US', frootbat:'US', kegnbottles:'US',
+  hedonism:'GB', totalwine:'US', masterofmalt:'GB', whiskyexchange:'GB', maisonduwhisky:'FR', whiskysite:'NL',
+  ludwig:'US', beverlyhills:'US', elcerrito:'US', roadrunner:'US'
+};
 
 function parseCSV(text) {
   text = text.replace(/^﻿/, ''); const rows = []; let row = [], cur = '', q = false;
@@ -28,7 +40,14 @@ function parseCSV(text) {
 }
 function num(v) { const s = String(v || '').trim(); return /^-?\d+(\.\d+)?$/.test(s) ? Number(s) : null; }
 function readCSV(name) { if (!fs.existsSync(name)) { console.error('見つかりません:', process.cwd() + '/' + name); process.exit(1); } return parseCSV(fs.readFileSync(name, 'utf8')); }
-function norm(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,''); }
+// アクセント（á/ñ/í 等）を畳んでから英数字のみに正規化。
+// 例: "Años"→"anos" / "Tapatío"→"tapatio"。店側の英字表記と道場マスタを揃える。
+function norm(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,''); }
+// 語順違いの照合用トークン列。アクセント畳込み後、3文字未満と一般語のみ除外。
+// ※ クラス語（blanco/reposado/anejo 等）はボトルを区別する重要トークンなので【残す】
+//    （落とすとブランコとレポサドが同一視され誤マッチになる）。
+const STOP = new Set(['tequila','the','and','with','for','de','la','el','los','las','con','por','ml','cl','liter','litre','bottle']);
+function tokens(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length >= 3 && !STOP.has(t) && !/^\d+ml$/.test(t)); }
 async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { const b = db.batch(); ops.slice(i, i + 400).forEach(o => b.set(o.ref, o.data, { merge: true })); await b.commit(); } }
 
 (async () => {
@@ -39,14 +58,26 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
   let masters = [];
   if (fs.existsSync('tequiladojo_master.csv')) {
     masters = parseCSV(fs.readFileSync('tequiladojo_master.csv', 'utf8'))
-      .map(m => ({ bottleId: m.bottleId || m.id, key: norm(m.bottleEs), es: m.bottleEs || '' }))
+      .map(m => { const tk = tokens(m.bottleEs);
+        return { bottleId: m.bottleId || m.id, key: norm(m.bottleEs), es: m.bottleEs || '', tk, tkLen: tk.join('').length }; })
       .filter(m => m.key.length >= 6); // 短すぎる名は誤マッチ防止で除外
     masters.sort((a, b) => b.key.length - a.key.length); // 長い名を優先
   }
   function matchMaster(name) {
     const n = norm(name); if (!n) return null;
+    // 1) 連続部分一致（厳密・最優先）: 店名の中にマスタ名がそのまま含まれる
     for (const m of masters) { if (n.indexOf(m.key) >= 0) return m; }
-    return null;
+    // 2) トークン全一致（語順違い・語間挿入を吸収。例: "100 ANOS TEQUILA BLANCO"）
+    //    ガード: マスタ語数>=2 かつ 有効文字合計>=8 の時のみ（誤マッチ抑制）。
+    //    マスタの全トークンが店名トークンに存在すれば一致。最も特徴の多い（合計長最大）候補を採用。
+    const itemToks = new Set(tokens(name));
+    if (!itemToks.size) return null;
+    let best = null;
+    for (const m of masters) {
+      if (m.tk.length < 2 || m.tkLen < 8) continue;
+      if (m.tk.every(t => itemToks.has(t)) && (!best || m.tkLen > best.tkLen)) best = m;
+    }
+    return best;
   }
 
   let matched = 0;

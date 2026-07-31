@@ -36,12 +36,38 @@ SHOPS = {
                   "note": "大規模・bot対策が強くカテゴリ構造も独自のため保留。必要なら個別対応。"},
   # ── 海外店（intl:True）。全件収集し import_intl.js で marketIntl に格納（マスタ紐付けは任意） ──
   # platform は --probe で確認してから確定。多くの米国酒販は Shopify。
-  "oldtowntequila": {"name": "Old Town Tequila", "platform": "shopify", "base": "https://oldtowntequila.com",   "collections": ["tequila", "all"], "only_tequila": True, "intl": True, "currency": "USD"},
+  "oldtowntequila": {"name": "Old Town Tequila", "platform": "disabled", "base": "https://oldtowntequila.com",   "intl": True, "currency": "USD", "country": "US", "note": "products.json 404（collections/rootとも）。非Shopify基盤。要個別対応。"},
   "siptequila":     {"name": "Sip Tequila",      "platform": "shopify", "base": "https://siptequila.com",       "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
   "sftequilashop":  {"name": "SF Tequila Shop",  "platform": "shopify", "base": "https://sftequilashop.com",    "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
   "hiproof":        {"name": "Hi Proof",         "platform": "shopify", "base": "https://www.hiproof.com",      "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
   "klwines":        {"name": "K&L Wines",        "platform": "disabled","base": "https://www.klwines.com",      "intl": True, "currency": "USD",
                      "note": "独自プラットフォーム（products.json非対応の可能性大）。--probe で確認し個別対応。"},
+  # ── 追加の海外店。base は推測ドメイン。まず `--intl --probe` で疎通/基盤を確認し、
+  #    ✓Shopify のものはそのまま crawl、✗/到達失敗は base 修正 or 個別対応へ。
+  #    小規模な米国酒販は Shopify が多いため shopify で仮置き、大規模/独自基盤は disabled。
+  "remedy":         {"name": "Remedy Liquor",              "platform": "shopify", "base": "https://remedyliquor.com",      "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "delmesa":        {"name": "Del Mesa Liquor",            "platform": "shopify", "base": "https://delmesaliquor.com",     "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "uptown":         {"name": "Uptown Spirits",             "platform": "shopify", "base": "https://uptownspirits.com",     "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "thirdbase":      {"name": "Third Base Market & Spirits","platform": "disabled", "base": "https://thirdbasemarketandspirits.com", "intl": True, "currency": "USD", "country": "US", "note": "正URL確認済だが /shop/product-groups/ の独自基盤（非Shopify）。要個別パーサ。"},
+  "hitime":         {"name": "Hi-Time Wine Cellars",       "platform": "disabled", "base": "https://hitimewine.net",       "intl": True, "currency": "USD", "country": "US", "note": "products.json 404。非Shopify基盤。要個別対応。"},
+  "montagave":      {"name": "Montagave",                  "platform": "shopify", "base": "https://montagave.com",         "collections": ["all"], "only_tequila": False, "intl": True, "currency": "USD", "country": "US", "note": "アガベ専門ブランド店。商品名にtequila語が無いため全商品収集(only_tequila:False)。"},
+  "chips":          {"name": "Chips Liquor",               "platform": "shopify", "base": "https://chipsliquor.com",       "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "frootbat":       {"name": "Froot Bat",                  "platform": "disabled", "base": "https://frootbat.com",         "intl": True, "currency": "USD", "country": "US", "note": "products.json 404。非Shopify基盤。要個別対応。"},
+  "kegnbottles":    {"name": "Keg N Bottle",               "platform": "shopify", "base": "https://www.kegnbottle.com",    "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US", "note": "旧kegnbottles.comはDNS不可。kegnbottle.com(単数)を推測。--probe で再確認。"},
+  "hedonism":       {"name": "Hedonism Wines",             "platform": "shopify", "base": "https://hedonism.co.uk",        "collections": ["all"], "only_tequila": True, "intl": True, "currency": "GBP", "country": "GB",
+                     "note": "英・基盤不明。--probe で確認。"},
+  # ── 大規模/独自基盤（bot対策強め・products.json 非対応の可能性大）: 既定 disabled。
+  #    URL/基盤を --probe で確認し、可能なら個別パーサを追加。
+  "totalwine":      {"name": "Total Wine & More",          "platform": "disabled", "base": "https://www.totalwine.com",        "intl": True, "currency": "USD", "country": "US", "note": "大規模EC・bot対策強。個別対応が必要。"},
+  "masterofmalt":   {"name": "Master of Malt",             "platform": "disabled", "base": "https://www.masterofmalt.com",     "intl": True, "currency": "GBP", "country": "GB", "note": "英・独自基盤。個別対応が必要。"},
+  "whiskyexchange": {"name": "The Whisky Exchange",        "platform": "disabled", "base": "https://www.thewhiskyexchange.com", "intl": True, "currency": "GBP", "country": "GB", "note": "英・独自基盤。個別対応が必要。"},
+  "maisonduwhisky": {"name": "La Maison du Whisky",        "platform": "disabled", "base": "https://www.whisky.fr",            "intl": True, "currency": "EUR", "country": "FR", "note": "仏・独自基盤。個別対応が必要。"},
+  "whiskysite":     {"name": "Whiskysite.nl",              "platform": "disabled", "base": "https://www.whiskysite.nl",        "intl": True, "currency": "EUR", "country": "NL", "note": "蘭・基盤不明(Magento?)。--probe で確認。"},
+  # ── URL未確定（推測ドメイン）: 既定 disabled。正しい URL を確認してから有効化。
+  "ludwig":         {"name": "Ludwig's Fine Wine",         "platform": "shopify", "base": "https://ludwigsfinewine.com",  "collections": ["tequila", "all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US", "note": "正URL: ludwigsfinewine.com（/collections/tequila でShopify想定）。--probe で確認。"},
+  "beverlyhills":   {"name": "Beverly Hills Liquor & Wine","platform": "disabled", "base": "https://shopbeverlyhillsliquor.com","intl": True, "currency": "USD", "country": "US", "note": "正URL確認済だが /shop/?region= の独自基盤（非Shopify）。要個別パーサ。"},
+  "elcerrito":      {"name": "El Cerrito Liquor",          "platform": "shopify", "base": "https://elcerritoliquor.com",   "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "roadrunner":     {"name": "Road Runner Spirits",        "platform": "shopify", "base": "https://www.roadrunner.la",     "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US", "note": "正URL: roadrunner.la。基盤不明のため --probe でShopifyか確認。"},
 }
 
 # ── finalize 相当（クラス推定・ブランド・容量・750ml換算） ──
@@ -259,22 +285,26 @@ def write_final(key, raw):
     return len(rows)
 
 def probe_shop(session, key, cfg):
-    """Shopify(products.json)対応か判定。海外店の基盤確認用。"""
+    """Shopify(products.json)対応か判定。crawler が実際に使う collections/all を優先し、
+    ダメなら root /products.json も試す（root feed だけ無効な店を拾う）。海外店の基盤確認用。"""
     base = cfg.get("base", "")
-    try:
-        r = session.get(base + "/products.json?limit=1", timeout=25)
-        ct = r.headers.get("content-type", "")
-        if r.status_code == 200 and "json" in ct.lower():
+    last_status, last_ct = None, ""
+    for ep in ("/collections/all/products.json?limit=1", "/products.json?limit=1"):
+        try:
+            r = session.get(base + ep, timeout=25)
+        except Exception as e:
+            print(f"{key:16} 到達失敗: {e}")
+            return
+        last_status, last_ct = r.status_code, r.headers.get("content-type", "")
+        if r.status_code == 200 and "json" in last_ct.lower():
             try:
                 d = r.json(); prods = d.get("products", [])
                 sample = (prods[0].get("title", "") if prods else "")[:40]
-                print(f"{key:16} ✓ Shopify（products.json OK, {len(prods)}件 例:{sample}）")
+                print(f"{key:16} ✓ Shopify（{ep} OK, {len(prods)}件 例:{sample}）")
                 return
             except Exception:
                 pass
-        print(f"{key:16} ✗ 非Shopify?  HTTP {r.status_code} / {ct}  → 個別対応が必要")
-    except Exception as e:
-        print(f"{key:16} 到達失敗: {e}")
+    print(f"{key:16} ✗ 非Shopify?  HTTP {last_status} / {last_ct}  → 個別対応が必要")
 
 def main():
     ap = argparse.ArgumentParser(description="マルチショップ テキーラ価格クローラ")
