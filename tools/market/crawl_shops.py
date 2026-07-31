@@ -62,12 +62,12 @@ SHOPS = {
   "masterofmalt":   {"name": "Master of Malt",             "platform": "disabled", "base": "https://www.masterofmalt.com",     "intl": True, "currency": "GBP", "country": "GB", "note": "英・独自基盤。個別対応が必要。"},
   "whiskyexchange": {"name": "The Whisky Exchange",        "platform": "disabled", "base": "https://www.thewhiskyexchange.com", "intl": True, "currency": "GBP", "country": "GB", "note": "英・独自基盤。個別対応が必要。"},
   "maisonduwhisky": {"name": "La Maison du Whisky",        "platform": "jsonld", "base": "https://www.whisky.fr", "category_path": "/achat/alcool/spiritueux/tequila-mezcal-sotol.html", "intl": True, "currency": "EUR", "country": "FR", "note": "Next.js。カテゴリのJSON-LD Productをページ送りで取得（テキーラ/メスカル/ソトル）。"},
-  "whiskysite":     {"name": "Whiskysite.nl",              "platform": "disabled", "base": "https://www.whiskysite.nl",        "intl": True, "currency": "EUR", "country": "NL", "note": "蘭・基盤不明(Magento?)。--probe で確認。"},
+  "whiskysite":     {"name": "Whiskysite.nl",              "platform": "htmlcards", "base": "https://www.whiskysite.nl", "category_path": "/nl/tequila/", "page_tmpl": "/nl/tequila/page{n}.html", "card_sel": ".product-block", "price_sel": ".product-block-price", "link_re": r"/nl/[^/]+\.html", "intl": True, "currency": "EUR", "country": "NL", "note": "サーバー描画。.product-block カードを pageN.html で巡回。"},
   # ── URL未確定（推測ドメイン）: 既定 disabled。正しい URL を確認してから有効化。
   "ludwig":         {"name": "Ludwig's Fine Wine",         "platform": "shopify", "base": "https://ludwigsfinewine.com",  "collections": ["tequila", "all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US", "note": "正URL: ludwigsfinewine.com（/collections/tequila でShopify想定）。--probe で確認。"},
   "beverlyhills":   {"name": "Beverly Hills Liquor & Wine","platform": "disabled", "base": "https://shopbeverlyhillsliquor.com","intl": True, "currency": "USD", "country": "US", "note": "正URL確認済だが /shop/?region= の独自基盤（非Shopify）。要個別パーサ。"},
   "elcerrito":      {"name": "El Cerrito Liquor",          "platform": "shopify", "base": "https://elcerritoliquor.com",   "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
-  "roadrunner":     {"name": "Road Runner Spirits",        "platform": "shopify", "base": "https://www.roadrunner.la",     "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US", "note": "正URL: roadrunner.la。基盤不明のため --probe でShopifyか確認。"},
+  "roadrunner":     {"name": "Road Runner Spirits",        "platform": "wix", "base": "https://www.roadrunner.la", "category_path": "/agave", "intl": True, "currency": "USD", "country": "US", "note": "Wix。カテゴリの wix-warmup-data(JSON) から商品抽出。"},
 }
 
 # ── finalize 相当（クラス推定・ブランド・容量・750ml換算） ──
@@ -241,16 +241,100 @@ DETAIL_RE_ECCUBE = re.compile(r"/products/detail/(\d+)")
 DETAIL_RE_COLORME = re.compile(r"[?&]pid=(\d+)")
 
 # ── 通貨記号つき金額の抽出（$ / £ / €、USD等）。海外店HTML用 ──
-_MONEY_RE = re.compile(r'(?:\$|£|€|USD|GBP|EUR)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)')
+# 米/英式(1,234.56) と 欧式(1.234,56 / 18,95) の両方に対応。末尾の「区切り＋1〜2桁」を小数部とみなす。
+_MONEY_RE = re.compile(r'(?:\$|£|€|USD|GBP|EUR)\s*([0-9][0-9.,]*)')
+def _num_from_money(tok):
+    tok = tok.strip().rstrip(".,")
+    m = re.search(r'[.,](\d{1,2})$', tok)
+    if m:
+        idx = m.start()
+        intp = re.sub(r'[.,]', '', tok[:idx]) or "0"
+        return float(intp + "." + tok[idx + 1:])
+    return float(re.sub(r'[.,]', '', tok) or "0")
 def _extract_money(txt):
     vals = []
     for m in _MONEY_RE.finditer(txt or ""):
-        try: vals.append(float(m.group(1).replace(",", "")))
+        try: vals.append(_num_from_money(m.group(1)))
         except ValueError: pass
     return vals
 def _slug_id(url):
     if not url: return ""
     return (url.rstrip("/").split("/")[-1].split("?")[0])[:60]
+
+def parse_html_cards(html, base, cfg):
+    """設定駆動の汎用カードパーサ（サーバー描画のカテゴリHTML用）。
+    card_sel でカード要素、price_sel で価格、link_re で商品リンクを特定。名前は
+    リンク文字列→img alt→title→URLスラッグ の順でフォールバック。"""
+    soup = BeautifulSoup(html, "html.parser")
+    cards = soup.select(cfg.get("card_sel", ".product"))
+    link_re = re.compile(cfg["link_re"]) if cfg.get("link_re") else None
+    price_sel = cfg.get("price_sel")
+    out, seen = [], set()
+    for c in cards:
+        a = None
+        for cand in c.select("a[href]"):
+            if link_re and not link_re.search(cand.get("href", "")): continue
+            a = cand; break
+        if a is None: a = c.select_one("a[href]")
+        url = a.get("href", "") if a else ""
+        name = ""
+        if a:
+            img = a.select_one("img")
+            name = (a.get_text(strip=True) or (img.get("alt", "").strip() if img else "") or a.get("title", "").strip())
+        if not name:
+            im = c.select_one("img")
+            if im: name = im.get("alt", "").strip()
+        if not name and url:
+            name = _slug_id(url).replace("-", " ").replace(".html", "").strip()
+        if not name: continue
+        pe = c.select_one(price_sel) if price_sel else None
+        prices = _extract_money(pe.get_text(" ", strip=True)) if pe else _extract_money(c.get_text(" ", strip=True))
+        price = min(prices) if prices else None
+        avail = "品切れ" if re.search(r"sold ?out|uitverkocht|out of stock|niet (op|meer) voorraad", c.get_text(" ", strip=True), re.I) else "在庫あり"
+        pid = _slug_id(url) or name
+        if pid in seen: continue
+        seen.add(pid)
+        out.append({"id": pid, "name": name, "price": price, "availability": avail,
+                    "url": urllib.parse.urljoin(base + "/", url) if url else ""})
+    return out
+
+def parse_wix_warmup(html, base):
+    """Wixのカテゴリページに埋め込まれた wix-warmup-data(JSON)から商品を抽出。
+    name(文字列)+price(数値)+スラッグ系キーを持つオブジェクトを再帰的に拾う。"""
+    blob = None
+    m = re.search(r'<script[^>]+id=["\']wix-warmup-data["\'][^>]*>(.*?)</script>', html or "", re.S)
+    if m:
+        try: blob = json.loads(m.group(1))
+        except Exception: blob = None
+    if blob is None:
+        m2 = re.search(r'warmupData\s*=\s*(\{.*?\})\s*;\s*</script>', html or "", re.S)
+        if m2:
+            try: blob = json.loads(m2.group(1))
+            except Exception: blob = None
+    if blob is None: return []
+    out, seen, stack = [], set(), [blob]
+    while stack:
+        d = stack.pop()
+        if isinstance(d, list): stack.extend(d); continue
+        if not isinstance(d, dict): continue
+        name, price = d.get("name"), d.get("price")
+        keys = d.keys()
+        if isinstance(name, str) and isinstance(price, (int, float)) and price > 0 \
+           and any(k in keys for k in ("urlPart", "productPageUrl", "slug", "formattedPrice")):
+            slug = d.get("urlPart") or d.get("slug") or ""
+            url = ""
+            ppu = d.get("productPageUrl")
+            if isinstance(ppu, dict): url = (ppu.get("base", "") + ppu.get("path", "")) or ""
+            elif isinstance(ppu, str): url = ppu
+            if not url and slug: url = base + "/product-page/" + slug
+            avail = "品切れ" if (d.get("inStock") is False or d.get("isInStock") is False) else "在庫あり"
+            pid = slug or name
+            if pid not in seen:
+                seen.add(pid)
+                out.append({"id": pid, "name": name, "price": float(price), "availability": avail, "url": url})
+        for v in d.values():
+            if isinstance(v, (dict, list)): stack.append(v)
+    return out
 
 def parse_bigcommerce(html, base):
     """BigCommerce(Stencil)のカテゴリHTMLから商品カードを抽出（name/price/url/在庫）。
@@ -378,6 +462,38 @@ def crawl_shop(session, key, cfg, delay, max_pages, debug):
                 purl = p.get("url") or ""
                 items.append({"id": _slug_id(purl) or name, "name": name, "price": price,
                               "availability": avail, "url": urllib.parse.urljoin(base + "/", purl) if purl else ""})
+            new = [x for x in items if x["id"] not in seen]
+            for x in new: seen.add(x["id"])
+            print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
+            if not new: break
+            raw += new; time.sleep(delay)
+    elif plat == "htmlcards":
+        cat = cfg.get("category_path", "/")
+        tmpl = cfg.get("page_tmpl")   # page>1 のURL（{n}）。無ければ ?page=N
+        seen = set()
+        for page in range(1, max_pages + 1):
+            if page == 1: path = cat
+            elif tmpl: path = tmpl.replace("{n}", str(page))
+            else: sep = "&" if "?" in cat else "?"; path = f"{cat}{sep}page={page}"
+            r = session.get(base + path, timeout=30)
+            if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
+            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(r.text)
+            items = parse_html_cards(r.text, base, cfg)
+            new = [x for x in items if x["id"] not in seen]
+            for x in new: seen.add(x["id"])
+            print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
+            if not new: break
+            raw += new; time.sleep(delay)
+    elif plat == "wix":
+        cat = cfg.get("category_path", "/")
+        seen = set()
+        for page in range(1, max_pages + 1):
+            sep = "&" if "?" in cat else "?"
+            url = base + cat + ("" if page == 1 else f"{sep}page={page}")
+            r = session.get(url, timeout=30)
+            if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
+            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(r.text)
+            items = parse_wix_warmup(r.text, base)
             new = [x for x in items if x["id"] not in seen]
             for x in new: seen.add(x["id"])
             print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
