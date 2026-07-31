@@ -139,10 +139,14 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 #tbl-districts th:last-child,#tbl-locations th:last-child,#tbl-distilleries th:last-child{padding-left:10px;border-left:1px solid var(--border2)}
 #tbl-districts td:last-child,#tbl-locations td:last-child,#tbl-distilleries td:last-child{border-left:1px solid var(--border)}
 #tbl-districts .acts,#tbl-locations .acts,#tbl-distilleries .acts{justify-content:flex-start}
+html.embed body{background:transparent!important}
+html.embed #app,html.embed #login-screen{display:none!important}
+html.embed .mbg{background:transparent!important}
 </style>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
+<script>if(new URLSearchParams(location.search).get('embed')==='1')document.documentElement.classList.add('embed');</script>
 </head>
 <body>
 
@@ -604,14 +608,22 @@ g("confirm-cancel").addEventListener("click",function(){ g("confirm-bg").classLi
 g("confirm-ok").addEventListener("click",function(){ if(confirmCb) confirmCb(); g("confirm-bg").classList.remove("open"); });
 function confirmDel(msg,cb){ g("confirm-msg").textContent=msg; confirmCb=cb; g("confirm-bg").classList.add("open"); }
 
+// 蒸留所ツリーからの埋め込み（?embed=1）：保存/キャンセルで親へ通知して閉じる
+var _embed = new URLSearchParams(location.search).get('embed')==='1';
+var _embedSaved = false;
+function _embedNotify(id){
+  if(!_embed || id!=='m-distillery') return;
+  try{ parent.postMessage({type:'tequila-embed-close',saved:_embedSaved,id:id},'*'); }catch(e){}
+  _embedSaved=false;
+}
 function openM(id)  { g(id).classList.add("open"); }
-function closeM(id) { g(id).classList.remove("open"); }
+function closeM(id) { g(id).classList.remove("open"); _embedNotify(id); }
 
 // モーダル閉じ確認
 var FORM_MODALS=["m-district","m-location","m-distillery"];
 function confirmClose(id){
   if(FORM_MODALS.indexOf(id)>=0){ if(!confirm("登録作業を中止しますか？\n入力内容は破棄されます。")) return; }
-  g(id).classList.remove("open");
+  g(id).classList.remove("open"); _embedNotify(id);
 }
 document.addEventListener("click",function(e){
   var btn=e.target.closest("[data-close]");
@@ -694,6 +706,7 @@ function loadCol(col){
         if(urlNom){
           var target=cache.distilleries.find(function(d){ return String(d.nom||d.id)===String(urlNom); });
           if(target) openDistilleryModal(target.id);
+          else if(_embed){ try{ parent.postMessage({type:'tequila-embed-close',saved:false,error:'notfound'},'*'); }catch(e){} }
         }
       }
     })
@@ -1032,7 +1045,7 @@ g("btn-save-distillery").addEventListener("click",function(){
     salesCategory:parseInt(gv("dis-sales"))
   };
   db.collection("distilleries").doc(nom).set(data, {merge:true})
-    .then(function(){ toast(editId.distillery?"蒸留所を更新しました":"蒸留所を登録しました"); closeM("m-distillery"); bumpAndRender("distilleries"); loadCol("distilleries"); })
+    .then(function(){ toast(editId.distillery?"蒸留所を更新しました":"蒸留所を登録しました"); _embedSaved=true; closeM("m-distillery"); bumpAndRender("distilleries"); loadCol("distilleries"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
