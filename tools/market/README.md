@@ -86,5 +86,10 @@ cd ~/functions && node <repo>/tools/market/import_intl.js --shop oldtowntequila
 ```
 
 - Firestore: `marketIntl/{shop}__{itemId}`（全件）。`matched:true`＋`bottleId` は道場にある銘柄。
-- 表示: `admin_tequila`「海外相場」タブ（全件・店/検索/道場のみ絞り込み。道場銘柄はマーク＋リンク）。
+- 道場マッチは import_intl.js の2段階照合: ①マスタ名の連続部分一致 → ②トークン全一致（語順・語間挿入を吸収、
+  アクセント畳込み済。ガード: マスタ語数>=2＋有効8文字以上）。クラス語は区別トークンとして温存し誤マッチを防ぐ。
+- 表示:
+  - `admin_tequila`「海外相場」タブ … 全件（店/検索/道場のみ絞り込み。道場銘柄はマーク＋リンク）。
+  - `admin_tequila`「海外比較」タブ … 同一ボトルを束ねて店舗横断で価格比較。道場銘柄は `bottleId` で確実に集約、
+    未マッチ品は名称核（容量/tequila語を除去）で近似集約。行クリックで店別内訳。通貨混在は参考レート(`FX`)で¥概算。
 - `--probe` が「非Shopify」を返した店（klwines 等）は products.json 非対応のため、構造を見て個別パーサを追加（後続対応）。

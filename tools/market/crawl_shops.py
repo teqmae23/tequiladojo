@@ -48,7 +48,7 @@ SHOPS = {
   "remedy":         {"name": "Remedy Liquor",              "platform": "shopify", "base": "https://remedyliquor.com",      "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
   "delmesa":        {"name": "Del Mesa Liquor",            "platform": "shopify", "base": "https://delmesaliquor.com",     "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
   "uptown":         {"name": "Uptown Spirits",             "platform": "shopify", "base": "https://uptownspirits.com",     "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
-  "thirdbase":      {"name": "Third Base Market & Spirits","platform": "disabled", "base": "https://thirdbasemarket.com",  "intl": True, "currency": "USD", "country": "US", "note": "DNS解決不可。正URL未確認（要調査して base 修正）。"},
+  "thirdbase":      {"name": "Third Base Market & Spirits","platform": "disabled", "base": "https://thirdbasemarketandspirits.com", "intl": True, "currency": "USD", "country": "US", "note": "正URL確認済だが /shop/product-groups/ の独自基盤（非Shopify）。要個別パーサ。"},
   "hitime":         {"name": "Hi-Time Wine Cellars",       "platform": "disabled", "base": "https://hitimewine.net",       "intl": True, "currency": "USD", "country": "US", "note": "products.json 404。非Shopify基盤。要個別対応。"},
   "montagave":      {"name": "Montagave",                  "platform": "shopify", "base": "https://montagave.com",         "collections": ["all"], "only_tequila": False, "intl": True, "currency": "USD", "country": "US", "note": "アガベ専門ブランド店。商品名にtequila語が無いため全商品収集(only_tequila:False)。"},
   "chips":          {"name": "Chips Liquor",               "platform": "shopify", "base": "https://chipsliquor.com",       "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
@@ -64,10 +64,10 @@ SHOPS = {
   "maisonduwhisky": {"name": "La Maison du Whisky",        "platform": "disabled", "base": "https://www.whisky.fr",            "intl": True, "currency": "EUR", "country": "FR", "note": "仏・独自基盤。個別対応が必要。"},
   "whiskysite":     {"name": "Whiskysite.nl",              "platform": "disabled", "base": "https://www.whiskysite.nl",        "intl": True, "currency": "EUR", "country": "NL", "note": "蘭・基盤不明(Magento?)。--probe で確認。"},
   # ── URL未確定（推測ドメイン）: 既定 disabled。正しい URL を確認してから有効化。
-  "ludwig":         {"name": "Ludwig Fine Wine",           "platform": "disabled", "base": "https://ludwigfinewine.com",   "intl": True, "currency": "USD", "country": "US", "note": "URL未確定（推測）。正URLを確認して base 修正。"},
-  "beverlyhills":   {"name": "Beverly Hills Liquor & Wine","platform": "disabled", "base": "https://beverlyhillsliquor.com","intl": True, "currency": "USD", "country": "US", "note": "URL未確定（推測）。正URLを確認して base 修正。"},
+  "ludwig":         {"name": "Ludwig's Fine Wine",         "platform": "shopify", "base": "https://ludwigsfinewine.com",  "collections": ["tequila", "all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US", "note": "正URL: ludwigsfinewine.com（/collections/tequila でShopify想定）。--probe で確認。"},
+  "beverlyhills":   {"name": "Beverly Hills Liquor & Wine","platform": "disabled", "base": "https://shopbeverlyhillsliquor.com","intl": True, "currency": "USD", "country": "US", "note": "正URL確認済だが /shop/?region= の独自基盤（非Shopify）。要個別パーサ。"},
   "elcerrito":      {"name": "El Cerrito Liquor",          "platform": "shopify", "base": "https://elcerritoliquor.com",   "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
-  "roadrunner":     {"name": "Road Runner Spirits",        "platform": "disabled", "base": "https://roadrunnerspirits.com", "intl": True, "currency": "USD", "country": "US", "note": "URL未確定（推測）。正URLを確認して base 修正。"},
+  "roadrunner":     {"name": "Road Runner Spirits",        "platform": "shopify", "base": "https://www.roadrunner.la",     "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US", "note": "正URL: roadrunner.la。基盤不明のため --probe でShopifyか確認。"},
 }
 
 # ── finalize 相当（クラス推定・ブランド・容量・750ml換算） ──

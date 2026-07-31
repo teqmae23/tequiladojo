@@ -43,6 +43,11 @@ function readCSV(name) { if (!fs.existsSync(name)) { console.error('見つかり
 // アクセント（á/ñ/í 等）を畳んでから英数字のみに正規化。
 // 例: "Años"→"anos" / "Tapatío"→"tapatio"。店側の英字表記と道場マスタを揃える。
 function norm(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,''); }
+// 語順違いの照合用トークン列。アクセント畳込み後、3文字未満と一般語のみ除外。
+// ※ クラス語（blanco/reposado/anejo 等）はボトルを区別する重要トークンなので【残す】
+//    （落とすとブランコとレポサドが同一視され誤マッチになる）。
+const STOP = new Set(['tequila','the','and','with','for','de','la','el','los','las','con','por','ml','cl','liter','litre','bottle']);
+function tokens(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length >= 3 && !STOP.has(t) && !/^\d+ml$/.test(t)); }
 async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { const b = db.batch(); ops.slice(i, i + 400).forEach(o => b.set(o.ref, o.data, { merge: true })); await b.commit(); } }
 
 (async () => {
@@ -53,14 +58,26 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
   let masters = [];
   if (fs.existsSync('tequiladojo_master.csv')) {
     masters = parseCSV(fs.readFileSync('tequiladojo_master.csv', 'utf8'))
-      .map(m => ({ bottleId: m.bottleId || m.id, key: norm(m.bottleEs), es: m.bottleEs || '' }))
+      .map(m => { const tk = tokens(m.bottleEs);
+        return { bottleId: m.bottleId || m.id, key: norm(m.bottleEs), es: m.bottleEs || '', tk, tkLen: tk.join('').length }; })
       .filter(m => m.key.length >= 6); // 短すぎる名は誤マッチ防止で除外
     masters.sort((a, b) => b.key.length - a.key.length); // 長い名を優先
   }
   function matchMaster(name) {
     const n = norm(name); if (!n) return null;
+    // 1) 連続部分一致（厳密・最優先）: 店名の中にマスタ名がそのまま含まれる
     for (const m of masters) { if (n.indexOf(m.key) >= 0) return m; }
-    return null;
+    // 2) トークン全一致（語順違い・語間挿入を吸収。例: "100 ANOS TEQUILA BLANCO"）
+    //    ガード: マスタ語数>=2 かつ 有効文字合計>=8 の時のみ（誤マッチ抑制）。
+    //    マスタの全トークンが店名トークンに存在すれば一致。最も特徴の多い（合計長最大）候補を採用。
+    const itemToks = new Set(tokens(name));
+    if (!itemToks.size) return null;
+    let best = null;
+    for (const m of masters) {
+      if (m.tk.length < 2 || m.tkLen < 8) continue;
+      if (m.tk.every(t => itemToks.has(t)) && (!best || m.tkLen > best.tkLen)) best = m;
+    }
+    return best;
   }
 
   let matched = 0;
