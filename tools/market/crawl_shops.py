@@ -61,7 +61,7 @@ SHOPS = {
   "totalwine":      {"name": "Total Wine & More",          "platform": "disabled", "base": "https://www.totalwine.com",        "intl": True, "currency": "USD", "country": "US", "note": "大規模EC・bot対策強。個別対応が必要。"},
   "masterofmalt":   {"name": "Master of Malt",             "platform": "disabled", "base": "https://www.masterofmalt.com",     "intl": True, "currency": "GBP", "country": "GB", "note": "英・独自基盤。個別対応が必要。"},
   "whiskyexchange": {"name": "The Whisky Exchange",        "platform": "disabled", "base": "https://www.thewhiskyexchange.com", "intl": True, "currency": "GBP", "country": "GB", "note": "英・独自基盤。個別対応が必要。"},
-  "maisonduwhisky": {"name": "La Maison du Whisky",        "platform": "disabled", "base": "https://www.whisky.fr",            "intl": True, "currency": "EUR", "country": "FR", "note": "仏・独自基盤。個別対応が必要。"},
+  "maisonduwhisky": {"name": "La Maison du Whisky",        "platform": "jsonld", "base": "https://www.whisky.fr", "category_path": "/achat/alcool/spiritueux/tequila-mezcal-sotol.html", "intl": True, "currency": "EUR", "country": "FR", "note": "Next.js。カテゴリのJSON-LD Productをページ送りで取得（テキーラ/メスカル/ソトル）。"},
   "whiskysite":     {"name": "Whiskysite.nl",              "platform": "disabled", "base": "https://www.whiskysite.nl",        "intl": True, "currency": "EUR", "country": "NL", "note": "蘭・基盤不明(Magento?)。--probe で確認。"},
   # ── URL未確定（推測ドメイン）: 既定 disabled。正しい URL を確認してから有効化。
   "ludwig":         {"name": "Ludwig's Fine Wine",         "platform": "shopify", "base": "https://ludwigsfinewine.com",  "collections": ["tequila", "all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US", "note": "正URL: ludwigsfinewine.com（/collections/tequila でShopify想定）。--probe で確認。"},
@@ -349,6 +349,35 @@ def crawl_shop(session, key, cfg, delay, max_pages, debug):
             if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
             if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(r.text)
             items = parse_bigcommerce(r.text, base)
+            new = [x for x in items if x["id"] not in seen]
+            for x in new: seen.add(x["id"])
+            print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
+            if not new: break
+            raw += new; time.sleep(delay)
+    elif plat == "jsonld":
+        # カテゴリHTMLの JSON-LD(Product/ItemList) からページ送りで取得（多くのECで共通に使える）
+        cat = cfg.get("category_path", "/")
+        page_param = cfg.get("page_param", "page")
+        only_teq = cfg.get("only_tequila", False)
+        seen = set()
+        for page in range(1, max_pages + 1):
+            sep = "&" if "?" in cat else "?"
+            url = base + cat + ("" if page == 1 else f"{sep}{page_param}={page}")
+            r = session.get(url, timeout=30)
+            if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
+            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(r.text)
+            items = []
+            for p in extract_jsonld_products(r.text):
+                name = (p.get("name") or "").strip()
+                if not name: continue
+                if only_teq and not TEQ_TYPE_RE.search(name): continue
+                try: price = float(str(p.get("price")).replace(",", "")) if p.get("price") not in (None, "") else None
+                except ValueError: price = None
+                av = str(p.get("availability") or "")
+                avail = "在庫あり" if re.search(r"instock|in_stock", av, re.I) else ("品切れ" if av else "")
+                purl = p.get("url") or ""
+                items.append({"id": _slug_id(purl) or name, "name": name, "price": price,
+                              "availability": avail, "url": urllib.parse.urljoin(base + "/", purl) if purl else ""})
             new = [x for x in items if x["id"] not in seen]
             for x in new: seen.add(x["id"])
             print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
