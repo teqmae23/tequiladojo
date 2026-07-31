@@ -49,7 +49,7 @@ SHOPS = {
   "delmesa":        {"name": "Del Mesa Liquor",            "platform": "shopify", "base": "https://delmesaliquor.com",     "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
   "uptown":         {"name": "Uptown Spirits",             "platform": "shopify", "base": "https://uptownspirits.com",     "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
   "thirdbase":      {"name": "Third Base Market & Spirits","platform": "disabled", "base": "https://thirdbasemarketandspirits.com", "intl": True, "currency": "USD", "country": "US", "note": "正URL確認済だが /shop/product-groups/ の独自基盤（非Shopify）。要個別パーサ。"},
-  "hitime":         {"name": "Hi-Time Wine Cellars",       "platform": "disabled", "base": "https://hitimewine.net",       "intl": True, "currency": "USD", "country": "US", "note": "products.json 404。非Shopify基盤。要個別対応。"},
+  "hitime":         {"name": "Hi-Time Wine Cellars",       "platform": "bigcommerce", "base": "https://www.hitimewine.net", "category_path": "/spirits/tequila/", "intl": True, "currency": "USD", "country": "US", "note": "BigCommerce。/spirits/tequila/ を ?page= で巡回。"},
   "montagave":      {"name": "Montagave",                  "platform": "shopify", "base": "https://montagave.com",         "collections": ["all"], "only_tequila": False, "intl": True, "currency": "USD", "country": "US", "note": "アガベ専門ブランド店。商品名にtequila語が無いため全商品収集(only_tequila:False)。"},
   "chips":          {"name": "Chips Liquor",               "platform": "shopify", "base": "https://chipsliquor.com",       "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
   "frootbat":       {"name": "Froot Bat",                  "platform": "disabled", "base": "https://frootbat.com",         "intl": True, "currency": "USD", "country": "US", "note": "products.json 404。非Shopify基盤。要個別対応。"},
@@ -138,7 +138,20 @@ def finalize_row(shop, it):
 # ── HTTP ──────────────────────────────────────────────────
 def make_session():
     s = requests.Session()
-    s.headers.update({"User-Agent": UA, "Accept-Language": "ja,en;q=0.8"})
+    # 実ブラウザに近いヘッダ（簡易な403対策を通す狙い。JSチャレンジ型のCloudflareは通らない）
+    s.headers.update({
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,ja;q=0.8",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "sec-ch-ua": '"Chromium";v="125", "Not.A/Brand";v="24", "Google Chrome";v="125"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+    })
     return s
 def robots_ok(session, base, path):
     rp = urllib.robotparser.RobotFileParser()
@@ -480,6 +493,15 @@ def sniff_shop(session, key, cfg, path):
     # ページネーション痕跡
     pag = sorted(set(re.findall(r'[?&](page|p|start|offset|pagenumber)=(\d+)', html, re.I)))
     if pag: print(f"  ページング痕跡: {pag[:6]}")
+    # 埋め込みJSON（Next.js等）: 商品配列を含むことが多く個別解析で取得可能
+    nd = re.search(r'<script id=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>', html, re.S)
+    if nd:
+        blob = nd.group(1)
+        print(f"  __NEXT_DATA__ 検出（Next.js, {len(blob):,}bytes）: 中の product 配列を解析すれば取得可。")
+        for kw in ("price", "sku", "product"):
+            print(f"    '{kw}' 出現: {blob.lower().count(kw)}回")
+    if re.search(r'requirejs|mage/|data-mage-init|/static/version', html, re.I):
+        print("  Magento痕跡あり（カテゴリHTMLの .product-item をパース、または /rest/V1 API を検討）")
 
 def main():
     ap = argparse.ArgumentParser(description="マルチショップ テキーラ価格クローラ")
