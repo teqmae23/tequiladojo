@@ -321,11 +321,107 @@ def probe_shop(session, key, cfg):
                 pass
     print(f"{key:16} ✗ 非Shopify?  HTTP {last_status} / {last_ct}  → 個別対応が必要")
 
+# ── 非Shopify店の基盤・構造を調べる sniff（個別パーサ作成の下調べ用） ──
+def detect_platform(html, headers):
+    h = (html or "")[:300000].lower()
+    sig = {
+        "shopify":       ("cdn.shopify.com" in h or "shopify.theme" in h or "myshopify.com" in h),
+        "bigcommerce":   ("bigcommerce.com" in h or "stencil-utils" in h or "data-stencil" in h),
+        "woocommerce":   ("woocommerce" in h or "wp-content/plugins/woocommerce" in h),
+        "magento":       ("mage/cookies" in h or "/static/version" in h or "magento" in h or "data-mage-init" in h),
+        "wordpress":     ("wp-content" in h or "wp-json" in h),
+        "squarespace":   ("squarespace" in h or "static1.squarespace" in h),
+        "wix":           ("wixstatic" in h or "wix.com" in h),
+        "salesforce_cc": ("demandware" in h or "dwstatic" in h),
+        "shopware":      ("shopware" in h),
+        "prestashop":    ("prestashop" in h),
+        "city_hive":     ("cityhive" in h or "city-hive" in h),
+        "bottlecapps":   ("bottlecapps" in h),
+    }
+    found = [k for k, v in sig.items() if v]
+    server = (headers.get("server", "") if headers else "")
+    powered = (headers.get("x-powered-by", "") if headers else "")
+    extra = " ".join(x for x in [f"server:{server}" if server else "", f"x-powered-by:{powered}" if powered else ""] if x)
+    return (", ".join(found) or "unknown") + (f"  [{extra}]" if extra else "")
+
+def _iter_jsonld(html):
+    for m in re.finditer(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html or "", re.I | re.S):
+        try:
+            data = json.loads(m.group(1).strip())
+        except Exception:
+            continue
+        stack = [data]
+        while stack:
+            d = stack.pop()
+            if isinstance(d, list): stack.extend(d); continue
+            if isinstance(d, dict):
+                if isinstance(d.get("@graph"), list): stack.extend(d["@graph"])
+                yield d
+
+def extract_jsonld_products(html):
+    """JSON-LD(構造化データ)から Product / ItemList を抽出（多くのEC共通で使える）。"""
+    def types_of(d):
+        t = d.get("@type"); return t if isinstance(t, list) else [t]
+    def one_offer(off):
+        if isinstance(off, list): off = off[0] if off else {}
+        if not isinstance(off, dict): return None, "", ""
+        price = off.get("price") or off.get("lowPrice") or (off.get("priceSpecification", {}) or {}).get("price")
+        return price, off.get("availability", ""), off.get("priceCurrency", "")
+    out = []
+    for d in _iter_jsonld(html):
+        ts = types_of(d)
+        if "Product" in ts:
+            price, avail, cur = one_offer(d.get("offers") or {})
+            out.append({"name": d.get("name"), "price": price, "availability": avail, "currency": cur, "url": d.get("url", "")})
+        elif "ItemList" in ts:
+            for el in (d.get("itemListElement") or []):
+                item = el.get("item") if isinstance(el, dict) else None
+                if isinstance(item, dict):
+                    price, avail, cur = one_offer(item.get("offers") or {})
+                    out.append({"name": item.get("name"), "price": price, "availability": avail, "currency": cur, "url": item.get("url", "")})
+    return out
+
+def sniff_shop(session, key, cfg, path):
+    """非Shopify店の下調べ: 指定URLを取得し、基盤判定・JSON-LD商品抽出・テキーラ関連リンクを表示。
+    HTMLは <key>_sniff.html に保存。--path 未指定ならトップページを見てカテゴリ候補リンクを探す。"""
+    base = cfg.get("base", "")
+    url = base + (path or "")
+    try:
+        r = session.get(url, timeout=30)
+    except Exception as e:
+        print(f"[{key}] 到達失敗 {url}: {e}"); return
+    html = r.text or ""
+    fn = f"{key}_sniff.html"
+    try: open(fn, "w", encoding="utf-8").write(html)
+    except Exception: pass
+    print(f"[{key}] {url}")
+    print(f"  HTTP {r.status_code} / {r.headers.get('content-type','')[:28]} / {len(html):,}bytes / dump: {fn}")
+    print(f"  platform = {detect_platform(html, r.headers)}")
+    prods = extract_jsonld_products(html)
+    print(f"  JSON-LD Product/ItemList: {len(prods)}件" + ("（このページから直接取れる可能性）" if prods else "（このページには無し）"))
+    for p in prods[:6]:
+        print(f"    - {str(p.get('name'))[:46]:46} | {p.get('price')} {p.get('currency','')} | {str(p.get('availability'))[-18:]}")
+    # テキーラ関連リンク（カテゴリURL探し。トップ or 一覧ページで有用）
+    links = []
+    for m in re.finditer(r'href=["\']([^"\']+)["\']', html, re.I):
+        href = m.group(1)
+        if re.search(r'tequila|agave', href, re.I) and href not in links:
+            links.append(href)
+    if links:
+        print(f"  'tequila/agave' を含むリンク {len(links)}件（先頭12）:")
+        for l in links[:12]:
+            print(f"    {l}")
+    # ページネーション痕跡
+    pag = sorted(set(re.findall(r'[?&](page|p|start|offset|pagenumber)=(\d+)', html, re.I)))
+    if pag: print(f"  ページング痕跡: {pag[:6]}")
+
 def main():
     ap = argparse.ArgumentParser(description="マルチショップ テキーラ価格クローラ")
     ap.add_argument("--shop"); ap.add_argument("--all", action="store_true")
     ap.add_argument("--intl", action="store_true", help="海外店（intl:True）のみ対象")
     ap.add_argument("--probe", action="store_true", help="対象店のプラットフォーム(Shopify)判定のみ")
+    ap.add_argument("--sniff", action="store_true", help="非Shopify店の下調べ（基盤判定・JSON-LD抽出・カテゴリ探索）")
+    ap.add_argument("--path", default="", help="--sniff で取得する base 相対パス（例: /tequila）")
     ap.add_argument("--list", action="store_true"); ap.add_argument("--debug", action="store_true")
     ap.add_argument("--delay", type=float, default=1.5); ap.add_argument("--max-pages", type=int, default=60)
     a = ap.parse_args()
@@ -341,6 +437,12 @@ def main():
         for k in keys:
             cfg = SHOPS.get(k)
             if cfg: probe_shop(session, k, cfg)
+        return
+    if a.sniff:
+        session = make_session()
+        for k in keys:
+            cfg = SHOPS.get(k)
+            if cfg: sniff_shop(session, k, cfg, a.path)
         return
     if not keys: print("--shop <key> または --all を指定（--list で一覧）", file=sys.stderr); sys.exit(1)
     session = make_session(); total = 0
