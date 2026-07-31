@@ -95,7 +95,9 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
     return true;
   }
 
-  // 履歴の日付（JST）。--date YYYY-MM-DD で上書き可。
+  // 履歴の蓄積は --history を付けた時のみ（週次自動の月初回のみ想定・手動は蓄積しない）。
+  //   日付（JST）。--date YYYY-MM-DD で上書き可。
+  const HIST = process.argv.indexOf('--history') >= 0;
   const dateArgIdx = process.argv.indexOf('--date');
   const DAY = dateArgIdx >= 0 ? process.argv[dateArgIdx + 1] : new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
   const inStock = av => /在庫あり|in ?stock|available|true/i.test(String(av || ''));
@@ -105,8 +107,8 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
   items.forEach(it => {
     const ref = db.collection('marketIntl').doc(SHOP + '__' + it.id);
     const href = db.collection('marketIntlHistory').doc(SHOP + '__' + it.id);
-    if (!passFilter(it.name)) {                        // NG: 現行・履歴とも削除（いらないものは蓄積しない）
-      dropped++; ops.push({ ref, del: true }); ops.push({ ref: href, del: true }); return;
+    if (!passFilter(it.name)) {                        // NG: 現行を削除。履歴は蓄積時のみ削除（手動実行は履歴に触れない）
+      dropped++; ops.push({ ref, del: true }); if (HIST) ops.push({ ref: href, del: true }); return;
     }
     kept++;
     const m = masters.length ? matchMaster(it.name) : null;
@@ -119,14 +121,14 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
       bottleId: m ? m.bottleId : '', matched: !!m, matchedName: m ? m.es : '',
       source: 'crawl-intl', updatedAt: FV.serverTimestamp()
     } });
-    // 履歴: 日付キーのマップに当日値を追記（merge。同日再実行は上書き）
+    // 履歴: 日付キーのマップに当日値を追記（merge。同日再実行は上書き）。--history 指定時のみ。
     const p750 = num(it.price_750ml);
-    if (p750 != null) ops.push({ ref: href, data: {
+    if (HIST && p750 != null) ops.push({ ref: href, data: {
       shop: SHOP, shopName, name: it.name || '', bottleId: m ? m.bottleId : '',
       currency: it.currency || 'USD', itemKey: SHOP + '__' + it.id,
       hist: { [DAY]: { p: p750, s: inStock(it.availability) ? 1 : 0 } }
     } });
   });
   await commitChunked(ops);
-  console.log(`[${SHOP}] marketIntl 取込 ${kept}件 / 除外 ${dropped}件 / 道場マッチ ${matched}件 / 履歴日 ${DAY}${masters.length ? '' : ' / master未読込'}`);
+  console.log(`[${SHOP}] marketIntl 取込 ${kept}件 / 除外 ${dropped}件 / 道場マッチ ${matched}件 / 履歴 ${HIST ? '記録(' + DAY + ')' : '無し'}${masters.length ? '' : ' / master未読込'}`);
 })().catch(e => { console.error('失敗:', e.message); process.exit(1); });

@@ -103,6 +103,14 @@ cd ~/functions && node <repo>/tools/market/import_intl.js --shop oldtowntequila
   - 定期スクレイピングを重ねるほど点が増える。ボトルの集約は現行 marketIntl のメンバー item を辿って履歴を合算。
 - **NG/OK ワード**（`settings/marketFilter` = `{ng:[], ok:[]}`）: いらない商品を蓄積しないための除外。
   - ルール: 商品名が **NG語を含み、かつ OK語を含まない**ものを除外（大小文字区別なし・部分一致）。OKはNGの救済。
-  - import_intl.js が取り込み時に適用（除外分は marketIntl / marketIntlHistory から**削除**）。画面表示にも即時反映。
+  - import_intl.js が取り込み時に適用（除外分は marketIntl から削除。履歴削除は `--history` 時のみ）。画面表示にも即時反映。
   - 編集: `admin_tequila`「海外相場」タブの「🚫 除外ワード」ボタン（オーナーのみ保存）。
+
+### 定期実行（週次・GitHub Actions / `.github/workflows/market-intl-crawl.yml`）
+- **週次**でクロール→`marketIntl`更新。相場は毎週最新化。
+- **履歴は月次**: `import_intl.js --history` を付けた時だけ `marketIntlHistory` に蓄積する。
+  ワークフローは **schedule かつ「月の最初の週次実行」(JST日<=7)** の時のみ `--history` を付与 → 推移は月1点。
+- **手動実行は蓄積しない**（Actions の Run workflow。`history=true` を明示した時のみ手動でも蓄積）。
+- 事前設定: Secrets `GCP_SA_KEY`（Firestore書込権限のSA JSON）。cron を編集すれば間隔変更可。
+- 手動の単発取り込みでも同じ: 履歴を残したい時のみ `node import_intl.js --shop <key> --history`（日付上書きは `--date YYYY-MM-DD`）。
 - `--probe` が「非Shopify」を返した店（klwines 等）は products.json 非対応のため、構造を見て個別パーサを追加（後続対応）。
