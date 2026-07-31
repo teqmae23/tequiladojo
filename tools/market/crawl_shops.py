@@ -90,6 +90,8 @@ SIDEBAR_RE = re.compile(r"sidebar|side_a|side_b|_side|side_|ranking|rank_|recomm
 RANK_NAME_RE = re.compile(r"^\s*No\.?\s*\d")
 SET_RE = re.compile(r"セット|飲み比べ|ギフトBOX|詰め合わせ|アソート")
 VOL_RE = re.compile(r"(\d{2,4})\s*ml|(\d(?:\.\d+)?)\s*[lL](?![a-z])", re.I)
+# 度数(ABV): 誤検出（"25% off" / "100% agave"）を避けるためアルコール語が隣接する場合のみ採用。
+ABV_RE = re.compile(r"(\d{2,3}(?:\.\d+)?)\s*%\s*(?:abv|alc\.?|alcohol|vol)|(?:abv|alc\.?|alcohol)[^0-9]{0,8}(\d{2,3}(?:\.\d+)?)\s*%|(\d{2,3}(?:\.\d+)?)\s*proof", re.I)
 
 def class_of(name):
     for label, pat in CLASS_RULES:
@@ -104,6 +106,17 @@ def vol_from_name(name):
     m = VOL_RE.search(name or "")
     if not m: return None
     return int(m.group(1)) if m.group(1) else int(float(m.group(2)) * 1000)
+def abv_of(text):
+    for m in ABV_RE.finditer(text or ""):
+        if m.group(3):                                   # proof → ABV = proof/2
+            try: v = float(m.group(3)) / 2.0
+            except ValueError: continue
+        else:
+            g = m.group(1) or m.group(2)
+            try: v = float(g)
+            except (TypeError, ValueError): continue
+        if 20 <= v <= 75: return round(v, 1)             # テキーラの妥当域のみ採用
+    return None
 def finalize_row(shop, it):
     name = it["name"]; price = it.get("price")
     vol = it.get("volume_ml") or vol_from_name(name)
@@ -119,6 +132,7 @@ def finalize_row(shop, it):
         "availability": it.get("availability", ""), "is_drink": is_drink, "is_set": is_set,
         "shop": shop, "url": it.get("url", ""),
         "currency": SHOPS.get(shop, {}).get("currency", "JPY"),
+        "abv": (it.get("abv") if it.get("abv") is not None else abv_of(name)) or "",
     }
 
 # ── HTTP ──────────────────────────────────────────────────
@@ -155,6 +169,7 @@ def parse_shopify(data, base, only_tequila=False):
         handle = p.get("handle") or ""
         out.append({"id": str(p.get("id") or handle), "name": p.get("title") or handle,
                     "price": price, "availability": "在庫あり" if avail else "品切れ",
+                    "abv": abv_of((p.get("title") or "") + " " + (p.get("body_html") or "")),
                     "url": base + "/products/" + handle})
     return out
 
@@ -274,7 +289,7 @@ def write_final(key, raw):
     rows = [finalize_row(key, it) for it in raw if it.get("name")]
     rows.sort(key=lambda x: (x["price_per_ml"] == "", x["price_per_ml"] if x["price_per_ml"] != "" else 0))
     cols = ["id","name","brand_guess","class_guess","price_yen","volume_ml","volume_used",
-            "vol_assumed","price_per_ml","price_750ml","availability","is_drink","is_set","shop","url","currency"]
+            "vol_assumed","price_per_ml","price_750ml","availability","is_drink","is_set","shop","url","currency","abv"]
     out = f"{key}_tequila_final.csv"
     with open(out, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols); w.writeheader()
