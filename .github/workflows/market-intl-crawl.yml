@@ -1,0 +1,61 @@
+# 海外相場の定期巡回（週次）。intl店をクロール→marketIntl取込。
+# 履歴(marketIntlHistory)は「月の最初の週次実行時」のみ蓄積（--history）。
+#   → 週次で最新相場を更新しつつ、推移グラフは月次の粒度で溜める。手動実行は蓄積しない。
+# 事前設定(必須): リポジトリ Secrets に GCP_SA_KEY（Firestore書込権限のサービスアカウントJSON）。
+# 手動実行も可（Actions画面の Run workflow。history=true を指定した時のみ手動でも蓄積）。
+name: market-intl-crawl
+on:
+  schedule:
+    - cron: '23 20 * * 1'   # 毎週火 05:23 JST 相当(UTC 月20:23)。:00を避け負荷分散
+  workflow_dispatch:
+    inputs:
+      history:
+        description: '履歴を蓄積する(true/false)。手動は既定false（蓄積しない）'
+        required: false
+        default: 'false'
+concurrency:
+  group: market-intl-crawl
+  cancel-in-progress: false
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: Install deps
+        run: |
+          python -m pip install --quiet requests beautifulsoup4
+          npm install --no-save firebase-admin@12
+      - name: Auth (service account)
+        run: |
+          echo "$GCP_SA_KEY" > "$RUNNER_TEMP/sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      - name: Crawl intl + import (history monthly)
+        env:
+          NODE_PATH: ${{ github.workspace }}/node_modules
+        run: |
+          set -e
+          shopt -s nullglob
+          cd "$GITHUB_WORKSPACE/tools/market"
+          # 履歴蓄積の判定:
+          #   ・schedule かつ 月の最初の週次実行(JST日<=7) → 蓄積
+          #   ・手動(workflow_dispatch)は history=true の時のみ蓄積
+          HIST=""
+          DOM=$(TZ=Asia/Tokyo date +%-d)
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$DOM" -le 7 ]; then HIST="--history"; fi
+          if [ "${{ github.event.inputs.history }}" = "true" ]; then HIST="--history"; fi
+          echo "history flag: [$HIST]  (JST day=$DOM, event=${{ github.event_name }})"
+          # クロール（Shopifyの有効店のみ。disabledは自動スキップ）
+          python3 crawl_shops.py --intl
+          # 道場マスタ（自動マッチ用）
+          node export_tequila_master.js
+          # 各店を marketIntl へ取り込み（履歴は $HIST が付いた時のみ蓄積）
+          for f in *_tequila_final.csv; do
+            shop=$(basename "$f" _tequila_final.csv)
+            node import_intl.js --shop "$shop" $HIST
+          done

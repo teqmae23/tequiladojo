@@ -417,6 +417,7 @@ html.embed .mbg{background:transparent!important}
           <select class="fsel" id="f-intl-shop"><option value="">全店</option></select>
           <label style="font-size:12px;display:flex;align-items:center;gap:5px"><input type="checkbox" id="f-intl-dojo"> 道場にあるもののみ</label>
           <select class="fsel" id="f-intl-sort"><option value="shop">店舗順</option><option value="cheap">750ml換算 安い順</option><option value="name">名前順</option></select>
+          <button class="btn bs" id="btn-mktfilter" title="NG/OKワードで取り込み対象を絞る">🚫 除外ワード</button>
           <span style="margin-left:auto;font-size:11px;color:var(--ink3)" id="intl-count"></span>
         </div>
         <div class="tw" id="intl-tw"><table id="tbl-intl">
@@ -448,6 +449,37 @@ html.embed .mbg{background:transparent!important}
       </div>
     </div>
 
+  </div>
+</div>
+
+<!-- 海外相場: NG/OKワード設定モーダル -->
+<div class="mbg" id="m-mktfilter">
+  <div class="modal">
+    <div class="mhead"><div class="mtitle">取り込み除外ワード（NG / OK）</div><button class="mx" data-close="m-mktfilter">✕</button></div>
+    <div class="mbody">
+      <div class="pdesc" style="margin-bottom:10px">商品名に <b>NGワード</b> を含むものを取り込み対象から除外します（1行1語・大小文字区別なし・部分一致）。<b>OKワード</b> を含むものは、NGに該当しても<b>残します</b>（救済）。<br>この設定は次回の <code>import_intl.js</code> 実行時に適用され、既存の該当データも削除されます。画面表示にも即時反映されます。</div>
+      <div class="frow">
+        <div class="fg" style="flex:1"><label class="fl">NGワード（除外）</label><textarea class="fi" id="mf-ng" rows="8" placeholder="例:&#10;glass&#10;t-shirt&#10;sticker&#10;gift card&#10;バンドル" style="resize:vertical;font-family:monospace"></textarea></div>
+        <div class="fg" style="flex:1"><label class="fl">OKワード（救済）</label><textarea class="fi" id="mf-ok" rows="8" placeholder="例:&#10;tequila&#10;mezcal&#10;テキーラ" style="resize:vertical;font-family:monospace"></textarea></div>
+      </div>
+    </div>
+    <div class="mfoot"><button class="btn bg2" data-close="m-mktfilter">キャンセル</button><button class="btn bp" id="btn-save-mktfilter">保存して反映</button></div>
+  </div>
+</div>
+
+<!-- 海外相場: 価格推移モーダル -->
+<div class="mbg" id="m-trend">
+  <div class="modal" style="max-width:660px">
+    <div class="mhead"><div class="mtitle" id="trend-title">価格推移</div><button class="mx" data-close="m-trend">✕</button></div>
+    <div class="mbody">
+      <div class="pdesc" style="margin-bottom:8px">在庫のある店の <b>最安（750ml換算・¥概算）</b> の推移。スクレイピングを重ねるほど点が増えます。</div>
+      <div id="trend-chart"><div class="dim" style="padding:24px;text-align:center">読み込み中…</div></div>
+      <div class="tw" style="max-height:240px;overflow:auto;margin-top:10px"><table style="width:100%">
+        <thead><tr><th>日付</th><th style="text-align:right">最安(≈¥)</th><th style="text-align:right">最高(≈¥)</th><th style="text-align:center">店数</th><th style="text-align:center">在庫店</th></tr></thead>
+        <tbody id="trend-tbody"></tbody>
+      </table></div>
+    </div>
+    <div class="mfoot"><button class="btn bg2" data-close="m-trend">閉じる</button></div>
   </div>
 </div>
 
@@ -904,8 +936,19 @@ document.querySelector('[data-page="intl"]').addEventListener("click",function()
 document.querySelector('[data-page="intlcmp"]').addEventListener("click",function(){ if(!cache.intl.length) loadMarketIntl(); else renderIntlCmp(); });
 
 // ══════════════════ 海外相場（marketIntl・全件表示） ══════════════════
+var mktFilter={ng:[],ok:[]};   // 取り込み除外ワード（settings/marketFilter）
+var _cmpGroups=[];              // 海外比較の描画中グループ（推移モーダルの参照用）
+// NG語を含み、かつOK語を含まないものを除外（OKはNGの救済）。大小文字区別なし・部分一致。
+function _passFilter(name){ var n=String(name||'').toLowerCase();
+  if(mktFilter.ng.length && mktFilter.ng.some(function(w){return n.indexOf(w)>=0;})) return mktFilter.ok.some(function(w){return n.indexOf(w)>=0;});
+  return true; }
 function loadMarketIntl(){
-  db.collection('marketIntl').get().then(function(snap){
+  db.doc('settings/marketFilter').get().then(function(fd){
+    if(fd.exists){ var d=fd.data()||{};
+      mktFilter.ng=(d.ng||[]).map(function(s){return String(s).toLowerCase().trim();}).filter(Boolean);
+      mktFilter.ok=(d.ok||[]).map(function(s){return String(s).toLowerCase().trim();}).filter(Boolean);
+    }
+  }).catch(function(){}).then(function(){ return db.collection('marketIntl').get(); }).then(function(snap){
     cache.intl=snap.docs.map(function(d){return Object.assign({_id:d.id},d.data());});
     setCnt('intl',cache.intl.length);
     var shopSel=g('f-intl-shop');
@@ -923,6 +966,7 @@ function renderIntl(){
   var q=(g('s-intl')||{value:''}).value.toLowerCase();
   var shop=gv('f-intl-shop'), dojo=g('f-intl-dojo')&&g('f-intl-dojo').checked, sort=gv('f-intl-sort')||'shop';
   var list=(cache.intl||[]).filter(function(m){
+    if(!_passFilter(m.name)) return false;
     if(shop && m.shop!==shop) return false;
     if(dojo && !m.matched) return false;
     if(q && (m.name||'').toLowerCase().indexOf(q)<0) return false;
@@ -980,6 +1024,7 @@ function _intlGroups(){
   // 価格ありのテキーラのみ抽出。各アイテムに core(名称核) と bid(道場bottleId) を付与。
   var items=[];
   (cache.intl||[]).forEach(function(m){
+    if(!_passFilter(m.name)) return;                  // NGワード除外
     var p=Number(m.price750!=null&&m.price750!==''?m.price750:m.price);
     if(!isFinite(p)||p<=0) return;                    // 価格なしは比較対象外
     var core=_cmpCore(m.name), bid=(m.matched&&m.bottleId)?String(m.bottleId):'';
@@ -1015,7 +1060,7 @@ function _intlGroups(){
     var stocked=list.filter(function(r){return r.inStock;});
     var base=stocked.length?stocked:list;               // 最安/最高は【在庫店のみ】（全滅時のみ全店にフォールバック）
     var grp={matched:!!bottleId,bottleId:bottleId,label:label||'',cls:cls,shops:shops,
-      list:list,n:list.length,stockN:stocked.length};
+      list:list,n:list.length,stockN:stocked.length,memberIds:arr.map(function(x){return x.m._id;})};
     grp.min=base.length?base[0].jpy:null; grp.max=base.length?base[base.length-1].jpy:null;
     grp.spread=(grp.min!=null&&grp.max!=null)?(grp.max-grp.min):0;
     grp.cheapJpy=grp.min;                               // 詳細で最安(在庫店)行をハイライトする基準
@@ -1051,7 +1096,8 @@ function renderIntlCmp(){
   var cc=g('intlcmp-count'); if(cc) cc.textContent=groups.length+' 銘柄';
   var tb=g('tb-intlcmp');
   if(!groups.length){ tb.innerHTML='<tr><td colspan="7" class="ec">該当なし（海外相場の取り込み後に表示されます）</td></tr>'; return; }
-  tb.innerHTML=groups.slice(0,500).map(function(gr,i){
+  _cmpGroups=groups.slice(0,500);
+  tb.innerHTML=_cmpGroups.map(function(gr,i){
     var badge=gr.matched?('<a class="badge bg-teal" href="admin_tequila.html?tab=bottles&edit='+escD(gr.bottleId)+'" target="_blank" style="text-decoration:none" title="'+escD(gr.label||'')+'">🥃</a>'):'<span class="dim">—</span>';
     var min=gr.min!=null?('¥'+gr.min.toLocaleString()):'—';
     var max=gr.max!=null?('¥'+gr.max.toLocaleString()):'—';
@@ -1073,7 +1119,7 @@ function renderIntlCmp(){
         +'<td style="text-align:center">'+stk+'</td></tr>';
     }).join('');
     return '<tr class="cmp-row" data-i="'+i+'" style="cursor:pointer">'
-      +'<td style="font-size:12px"><span class="cmp-caret dim" style="font-size:9px">▶</span> '+escD(gr.label||'')+'</td>'
+      +'<td style="font-size:12px"><span class="cmp-caret dim" style="font-size:9px">▶</span> '+escD(gr.label||'')+' <button class="cmp-trend" data-i="'+i+'" title="価格推移を見る" style="border:none;background:none;cursor:pointer;font-size:12px;padding:0 2px;line-height:1">📈</button></td>'
       +'<td class="dim" style="font-size:11px">'+escD(gr.cls||'')+'</td>'
       +'<td style="text-align:center;font-weight:700">'+cntCell+'</td>'
       +'<td class="mono" style="text-align:right;color:#1a6e58;font-weight:700">'+min+'</td>'
@@ -1085,6 +1131,8 @@ function renderIntlCmp(){
   }).join('');
 }
 if(g('tb-intlcmp')) g('tb-intlcmp').addEventListener('click',function(e){
+  var tbtn=e.target.closest?e.target.closest('.cmp-trend'):null;
+  if(tbtn){ e.stopPropagation(); openTrend(_cmpGroups[Number(tbtn.getAttribute('data-i'))]); return; }
   var row=e.target.closest?e.target.closest('.cmp-row'):null;
   if(!row || row.tagName!=='TR') return;
   var i=row.getAttribute('data-i');
@@ -1095,6 +1143,72 @@ if(g('tb-intlcmp')) g('tb-intlcmp').addEventListener('click',function(e){
 ['s-intlcmp'].forEach(function(id){ var e=g(id); if(e) e.addEventListener('input',renderIntlCmp); });
 ['f-intlcmp-cls','f-intlcmp-multi','f-intlcmp-dojo','f-intlcmp-sort'].forEach(function(id){ var e=g(id); if(e) e.addEventListener('change',renderIntlCmp); });
 if(g('btn-intlcmp-reload')) g('btn-intlcmp-reload').addEventListener('click',loadMarketIntl);
+
+// ── 価格推移（marketIntlHistory から当該ボトルの店別履歴を集計） ──
+function _trendSVG(series){
+  var W=600,H=210,pl=58,pr=16,pt=14,pb=30,n=series.length;
+  var ys=series.map(function(s){return s.minJpy;});
+  var ymin=Math.min.apply(null,ys), ymax=Math.max.apply(null,ys);
+  if(ymin===ymax){ ymin=ymin*0.9; ymax=ymax*1.1||1; }
+  function X(i){ return pl+(n<=1?(W-pl-pr)/2:(i/(n-1))*(W-pl-pr)); }
+  function Y(v){ return pt+(1-(v-ymin)/(ymax-ymin))*(H-pt-pb); }
+  var line=series.map(function(s,i){return X(i).toFixed(1)+','+Y(s.minJpy).toFixed(1);}).join(' ');
+  var dots=series.map(function(s,i){return '<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(s.minJpy).toFixed(1)+'" r="3" fill="#c86a1f"><title>'+escD(s.date)+'  ¥'+Math.round(s.minJpy).toLocaleString()+'</title></circle>';}).join('');
+  var yLab='<text x="'+(pl-6)+'" y="'+(Y(ymax)+4)+'" text-anchor="end" font-size="10" fill="#999">¥'+Math.round(ymax).toLocaleString()+'</text>'
+    +'<text x="'+(pl-6)+'" y="'+(Y(ymin)+4)+'" text-anchor="end" font-size="10" fill="#999">¥'+Math.round(ymin).toLocaleString()+'</text>';
+  var xLab='<text x="'+X(0).toFixed(1)+'" y="'+(H-9)+'" text-anchor="start" font-size="10" fill="#999">'+escD(series[0].date)+'</text>'
+    +(n>1?'<text x="'+X(n-1).toFixed(1)+'" y="'+(H-9)+'" text-anchor="end" font-size="10" fill="#999">'+escD(series[n-1].date)+'</text>':'');
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;background:var(--cream2);border-radius:8px">'
+    +'<polyline points="'+line+'" fill="none" stroke="#c86a1f" stroke-width="2"/>'+dots+yLab+xLab+'</svg>';
+}
+function openTrend(grp){
+  if(!grp) return;
+  g('trend-title').textContent=(grp.label||'ボトル')+'　価格推移';
+  g('trend-chart').innerHTML='<div class="dim" style="padding:24px;text-align:center">読み込み中…</div>';
+  g('trend-tbody').innerHTML='';
+  openM('m-trend');
+  var ids=(grp.memberIds||[]).slice(0,60);
+  if(!ids.length){ g('trend-chart').innerHTML='<div class="dim" style="padding:24px;text-align:center">対象アイテムがありません</div>'; return; }
+  Promise.all(ids.map(function(id){ return db.collection('marketIntlHistory').doc(id).get().then(function(d){return d.exists?d.data():null;}).catch(function(){return null;}); }))
+  .then(function(docs){
+    var byDate={};
+    docs.forEach(function(d){ if(!d||!d.hist) return; var cur=d.currency||'USD';
+      Object.keys(d.hist).forEach(function(day){ var h=d.hist[day]||{}; if(h.p==null) return;
+        (byDate[day]||(byDate[day]=[])).push({jpy:_toJpy(h.p,cur),s:!!h.s}); }); });
+    var series=Object.keys(byDate).sort().map(function(day){ var arr=byDate[day];
+      var stocked=arr.filter(function(x){return x.s;}), base=stocked.length?stocked:arr;
+      var jpys=base.map(function(x){return x.jpy;}).filter(function(v){return v!=null;});
+      return {date:day, minJpy:jpys.length?Math.min.apply(null,jpys):null, maxJpy:jpys.length?Math.max.apply(null,jpys):null, n:arr.length, nStock:stocked.length};
+    }).filter(function(s){return s.minJpy!=null;});
+    if(!series.length){ g('trend-chart').innerHTML='<div class="dim" style="padding:24px;text-align:center">履歴データがまだありません。<br>スクレイピングを重ねると推移が表示されます。</div>'; return; }
+    g('trend-chart').innerHTML=_trendSVG(series);
+    g('trend-tbody').innerHTML=series.slice().reverse().map(function(s){
+      return '<tr><td style="font-size:12px">'+escD(s.date)+'</td>'
+        +'<td class="mono" style="text-align:right;color:#1a6e58;font-weight:700">¥'+Math.round(s.minJpy).toLocaleString()+'</td>'
+        +'<td class="mono" style="text-align:right">¥'+Math.round(s.maxJpy).toLocaleString()+'</td>'
+        +'<td style="text-align:center">'+s.n+'</td><td style="text-align:center">'+s.nStock+'</td></tr>';
+    }).join('');
+  }).catch(function(e){ g('trend-chart').innerHTML='<div class="dim" style="padding:24px;text-align:center">読込失敗: '+escD(e.message)+'</div>'; });
+}
+
+// ── NG/OKワード設定（settings/marketFilter） ──
+if(g('btn-mktfilter')) g('btn-mktfilter').addEventListener('click',function(){
+  g('mf-ng').value=(mktFilter.ng||[]).join('\n');
+  g('mf-ok').value=(mktFilter.ok||[]).join('\n');
+  openM('m-mktfilter');
+});
+if(g('btn-save-mktfilter')) g('btn-save-mktfilter').addEventListener('click',function(){
+  var ng=(g('mf-ng').value||'').split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  var ok=(g('mf-ok').value||'').split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  var btn=this; btn.disabled=true; btn.textContent='保存中...';
+  db.doc('settings/marketFilter').set({ng:ng,ok:ok,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+  .then(function(){
+    mktFilter.ng=ng.map(function(s){return s.toLowerCase();}); mktFilter.ok=ok.map(function(s){return s.toLowerCase();});
+    closeM('m-mktfilter'); renderIntl(); if(g('tb-intlcmp')) renderIntlCmp();
+    toast('除外ワードを保存しました（表示に即反映／次回の取り込みから蓄積対象に適用）');
+  }).catch(function(e){ toast('保存失敗: '+e.message,'err'); })
+  .then(function(){ btn.disabled=false; btn.textContent='保存して反映'; });
+});
 
 // ── データ読み込み ──────────────────────────────────────────────
 function renderMeta(col){

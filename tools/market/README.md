@@ -95,4 +95,22 @@ cd ~/functions && node <repo>/tools/market/import_intl.js --shop oldtowntequila
     - **最安/最高は在庫のある店のみ**で集計（全店品切れ時のみ全店にフォールバック）。
     - 行クリックで店別内訳（容量・**度数(ABV)**・実売価格・750ml換算）。通貨混在は参考レート(`FX`)で¥概算・画面に明記。
 - CSVの `abv` 列は crawl_shops.py が商品名/本文からアルコール語隣接時のみ抽出（"25% off"/"100% agave" 等の誤検出を回避、テキーラ妥当域 **35〜75%**）。度数表示には**再クロール**が必要。
+
+### 相場推移（履歴）と NG/OK ワード
+- **履歴**: import_intl.js は取り込みのたび `marketIntlHistory/{shop}__{itemId}` の `hist` マップに
+  当日値 `{[YYYY-MM-DD]:{p:750ml換算, s:在庫1/0}}` を merge 追記（同日再実行は上書き）。日付は JST、`--date YYYY-MM-DD` で上書き可。
+  - 表示: `admin_tequila`「海外比較」タブの各行の 📈 から**ボトル単位の価格推移**（在庫店の750ml換算・¥概算の最安）をグラフ＋表で確認。
+  - 定期スクレイピングを重ねるほど点が増える。ボトルの集約は現行 marketIntl のメンバー item を辿って履歴を合算。
+- **NG/OK ワード**（`settings/marketFilter` = `{ng:[], ok:[]}`）: いらない商品を蓄積しないための除外。
+  - ルール: 商品名が **NG語を含み、かつ OK語を含まない**ものを除外（大小文字区別なし・部分一致）。OKはNGの救済。
+  - import_intl.js が取り込み時に適用（除外分は marketIntl から削除。履歴削除は `--history` 時のみ）。画面表示にも即時反映。
+  - 編集: `admin_tequila`「海外相場」タブの「🚫 除外ワード」ボタン（オーナーのみ保存）。
+
+### 定期実行（週次・GitHub Actions / `.github/workflows/market-intl-crawl.yml`）
+- **週次**でクロール→`marketIntl`更新。相場は毎週最新化。
+- **履歴は月次**: `import_intl.js --history` を付けた時だけ `marketIntlHistory` に蓄積する。
+  ワークフローは **schedule かつ「月の最初の週次実行」(JST日<=7)** の時のみ `--history` を付与 → 推移は月1点。
+- **手動実行は蓄積しない**（Actions の Run workflow。`history=true` を明示した時のみ手動でも蓄積）。
+- 事前設定: Secrets `GCP_SA_KEY`（Firestore書込権限のSA JSON）。cron を編集すれば間隔変更可。
+- 手動の単発取り込みでも同じ: 履歴を残したい時のみ `node import_intl.js --shop <key> --history`（日付上書きは `--date YYYY-MM-DD`）。
 - `--probe` が「非Shopify」を返した店（klwines 等）は products.json 非対応のため、構造を見て個別パーサを追加（後続対応）。

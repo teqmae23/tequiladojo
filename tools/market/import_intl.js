@@ -48,7 +48,7 @@ function norm(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').t
 //    （落とすとブランコとレポサドが同一視され誤マッチになる）。
 const STOP = new Set(['tequila','the','and','with','for','de','la','el','los','las','con','por','ml','cl','liter','litre','bottle']);
 function tokens(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length >= 3 && !STOP.has(t) && !/^\d+ml$/.test(t)); }
-async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { const b = db.batch(); ops.slice(i, i + 400).forEach(o => b.set(o.ref, o.data, { merge: true })); await b.commit(); } }
+async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { const b = db.batch(); ops.slice(i, i + 400).forEach(o => { if (o.del) b.delete(o.ref); else b.set(o.ref, o.data, { merge: true }); }); await b.commit(); } }
 
 (async () => {
   const items = readCSV(`${SHOP}_tequila_final.csv`).filter(r => r.is_drink === '1' && r.is_set !== '1');
@@ -80,19 +80,55 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
     return best;
   }
 
-  let matched = 0;
-  const ops = items.map(it => {
+  // NG/OKワード（settings/marketFilter）。NG語を含み、かつOK語を含まないものを除外。
+  let ng = [], ok = [];
+  try {
+    const fdoc = await db.doc('settings/marketFilter').get();
+    if (fdoc.exists) { const d = fdoc.data() || {};
+      ng = (d.ng || []).map(s => String(s).toLowerCase().trim()).filter(Boolean);
+      ok = (d.ok || []).map(s => String(s).toLowerCase().trim()).filter(Boolean);
+    }
+  } catch (e) { console.warn('marketFilter 読込失敗（除外なしで継続）:', e.message); }
+  function passFilter(name) {
+    const n = String(name || '').toLowerCase();
+    if (ng.length && ng.some(w => n.indexOf(w) >= 0)) return ok.some(w => n.indexOf(w) >= 0);
+    return true;
+  }
+
+  // 履歴の蓄積は --history を付けた時のみ（週次自動の月初回のみ想定・手動は蓄積しない）。
+  //   日付（JST）。--date YYYY-MM-DD で上書き可。
+  const HIST = process.argv.indexOf('--history') >= 0;
+  const dateArgIdx = process.argv.indexOf('--date');
+  const DAY = dateArgIdx >= 0 ? process.argv[dateArgIdx + 1] : new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+  const inStock = av => /在庫あり|in ?stock|available|true/i.test(String(av || ''));
+
+  let matched = 0, dropped = 0, kept = 0;
+  const ops = [];
+  items.forEach(it => {
+    const ref = db.collection('marketIntl').doc(SHOP + '__' + it.id);
+    const href = db.collection('marketIntlHistory').doc(SHOP + '__' + it.id);
+    if (!passFilter(it.name)) {                        // NG: 現行を削除。履歴は蓄積時のみ削除（手動実行は履歴に触れない）
+      dropped++; ops.push({ ref, del: true }); if (HIST) ops.push({ ref: href, del: true }); return;
+    }
+    kept++;
     const m = masters.length ? matchMaster(it.name) : null;
     if (m) matched++;
-    return { ref: db.collection('marketIntl').doc(SHOP + '__' + it.id), data: {
+    ops.push({ ref, data: {
       shop: SHOP, shopName, country: SHOP_COUNTRY[SHOP] || '', currency: it.currency || 'USD',
       name: it.name || '', brandGuess: it.brand_guess || '', classGuess: it.class_guess || '',
       price: num(it.price_yen), price750: num(it.price_750ml), volumeMl: num(it.volume_ml), abv: num(it.abv),
       availability: it.availability || '', url: it.url || '',
       bottleId: m ? m.bottleId : '', matched: !!m, matchedName: m ? m.es : '',
       source: 'crawl-intl', updatedAt: FV.serverTimestamp()
-    } };
+    } });
+    // 履歴: 日付キーのマップに当日値を追記（merge。同日再実行は上書き）。--history 指定時のみ。
+    const p750 = num(it.price_750ml);
+    if (HIST && p750 != null) ops.push({ ref: href, data: {
+      shop: SHOP, shopName, name: it.name || '', bottleId: m ? m.bottleId : '',
+      currency: it.currency || 'USD', itemKey: SHOP + '__' + it.id,
+      hist: { [DAY]: { p: p750, s: inStock(it.availability) ? 1 : 0 } }
+    } });
   });
   await commitChunked(ops);
-  console.log(`[${SHOP}] marketIntl ${ops.length}件 取り込み（道場マッチ ${matched}件${masters.length ? '' : ' / master未読込のためマッチなし'}）`);
+  console.log(`[${SHOP}] marketIntl 取込 ${kept}件 / 除外 ${dropped}件 / 道場マッチ ${matched}件 / 履歴 ${HIST ? '記録(' + DAY + ')' : '無し'}${masters.length ? '' : ' / master未読込'}`);
 })().catch(e => { console.error('失敗:', e.message); process.exit(1); });
