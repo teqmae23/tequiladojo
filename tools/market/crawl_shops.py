@@ -41,7 +41,7 @@ SHOPS = {
   "sftequilashop":  {"name": "SF Tequila Shop",  "platform": "shopify", "base": "https://sftequilashop.com",    "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
   "hiproof":        {"name": "Hi Proof",         "platform": "shopify", "base": "https://www.hiproof.com",      "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
   "klwines":        {"name": "K&L Wines",        "platform": "disabled","base": "https://www.klwines.com",      "intl": True, "currency": "USD",
-                     "note": "独自プラットフォーム（products.json非対応の可能性大）。--probe で確認し個別対応。"},
+                     "note": "Cloudflare Turnstile(対話型)。requests/Playwright-headless とも通過不可（title='Just a moment'）。保留。"},
   # ── 追加の海外店。base は推測ドメイン。まず `--intl --probe` で疎通/基盤を確認し、
   #    ✓Shopify のものはそのまま crawl、✗/到達失敗は base 修正 or 個別対応へ。
   #    小規模な米国酒販は Shopify が多いため shopify で仮置き、大規模/独自基盤は disabled。

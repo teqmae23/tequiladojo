@@ -95,4 +95,16 @@ cd ~/functions && node <repo>/tools/market/import_intl.js --shop oldtowntequila
     - **最安/最高は在庫のある店のみ**で集計（全店品切れ時のみ全店にフォールバック）。
     - 行クリックで店別内訳（容量・**度数(ABV)**・実売価格・750ml換算）。通貨混在は参考レート(`FX`)で¥概算・画面に明記。
 - CSVの `abv` 列は crawl_shops.py が商品名/本文からアルコール語隣接時のみ抽出（"25% off"/"100% agave" 等の誤検出を回避、テキーラ妥当域 **35〜75%**）。度数表示には**再クロール**が必要。
-- `--probe` が「非Shopify」を返した店（klwines 等）は products.json 非対応のため、構造を見て個別パーサを追加（後続対応）。
+### 非Shopify店の対応（`--sniff` と個別パーサ）
+`--probe` が「非Shopify」を返した店は、`--sniff [--path <相対パス>]` で基盤判定・JSON-LD抽出・
+カード抽出テスト・カテゴリリンク・`__NEXT_DATA__`/Magento痕跡を調べ、以下のいずれかで対応:
+- **bigcommerce**: Stencilカテゴリカードを `?page=` 巡回（例: oldtowntequila `/tequila/`、hitime `/spirits/tequila/`）。
+- **jsonld**: カテゴリHTMLの JSON-LD Product をページ送り取得（例: maisonduwhisky）。
+- **htmlcards**: `card_sel`/`price_sel`/`link_re`/`page_tmpl` を設定して汎用カード解析（例: whiskysite `.product-block`）。
+- **wix**: `wix-warmup-data`(JSON) から抽出（例: roadrunner `/agave`）。
+- 金額は `_extract_money` が米式/欧式（`1,234.56` / `18,95`）両対応。
+
+**bot対策で取得不可（保留）**: K&L / Total Wine / Master of Malt / Whisky Exchange / Third Base / Beverly Hills。
+Cloudflare Turnstile / Vercel 等の**対話型チャレンジ**で、requests は403/429、Playwright-headless（`crawl_pw.py`）でも
+`title='Just a moment'` のまま通過できない（K&Lで確認）。画面付き(`xvfb`)＋手動Turnstile や専用サービスが必要でグレーのため保留。
+- `crawl_pw.py`: bot対策店をヘッドレスChromeで取得するための別スクリプト（依存 playwright）。通過可能な店が出た場合の受け皿として同梱。
