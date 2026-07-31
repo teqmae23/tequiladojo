@@ -13,8 +13,20 @@ const shopArgIdx = process.argv.indexOf('--shop');
 const SHOP = shopArgIdx >= 0 ? process.argv[shopArgIdx + 1] : null;
 if (!SHOP) { console.error('使い方: node import_intl.js --shop <key>'); process.exit(1); }
 
-const SHOP_NAMES = { oldtowntequila:'Old Town Tequila', siptequila:'Sip Tequila', sftequilashop:'SF Tequila Shop', hiproof:'Hi Proof', klwines:'K&L Wines' };
-const SHOP_COUNTRY = { oldtowntequila:'US', siptequila:'US', sftequilashop:'US', hiproof:'US', klwines:'US' };
+const SHOP_NAMES = {
+  oldtowntequila:'Old Town Tequila', siptequila:'Sip Tequila', sftequilashop:'SF Tequila Shop', hiproof:'Hi Proof', klwines:'K&L Wines',
+  remedy:'Remedy Liquor', delmesa:'Del Mesa Liquor', uptown:'Uptown Spirits', thirdbase:'Third Base Market & Spirits',
+  hitime:'Hi-Time Wine Cellars', montagave:'Montagave', chips:'Chips Liquor', frootbat:'Froot Bat', kegnbottles:'Keg N Bottles',
+  hedonism:'Hedonism Wines', totalwine:'Total Wine & More', masterofmalt:'Master of Malt', whiskyexchange:'The Whisky Exchange',
+  maisonduwhisky:'La Maison du Whisky', whiskysite:'Whiskysite.nl',
+  ludwig:'Ludwig Fine Wine', beverlyhills:'Beverly Hills Liquor & Wine', elcerrito:'El Cerrito Liquor', roadrunner:'Road Runner Spirits'
+};
+const SHOP_COUNTRY = {
+  oldtowntequila:'US', siptequila:'US', sftequilashop:'US', hiproof:'US', klwines:'US',
+  remedy:'US', delmesa:'US', uptown:'US', thirdbase:'US', hitime:'US', montagave:'US', chips:'US', frootbat:'US', kegnbottles:'US',
+  hedonism:'GB', totalwine:'US', masterofmalt:'GB', whiskyexchange:'GB', maisonduwhisky:'FR', whiskysite:'NL',
+  ludwig:'US', beverlyhills:'US', elcerrito:'US', roadrunner:'US'
+};
 
 function parseCSV(text) {
   text = text.replace(/^﻿/, ''); const rows = []; let row = [], cur = '', q = false;

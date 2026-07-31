@@ -60,7 +60,12 @@ REPO=<repoのパス> NODE_PATH=~/functions/node_modules \
 ## 海外店（intl）— 全件表示・紐付けは任意
 海外の酒販は「マスタに無くても全件収集・表示、道場にあるものだけ紐付け＋マーク」の方針。
 
-対象（`crawl_shops.py` の `intl:True`）: oldtowntequila / siptequila / sftequilashop / hiproof（Shopify想定）、klwines（独自・要個別対応）。
+対象（`crawl_shops.py` の `intl:True`）:
+- **Shopify仮置き（probe後そのまま crawl 可）**: oldtowntequila / siptequila / sftequilashop / hiproof / remedy / delmesa / uptown / thirdbase / hitime / montagave / chips / frootbat / kegnbottles / hedonism(英)
+- **disabled（大規模・独自基盤／URL未確定・要個別対応）**: klwines / totalwine / masterofmalt(英) / whiskyexchange(英) / maisonduwhisky(仏) / whiskysite(蘭) / ludwig / beverlyhills / elcerrito / roadrunner
+
+> `base` の多くは推測ドメイン。まず `--intl --probe` で「✓Shopify / ✗非Shopify / 到達失敗」を確認する。
+> ✓なら crawl、✗や誤URLは SHOPS の `base`/`platform` を修正してから再実行。通貨は各店 `currency`（USD/GBP/EUR）で CSV に出力・表示。
 
 ```bash
 # 1) 基盤(Shopify)判定：まず疎通と products.json 対応を確認

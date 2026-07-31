@@ -42,6 +42,33 @@ SHOPS = {
   "hiproof":        {"name": "Hi Proof",         "platform": "shopify", "base": "https://www.hiproof.com",      "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
   "klwines":        {"name": "K&L Wines",        "platform": "disabled","base": "https://www.klwines.com",      "intl": True, "currency": "USD",
                      "note": "独自プラットフォーム（products.json非対応の可能性大）。--probe で確認し個別対応。"},
+  # ── 追加の海外店。base は推測ドメイン。まず `--intl --probe` で疎通/基盤を確認し、
+  #    ✓Shopify のものはそのまま crawl、✗/到達失敗は base 修正 or 個別対応へ。
+  #    小規模な米国酒販は Shopify が多いため shopify で仮置き、大規模/独自基盤は disabled。
+  "remedy":         {"name": "Remedy Liquor",              "platform": "shopify", "base": "https://remedyliquor.com",      "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "delmesa":        {"name": "Del Mesa Liquor",            "platform": "shopify", "base": "https://delmesaliquor.com",     "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "uptown":         {"name": "Uptown Spirits",             "platform": "shopify", "base": "https://uptownspirits.com",     "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "thirdbase":      {"name": "Third Base Market & Spirits","platform": "shopify", "base": "https://thirdbasemarket.com",   "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "hitime":         {"name": "Hi-Time Wine Cellars",       "platform": "shopify", "base": "https://hitimewine.net",        "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US",
+                     "note": "基盤不明。--probe で Shopify か確認。非Shopifyなら個別対応。"},
+  "montagave":      {"name": "Montagave",                  "platform": "shopify", "base": "https://montagave.com",         "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "chips":          {"name": "Chips Liquor",               "platform": "shopify", "base": "https://chipsliquor.com",       "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "frootbat":       {"name": "Froot Bat",                  "platform": "shopify", "base": "https://frootbat.com",          "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "kegnbottles":    {"name": "Keg N Bottles",              "platform": "shopify", "base": "https://kegnbottles.com",       "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "hedonism":       {"name": "Hedonism Wines",             "platform": "shopify", "base": "https://hedonism.co.uk",        "collections": ["all"], "only_tequila": True, "intl": True, "currency": "GBP", "country": "GB",
+                     "note": "英・基盤不明。--probe で確認。"},
+  # ── 大規模/独自基盤（bot対策強め・products.json 非対応の可能性大）: 既定 disabled。
+  #    URL/基盤を --probe で確認し、可能なら個別パーサを追加。
+  "totalwine":      {"name": "Total Wine & More",          "platform": "disabled", "base": "https://www.totalwine.com",        "intl": True, "currency": "USD", "country": "US", "note": "大規模EC・bot対策強。個別対応が必要。"},
+  "masterofmalt":   {"name": "Master of Malt",             "platform": "disabled", "base": "https://www.masterofmalt.com",     "intl": True, "currency": "GBP", "country": "GB", "note": "英・独自基盤。個別対応が必要。"},
+  "whiskyexchange": {"name": "The Whisky Exchange",        "platform": "disabled", "base": "https://www.thewhiskyexchange.com", "intl": True, "currency": "GBP", "country": "GB", "note": "英・独自基盤。個別対応が必要。"},
+  "maisonduwhisky": {"name": "La Maison du Whisky",        "platform": "disabled", "base": "https://www.whisky.fr",            "intl": True, "currency": "EUR", "country": "FR", "note": "仏・独自基盤。個別対応が必要。"},
+  "whiskysite":     {"name": "Whiskysite.nl",              "platform": "disabled", "base": "https://www.whiskysite.nl",        "intl": True, "currency": "EUR", "country": "NL", "note": "蘭・基盤不明(Magento?)。--probe で確認。"},
+  # ── URL未確定（推測ドメイン）: 既定 disabled。正しい URL を確認してから有効化。
+  "ludwig":         {"name": "Ludwig Fine Wine",           "platform": "disabled", "base": "https://ludwigfinewine.com",   "intl": True, "currency": "USD", "country": "US", "note": "URL未確定（推測）。正URLを確認して base 修正。"},
+  "beverlyhills":   {"name": "Beverly Hills Liquor & Wine","platform": "disabled", "base": "https://beverlyhillsliquor.com","intl": True, "currency": "USD", "country": "US", "note": "URL未確定（推測）。正URLを確認して base 修正。"},
+  "elcerrito":      {"name": "El Cerrito Liquor",          "platform": "disabled", "base": "https://elcerritoliquor.com",   "intl": True, "currency": "USD", "country": "US", "note": "URL未確定（推測）。正URLを確認して base 修正。"},
+  "roadrunner":     {"name": "Road Runner Spirits",        "platform": "disabled", "base": "https://roadrunnerspirits.com", "intl": True, "currency": "USD", "country": "US", "note": "URL未確定（推測）。正URLを確認して base 修正。"},
 }
 
 # ── finalize 相当（クラス推定・ブランド・容量・750ml換算） ──
