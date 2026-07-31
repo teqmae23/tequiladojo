@@ -36,7 +36,7 @@ SHOPS = {
                   "note": "大規模・bot対策が強くカテゴリ構造も独自のため保留。必要なら個別対応。"},
   # ── 海外店（intl:True）。全件収集し import_intl.js で marketIntl に格納（マスタ紐付けは任意） ──
   # platform は --probe で確認してから確定。多くの米国酒販は Shopify。
-  "oldtowntequila": {"name": "Old Town Tequila", "platform": "disabled", "base": "https://oldtowntequila.com",   "intl": True, "currency": "USD", "country": "US", "note": "products.json 404（collections/rootとも）。非Shopify基盤。要個別対応。"},
+  "oldtowntequila": {"name": "Old Town Tequila", "platform": "bigcommerce", "base": "https://www.oldtowntequila.com", "category_path": "/tequila/", "intl": True, "currency": "USD", "country": "US", "note": "BigCommerce(Stencil)。/tequila/ カテゴリを ?page= で巡回。"},
   "siptequila":     {"name": "Sip Tequila",      "platform": "shopify", "base": "https://siptequila.com",       "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
   "sftequilashop":  {"name": "SF Tequila Shop",  "platform": "shopify", "base": "https://sftequilashop.com",    "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
   "hiproof":        {"name": "Hi Proof",         "platform": "shopify", "base": "https://www.hiproof.com",      "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
@@ -227,6 +227,51 @@ def _parse_by_detail_links(html, base, detail_re, exclude_sidebar=False):
 DETAIL_RE_ECCUBE = re.compile(r"/products/detail/(\d+)")
 DETAIL_RE_COLORME = re.compile(r"[?&]pid=(\d+)")
 
+# ── 通貨記号つき金額の抽出（$ / £ / €、USD等）。海外店HTML用 ──
+_MONEY_RE = re.compile(r'(?:\$|£|€|USD|GBP|EUR)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)')
+def _extract_money(txt):
+    vals = []
+    for m in _MONEY_RE.finditer(txt or ""):
+        try: vals.append(float(m.group(1).replace(",", "")))
+        except ValueError: pass
+    return vals
+def _slug_id(url):
+    if not url: return ""
+    return (url.rstrip("/").split("/")[-1].split("?")[0])[:60]
+
+def parse_bigcommerce(html, base):
+    """BigCommerce(Stencil)のカテゴリHTMLから商品カードを抽出（name/price/url/在庫）。
+    テーマ差に強いよう複数セレクタをフォールバック。カテゴリ配下＝全テキーラ前提。"""
+    soup = BeautifulSoup(html, "html.parser")
+    cards = soup.select("li.product")
+    if not cards: cards = soup.select("article.card")
+    if not cards: cards = soup.select("ul.productGrid > li, .productGrid li, li.productGrid-item")
+    out, seen = [], set()
+    for c in cards:
+        a = c.select_one(".card-title a, h3.card-title a, h4.card-title a, .card-title, .productView-title a")
+        name, url = "", ""
+        if a:
+            name = a.get_text(strip=True) or (a.get("aria-label") or "").strip()
+            if a.name == "a": url = a.get("href", "")
+        if not url:
+            la = c.select_one("a[href]")
+            if la:
+                url = la.get("href", "")
+                if not name:
+                    img = la.select_one("img"); name = (img.get("alt", "").strip() if img else "")
+        if not name: continue
+        pe = c.select_one("[data-product-price-without-tax], .price--withoutTax, .price--main, .price-section .price, span.price, .price")
+        prices = _extract_money(pe.get_text(" ", strip=True)) if pe else []
+        if not prices: prices = _extract_money(c.get_text(" ", strip=True))
+        price = min(prices) if prices else None
+        avail = "品切れ" if re.search(r"out of stock|sold out|unavailable|品切", c.get_text(" ", strip=True), re.I) else "在庫あり"
+        pid = _slug_id(url) or name
+        if pid in seen: continue
+        seen.add(pid)
+        out.append({"id": pid, "name": name, "price": price, "availability": avail,
+                    "url": urllib.parse.urljoin(base + "/", url) if url else ""})
+    return out
+
 # ── クローラ本体 ──
 def crawl_shop(session, key, cfg, delay, max_pages, debug):
     plat = cfg["platform"]; base = cfg["base"]
@@ -276,6 +321,21 @@ def crawl_shop(session, key, cfg, delay, max_pages, debug):
             if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
             if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(r.text)
             items = _parse_by_detail_links(r.text, base, DETAIL_RE_COLORME, exclude_sidebar=True)
+            new = [x for x in items if x["id"] not in seen]
+            for x in new: seen.add(x["id"])
+            print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
+            if not new: break
+            raw += new; time.sleep(delay)
+    elif plat == "bigcommerce":
+        cat = cfg.get("category_path", "/")
+        seen = set()
+        for page in range(1, max_pages + 1):
+            sep = "&" if "?" in cat else "?"
+            url = base + cat + f"{sep}page={page}"
+            r = session.get(url, timeout=30)
+            if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
+            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(r.text)
+            items = parse_bigcommerce(r.text, base)
             new = [x for x in items if x["id"] not in seen]
             for x in new: seen.add(x["id"])
             print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
@@ -401,6 +461,12 @@ def sniff_shop(session, key, cfg, path):
     print(f"  JSON-LD Product/ItemList: {len(prods)}件" + ("（このページから直接取れる可能性）" if prods else "（このページには無し）"))
     for p in prods[:6]:
         print(f"    - {str(p.get('name'))[:46]:46} | {p.get('price')} {p.get('currency','')} | {str(p.get('availability'))[-18:]}")
+    # BigCommerce等のカードHTML抽出テスト（同じ実行で個別パーサの効きを確認）
+    try: cards = parse_bigcommerce(html, base)
+    except Exception as e: cards = []; print(f"  カード抽出エラー: {e}")
+    print(f"  カード抽出テスト(BigCommerce): {len(cards)}件")
+    for p in cards[:8]:
+        print(f"    - {str(p.get('name'))[:44]:44} | {p.get('price')} | {p.get('availability')} | {p.get('url','')[-36:]}")
     # テキーラ関連リンク（カテゴリURL探し。トップ or 一覧ページで有用）
     links = []
     for m in re.finditer(r'href=["\']([^"\']+)["\']', html, re.I):
