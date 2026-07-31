@@ -56,3 +56,27 @@ REPO=<repoのパス> NODE_PATH=~/functions/node_modules \
 - robots.txt を確認し、`--delay`（既定1.5秒）で待機。巡回は週次程度に留める。
 - 各サイトの利用規約で自動取得が制限される場合がある。相場の**社内参考**用途に限定し、負荷をかけない。
 - biccamera は bot対策が強いため既定で無効。必要時のみ個別対応。
+
+## 海外店（intl）— 全件表示・紐付けは任意
+海外の酒販は「マスタに無くても全件収集・表示、道場にあるものだけ紐付け＋マーク」の方針。
+
+対象（`crawl_shops.py` の `intl:True`）: oldtowntequila / siptequila / sftequilashop / hiproof（Shopify想定）、klwines（独自・要個別対応）。
+
+```bash
+# 1) 基盤(Shopify)判定：まず疎通と products.json 対応を確認
+python3 crawl_shops.py --intl --probe
+
+# 2) クロール（Shopify判定できた店。--intl で海外店のみ）
+python3 crawl_shops.py --shop oldtowntequila
+#   → oldtowntequila_tequila_final.csv（currency 列付き）
+
+# 3)（任意）道場マスタを書き出しておくと自動マッチ対象に
+node export_tequila_master.js     # → tequiladojo_master.csv
+
+# 4) marketIntl へ取り込み（全件。masterがあれば英字名一致で bottleId を軽く紐付け）
+cd ~/functions && node <repo>/tools/market/import_intl.js --shop oldtowntequila
+```
+
+- Firestore: `marketIntl/{shop}__{itemId}`（全件）。`matched:true`＋`bottleId` は道場にある銘柄。
+- 表示: `admin_tequila`「海外相場」タブ（全件・店/検索/道場のみ絞り込み。道場銘柄はマーク＋リンク）。
+- `--probe` が「非Shopify」を返した店（klwines 等）は products.json 非対応のため、構造を見て個別パーサを追加（後続対応）。

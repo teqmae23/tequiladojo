@@ -34,6 +34,14 @@ SHOPS = {
   "mukawa":      {"name": "武川蒸留酒販売",   "platform": "colorme", "base": "https://mukawa-spirit.com", "cbid": 2163597, "csid": 0},
   "biccamera":   {"name": "ビックカメラ",     "platform": "disabled", "base": "https://www.biccamera.com",
                   "note": "大規模・bot対策が強くカテゴリ構造も独自のため保留。必要なら個別対応。"},
+  # ── 海外店（intl:True）。全件収集し import_intl.js で marketIntl に格納（マスタ紐付けは任意） ──
+  # platform は --probe で確認してから確定。多くの米国酒販は Shopify。
+  "oldtowntequila": {"name": "Old Town Tequila", "platform": "shopify", "base": "https://oldtowntequila.com",   "collections": ["tequila", "all"], "only_tequila": True, "intl": True, "currency": "USD"},
+  "siptequila":     {"name": "Sip Tequila",      "platform": "shopify", "base": "https://siptequila.com",       "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
+  "sftequilashop":  {"name": "SF Tequila Shop",  "platform": "shopify", "base": "https://sftequilashop.com",    "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
+  "hiproof":        {"name": "Hi Proof",         "platform": "shopify", "base": "https://www.hiproof.com",      "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
+  "klwines":        {"name": "K&L Wines",        "platform": "disabled","base": "https://www.klwines.com",      "intl": True, "currency": "USD",
+                     "note": "独自プラットフォーム（products.json非対応の可能性大）。--probe で確認し個別対応。"},
 }
 
 # ── finalize 相当（クラス推定・ブランド・容量・750ml換算） ──
@@ -84,6 +92,7 @@ def finalize_row(shop, it):
         "vol_assumed": 0 if vol else 1, "price_per_ml": ppm, "price_750ml": p750,
         "availability": it.get("availability", ""), "is_drink": is_drink, "is_set": is_set,
         "shop": shop, "url": it.get("url", ""),
+        "currency": SHOPS.get(shop, {}).get("currency", "JPY"),
     }
 
 # ── HTTP ──────────────────────────────────────────────────
@@ -239,7 +248,7 @@ def write_final(key, raw):
     rows = [finalize_row(key, it) for it in raw if it.get("name")]
     rows.sort(key=lambda x: (x["price_per_ml"] == "", x["price_per_ml"] if x["price_per_ml"] != "" else 0))
     cols = ["id","name","brand_guess","class_guess","price_yen","volume_ml","volume_used",
-            "vol_assumed","price_per_ml","price_750ml","availability","is_drink","is_set","shop","url"]
+            "vol_assumed","price_per_ml","price_750ml","availability","is_drink","is_set","shop","url","currency"]
     out = f"{key}_tequila_final.csv"
     with open(out, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols); w.writeheader()
@@ -249,16 +258,45 @@ def write_final(key, raw):
           f"750ml換算{len(priced)}" + (f" 最安¥{min(priced):,}〜最高¥{max(priced):,}" if priced else ""))
     return len(rows)
 
+def probe_shop(session, key, cfg):
+    """Shopify(products.json)対応か判定。海外店の基盤確認用。"""
+    base = cfg.get("base", "")
+    try:
+        r = session.get(base + "/products.json?limit=1", timeout=25)
+        ct = r.headers.get("content-type", "")
+        if r.status_code == 200 and "json" in ct.lower():
+            try:
+                d = r.json(); prods = d.get("products", [])
+                sample = (prods[0].get("title", "") if prods else "")[:40]
+                print(f"{key:16} ✓ Shopify（products.json OK, {len(prods)}件 例:{sample}）")
+                return
+            except Exception:
+                pass
+        print(f"{key:16} ✗ 非Shopify?  HTTP {r.status_code} / {ct}  → 個別対応が必要")
+    except Exception as e:
+        print(f"{key:16} 到達失敗: {e}")
+
 def main():
     ap = argparse.ArgumentParser(description="マルチショップ テキーラ価格クローラ")
     ap.add_argument("--shop"); ap.add_argument("--all", action="store_true")
+    ap.add_argument("--intl", action="store_true", help="海外店（intl:True）のみ対象")
+    ap.add_argument("--probe", action="store_true", help="対象店のプラットフォーム(Shopify)判定のみ")
     ap.add_argument("--list", action="store_true"); ap.add_argument("--debug", action="store_true")
     ap.add_argument("--delay", type=float, default=1.5); ap.add_argument("--max-pages", type=int, default=60)
     a = ap.parse_args()
     if a.list:
-        for k, c in SHOPS.items(): print(f"{k:12} {c['platform']:9} {c['name']}  {c.get('base','')}")
+        for k, c in SHOPS.items(): print(f"{k:16} {c['platform']:9} {'INTL' if c.get('intl') else '    '} {c['name']}  {c.get('base','')}")
         return
-    keys = [a.shop] if a.shop else (list(SHOPS) if a.all else [])
+    if a.intl:
+        keys = [k for k, c in SHOPS.items() if c.get("intl")]
+    else:
+        keys = [a.shop] if a.shop else (list(SHOPS) if a.all else [])
+    if a.probe:
+        session = make_session()
+        for k in keys:
+            cfg = SHOPS.get(k)
+            if cfg: probe_shop(session, k, cfg)
+        return
     if not keys: print("--shop <key> または --all を指定（--list で一覧）", file=sys.stderr); sys.exit(1)
     session = make_session(); total = 0
     for k in keys:
