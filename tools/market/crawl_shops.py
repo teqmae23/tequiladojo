@@ -115,7 +115,7 @@ def abv_of(text):
             g = m.group(1) or m.group(2)
             try: v = float(g)
             except (TypeError, ValueError): continue
-        if 20 <= v <= 75: return round(v, 1)             # テキーラの妥当域のみ採用
+        if 35 <= v <= 75: return round(v, 1)             # テキーラの妥当域（35%以上）のみ採用
     return None
 def finalize_row(shop, it):
     name = it["name"]; price = it.get("price")
