@@ -60,11 +60,14 @@ REPO=<repoのパス> NODE_PATH=~/functions/node_modules \
 ## 海外店（intl）— 全件表示・紐付けは任意
 海外の酒販は「マスタに無くても全件収集・表示、道場にあるものだけ紐付け＋マーク」の方針。
 
-対象（`crawl_shops.py` の `intl:True`）:
-- **Shopify仮置き（probe後そのまま crawl 可）**: oldtowntequila / siptequila / sftequilashop / hiproof / remedy / delmesa / uptown / thirdbase / hitime / montagave / chips / frootbat / kegnbottles / hedonism(英)
-- **disabled（大規模・独自基盤／URL未確定・要個別対応）**: klwines / totalwine / masterofmalt(英) / whiskyexchange(英) / maisonduwhisky(仏) / whiskysite(蘭) / ludwig / beverlyhills / elcerrito / roadrunner
+対象（`crawl_shops.py` の `intl:True`）。`--intl --probe` の実測結果で分類:
+- **✓ Shopify（crawl可）**: siptequila / sftequilashop / hiproof / remedy / delmesa / uptown / montagave / chips / elcerrito / hedonism(英)
+- **要再probe（root feed無効かも／URL修正済）**: oldtowntequila・hitime・frootbat（root /products.json は404→probe を collections/all 優先に改良）、kegnbottles（kegnbottle.com へ修正）
+- **disabled（非Shopify・独自基盤／要個別パーサ）**: klwines(403) / totalwine(403) / masterofmalt(429) / whiskyexchange(403) / maisonduwhisky(404) / whiskysite(404)
+- **disabled（DNS不可・正URL未確認）**: thirdbase / ludwig / beverlyhills / roadrunner
 
-> `base` の多くは推測ドメイン。まず `--intl --probe` で「✓Shopify / ✗非Shopify / 到達失敗」を確認する。
+> `base` は推測ドメインを含む。まず `--intl --probe` で「✓Shopify / ✗非Shopify / 到達失敗」を確認する。
+> probe は crawler と同じ `/collections/all/products.json` を優先し、ダメなら root `/products.json` も試す。
 > ✓なら crawl、✗や誤URLは SHOPS の `base`/`platform` を修正してから再実行。通貨は各店 `currency`（USD/GBP/EUR）で CSV に出力・表示。
 
 ```bash

@@ -16,7 +16,7 @@ if (!SHOP) { console.error('使い方: node import_intl.js --shop <key>'); proce
 const SHOP_NAMES = {
   oldtowntequila:'Old Town Tequila', siptequila:'Sip Tequila', sftequilashop:'SF Tequila Shop', hiproof:'Hi Proof', klwines:'K&L Wines',
   remedy:'Remedy Liquor', delmesa:'Del Mesa Liquor', uptown:'Uptown Spirits', thirdbase:'Third Base Market & Spirits',
-  hitime:'Hi-Time Wine Cellars', montagave:'Montagave', chips:'Chips Liquor', frootbat:'Froot Bat', kegnbottles:'Keg N Bottles',
+  hitime:'Hi-Time Wine Cellars', montagave:'Montagave', chips:'Chips Liquor', frootbat:'Froot Bat', kegnbottles:'Keg N Bottle',
   hedonism:'Hedonism Wines', totalwine:'Total Wine & More', masterofmalt:'Master of Malt', whiskyexchange:'The Whisky Exchange',
   maisonduwhisky:'La Maison du Whisky', whiskysite:'Whiskysite.nl',
   ludwig:'Ludwig Fine Wine', beverlyhills:'Beverly Hills Liquor & Wine', elcerrito:'El Cerrito Liquor', roadrunner:'Road Runner Spirits'
