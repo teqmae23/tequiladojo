@@ -61,8 +61,8 @@ REPO=<repoのパス> NODE_PATH=~/functions/node_modules \
 海外の酒販は「マスタに無くても全件収集・表示、道場にあるものだけ紐付け＋マーク」の方針。
 
 対象（`crawl_shops.py` の `intl:True`）。`--intl --probe` の実測結果で分類:
-- **✓ Shopify（crawl可）**: siptequila / sftequilashop / hiproof / remedy / delmesa / uptown / montagave / chips / elcerrito / hedonism(英)
-- **要再probe（root feed無効かも／URL修正済）**: oldtowntequila・hitime・frootbat（root /products.json は404→probe を collections/all 優先に改良）、kegnbottles（kegnbottle.com へ修正）
+- **✓ Shopify・取込済み（11店）**: siptequila / sftequilashop / hiproof / remedy / delmesa / uptown / chips / elcerrito / kegnbottles(kegnbottle.com) / hedonism(英) / montagave(アガベ専門→`only_tequila:False`で全商品)
+- **disabled（products.json 404・非Shopify基盤／要個別パーサ）**: oldtowntequila / hitime / frootbat
 - **disabled（非Shopify・独自基盤／要個別パーサ）**: klwines(403) / totalwine(403) / masterofmalt(429) / whiskyexchange(403) / maisonduwhisky(404) / whiskysite(404)
 - **disabled（DNS不可・正URL未確認）**: thirdbase / ludwig / beverlyhills / roadrunner
 

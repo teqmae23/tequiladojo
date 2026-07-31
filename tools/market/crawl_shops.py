@@ -36,7 +36,7 @@ SHOPS = {
                   "note": "大規模・bot対策が強くカテゴリ構造も独自のため保留。必要なら個別対応。"},
   # ── 海外店（intl:True）。全件収集し import_intl.js で marketIntl に格納（マスタ紐付けは任意） ──
   # platform は --probe で確認してから確定。多くの米国酒販は Shopify。
-  "oldtowntequila": {"name": "Old Town Tequila", "platform": "shopify", "base": "https://oldtowntequila.com",   "collections": ["tequila", "all"], "only_tequila": True, "intl": True, "currency": "USD"},
+  "oldtowntequila": {"name": "Old Town Tequila", "platform": "disabled", "base": "https://oldtowntequila.com",   "intl": True, "currency": "USD", "country": "US", "note": "products.json 404（collections/rootとも）。非Shopify基盤。要個別対応。"},
   "siptequila":     {"name": "Sip Tequila",      "platform": "shopify", "base": "https://siptequila.com",       "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
   "sftequilashop":  {"name": "SF Tequila Shop",  "platform": "shopify", "base": "https://sftequilashop.com",    "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
   "hiproof":        {"name": "Hi Proof",         "platform": "shopify", "base": "https://www.hiproof.com",      "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
@@ -49,11 +49,10 @@ SHOPS = {
   "delmesa":        {"name": "Del Mesa Liquor",            "platform": "shopify", "base": "https://delmesaliquor.com",     "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
   "uptown":         {"name": "Uptown Spirits",             "platform": "shopify", "base": "https://uptownspirits.com",     "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
   "thirdbase":      {"name": "Third Base Market & Spirits","platform": "disabled", "base": "https://thirdbasemarket.com",  "intl": True, "currency": "USD", "country": "US", "note": "DNS解決不可。正URL未確認（要調査して base 修正）。"},
-  "hitime":         {"name": "Hi-Time Wine Cellars",       "platform": "shopify", "base": "https://hitimewine.net",        "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US",
-                     "note": "基盤不明。--probe で Shopify か確認。非Shopifyなら個別対応。"},
-  "montagave":      {"name": "Montagave",                  "platform": "shopify", "base": "https://montagave.com",         "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "hitime":         {"name": "Hi-Time Wine Cellars",       "platform": "disabled", "base": "https://hitimewine.net",       "intl": True, "currency": "USD", "country": "US", "note": "products.json 404。非Shopify基盤。要個別対応。"},
+  "montagave":      {"name": "Montagave",                  "platform": "shopify", "base": "https://montagave.com",         "collections": ["all"], "only_tequila": False, "intl": True, "currency": "USD", "country": "US", "note": "アガベ専門ブランド店。商品名にtequila語が無いため全商品収集(only_tequila:False)。"},
   "chips":          {"name": "Chips Liquor",               "platform": "shopify", "base": "https://chipsliquor.com",       "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
-  "frootbat":       {"name": "Froot Bat",                  "platform": "shopify", "base": "https://frootbat.com",          "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US"},
+  "frootbat":       {"name": "Froot Bat",                  "platform": "disabled", "base": "https://frootbat.com",         "intl": True, "currency": "USD", "country": "US", "note": "products.json 404。非Shopify基盤。要個別対応。"},
   "kegnbottles":    {"name": "Keg N Bottle",               "platform": "shopify", "base": "https://www.kegnbottle.com",    "collections": ["all"], "only_tequila": True, "intl": True, "currency": "USD", "country": "US", "note": "旧kegnbottles.comはDNS不可。kegnbottle.com(単数)を推測。--probe で再確認。"},
   "hedonism":       {"name": "Hedonism Wines",             "platform": "shopify", "base": "https://hedonism.co.uk",        "collections": ["all"], "only_tequila": True, "intl": True, "currency": "GBP", "country": "GB",
                      "note": "英・基盤不明。--probe で確認。"},

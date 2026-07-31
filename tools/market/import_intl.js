@@ -40,7 +40,9 @@ function parseCSV(text) {
 }
 function num(v) { const s = String(v || '').trim(); return /^-?\d+(\.\d+)?$/.test(s) ? Number(s) : null; }
 function readCSV(name) { if (!fs.existsSync(name)) { console.error('見つかりません:', process.cwd() + '/' + name); process.exit(1); } return parseCSV(fs.readFileSync(name, 'utf8')); }
-function norm(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,''); }
+// アクセント（á/ñ/í 等）を畳んでから英数字のみに正規化。
+// 例: "Años"→"anos" / "Tapatío"→"tapatio"。店側の英字表記と道場マスタを揃える。
+function norm(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,''); }
 async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { const b = db.batch(); ops.slice(i, i + 400).forEach(o => b.set(o.ref, o.data, { merge: true })); await b.commit(); } }
 
 (async () => {
