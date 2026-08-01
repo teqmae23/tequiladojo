@@ -481,8 +481,9 @@ body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-
         </div>
         <div id="product-search-row" style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
           <input type="text" id="product-search" class="fi" placeholder="商品名・NOMで検索..." oninput="filterProducts()" style="flex:1">
-          <button class="nom-btn" id="sort-name-btn" onclick="setProductSort('name')" title="名前順">名前</button>
-          <button class="nom-btn" id="sort-nom-btn" onclick="setProductSort('nom')" title="NOM番号順">NOM</button>
+          <button class="nom-btn" id="sort-name-btn" onclick="setProductSort('name')" title="名前順（押すと昇順/降順）">名前</button>
+          <button class="nom-btn" id="sort-price-btn" onclick="setProductSort('price')" title="価格順（押すと昇順/降順）">価格</button>
+          <button class="nom-btn" id="sort-nom-btn" onclick="setProductSort('nom')" title="NOM番号順（押すと昇順/降順）">NOM</button>
         </div>
         <!-- カクテルパネル -->
         <div id="cocktail-panel" style="display:none;">
@@ -505,8 +506,8 @@ body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-
                 <button onclick="cspResetCls()" class="nom-btn" style="font-size:9px;">全解</button>
               </div>
               <span style="width:1px;background:var(--border2);margin:0 2px;align-self:stretch;display:inline-block;"></span>
-              <button onclick="cspSetSort('asc')" id="csp-sort-asc" class="nom-btn" title="価格昇順">↑¥</button>
-              <button onclick="cspSetSort('desc')" id="csp-sort-desc" class="nom-btn" title="価格降順">↓¥</button>
+              <button onclick="cspSort('price')" id="csp-sort-price" class="nom-btn" title="価格順（押すと昇順/降順）">価格</button>
+              <button onclick="cspSort('name')" id="csp-sort-name" class="nom-btn" title="名前順（押すと昇順/降順）">名前</button>
             </div>
             <!-- 検索 + X + ハウス -->
             <div style="display:flex;gap:4px;margin-bottom:8px;align-items:stretch;">
@@ -687,7 +688,7 @@ let keepBottlesData=[], stockBottlesData=[];
 let blindMarks=[];
 let flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false};
 let resultTarget=null;
-let currentPTab='tequila', currentNOM='', currentLotType='1', currentInitial='', currentClasses=new Set(), currentAbv='', currentAdditive='', pendingProduct=null, currentProductSort='';
+let currentPTab='tequila', currentNOM='', currentLotType='1', currentInitial='', currentClasses=new Set(), currentAbv='', currentAdditive='', pendingProduct=null, currentProductSort='', currentProductSortDir='asc';
 
 // ━━━ 認証 ━━━
 AuthRole.requireStaff(auth,
@@ -783,6 +784,12 @@ async function init(){
         }
       });
     }
+    window.history.replaceState({},document.title,window.location.pathname);
+  }
+
+  // checkin.htmlから来場者チェックなしで「新規注文」→ 来場者選択(STEP0)を開く
+  if(params.get('new')==='1'){
+    openOrderModal();
     window.history.replaceState({},document.title,window.location.pathname);
   }
 
@@ -1419,17 +1426,26 @@ async function goStep1(){
   }
   switchPTab('tequila',document.querySelectorAll('.ptab')[0]);
 }
+// 同じキーを再押下で昇順⇔降順トグル、別キーなら昇順から
 function setProductSort(s){
-  currentProductSort=currentProductSort===s?'':s;
-  document.getElementById('sort-name-btn').classList.toggle('active',currentProductSort==='name');
-  document.getElementById('sort-nom-btn').classList.toggle('active',currentProductSort==='nom');
+  if(currentProductSort===s){ currentProductSortDir=(currentProductSortDir==='asc')?'desc':'asc'; }
+  else { currentProductSort=s; currentProductSortDir='asc'; }
+  _updateProductSortBtns();
   filterProducts();
 }
+function _updateProductSortBtns(){
+  [['name','sort-name-btn','名前'],['price','sort-price-btn','価格'],['nom','sort-nom-btn','NOM']].forEach(function(x){
+    var b=document.getElementById(x[1]); if(!b)return;
+    var on=currentProductSort===x[0];
+    b.classList.toggle('active',on);
+    b.textContent=x[2]+(on?(currentProductSortDir==='asc'?' ▲':' ▼'):'');
+  });
+}
+function _prodPrice(i){ return parseFloat(i.price!=null?i.price:(i.unitPrice!=null?i.unitPrice:i.price10))||0; }
 function switchPTab(type,el){
-  currentPTab=type;currentNOM='';currentProductSort='';
+  currentPTab=type;currentNOM='';currentProductSort='';currentProductSortDir='asc';
   if(type==='other') _defaultMl=10; // 他酒タブへ切り替え時は容量を10mlにリセット
-  document.getElementById('sort-name-btn').classList.remove('active');
-  document.getElementById('sort-nom-btn').classList.remove('active');
+  _updateProductSortBtns();
   document.querySelectorAll('.ptab').forEach(t=>t.classList.remove('active'));
   if(el)el.classList.add('active');
   const isCocktail=type==='cocktail';
@@ -1521,7 +1537,7 @@ function filterProducts(){
       });
     }
   }
-  // ユーザー指定ソート（指定があればデフォルトソートを上書き）
+  // ユーザー指定ソート（指定があればデフォルトソートを上書き。方向はcurrentProductSortDir）
   if(currentProductSort==='name'){
     items.sort((a,b)=>{
       const na=(a.bottleEs||a.bottleJa||a.name||''),nb=(b.bottleEs||b.bottleJa||b.name||'');
@@ -1534,7 +1550,10 @@ function filterProducts(){
       if(na!==nb)return na.localeCompare(nb,undefined,{numeric:true});
       return(a.bottleEs||a.bottleJa||a.name||'').localeCompare(b.bottleEs||b.bottleJa||b.name||'');
     });
+  }else if(currentProductSort==='price'){
+    items.sort((a,b)=>_prodPrice(a)-_prodPrice(b));
   }
+  if(currentProductSort&&currentProductSortDir==='desc') items.reverse();
   // その他タブの末尾に固定「ボトルキープ」タイルを表示
   const keepTile=(currentPTab==='misc'&&!q)?`<div class="product-item" style="background:#2a1f14;border:1px solid #7a5c2e" onclick="openKeepFlow()">
       <div><div class="product-item-name">🍾 ボトルキープ</div><div class="product-item-sub">利用・購入・終了</div></div>
@@ -1654,7 +1673,7 @@ function removeSetGroup(setGroupId){
 // ━━━ カクテル ━━━
 var _selCocktail=null;
 var _cspClasses=new Set(); // 空=全表示
-var _cspSort='';
+var _cspSortKey='', _cspSortDir='asc';
 var _cocktailSpiritTab='tequila';
 var _pendingSpirit=null;
 
@@ -1686,9 +1705,8 @@ function selectCocktail(cocktailId){
   document.getElementById('csp-tab-other').className='btn bs sm';
   document.getElementById('csp-cls-wrap').style.display='flex';
   _cspClasses=new Set(['B','J','R','X','A']); // 全選択=全表示
-  _cspSort='';
-  document.getElementById('csp-sort-asc').classList.remove('active');
-  document.getElementById('csp-sort-desc').classList.remove('active');
+  _cspSortKey='';_cspSortDir='asc';
+  _updateCspSortBtns();
   document.querySelectorAll('#csp-cls-wrap .nom-btn[onclick^="cspToggleCls"]').forEach(b=>b.classList.add('active'));
   document.getElementById('cocktail-spirit-search').value='';
   filterCocktailSpirit();
@@ -1714,12 +1732,22 @@ function cspResetCls(){
   document.querySelectorAll('#csp-cls-wrap .nom-btn[onclick^="cspToggleCls"]').forEach(b=>b.classList.add('active'));
   filterCocktailSpirit();
 }
-function cspSetSort(dir){
-  _cspSort=_cspSort===dir?'':dir;
-  document.getElementById('csp-sort-asc').classList.toggle('active',_cspSort==='asc');
-  document.getElementById('csp-sort-desc').classList.toggle('active',_cspSort==='desc');
+// 価格/名前ソート。同キー再押下で昇順⇔降順トグル。
+function cspSort(key){
+  if(_cspSortKey===key){ _cspSortDir=(_cspSortDir==='asc')?'desc':'asc'; }
+  else { _cspSortKey=key; _cspSortDir='asc'; }
+  _updateCspSortBtns();
   filterCocktailSpirit();
 }
+function _updateCspSortBtns(){
+  [['price','csp-sort-price','価格'],['name','csp-sort-name','名前']].forEach(function(x){
+    var b=document.getElementById(x[1]); if(!b)return;
+    var on=_cspSortKey===x[0];
+    b.classList.toggle('active',on);
+    b.textContent=x[2]+(on?(_cspSortDir==='asc'?' ▲':' ▼'):'');
+  });
+}
+function _cspName(t){ return (_cocktailSpiritTab==='tequila'?(AuthRole.bdName(t,'es')||''):(t.bottleEn||t.bottleName||t.name||t.bottleEs||t.bottleJa||t.id||'')); }
 function cspSetHouse(){
   document.getElementById('cocktail-spirit-search').value='Agavales Blanco';
   filterCocktailSpirit();
@@ -1750,8 +1778,8 @@ function filterCocktailSpirit(){
     });
   }
   const priceOf=t=>parseFloat(t.price!=null?t.price:t.unitPrice!=null?t.unitPrice:t.price10)||0;
-  if(_cspSort==='asc') items=[...items].sort((a,b)=>priceOf(a)-priceOf(b));
-  else if(_cspSort==='desc') items=[...items].sort((a,b)=>priceOf(b)-priceOf(a));
+  if(_cspSortKey==='price'){ items=[...items].sort((a,b)=>priceOf(a)-priceOf(b)); if(_cspSortDir==='desc') items.reverse(); }
+  else if(_cspSortKey==='name'){ items=[...items].sort((a,b)=>_cspName(a).localeCompare(_cspName(b))); if(_cspSortDir==='desc') items.reverse(); }
   document.getElementById('cocktail-spirit-list').innerHTML=items.slice(0,60).map(t=>{
     const name=_cocktailSpiritTab==='tequila'?AuthRole.bdName(t,'es'):(t.bottleEn||t.bottleName||t.name||t.bottleEs||t.bottleJa||t.id);
     const sub=_cocktailSpiritTab==='tequila'?(t.bottleJa||''):'';
