@@ -143,8 +143,21 @@ document.getElementById('btn-logout').addEventListener('click',function(){ auth.
 // ══════════ 解析ユーティリティ（tools/market の Python 版を移植） ══════════
 function decodeEntities(s){ var t=document.createElement('textarea'); t.innerHTML=String(s||''); return t.value; }
 function norm(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,''); }
-var STOP=new Set(['tequila','the','and','with','for','de','la','el','los','las','con','por','ml','cl','liter','litre','bottle']);
-function tokens(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().split(/[^a-z0-9]+/).filter(function(t){return t.length>=3&&!STOP.has(t)&&!/^\d+ml$/.test(t);}); }
+// \u6b63\u898f\u5316\u30c8\u30fc\u30af\u30ca\u30a4\u30b6: \u30af\u30e9\u30b9\u540c\u7fa9\u3092\u6b63\u6e96\u5316\uff0b\u6570\u5b57\u8b58\u5225\u5b50(48/No7/1942)\u306f\u4fdd\u6301\uff0b\u5bb9\u91cf/\u5ea6\u6570\u306f\u9664\u53bb\u3002
+var CLASS_SYN={silver:'blanco',plata:'blanco',plateado:'blanco',gold:'joven',oro:'joven',dorado:'joven'};
+var STOP=new Set(['tequila','the','and','with','for','de','la','el','los','las','con','por','ml','cl','liter','litre','bottle','no']);
+var VOLNUM=new Set(['50','100','180','200','330','375','500','700','720','750','1000','1500','1750']);
+function tokens(s){
+  var t=String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  t=t.replace(/\d+(?:\.\d+)?\s*(?:ml|cl|l|liter|litre)\b/g,' ').replace(/\d+(?:\.\d+)?\s*%/g,' ').replace(/\d+\s*proof/g,' ');
+  var out=[];
+  t.split(/[^a-z0-9]+/).forEach(function(x){
+    if(!x) return;
+    if(/^\d+$/.test(x)){ if(!VOLNUM.has(x)) out.push(x); return; }
+    if(x.length>=3 && !STOP.has(x)) out.push(CLASS_SYN[x]||x);
+  });
+  return out;
+}
 var CLASS_RULES=[['Cristalino',/cristalino/i],['ExtraAnejo',/extra\s*a[nñ]ejo|extra/i],['Reposado',/reposa|reposado/i],['Anejo',/a[nñ]ejo/i],['Joven',/joven|gold|\boro\b/i],['Blanco',/blanco|silver|plata/i]];
 function classOf(name){ for(var i=0;i<CLASS_RULES.length;i++){ if(CLASS_RULES[i][1].test(name||'')) return CLASS_RULES[i][0]; } return ''; }
 function volFromName(name){ var m=String(name||'').match(/(\d{2,4})\s*ml|(\d(?:\.\d+)?)\s*[lL](?![a-z])/); if(!m)return null; return m[1]?parseInt(m[1],10):Math.round(parseFloat(m[2])*1000); }
@@ -183,28 +196,35 @@ function detectShop(html){ for(var k in IMPORT_SHOPS){ if(IMPORT_SHOPS[k].detect
 
 document.getElementById('supported-shops').textContent=Object.keys(IMPORT_SHOPS).map(function(k){return IMPORT_SHOPS[k].name;}).join(' / ');
 
-// ══════════ マスタ照合（bottles コレクション） ══════════
-var masters=[];
+// ══════════ 道場マッチ（ブランド→ボトル→新商品の3段階） ══════════
+//   1) 店名からブランド特定（brand語⊆店名語・最長優先） 2) そのブランドのbottlesで集合一致→matched
+//   3) ブランド既知だがボトル無→newBottle（新商品候補） 4) ブランド不明→unknown
+var brands=[], bottlesByBrand={};
 function loadMasters(){
-  return db.collection('bottles').get().then(function(snap){
-    masters=snap.docs.map(function(d){ var v=d.data(); var es=v.bottleEs||v.bottleEsBase||''; var tk=tokens(es);
-      return { bottleId:d.id, es:es, key:norm(es), tk:tk, tkLen:tk.join('').length, tku:new Set(tk).size }; })
-      .filter(function(m){ return m.key.length>=6; });
-    masters.sort(function(a,b){ return b.key.length-a.key.length; });
+  return Promise.all([db.collection('brands').get(), db.collection('bottles').get()]).then(function(res){
+    brands=[]; bottlesByBrand={};
+    res[0].forEach(function(d){ var es=(d.data().brandEs||''); var tk=tokens(es);
+      if(tk.length && tk.join('').length>=3) brands.push({ brandId:d.id, es:es, tk:tk, tkLen:tk.join('').length }); });
+    brands.sort(function(a,b){ return b.tkLen-a.tkLen; });   // 長いブランド優先（Don Julio > Don）
+    res[1].forEach(function(d){ var v=d.data(); var es=v.bottleEs||v.bottleEsBase||''; var tk=tokens(es);
+      if(!tk.length) return;
+      var brandId=String(v.brandId||(d.id.length>=7?d.id.slice(0,7):''));
+      (bottlesByBrand[brandId]=bottlesByBrand[brandId]||[]).push({ bottleId:d.id, es:es, tk:tk, tku:new Set(tk).size, tkLen:tk.join('').length });
+    });
   });
 }
-function matchMaster(name){
-  var n=norm(name); if(!n) return null;
-  for(var i=0;i<masters.length;i++){ if(n.indexOf(masters[i].key)>=0) return masters[i]; }
-  var itemToks=new Set(tokens(name)); if(!itemToks.size) return null;
-  var best=null;
-  for(var j=0;j<masters.length;j++){ var m=masters[j];
-    if(m.tk.length<2||m.tkLen<8) continue;
-    // マスタと店名の有効トークン集合が【一致】する時のみ採用（部分集合だと
-    // 「Patron El Cielo Silver」が「Patron Silver」へ誤マッチし集計されるため）。
-    if(m.tku===itemToks.size && m.tk.every(function(t){return itemToks.has(t);}) && (!best||m.tkLen>best.tkLen)) best=m;
-  }
-  return best;
+function classifyItem(name){
+  var it=new Set(tokens(name));
+  if(!it.size) return { status:'unknown', brandId:'', bottleId:'', matchedName:'' };
+  var br=null;
+  for(var i=0;i<brands.length;i++){ var b=brands[i];
+    if(b.tk.every(function(t){return it.has(t);}) && (!br||b.tkLen>br.tkLen)) br=b; }
+  if(!br) return { status:'unknown', brandId:'', bottleId:'', matchedName:'' };
+  var cands=bottlesByBrand[br.brandId]||[], bo=null;
+  for(var j=0;j<cands.length;j++){ var c=cands[j];
+    if(c.tku===it.size && c.tk.every(function(t){return it.has(t);}) && (!bo||c.tkLen>bo.tkLen)) bo=c; }
+  if(bo) return { status:'matched', brandId:br.brandId, bottleId:bo.bottleId, matchedName:bo.es };
+  return { status:'newBottle', brandId:br.brandId, bottleId:'', matchedName:'' };
 }
 
 // ══════════ ファイル読み込み → 解析 ══════════
@@ -236,8 +256,9 @@ async function handleFiles(fileList){
   Object.keys(parsed).forEach(function(shop){
     parsed[shop].items.forEach(function(it){
       var fin=finalizeItem(it); Object.assign(it, fin);
-      var m=masters.length?matchMaster(it.name):null;
-      it.bottleId=m?m.bottleId:''; it.matched=!!m; it.matchedName=m?m.es:'';
+      var cls=brands.length?classifyItem(it.name):{status:'unknown',brandId:'',bottleId:'',matchedName:''};
+      it.bottleId=cls.bottleId; it.matched=cls.status==='matched'; it.matchedName=cls.matchedName||'';
+      it.brandId=cls.brandId||''; it.matchStatus=cls.status;
       it.excluded=!passFilter(it.name);
     });
   });
@@ -256,14 +277,20 @@ function renderPreview(unknown){
     var keep=items.filter(function(x){return !x.excluded;});
     var priced=keep.filter(function(x){return x.price!=null;}).length;
     var matched=keep.filter(function(x){return x.matched;}).length;
+    var newB=keep.filter(function(x){return x.matchStatus==='newBottle';}).length;
     var excluded=items.length-keep.length;
     totalWrite+=keep.length;
     var cur=({USD:'$',EUR:'€',GBP:'£',JPY:'¥'})[cfg.currency]||cfg.currency+' ';
+    var badgeFor=function(x){
+      if(x.matched) return '<span class="badge teal" title="'+esc(x.matchedName)+'">🥃道場</span>';
+      if(x.matchStatus==='newBottle') return '<span class="badge" style="background:#fdecc8;color:#8a5a00" title="ブランド既知の未登録銘柄">🆕新商品</span>';
+      return '<span class="dim">—</span>';
+    };
     var sample=keep.slice(0,6).map(function(x){
       return '<tr><td>'+esc(x.name)+(x.classGuess?' <span class="dim">'+esc(x.classGuess)+'</span>':'')+'</td>'
         +'<td class="mono">'+(x.price!=null?cur+x.price.toLocaleString():'—')+'</td>'
         +'<td class="mono">'+(x.price750!=null?cur+x.price750.toLocaleString():'—')+'</td>'
-        +'<td>'+(x.matched?'<span class="badge teal" title="'+esc(x.matchedName)+'">🥃道場</span>':'<span class="dim">—</span>')+'</td></tr>';
+        +'<td>'+badgeFor(x)+'</td></tr>';
     }).join('');
     var div=document.createElement('div'); div.style.marginBottom='14px';
     div.innerHTML='<div class="shop-hd"><span class="nm">'+esc(cfg.name)+'</span>'
@@ -271,6 +298,7 @@ function renderPreview(unknown){
       +'<span class="badge">取込 '+keep.length+'件</span>'
       +'<span class="badge">価格 '+priced+'</span>'
       +'<span class="badge teal">道場マッチ '+matched+'</span>'
+      +(newB?'<span class="badge" style="background:#fdecc8;color:#8a5a00">🆕新商品候補 '+newB+'</span>':'')
       +(excluded?'<span class="badge" style="background:#f3d9d3;color:#b03020">NG除外 '+excluded+'</span>':'')+'</div>'
       +'<table><thead><tr><th>銘柄</th><th class="mono">価格</th><th class="mono">750ml換算</th><th>道場</th></tr></thead>'
       +'<tbody>'+sample+'</tbody></table>'
@@ -296,7 +324,7 @@ document.getElementById('btn-import').addEventListener('click',async function(){
   var withHist=document.getElementById('opt-history').checked;
   var day=document.getElementById('opt-date').value||jstToday();
   try{
-    var ops=[], total=0, matchedTotal=0;
+    var ops=[], total=0, matchedTotal=0, newTotal=0;
     Object.keys(parsed).forEach(function(shop){
       var cfg=IMPORT_SHOPS[shop];
       parsed[shop].items.filter(function(x){return !x.excluded;}).forEach(function(it){
@@ -308,6 +336,7 @@ document.getElementById('btn-import').addEventListener('click',async function(){
           volumeMl:(it.volumeMl!=null?it.volumeMl:null), abv:(it.abv!=null?it.abv:null),
           availability:it.availability||'', url:it.url||'',
           bottleId:it.bottleId||'', matched:!!it.matched, matchedName:it.matchedName||'',
+          brandId:it.brandId||'', matchStatus:it.matchStatus||'unknown',
           source:'import-html', updatedAt:FV.serverTimestamp()
         }});
         if(withHist && it.price750!=null){
@@ -316,10 +345,10 @@ document.getElementById('btn-import').addEventListener('click',async function(){
           ops.push({ref:href, data:{ shop:shop, shopName:cfg.name, name:it.name||'', bottleId:it.bottleId||'',
             currency:cfg.currency||'USD', itemKey:shop+'__'+it.id, hist:h }});
         }
-        total++; if(it.matched) matchedTotal++;
+        total++; if(it.matched) matchedTotal++; else if(it.matchStatus==='newBottle') newTotal++;
       });
     });
-    logLine('書込 '+ops.length+' 操作（商品 '+total+'件 / 道場マッチ '+matchedTotal+'）'+(withHist?(' / 履歴日 '+day):' / 履歴なし'));
+    logLine('書込 '+ops.length+' 操作（商品 '+total+'件 / 道場マッチ '+matchedTotal+' / 新商品候補 '+newTotal+'）'+(withHist?(' / 履歴日 '+day):' / 履歴なし'));
     await commitChunked(ops);
     logLine('✓ 取込完了。admin_tequila の「海外相場 / 海外比較」で確認できます。');
     btn.textContent='取込完了';
