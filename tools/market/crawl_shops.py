@@ -16,6 +16,7 @@ Musashiya と同じ最終CSVスキーマ <key>_tequila_final.csv を出力する
 礼儀: robots.txt 確認・UA設定・--delay 待機。
 """
 import argparse, csv, json, re, sys, time, urllib.parse, urllib.robotparser
+from html import unescape as _unescape
 import requests
 from bs4 import BeautifulSoup
 
@@ -40,8 +41,8 @@ SHOPS = {
   "siptequila":     {"name": "Sip Tequila",      "platform": "shopify", "base": "https://siptequila.com",       "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
   "sftequilashop":  {"name": "SF Tequila Shop",  "platform": "shopify", "base": "https://sftequilashop.com",    "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
   "hiproof":        {"name": "Hi Proof",         "platform": "shopify", "base": "https://www.hiproof.com",      "collections": ["all"],            "only_tequila": True, "intl": True, "currency": "USD"},
-  "klwines":        {"name": "K&L Wines",        "platform": "disabled","base": "https://www.klwines.com",      "intl": True, "currency": "USD",
-                     "note": "独自プラットフォーム（products.json非対応の可能性大）。--probe で確認し個別対応。"},
+  "klwines":        {"name": "K&L Wines",        "platform": "saved","base": "https://www.klwines.com",      "intl": True, "currency": "USD",
+                     "note": "Cloudflare Turnstileで自動取得不可。ブラウザ保存HTMLを crawl_saved.py --shop klwines で処理（parse_klwines）。"},
   # ── 追加の海外店。base は推測ドメイン。まず `--intl --probe` で疎通/基盤を確認し、
   #    ✓Shopify のものはそのまま crawl、✗/到達失敗は base 修正 or 個別対応へ。
   #    小規模な米国酒販は Shopify が多いため shopify で仮置き、大規模/独自基盤は disabled。
@@ -336,6 +337,26 @@ def parse_wix_warmup(html, base):
             if isinstance(v, (dict, list)): stack.append(v)
     return out
 
+def parse_klwines(html_text, base="https://shop.klwines.com"):
+    """K&L Wines(Next.js/Algolia)の【手動保存HTML】から商品を抽出。
+    商品名は aria-label='View details for …'、価格は同一タイル内の $x.xx（次商品の直前まで）。
+    自動取得はCloudflare Turnstileで不可 → ブラウザ保存HTMLを crawl_saved.py で処理する。"""
+    seen, uniq = set(), []
+    for m in re.finditer(r'aria-label="View details for ([^"]+)"[^>]*href="https://shop\.klwines\.com/products/details/(\d+)"', html_text):
+        pid = m.group(2)
+        if pid in seen: continue
+        seen.add(pid); uniq.append((pid, m.group(1), m.start()))
+    pr = re.compile(r'\$([0-9][0-9,]*\.[0-9]{2})')
+    out = []
+    for i, (pid, name, pos) in enumerate(uniq):
+        end = uniq[i + 1][2] if i + 1 < len(uniq) else len(html_text)
+        prices = [float(x.replace(",", "")) for x in pr.findall(html_text[pos:end])]
+        price = min(prices) if prices else None      # 価格なし=入荷待ち/店頭のみ(allocated)
+        out.append({"id": pid, "name": _unescape(name).strip(), "price": price,
+                    "availability": "在庫あり" if price is not None else "",
+                    "url": base + "/products/details/" + pid})
+    return out
+
 def parse_bigcommerce(html, base):
     """BigCommerce(Stencil)のカテゴリHTMLから商品カードを抽出（name/price/url/在庫）。
     テーマ差に強いよう複数セレクタをフォールバック。カテゴリ配下＝全テキーラ前提。"""
@@ -375,6 +396,9 @@ def crawl_shop(session, key, cfg, delay, max_pages, debug):
     raw = []
     if plat == "disabled":
         print(f"[{key}] platform=disabled のためスキップ（{cfg.get('note','')}）", file=sys.stderr)
+        return raw
+    if plat == "saved":
+        print(f"[{key}] platform=saved: ブラウザ保存HTMLを crawl_saved.py --shop {key} <保存.html> で処理してください。", file=sys.stderr)
         return raw
     if plat == "shopify":
         for handle in cfg.get("collections", ["all"]):
