@@ -194,6 +194,12 @@ body{background:var(--cream);color:var(--ink);font-family:var(--sans);height:100
     <button class="cbtn" id="btn-expand-brand">ブランド展開</button>
     <button class="cbtn" id="btn-collapse-all">全折り畳み</button>
     <span style="width:1px;height:20px;background:var(--cream3);display:inline-block;"></span>
+    <label style="font-size:12px;color:var(--ink2);">色</label>
+    <button class="cbtn cf-btn active" data-cf="">すべて</button>
+    <button class="cbtn cf-btn" data-cf="blue"><span style="color:#1560bd">●</span> 青のみ</button>
+    <button class="cbtn cf-btn" data-cf="bluegreen"><span style="color:#1560bd">●</span><span style="color:#2e9e5b">●</span> 青と緑</button>
+    <button class="cbtn cf-btn" data-cf="notbluegreen"><span style="color:#c0392b">●</span><span style="color:#d97a10">●</span> 青緑以外</button>
+    <span style="width:1px;height:20px;background:var(--cream3);display:inline-block;"></span>
     <button class="cbtn" id="btn-col-toggle">列設定 ▼</button>
     <button class="cbtn" id="btn-audit" title="参照整合性チェック">🔍 整合性チェック</button>
     <button class="cbtn" id="btn-reload" title="データ再読み込み">↺ 再読込</button>
@@ -557,9 +563,17 @@ function toggleBrandHidden(brand){
 
 // ── ツリー描画 ────────────────────────────────────────────────────────
 var nomFilterVal='';
+var colorFilterVal='';   // ''=すべて / 'blue'=青のみ / 'bluegreen'=青と緑 / 'notbluegreen'=青緑以外
 var openState={};
 // 名称の色分け（配下の有無で状態を可視化）
 var TREE_C={red:'#c0392b',orange:'#d97a10',green:'#2e9e5b',blue:'#1560bd'};
+function _colorPass(color){
+  if(!colorFilterVal) return true;
+  if(colorFilterVal==='blue') return color===TREE_C.blue;
+  if(colorFilterVal==='bluegreen') return color===TREE_C.blue||color===TREE_C.green;
+  if(colorFilterVal==='notbluegreen') return color!==TREE_C.blue&&color!==TREE_C.green;
+  return true;
+}
 
 function getName(r, nameFields){
   for(var i=0;i<nameFields.length;i++){ if(r[nameFields[i]]) return r[nameFields[i]]; }
@@ -740,13 +754,14 @@ function renderTree(){
   noms.forEach(function(nom){
     var entry=tree[nom]; if(!entry) return;
     var dis=entry.dis||{id:nom};
-    disCount++;
     var brandIds=Object.keys(entry.brands).sort();
     var disKey='dis:'+nom;
     // 蒸留所名の色：ブランド無=赤／ブランド有・BT無=橙／BT有・BD無=緑／BD有=青
     var disHasBottle=false, disHasBdata=false;
     brandIds.forEach(function(bid){ var be0=entry.brands[bid]; var bo0=Object.keys(be0.bottles); if(bo0.length) disHasBottle=true; bo0.forEach(function(x){ if((be0.bottles[x].bdatas||[]).length) disHasBdata=true; }); });
     var disColor = brandIds.length===0 ? TREE_C.red : (!disHasBottle ? TREE_C.orange : (!disHasBdata ? TREE_C.green : TREE_C.blue));
+    if(!_colorPass(disColor)) return;   // 色フィルタで除外
+    disCount++;
     var disNode=makeRow(disLv, dis, disKey, brandIds.length>0, disColor);
 
     if(brandIds.length>0 && openState[disKey]!==false){
@@ -912,6 +927,14 @@ document.getElementById('btn-audit').addEventListener('click',function(){
 });
 
 // ── フィルター・展開 ──────────────────────────────────────────────────
+// 色フィルタ（蒸留所の状態色で抽出）
+document.querySelectorAll('.cf-btn').forEach(function(b){
+  b.addEventListener('click',function(){
+    colorFilterVal=this.getAttribute('data-cf')||'';
+    document.querySelectorAll('.cf-btn').forEach(function(x){ x.classList.toggle('active', x===b); });
+    renderTree();
+  });
+});
 document.getElementById('btn-search').addEventListener('click',function(){
   nomFilterVal=document.getElementById('nom-filter').value.trim();
   renderTree();
