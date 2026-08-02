@@ -96,6 +96,19 @@ cd ~/functions && node <repo>/tools/market/import_intl.js --shop oldtowntequila
     - 行クリックで店別内訳（容量・**度数(ABV)**・実売価格・750ml換算）。通貨混在は参考レート(`FX`)で¥概算・画面に明記。
 - CSVの `abv` 列は crawl_shops.py が商品名/本文からアルコール語隣接時のみ抽出（"25% off"/"100% agave" 等の誤検出を回避、テキーラ妥当域 **35〜75%**）。度数表示には**再クロール**が必要。
 
+### 手動保存HTMLからの取得（bot対策店・`crawl_saved.py`）
+Cloudflare Turnstile 等で自動取得できない店（K&L Wines 等、`platform:"saved"`）は、
+ブラウザでカテゴリページを開いて「完全なHTMLを保存」し、そのファイルから抽出する。
+```bash
+# 例: K&L のテキーラカテゴリを各ページ保存 → まとめて処理
+python3 crawl_saved.py --shop klwines Tequila*.html      # 複数ページ可・商品ID重複は自動排除
+#   → klwines_tequila_final.csv
+node import_intl.js --shop klwines                        # marketIntl へ取込（履歴は --history 時のみ）
+```
+- `parse_klwines`: K&L(Next.js/Algolia)保存HTMLを解析。商品名=`aria-label="View details for …"`、
+  価格=同一タイル内の `$x.xx`（次商品の直前まで＝価格なし=入荷待ち/店頭のみ を取り違えない）。
+- 他のbot対策店（Total Wine / Whisky Exchange 等）も保存HTMLの構造が分かれば `crawl_saved.py` の PARSERS に追加可能。
+
 ### 相場推移（履歴）と NG/OK ワード
 - **履歴**: import_intl.js は取り込みのたび `marketIntlHistory/{shop}__{itemId}` の `hist` マップに
   当日値 `{[YYYY-MM-DD]:{p:750ml換算, s:在庫1/0}}` を merge 追記（同日再実行は上書き）。日付は JST、`--date YYYY-MM-DD` で上書き可。
