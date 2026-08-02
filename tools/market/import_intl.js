@@ -59,7 +59,7 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
   if (fs.existsSync('tequiladojo_master.csv')) {
     masters = parseCSV(fs.readFileSync('tequiladojo_master.csv', 'utf8'))
       .map(m => { const tk = tokens(m.bottleEs);
-        return { bottleId: m.bottleId || m.id, key: norm(m.bottleEs), es: m.bottleEs || '', tk, tkLen: tk.join('').length }; })
+        return { bottleId: m.bottleId || m.id, key: norm(m.bottleEs), es: m.bottleEs || '', tk, tkLen: tk.join('').length, tku: new Set(tk).size }; })
       .filter(m => m.key.length >= 6); // 短すぎる名は誤マッチ防止で除外
     masters.sort((a, b) => b.key.length - a.key.length); // 長い名を優先
   }
@@ -67,15 +67,16 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
     const n = norm(name); if (!n) return null;
     // 1) 連続部分一致（厳密・最優先）: 店名の中にマスタ名がそのまま含まれる
     for (const m of masters) { if (n.indexOf(m.key) >= 0) return m; }
-    // 2) トークン全一致（語順違い・語間挿入を吸収。例: "100 ANOS TEQUILA BLANCO"）
+    // 2) トークン【集合一致】（語順違い・語間挿入を吸収。例: "100 ANOS TEQUILA BLANCO"）
     //    ガード: マスタ語数>=2 かつ 有効文字合計>=8 の時のみ（誤マッチ抑制）。
-    //    マスタの全トークンが店名トークンに存在すれば一致。最も特徴の多い（合計長最大）候補を採用。
+    //    ※ 部分集合ではなく集合一致にする（「Patron El Cielo Silver」が「Patron Silver」へ
+    //      誤マッチして同一bottleIdに集計されるのを防ぐ）。同点は特徴の多い（合計長最大）を採用。
     const itemToks = new Set(tokens(name));
     if (!itemToks.size) return null;
     let best = null;
     for (const m of masters) {
       if (m.tk.length < 2 || m.tkLen < 8) continue;
-      if (m.tk.every(t => itemToks.has(t)) && (!best || m.tkLen > best.tkLen)) best = m;
+      if (m.tku === itemToks.size && m.tk.every(t => itemToks.has(t)) && (!best || m.tkLen > best.tkLen)) best = m;
     }
     return best;
   }
