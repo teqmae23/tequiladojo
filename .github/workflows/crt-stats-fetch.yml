@@ -94,21 +94,19 @@ jobs:
           from datetime import datetime, timezone
           from dateutil.relativedelta import relativedelta
 
+          # produccion/forma/agave は年次集計（keys に Año を含む）。
+          # CRT は当年の集計を月ごとに更新するため、直近数か月が属する「年」を
+          # 重複排除して再取得し、当年・前年の集計を最新化する（INSERT OR REPLACE）。
           now = datetime.now(timezone.utc)
-          t_new  = now - relativedelta(months=2)
-          t_prev = now - relativedelta(months=3)
+          years = sorted({(now - relativedelta(months=m)).year for m in (2, 3)})
 
-          def run(year, month):
-              cmd = f"python3 tools/crt_stats_fetch.py --output sqlite --year {year} --month {month}"
+          for y in years:
+              cmd = f"python3 tools/crt_stats_fetch.py --output sqlite --year {y}"
+              print(f"=== {y} 年次再取得・更新 ===")
               print(f">> {cmd}")
               r = subprocess.run(cmd, shell=True)
               if r.returncode != 0:
                   sys.exit(r.returncode)
-
-          print(f"=== {t_prev.year}/{t_prev.month:02d} 比較・更新 ===")
-          run(t_prev.year, t_prev.month)
-          print(f"=== {t_new.year}/{t_new.month:02d} 新規追加 ===")
-          run(t_new.year, t_new.month)
           PYEOF
 
       - name: SQLite をリポジトリにコミット
