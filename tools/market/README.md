@@ -13,7 +13,7 @@
 | kinemon | 酒商金右衛門 | Shopify | `kinemon.shop /collections/all/products.json` |
 | youshuchiga | 洋酒専門 千雅 | ColorMe | `?mode=cate&cbid=1181170` |
 | chagata | ちゃがたパーク | ColorMe | `?mode=cate&cbid=2444445&csid=4` |
-| mukawa | ムカワ | ColorMe | cbid **要特定**（`--debug` でカテゴリURL確認） |
+| mukawa | 武川蒸留酒販売 | ColorMe | cbid=2163597（テキーラ）。**ブランド別サブカテゴリ索引型**のため `subcats:True` でcsidを収集し各ブランドを巡回して集約 |
 | biccamera | ビックカメラ | 独自/大規模 | **保留**（bot対策強・独自構造） |
 
 > ColorMe の cbid/csid や EC-CUBE のカテゴリは変わることがある。取りこぼし時は

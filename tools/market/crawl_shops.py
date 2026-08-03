@@ -32,7 +32,7 @@ SHOPS = {
   "liquorsato":  {"name": "サトー酒店",       "platform": "eccube",  "base": "https://liquor-sato.com", "list_path": "/cart/products/list", "category_id": 42},
   "youshuchiga": {"name": "洋酒専門店 千雅",  "platform": "colorme", "base": "https://youshuchiga.shop-pro.jp", "cbid": 1181170, "csid": 0},
   "chagata":     {"name": "ちゃがたパーク",   "platform": "colorme", "base": "https://www.chagata.com", "cbid": 2444445, "csid": 4},
-  "mukawa":      {"name": "武川蒸留酒販売",   "platform": "colorme", "base": "https://mukawa-spirit.com", "cbid": 2163597, "csid": 0},
+  "mukawa":      {"name": "武川蒸留酒販売",   "platform": "colorme", "base": "https://mukawa-spirit.com", "cbid": 2163597, "csid": 0, "subcats": True},
   "biccamera":   {"name": "ビックカメラ",     "platform": "disabled", "base": "https://www.biccamera.com",
                   "note": "大規模・bot対策が強くカテゴリ構造も独自のため保留。必要なら個別対応。"},
   # ── 海外店（intl:True）。全件収集し import_intl.js で marketIntl に格納（マスタ紐付けは任意） ──
@@ -455,19 +455,39 @@ def crawl_shop(session, key, cfg, delay, max_pages, debug):
             print(f"[{key}] cbid 未設定。サイトのテキーラカテゴリURL(?mode=cate&cbid=...)を確認して設定してください。", file=sys.stderr)
             return raw
         seen = set()
-        for page in range(1, max_pages + 1):
-            q = {"mode": "cate", "cbid": cfg["cbid"], "csid": cfg.get("csid", 0), "page": page}
-            url = base + "/?" + urllib.parse.urlencode(q)
-            r = session.get(url, timeout=30)
-            if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
-            txt = _decoded(r)
-            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(txt)
-            items = _parse_by_detail_links(txt, base, DETAIL_RE_COLORME, exclude_sidebar=True)
-            new = [x for x in items if x["id"] not in seen]
-            for x in new: seen.add(x["id"])
-            print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
-            if not new: break
-            raw += new; time.sleep(delay)
+        base_csid = cfg.get("csid", 0)
+        # subcats: カテゴリ(csid=0)が商品一覧ではなくブランド別サブカテゴリ索引の店（武川等）。
+        #   索引ページから同一cbid配下のcsidを収集し、各サブカテゴリを巡回して商品を集約する。
+        csids = [base_csid]
+        if cfg.get("subcats"):
+            idx_url = base + "/?" + urllib.parse.urlencode({"mode": "cate", "cbid": cfg["cbid"], "csid": base_csid})
+            r = session.get(idx_url, timeout=30)
+            if r.status_code == 200:
+                idx = _decoded(r)
+                found = re.findall(r"cbid=%s&(?:amp;)?csid=(\d+)" % re.escape(str(cfg["cbid"])), idx)
+                subs = sorted({int(c) for c in found if int(c) != int(base_csid or 0)})
+                if subs: csids = subs
+                print(f"[{key}] サブカテゴリ {len(csids)}件を巡回", file=sys.stderr)
+            else:
+                print(f"[{key}] 索引取得 HTTP {r.status_code}", file=sys.stderr)
+        for ci, csid in enumerate(csids):
+            for page in range(1, max_pages + 1):
+                q = {"mode": "cate", "cbid": cfg["cbid"], "csid": csid, "page": page}
+                url = base + "/?" + urllib.parse.urlencode(q)
+                r = session.get(url, timeout=30)
+                if r.status_code != 200: print(f"[{key}] csid{csid} p{page} HTTP {r.status_code}", file=sys.stderr); break
+                txt = _decoded(r)
+                if debug and page == 1 and ci == 0: open(f"{key}_dump.html", "w", encoding="utf-8").write(txt)
+                items = _parse_by_detail_links(txt, base, DETAIL_RE_COLORME, exclude_sidebar=True)
+                new = [x for x in items if x["id"] not in seen]
+                for x in new: seen.add(x["id"])
+                if not cfg.get("subcats"):
+                    print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
+                raw += new
+                if not new: break
+                time.sleep(delay)
+            if cfg.get("subcats"):
+                print(f"[{key}] csid{csid} ({ci+1}/{len(csids)}) 累計{len(raw)}", file=sys.stderr)
     elif plat == "bigcommerce":
         cat = cfg.get("category_path", "/")
         seen = set()
