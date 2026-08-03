@@ -174,7 +174,14 @@ def robots_ok(session, base, path):
     return True
 
 # ── パーサ（純関数・テスト可能） ──
-TEQ_TYPE_RE = re.compile(r"テキーラ|tequila", re.I)
+# only_tequila 判定: 「テキーラ/tequila」語が無くても、テキーラ/メスカル固有のクラス語
+# （ブランコ/レポサド/アニェホ等）やメスカルを含むものはテキーラ扱いにする。
+# 例: 金右衛門「カジェ23 ブランコ 700ml【新バッチ】」（tags: ブランコ）は "ブランコ" で拾う。
+# クラス語はテキーラ/メスカル固有のためウイスキー等の誤混入は起きにくい。
+TEQ_TYPE_RE = re.compile(
+    r"テキーラ|tequila|メスカル|mezcal|mescal"
+    r"|ブランコ|レポサ[ドート]|アニェホ|アネホ|クリスタリーノ|ホーベン|プラタ"
+    r"|blanco|reposado|a[ñn]ejo|cristalino|joven|plata", re.I)
 def parse_shopify(data, base, only_tequila=False):
     out = []
     for p in (data.get("products") or []):
