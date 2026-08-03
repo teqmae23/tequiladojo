@@ -90,7 +90,11 @@ SIDEBAR_RE = re.compile(r"sidebar|side_a|side_b|_side|side_|ranking|rank_|recomm
                         r"history|checkitem|relation|relate|footer|header|breadcrumb|topicpath", re.I)
 RANK_NAME_RE = re.compile(r"^\s*No\.?\s*\d")
 SET_RE = re.compile(r"セット|飲み比べ|ギフトBOX|詰め合わせ|アソート")
-VOL_RE = re.compile(r"(\d{2,4})\s*ml|(\d(?:\.\d+)?)\s*[lL](?![a-z])", re.I)
+# 品切れ文言（ColorMe/EC-CUBE等は在庫を明示要素で持たないため文言/ボタンで推定）。
+# EC-CUBEの「再入荷通知」系（＝在庫切れ）も対象。単なる「再入荷しました」等の誤検出は近接語で回避。
+SOLDOUT_RE = re.compile(r"品切れ|売り?切れ|在庫切れ|在庫なし|完売|入荷待ち|入荷未定|SOLD\s*OUT|soldout|再入荷.{0,8}(?:通知|希望|お知らせ|メール)", re.I)
+# 容量: カンマ区切り(4,000ml)にも対応。取得後にカンマ除去し妥当域のみ採用。
+VOL_RE = re.compile(r"(\d[\d,]*)\s*ml|(\d(?:\.\d+)?)\s*[lL](?![a-z])", re.I)
 # 度数(ABV): 誤検出（"25% off" / "100% agave"）を避けるためアルコール語が隣接する場合のみ採用。
 ABV_RE = re.compile(r"(\d{2,3}(?:\.\d+)?)\s*%\s*(?:abv|alc\.?|alcohol|vol)|(?:abv|alc\.?|alcohol)[^0-9]{0,8}(\d{2,3}(?:\.\d+)?)\s*%|(\d{2,3}(?:\.\d+)?)\s*proof", re.I)
 
@@ -106,7 +110,10 @@ def brand_of(name):
 def vol_from_name(name):
     m = VOL_RE.search(name or "")
     if not m: return None
-    return int(m.group(1)) if m.group(1) else int(float(m.group(2)) * 1000)
+    if m.group(1):
+        v = int(m.group(1).replace(",", ""))       # 4,000ml → 4000
+        return v if 10 <= v <= 20000 else None
+    return int(float(m.group(2)) * 1000)
 def abv_of(text):
     for m in ABV_RE.finditer(text or ""):
         if m.group(3):                                   # proof → ABV = proof/2
@@ -278,9 +285,24 @@ def _parse_by_detail_links(html, base, detail_re, exclude_sidebar=False):
             if node.parent is None: break
             node = node.parent
         url = urllib.parse.urljoin(base + "/", a["href"])
+        # 在庫（明示要素が無いColorMe/EC-CUBE向け・複数シグナルで推定。不明は在庫あり側に倒す）:
+        #   ①品切れ文言(SOLD OUT/売切れ/品切れ/在庫なし/完売/入荷待ち/再入荷通知) または
+        #   ②カート/購入ボタンが disabled → 品切れ。それ以外で価格あり → 在庫あり。
+        avail = ""
+        if price is not None:
+            scope = node
+            soldout = bool(SOLDOUT_RE.search(scope.get_text(" ", strip=True)))
+            if not soldout:
+                for b in scope.find_all(["button", "input", "a"]):
+                    lbl = (b.get_text(" ", strip=True) + " " + (b.get("value") or "")).strip()
+                    if re.search(r"カート|購入|買い物|cart", lbl, re.I):
+                        cls = " ".join(b.get("class") or [])
+                        if b.has_attr("disabled") or re.search(r"disabled|sold ?out|nostock|out-?of-?stock", cls, re.I):
+                            soldout = True; break
+            avail = "品切れ" if soldout else "在庫あり"
         prev = items.get(pid)
         if prev is None or (not prev["name"] and name) or (prev.get("price") is None and price is not None):
-            items[pid] = {"id": pid, "name": name, "price": price, "availability": "", "url": url, "volume_ml": vol_hint, "abv": abv_hint}
+            items[pid] = {"id": pid, "name": name, "price": price, "availability": avail, "url": url, "volume_ml": vol_hint, "abv": abv_hint}
     return list(items.values())
 
 DETAIL_RE_ECCUBE = re.compile(r"/products/detail/(\d+)")
