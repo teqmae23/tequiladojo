@@ -402,6 +402,8 @@ html.embed .mbg{background:transparent!important}
           <select class="fsel" id="f-cmp-class"><option value="">全クラス</option></select>
           <label style="font-size:12px;display:flex;align-items:center;gap:5px"><input type="checkbox" id="f-cmp-instock"> 在庫ありのみ</label>
           <select class="fsel" id="f-cmp-sort"><option value="name">名前順</option><option value="cheap">最安が安い順</option><option value="spread">価格差が大きい順</option><option value="nshop">掲載店数が多い順</option></select>
+          <select class="fsel" id="f-cmp-watch" title="定点観測ブランドで絞り込み"><option value="">全ブランド</option></select>
+          <button class="btn bs" id="btn-cmp-watch" title="定点観測ブランドのリストを設定">🎯 定点観測</button>
           <span style="margin-left:auto;font-size:11px;color:var(--ink3)" id="cmp-count"></span>
         </div>
         <div class="tw" id="tbl-compare-wrap"><table id="tbl-compare">
@@ -1294,13 +1296,16 @@ function _wlSaveDoc(cb){
     .catch(function(e){ toast('保存失敗: '+e.message,'err'); });
 }
 function _wlRefreshToolbarSel(){
-  var sel=g('f-intlcmp-watch'); if(!sel) return;
-  var cur=sel.value;
-  sel.innerHTML='<option value="">全ブランド</option>'+mktWatch.lists.map(function(l){
-    return '<option value="'+escD(l.id)+'">🎯 '+escD(l.name)+' ('+(l.brandIds||[]).length+')</option>';
-  }).join('');
-  if(cur && mktWatch.lists.some(function(l){return l.id===cur;})) sel.value=cur;
+  ['f-intlcmp-watch','f-cmp-watch'].forEach(function(sid){   // 海外比較・国内相場比較の両ツールバー
+    var sel=g(sid); if(!sel) return;
+    var cur=sel.value;
+    sel.innerHTML='<option value="">全ブランド</option>'+mktWatch.lists.map(function(l){
+      return '<option value="'+escD(l.id)+'">🎯 '+escD(l.name)+' ('+(l.brandIds||[]).length+')</option>';
+    }).join('');
+    if(cur && mktWatch.lists.some(function(l){return l.id===cur;})) sel.value=cur;
+  });
 }
+function _wlRerender(){ if(g('tb-intlcmp')) renderIntlCmp(); if(g('tb-compare')) renderCompare(); }
 function _wlEnsureBrands(cb){
   if(cache.brands && cache.brands.length){ cb(); return; }
   db.collection('brands').get().then(function(snap){
@@ -1356,15 +1361,17 @@ function _wlLoadInto(id){
   _wlChosen=wl?(wl.brandIds||[]).slice():[];
   _wlRefreshSelect(); _wlRenderChosen(); _wlRenderMaster();
 }
-function openWatchlistModal(){
+var _wlSrc='f-intlcmp-watch';                 // 保存後に選択を反映するツールバーselect
+function openWatchlistModal(srcId){
+  _wlSrc=(typeof srcId==='string' && srcId)?srcId:'f-intlcmp-watch';
   _wlEnsureBrands(function(){
     if(g('wl-q-nom')) g('wl-q-nom').value='';
     if(g('wl-q-name')) g('wl-q-name').value='';
-    _wlLoadInto(gv('f-intlcmp-watch')||'');   // ツールバーで選択中のリストがあれば編集モードで開く
+    _wlLoadInto(gv(_wlSrc)||'');   // 起動元ツールバーで選択中のリストがあれば編集モードで開く
     openM('m-watchlist');
   });
 }
-if(g('btn-intlcmp-watch')) g('btn-intlcmp-watch').addEventListener('click',openWatchlistModal);
+if(g('btn-intlcmp-watch')) g('btn-intlcmp-watch').addEventListener('click',function(){ openWatchlistModal('f-intlcmp-watch'); });
 if(g('wl-select')) g('wl-select').addEventListener('change',function(){ _wlLoadInto(this.value); });
 ['wl-q-nom','wl-q-name'].forEach(function(id){ var e=g(id); if(e) e.addEventListener('input',_wlRenderMaster); });
 if(g('wl-master')) g('wl-master').addEventListener('click',function(e){
@@ -1386,9 +1393,9 @@ if(g('wl-del')) g('wl-del').addEventListener('click',function(){
   var delId=_wlEditId;
   mktWatch.lists=mktWatch.lists.filter(function(l){return l.id!==delId;});
   _wlSaveDoc(function(){
-    var tsel=g('f-intlcmp-watch'); if(tsel && tsel.value===delId) tsel.value='';
+    ['f-intlcmp-watch','f-cmp-watch'].forEach(function(sid){ var s=g(sid); if(s && s.value===delId) s.value=''; });
     _wlEditId=''; _wlChosen=[];
-    _wlRefreshSelect(); _wlRenderChosen(); _wlRenderMaster(); renderIntlCmp();
+    _wlRefreshSelect(); _wlRenderChosen(); _wlRenderMaster(); _wlRerender();
     toast('リストを削除しました');
   });
 });
@@ -1402,7 +1409,8 @@ if(g('wl-save')) g('wl-save').addEventListener('click',function(){
   else { _wlEditId='w'+Date.now().toString(36); mktWatch.lists.push({id:_wlEditId,name:name,brandIds:_wlChosen.slice()}); }
   _wlSaveDoc(function(){
     _wlRefreshSelect();
-    var tsel=g('f-intlcmp-watch'); if(tsel){ tsel.value=_wlEditId; renderIntlCmp(); }
+    var tsel=g(_wlSrc); if(tsel){ tsel.value=_wlEditId; }   // 起動元ツールバーに反映
+    _wlRerender();
     closeM('m-watchlist');
     toast('定点観測リスト「'+name+'」を保存しました');
   });
@@ -1950,7 +1958,19 @@ g("btn-migrate-bottles").addEventListener("click",function(){
 // ── ボトルデータ ───────────────────────────────────────────────
 setCnt("bdata","—");
 
+// 読み込み中インジケーター（テーブル本体＋任意で再読み込みボタン）
+function _tblLoad(id,cols,msg,btnId){
+  var tb=g(id); if(tb) tb.innerHTML='<tr><td colspan="'+cols+'" class="ec"><span class="spin"></span>'+(msg||'読み込み中…')+'</td></tr>';
+  var b=btnId&&g(btnId); if(b){ if(b.dataset.txt==null) b.dataset.txt=b.textContent; b.classList.add('is-loading'); b.textContent='↻ 読み込み中…'; }
+}
+function _tblLoadDone(btnId){ var b=btnId&&g(btnId); if(b){ b.classList.remove('is-loading'); if(b.dataset.txt!=null) b.textContent=b.dataset.txt; } }
+function _tblErr(id,cols,e,btnId){
+  var tb=g(id); if(tb) tb.innerHTML='<tr><td colspan="'+cols+'" class="ec">読み込みに失敗しました。「↻ 再読み込み」でお試しください（'+escD(e&&e.message||e||'')+'）</td></tr>';
+  _tblLoadDone(btnId);
+}
 function loadBdata(){
+  loadWatchlists();                       // 定点観測リスト（相場比較の絞り込み用）
+  _tblLoad('tb-compare',20,'相場比較を読み込み中…','btn-compare-reload');
   Promise.all([
     db.collection("bottleData").get(),
     db.collection("marketPrices").get().catch(function(){ return {docs:[]}; })
@@ -1967,8 +1987,9 @@ function loadBdata(){
       if(!cur || (p750 && p750<Number(cur.price750||cur.price||1e12))) cache.market[bid]=m;
     });
     renderBdata();
-    if(g('page-compare') && g('page-compare').classList.contains('active')) renderCompare();
-  }).catch(function(e){ toast("読込失敗(bottleData): "+e.message,"err"); });
+    if(g('tb-compare')) renderCompare();     // 相場比較テーブルがあれば常に再描画（スピナー解除）
+    _tblLoadDone('btn-compare-reload');
+  }).catch(function(e){ toast("読込失敗(bottleData): "+e.message,"err"); _tblErr('tb-compare',20,e,'btn-compare-reload'); });
 }
 
 // 参考市場価格セル（管理画面のみ）
@@ -2026,9 +2047,12 @@ function renderCompare(){
     return {bid:bid,name:name,cls:_cmpClassLabel(bid),byShop:byShop,cheapest:cheapest,
             spread:(maxp&&cheapest)?(maxp-cheapest):0,nshop:Object.keys(byShop).length};
   });
+  var watchId=gv('f-cmp-watch'), watchSet=null;
+  if(watchId){ var wl=mktWatch.lists.find(function(l){return l.id===watchId;}); if(wl) watchSet=wl.brandIds||[]; }
   rows=rows.filter(function(row){
     if(q && (row.name||'').toLowerCase().indexOf(q)<0) return false;
     if(fc && row.cls!==fc) return false;
+    if(watchSet && watchSet.indexOf(String(row.bid).slice(0,7))<0) return false;
     return true;
   });
   var sort=gv('f-cmp-sort')||'name';
@@ -2063,8 +2087,9 @@ function renderCompare(){
   }).join('');
 }
 ['s-cmp'].forEach(function(id){var e=g(id);if(e)e.addEventListener('input',renderCompare);});
-['f-cmp-class','f-cmp-sort'].forEach(function(id){var e=g(id);if(e)e.addEventListener('change',renderCompare);});
+['f-cmp-class','f-cmp-sort','f-cmp-watch'].forEach(function(id){var e=g(id);if(e)e.addEventListener('change',renderCompare);});
 if(g('f-cmp-instock')) g('f-cmp-instock').addEventListener('change',renderCompare);
+if(g('btn-cmp-watch')) g('btn-cmp-watch').addEventListener('click',function(){ openWatchlistModal('f-cmp-watch'); });
 if(g('btn-compare-reload')) g('btn-compare-reload').addEventListener('click',function(){ loadBdata(); });
 
 // ══════════════════ 相場照合（marketStaging） ══════════════════
@@ -2095,11 +2120,13 @@ function _normName(s){
 function _groupKey(s){ return _normName(s.name)+'|'+(s.classGuess||''); }
 
 function loadMarketStaging(){
+  _tblLoad('tb-market',7,'相場を読み込み中…','btn-market-reload');
   db.collection('marketStaging').get().then(function(snap){
     cache.staging=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
     setCnt('market',cache.staging.filter(function(s){return (s.status||'pending')==='pending';}).length);
     renderMarket();
-  }).catch(function(e){ toast('相場読込失敗: '+e.message,'err'); });
+    _tblLoadDone('btn-market-reload');
+  }).catch(function(e){ toast('相場読込失敗: '+e.message,'err'); _tblErr('tb-market',7,e,'btn-market-reload'); });
 }
 function _pendingCount(){ return cache.staging.filter(function(s){return (s.status||'pending')==='pending';}).length; }
 function _staging(id){ return cache.staging.find(function(s){return s.id===id;}); }
