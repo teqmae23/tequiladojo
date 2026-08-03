@@ -188,6 +188,25 @@ def parse_shopify(data, base, only_tequila=False):
     return out
 
 _PRICE_RE = re.compile(r"(?:¥|￥)\s*([0-9][0-9,]*)|([0-9][0-9,]*)\s*円")
+_META_CS_RE = re.compile(rb'charset\s*=\s*["\']?\s*([A-Za-z0-9_\-]+)', re.I)
+def _decoded(r):
+    """HTMLを正しい文字コードで取得。ヘッダに charset が無い店（shop-pro/ColorMe等の
+    EUC-JP、一部EC-CUBEのShift_JIS）を UTF-8 と誤読して価格『円』が化ける問題を回避する。
+    優先順位: HTTPヘッダの charset > HTML内の <meta charset> > バイト列からの推定。"""
+    ctype = (r.headers.get("content-type") or "").lower()
+    if "charset=" in ctype:
+        return r.text                          # ヘッダ明示ありは requests の r.encoding を尊重
+    m = _META_CS_RE.search(r.content[:4096])   # <meta charset=...> を優先（shop-proはeuc-jp明示）
+    if m:
+        try:
+            r.encoding = m.group(1).decode("ascii")
+            return r.text
+        except Exception:
+            pass
+    if r.apparent_encoding:                     # 最後はバイト列から推定（EUC-JP/Shift_JIS/UTF-8を判別）
+        r.encoding = r.apparent_encoding
+    return r.text
+
 def _extract_prices(txt):
     vals = []
     for m in _PRICE_RE.finditer(txt or ""):
@@ -423,8 +442,9 @@ def crawl_shop(session, key, cfg, delay, max_pages, debug):
             url = base + cfg["list_path"] + "?" + urllib.parse.urlencode(q)
             r = session.get(url, timeout=30)
             if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
-            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(r.text)
-            items = _parse_by_detail_links(r.text, base, DETAIL_RE_ECCUBE)
+            txt = _decoded(r)
+            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(txt)
+            items = _parse_by_detail_links(txt, base, DETAIL_RE_ECCUBE)
             new = [x for x in items if x["id"] not in seen]
             for x in new: seen.add(x["id"])
             print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
@@ -440,8 +460,9 @@ def crawl_shop(session, key, cfg, delay, max_pages, debug):
             url = base + "/?" + urllib.parse.urlencode(q)
             r = session.get(url, timeout=30)
             if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
-            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(r.text)
-            items = _parse_by_detail_links(r.text, base, DETAIL_RE_COLORME, exclude_sidebar=True)
+            txt = _decoded(r)
+            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(txt)
+            items = _parse_by_detail_links(txt, base, DETAIL_RE_COLORME, exclude_sidebar=True)
             new = [x for x in items if x["id"] not in seen]
             for x in new: seen.add(x["id"])
             print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
@@ -455,8 +476,9 @@ def crawl_shop(session, key, cfg, delay, max_pages, debug):
             url = base + cat + f"{sep}page={page}"
             r = session.get(url, timeout=30)
             if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
-            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(r.text)
-            items = parse_bigcommerce(r.text, base)
+            txt = _decoded(r)
+            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(txt)
+            items = parse_bigcommerce(txt, base)
             new = [x for x in items if x["id"] not in seen]
             for x in new: seen.add(x["id"])
             print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
@@ -473,9 +495,10 @@ def crawl_shop(session, key, cfg, delay, max_pages, debug):
             url = base + cat + ("" if page == 1 else f"{sep}{page_param}={page}")
             r = session.get(url, timeout=30)
             if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
-            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(r.text)
+            txt = _decoded(r)
+            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(txt)
             items = []
-            for p in extract_jsonld_products(r.text):
+            for p in extract_jsonld_products(txt):
                 name = (p.get("name") or "").strip()
                 if not name: continue
                 if only_teq and not TEQ_TYPE_RE.search(name): continue
@@ -501,8 +524,9 @@ def crawl_shop(session, key, cfg, delay, max_pages, debug):
             else: sep = "&" if "?" in cat else "?"; path = f"{cat}{sep}page={page}"
             r = session.get(base + path, timeout=30)
             if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
-            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(r.text)
-            items = parse_html_cards(r.text, base, cfg)
+            txt = _decoded(r)
+            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(txt)
+            items = parse_html_cards(txt, base, cfg)
             new = [x for x in items if x["id"] not in seen]
             for x in new: seen.add(x["id"])
             print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
@@ -516,8 +540,9 @@ def crawl_shop(session, key, cfg, delay, max_pages, debug):
             url = base + cat + ("" if page == 1 else f"{sep}page={page}")
             r = session.get(url, timeout=30)
             if r.status_code != 200: print(f"[{key}] p{page} HTTP {r.status_code}", file=sys.stderr); break
-            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(r.text)
-            items = parse_wix_warmup(r.text, base)
+            txt = _decoded(r)
+            if debug and page == 1: open(f"{key}_dump.html", "w", encoding="utf-8").write(txt)
+            items = parse_wix_warmup(txt, base)
             new = [x for x in items if x["id"] not in seen]
             for x in new: seen.add(x["id"])
             print(f"[{key}] p{page}: {len(items)}件（新規{len(new)}／累計{len(raw)+len(new)}）", file=sys.stderr)
@@ -634,7 +659,7 @@ def sniff_shop(session, key, cfg, path):
         r = session.get(url, timeout=30)
     except Exception as e:
         print(f"[{key}] 到達失敗 {url}: {e}"); return
-    html = r.text or ""
+    html = _decoded(r) or ""
     fn = f"{key}_sniff.html"
     try: open(fn, "w", encoding="utf-8").write(html)
     except Exception: pass
