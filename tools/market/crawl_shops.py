@@ -118,6 +118,14 @@ def abv_of(text):
             except (TypeError, ValueError): continue
         if 35 <= v <= 75: return round(v, 1)             # テキーラの妥当域（35%以上）のみ採用
     return None
+def _abv_loose(text):
+    """スペック専用要素（千雅 .product-list__expl「750ml 40％」等）向けの緩い度数抽出。
+    文脈が明確なので % / ％ / 度 の数値をそのまま採用（テキーラ妥当域 35〜75% のみ）。"""
+    for m in re.finditer(r"(\d{2,3}(?:\.\d+)?)\s*(?:[%％]|度)", text or ""):
+        try: v = float(m.group(1))
+        except ValueError: continue
+        if 35 <= v <= 75: return round(v, 1)
+    return None
 def finalize_row(shop, it):
     name = it["name"]; price = it.get("price")
     vol = it.get("volume_ml") or vol_from_name(name)
@@ -238,10 +246,21 @@ def _parse_by_detail_links(html, base, detail_re, exclude_sidebar=False):
             cont = cont.parent
             cls = " ".join(cont.get("class", []))
             if cont.name == "li" or re.search(r"(item|product|list|goods|cart)", cls, re.I): break
-        name = (a.get_text(strip=True) or (a.find("img") and a.find("img").get("alt", "").strip()) or "")
+        # 商品名: タイル全体が単一<a>で囲まれ get_text だと価格/容量が混ざる形式(武川等)に対応。
+        # 専用の商品名要素(.list-product-item__ttl)があれば最優先で採用する（他店は該当なしで従来通り）。
+        ttl = a.select_one(".list-product-item__ttl") or cont.select_one(".list-product-item__ttl")
+        name = ttl.get_text(strip=True) if ttl else (a.get_text(strip=True) or (a.find("img") and a.find("img").get("alt", "").strip()) or "")
         if not name:
             h = cont.select_one(".product_name,.item_name,.goods_name,.ec-shelfGrid__title,h3,h4,p")
             if h: name = h.get_text(strip=True)
+        # 容量/度数ヒント: 名前でなく別要素にスペックがある形式を補完。
+        #   武川 .list-product-item__memo「テキーラ | 700ml / 40% / 正規品」/ 千雅 .product-list__expl「750ml 40％」。
+        vol_hint = None; abv_hint = None
+        spec = (a.select_one(".list-product-item__memo") or cont.select_one(".list-product-item__memo")
+                or cont.select_one(".product-list__expl") or cont.select_one(".item_expl"))
+        if spec:
+            stxt = spec.get_text(" ", strip=True)
+            vol_hint = vol_from_name(stxt); abv_hint = _abv_loose(stxt)
         if exclude_sidebar and RANK_NAME_RE.match(name): continue  # 「No.3 …」等のランキング枠を除外
         # 価格: 商品コンテナに無ければ、価格が現れるまで最小限だけ上位へ辿る（他商品を巻き込まない範囲）
         price = None
@@ -254,7 +273,7 @@ def _parse_by_detail_links(html, base, detail_re, exclude_sidebar=False):
         url = urllib.parse.urljoin(base + "/", a["href"])
         prev = items.get(pid)
         if prev is None or (not prev["name"] and name) or (prev.get("price") is None and price is not None):
-            items[pid] = {"id": pid, "name": name, "price": price, "availability": "", "url": url}
+            items[pid] = {"id": pid, "name": name, "price": price, "availability": "", "url": url, "volume_ml": vol_hint, "abv": abv_hint}
     return list(items.values())
 
 DETAIL_RE_ECCUBE = re.compile(r"/products/detail/(\d+)")
