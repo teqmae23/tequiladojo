@@ -66,7 +66,9 @@ def main():
         bid = t.get("brandId", "") or t.get("brandJa", "")
         b = brands.setdefault(bid, {"brandJa": t.get("brandJa", ""), "key": brand_key(t.get("brandJa", "")), "bottles": []})
         if not b["key"]: b["key"] = brand_key(t.get("bottleJa", ""))
-        b["bottles"].append({"id": t.get("id", ""), "bottleJa": t.get("bottleJa", ""),
+        # 紐付け先は12桁ボトルマスタID(bottleId)を優先（手動リンク・相場比較の行キーと一致させ合流させる）。
+        # bottleId が無いデータのみ bottleData ID(T番号=id)にフォールバック。
+        b["bottles"].append({"id": t.get("bottleId", "") or t.get("id", ""), "bottleJa": t.get("bottleJa", ""),
                              "classId": t.get("classId", ""), "label": teq_class_label(t.get("classId", ""))})
     # 各ブランドの照合キー群（マスタ名キー＋別名キー）。マッチは全キーの最大類似度で判定。
     for bid, b in brands.items():
