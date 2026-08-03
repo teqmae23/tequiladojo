@@ -114,6 +114,9 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 .dim{color:var(--ink3)}
 .acts{display:flex;gap:5px;justify-content:flex-end}
 .ec{text-align:center;color:var(--ink3);padding:32px!important}
+.spin{display:inline-block;width:15px;height:15px;border:2px solid rgba(200,146,30,.3);border-top-color:var(--gold-l,#c8921e);border-radius:50%;vertical-align:-3px;margin-right:8px;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.is-loading{opacity:.6;pointer-events:none}
 .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:500;white-space:nowrap}
 .bg-gold{background:#fdf0d0;color:var(--gold-d);border:1px solid rgba(200,146,30,.3)}
 .bg-teal{background:var(--teal-l);color:var(--teal);border:1px solid rgba(26,110,88,.3)}
@@ -957,7 +960,7 @@ document.querySelector('[data-page="compare"]').addEventListener("click",functio
   if(!cache.bdata.length || !cache.marketAll){ loadBdata(); }  // loadBdata が終わると renderCompare を呼ぶ
   else renderCompare();
 });
-document.querySelector('[data-page="intl"]').addEventListener("click",function(){ loadMarketIntl(); });
+document.querySelector('[data-page="intl"]').addEventListener("click",function(){ if(!cache.intl.length) loadMarketIntl(); else renderIntl(); });
 document.querySelector('[data-page="intlcmp"]').addEventListener("click",function(){ if(!cache.intl.length) loadMarketIntl(); else renderIntlCmp(); });
 
 // ══════════════════ 海外相場（marketIntl・全件表示） ══════════════════
@@ -970,7 +973,25 @@ var _cmpGroups=[];             // 海外比較の描画中グループ（推移�
 function _passFilter(name){ var n=String(name||'').toLowerCase();
   if(mktFilter.ng.length && mktFilter.ng.some(function(w){return n.indexOf(w)>=0;})) return mktFilter.ok.some(function(w){return n.indexOf(w)>=0;});
   return true; }
+var _intlLoading=false;
+function _intlSetLoading(){
+  ['tb-intl','tb-intlcmp'].forEach(function(id){
+    var tb=g(id); if(!tb) return;
+    var cols=(id==='tb-intl')?6:7;
+    tb.innerHTML='<tr><td colspan="'+cols+'" class="ec"><span class="spin"></span>海外相場を読み込み中…（件数が多いため時間がかかることがあります）</td></tr>';
+  });
+  var rb=g('btn-intl-reload'), rb2=g('btn-intlcmp-reload');
+  if(rb){ rb.classList.add('is-loading'); rb.textContent='↻ 読み込み中…'; }
+  if(rb2){ rb2.classList.add('is-loading'); rb2.textContent='↻ 読み込み中…'; }
+}
+function _intlClearLoading(){
+  var rb=g('btn-intl-reload'), rb2=g('btn-intlcmp-reload');
+  if(rb){ rb.classList.remove('is-loading'); rb.textContent='↻ 再読み込み'; }
+  if(rb2){ rb2.classList.remove('is-loading'); rb2.textContent='↻ 再読み込み'; }
+}
 function loadMarketIntl(){
+  if(_intlLoading) return;                 // 二重読み込み防止
+  _intlLoading=true; _intlSetLoading();
   loadWatchlists();
   db.doc('settings/marketFilter').get().then(function(fd){
     if(fd.exists){ var d=fd.data()||{};
@@ -987,7 +1008,14 @@ function loadMarketIntl(){
     }
     renderIntl();
     if(g('tb-intlcmp')) renderIntlCmp();
-  }).catch(function(e){ toast('海外相場 読込失敗: '+e.message,'err'); });
+  }).catch(function(e){
+    toast('海外相場 読込失敗: '+e.message,'err');
+    ['tb-intl','tb-intlcmp'].forEach(function(id){
+      var tb=g(id); if(!tb) return;
+      var cols=(id==='tb-intl')?6:7;
+      tb.innerHTML='<tr><td colspan="'+cols+'" class="ec">読み込みに失敗しました。「↻ 再読み込み」でお試しください（'+escD(e.message)+'）</td></tr>';
+    });
+  }).then(function(){ _intlLoading=false; _intlClearLoading(); });
 }
 function _intlCur(m){ return ({USD:'$',EUR:'€',GBP:'£',JPY:'¥'})[m.currency||'USD']||((m.currency||'')+' '); }
 function _intlStatus(m){
