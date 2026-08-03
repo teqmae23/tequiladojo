@@ -56,8 +56,31 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
       classGuess: u.class_guess || '', price: num(u.price), price750: num(u.price750), availability: u.availability || '',
       url: u.url || '', reason: 'unmatched', suggestedBottleId: '', status: 'pending', source: 'crawl', updatedAt: FV.serverTimestamp() });
   }
+  // 既存の手動処理(status: linked/ignored/registered)を保持し、再取込で pending に戻さない。
+  // さらに手動で紐付け済み(linked)の銘柄は、marketPrices を最新の相場（価格・在庫）で更新する。
+  const exSnap = await db.collection('marketStaging').where('shop', '==', SHOP).get();
+  const existing = {};
+  exSnap.forEach(d => { const x = d.data() || {}; existing[d.id] = { status: x.status || 'pending', linkedBottleId: x.linkedBottleId || '' }; });
+  const MANUAL = new Set(['linked', 'ignored', 'registered']);
+
   const priceOps = Object.values(bestByBottle).map(v => { const { _p750, _inStock, ...data } = v; return { ref: db.collection('marketPrices').doc(SHOP + '__' + data.bottleId), data }; });
-  const stageOps = staging.map(s => ({ ref: db.collection('marketStaging').doc(SHOP + '__' + s.itemId), data: s }));
-  await commitChunked(priceOps); await commitChunked(stageOps);
-  console.log(`[${SHOP}] marketPrices ${priceOps.length} / marketStaging ${stageOps.length}`);
+  const stageOps = []; const linkedOps = []; let kept = 0;
+  for (const s of staging) {
+    const id = SHOP + '__' + s.itemId;
+    const ex = existing[id];
+    const data = Object.assign({}, s);
+    if (ex && MANUAL.has(ex.status)) {
+      kept++;
+      delete data.status;                       // 手動status を上書きしない（merge で既存を維持）
+      if (ex.status === 'linked' && ex.linkedBottleId) {   // 紐付け済みは相場を鮮度維持
+        linkedOps.push({ ref: db.collection('marketPrices').doc(SHOP + '__' + ex.linkedBottleId),
+          data: { shop: SHOP, shopName, bottleId: ex.linkedBottleId, name: s.name || '', price: s.price,
+                  price750: s.price750, availability: s.availability || '', url: s.url || '',
+                  source: 'manual-link', updatedAt: FV.serverTimestamp() } });
+      }
+    }
+    stageOps.push({ ref: db.collection('marketStaging').doc(id), data });
+  }
+  await commitChunked(priceOps); await commitChunked(linkedOps); await commitChunked(stageOps);
+  console.log(`[${SHOP}] marketPrices ${priceOps.length}（手動紐付け更新 ${linkedOps.length}）/ marketStaging ${stageOps.length}（手動status維持 ${kept}）`);
 })().catch(e => { console.error('失敗:', e.message); process.exit(1); });
