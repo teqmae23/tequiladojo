@@ -90,7 +90,10 @@ SIDEBAR_RE = re.compile(r"sidebar|side_a|side_b|_side|side_|ranking|rank_|recomm
                         r"history|checkitem|relation|relate|footer|header|breadcrumb|topicpath", re.I)
 RANK_NAME_RE = re.compile(r"^\s*No\.?\s*\d")
 SET_RE = re.compile(r"セット|飲み比べ|ギフトBOX|詰め合わせ|アソート")
-VOL_RE = re.compile(r"(\d{2,4})\s*ml|(\d(?:\.\d+)?)\s*[lL](?![a-z])", re.I)
+# 品切れ表記（ColorMe/EC-CUBE等は在庫を明示要素で持たないため、タイル本文の文言で判定）。
+SOLDOUT_RE = re.compile(r"品切れ|売り?切れ|在庫切れ|在庫なし|完売|入荷待ち|入荷未定|SOLD\s*OUT|soldout", re.I)
+# 容量: カンマ区切り(4,000ml)にも対応。取得後にカンマ除去し妥当域のみ採用。
+VOL_RE = re.compile(r"(\d[\d,]*)\s*ml|(\d(?:\.\d+)?)\s*[lL](?![a-z])", re.I)
 # 度数(ABV): 誤検出（"25% off" / "100% agave"）を避けるためアルコール語が隣接する場合のみ採用。
 ABV_RE = re.compile(r"(\d{2,3}(?:\.\d+)?)\s*%\s*(?:abv|alc\.?|alcohol|vol)|(?:abv|alc\.?|alcohol)[^0-9]{0,8}(\d{2,3}(?:\.\d+)?)\s*%|(\d{2,3}(?:\.\d+)?)\s*proof", re.I)
 
@@ -106,7 +109,10 @@ def brand_of(name):
 def vol_from_name(name):
     m = VOL_RE.search(name or "")
     if not m: return None
-    return int(m.group(1)) if m.group(1) else int(float(m.group(2)) * 1000)
+    if m.group(1):
+        v = int(m.group(1).replace(",", ""))       # 4,000ml → 4000
+        return v if 10 <= v <= 20000 else None
+    return int(float(m.group(2)) * 1000)
 def abv_of(text):
     for m in ABV_RE.finditer(text or ""):
         if m.group(3):                                   # proof → ABV = proof/2
@@ -271,9 +277,12 @@ def _parse_by_detail_links(html, base, detail_re, exclude_sidebar=False):
             if node.parent is None: break
             node = node.parent
         url = urllib.parse.urljoin(base + "/", a["href"])
+        # 在庫: 明示要素が無いので、タイル本文（価格を見つけた node まで）に品切れ文言があれば品切れ、
+        #   なければ（価格あり=）在庫あり。node は cont から価格が現れるまで辿った範囲＝タイル相当。
+        avail = "品切れ" if SOLDOUT_RE.search(node.get_text(" ", strip=True)) else ("在庫あり" if price else "")
         prev = items.get(pid)
         if prev is None or (not prev["name"] and name) or (prev.get("price") is None and price is not None):
-            items[pid] = {"id": pid, "name": name, "price": price, "availability": "", "url": url, "volume_ml": vol_hint, "abv": abv_hint}
+            items[pid] = {"id": pid, "name": name, "price": price, "availability": avail, "url": url, "volume_ml": vol_hint, "abv": abv_hint}
     return list(items.values())
 
 DETAIL_RE_ECCUBE = re.compile(r"/products/detail/(\d+)")
