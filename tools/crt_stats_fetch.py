@@ -736,7 +736,10 @@ def main():
         ds_cfg = DATASETS[ds_name]
         print(f"\n=== {ds_name} ({ds_cfg['entity']}) ===")
 
-        if args.year and args.month:
+        # 月次取得は Fecha 列を持つ columns 型のみ対応。
+        # produccion/forma/agave は Calendario結合の年次集計（keys=["Año",...]）なので
+        # 月指定は無意味 → 年次再取得にフォールバック（INSERT OR REPLACE で当年集計を更新）。
+        if args.year and args.month and "columns" in ds_cfg:
             rows = fetch_single_month(ds_cfg, args.year, args.month)
             rows = rows or []
             print(f"  {args.year}/{args.month:02d}: {len(rows)} 行")
@@ -745,7 +748,8 @@ def main():
                 rows = fetch_cal_join_year(ds_cfg, args.year) or []
             else:
                 rows = fetch_dataset_year(ds_cfg, args.year) or []
-            print(f"  {args.year}: {len(rows)} 行")
+            note = f"/{args.month:02d}(月次非対応→年次)" if args.month else ""
+            print(f"  {args.year}{note}: {len(rows)} 行")
         else:
             rows = fetch_all_years(ds_name, ds_cfg)
 
