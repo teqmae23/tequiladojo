@@ -5,7 +5,7 @@
 
 使い方: python3 match_shop.py --shop wazawaza [--master tequiladojo_master.csv]
 """
-import argparse, csv, re, sys, unicodedata
+import argparse, csv, json, os, re, sys, unicodedata
 from difflib import SequenceMatcher
 
 try:
@@ -34,6 +34,14 @@ def ratio(a, b):
 def load(p):
     try: return list(csv.DictReader(open(p, encoding="utf-8-sig")))
     except FileNotFoundError: print(f"入力なし: {p}", file=sys.stderr); sys.exit(1)
+def load_aliases(path):
+    """ブランド別名 {店の表記: brandId}。マスタ綴りと違う店名を補う（例: カジェ23→1545001）。"""
+    try:
+        with open(path, encoding="utf-8") as f: d = json.load(f)
+        a = d.get("aliases", d) if isinstance(d, dict) else {}
+        return {str(k): str(v) for k, v in a.items() if not str(k).startswith("_")}
+    except Exception:
+        return {}
 
 def main():
     ap = argparse.ArgumentParser()
@@ -45,6 +53,14 @@ def main():
     mus = load(a.infile or f"{shop}_tequila_final.csv")
     master = load(a.master)
 
+    # ブランド別名（店の表記→brandId）。マスタ綴りと違う店名を照合キーに追加する
+    # （例: マスタ「カジェ・ベインティトレス」 ⇄ 各店「カジェ23」）。
+    alias_map = load_aliases(os.path.join(os.path.dirname(os.path.abspath(__file__)), "brand_aliases.json"))
+    alias_keys = {}
+    for al, bid in alias_map.items():
+        k = brand_key(al)
+        if k: alias_keys.setdefault(str(bid), []).append(k)
+
     brands = {}
     for t in master:
         bid = t.get("brandId", "") or t.get("brandJa", "")
@@ -52,7 +68,13 @@ def main():
         if not b["key"]: b["key"] = brand_key(t.get("bottleJa", ""))
         b["bottles"].append({"id": t.get("id", ""), "bottleJa": t.get("bottleJa", ""),
                              "classId": t.get("classId", ""), "label": teq_class_label(t.get("classId", ""))})
-    brand_list = [(k, v) for k, v in brands.items() if v["key"]]
+    # 各ブランドの照合キー群（マスタ名キー＋別名キー）。マッチは全キーの最大類似度で判定。
+    for bid, b in brands.items():
+        keys = [b["key"]] if b["key"] else []
+        for ak in alias_keys.get(str(bid), []):
+            if ak and ak not in keys: keys.append(ak)
+        b["keys"] = keys
+    brand_list = [(k, v) for k, v in brands.items() if v["keys"]]
 
     rows, unmatched = [], []
     for m in mus:
@@ -60,7 +82,7 @@ def main():
         name = m.get("name", ""); mbk = brand_key(name); mclass = m.get("class_guess", "")
         bestk = best = None; best_r = 0.0
         for k, b in brand_list:
-            r = ratio(mbk, b["key"])
+            r = max((ratio(mbk, bk) for bk in b["keys"]), default=0.0)
             if r > best_r: bestk, best, best_r = k, b, r
         if not best or best_r < BRAND_THRESHOLD: unmatched.append(m); continue
         bottle = next((x for x in best["bottles"] if x["label"] and x["label"] == mclass), None)

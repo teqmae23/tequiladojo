@@ -25,6 +25,14 @@ pip install requests beautifulsoup4
 # 取り込みは firebase-admin（~/functions/node_modules を利用 or npm i firebase-admin）
 ```
 
+## ブランド別名（名寄せの取りこぼし対策・`brand_aliases.json`）
+マスタの `brandJa` と店の表記が違うと自動名寄せに失敗する（例: マスタ「カジェ・ベインティトレス」⇄ 各店「カジェ23」）。
+`tools/market/brand_aliases.json` に **店の表記→brandId(7桁)** を1行足すと、`match_shop.py` がその表記も照合キーに加えて当てる。
+```json
+{ "aliases": { "カジェ23": "1545001", "Calle 23": "1545001" } }
+```
+クラス語・容量・記号は自動除去されるので、ブランド部分の表記だけ書けばよい。新しい取りこぼしを見つけたらここへ追記する。
+
 ## 手動更新（1店ずつ）
 ```
 python3 crawl_shops.py --shop wazawaza          # → wazawaza_tequila_final.csv
