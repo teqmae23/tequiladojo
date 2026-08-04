@@ -144,7 +144,8 @@ td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle
     </div>
 
     <div class="card" style="padding:14px 16px;margin-bottom:16px">
-      <div style="font-size:11px;font-weight:500;color:var(--ink3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em">出勤状況</div>
+      <div style="font-size:11px;font-weight:500;color:var(--ink3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em">出勤状況</div>
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">☑ チェックしたスタッフを<b>開店と同時に出勤</b>にします（出勤中・退勤済は変更不可）</div>
       <div id="oc-attendance-list" style="font-size:12px">読み込み中...</div>
     </div>
 
@@ -385,7 +386,8 @@ g("btn-open-store").addEventListener("click",function(){
         if(!testMode) writePublicStatus('open',{layoutId:layoutId,sessionDate:today});
         toast("開店しました（"+openTime+"）"+(testMode?" [テストモード]":""));
         sv("oc-memo","");
-        autoCheckinStaff(today, openTime);
+        // チェックしたスタッフを出勤にしてから、出勤者をスタッフvisitへ同期
+        checkInSelectedStaff(today, openTime).then(function(){ autoCheckinStaff(today, openTime); });
       });
     }).catch(function(e){toast("開店処理失敗: "+e.message,"err");});
 });
@@ -550,15 +552,21 @@ async function loadAttendance(){
     if(!mems.length){list.innerHTML='<div style="color:var(--ink3)">スタッフ未登録</div>';return;}
     list.innerHTML=mems.map(function(m){
       var att=atts[m.id]||atts[m.memberId]||null;
+      var mid=m.id||m.memberId;
       var role=(m.role||'').toLowerCase()==='owner'?'OWNER':'STAFF';
-      var status=att&&att.checkInTime&&!att.checkOutTime?'出勤中':att&&att.checkOutTime?'退勤済':'未出勤';
-      var color=status==='出勤中'?'var(--teal)':status==='退勤済'?'var(--ink3)':'var(--ink3)';
+      var isIn=!!(att&&att.checkInTime&&!att.checkOutTime);
+      var status=isIn?'出勤中':att&&att.checkOutTime?'退勤済':'未出勤';
+      var color=status==='出勤中'?'var(--teal)':'var(--ink3)';
       var timeStr=att&&att.checkInTime?(att.checkInTime.slice(0,2)+':'+att.checkInTime.slice(2,4)):'';
-      return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">'
-        +'<span style="font-size:12px;font-weight:500;flex:1">'+esc(m.nickname||m.name||m.id)+'</span>'
+      // 未出勤のみ選択可（出勤中=チェック済/退勤済=未チェックで無効化。開店時に選択分を出勤にする）
+      var disabled=(status!=='未出勤');
+      var checked=isIn;
+      return '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);cursor:'+(disabled?'default':'pointer')+'">'
+        +'<input type="checkbox" class="oc-staff-chk" data-mid="'+esc(mid)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+'>'
+        +'<span style="font-size:12px;font-weight:500;flex:1'+(disabled&&!isIn?';color:var(--ink3)':'')+'">'+esc(m.nickname||m.name||m.id)+'</span>'
         +'<span style="font-size:10px;background:rgba(0,0,0,.07);padding:1px 6px;border-radius:3px;color:var(--ink3)">'+role+'</span>'
         +'<span style="font-size:12px;color:'+color+';font-weight:500">'+status+(timeStr?' '+timeStr:'')+'</span>'
-        +'</div>';
+        +'</label>';
     }).join('');
   }catch(e){list.textContent='読み込み失敗';}
 }
@@ -579,6 +587,23 @@ function renderOcList(list){
       +'<td style="text-align:center;font-family:var(--mono);font-size:11px">'+(r.checkinGroupId||"—")+'</td>'
     +'</tr>';
   }).join("");
+}
+
+// 出勤リストでチェックした未出勤スタッフを attendance に出勤登録（開店と同時）。
+async function checkInSelectedStaff(today, openTime){
+  var boxes=document.querySelectorAll('.oc-staff-chk:checked:not(:disabled)');
+  var ids=Array.prototype.map.call(boxes,function(b){return b.getAttribute('data-mid');}).filter(Boolean);
+  if(!ids.length)return;
+  var cnt=0;
+  for(var i=0;i<ids.length;i++){
+    var mid=ids[i];
+    try{
+      await journaledSet('attendance',mid+'_'+today,{memberId:mid,date:today,checkInTime:openTime,checkOutTime:null});
+      cnt++;
+    }catch(e){}
+  }
+  if(cnt) toast('スタッフ'+cnt+'名を出勤にしました','inf');
+  await loadAttendance();
 }
 
 async function autoCheckinStaff(today, openTime){
