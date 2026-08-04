@@ -24,6 +24,7 @@ function parseCSV(text) {
   return rows.filter(r => r.length && r.some(x => x !== '')).map(r => Object.fromEntries(head.map((h, i) => [h, r[i] != null ? r[i] : ''])));
 }
 function num(v) { const s = String(v || '').trim(); return /^\d+$/.test(s) ? parseInt(s, 10) : null; }
+function fnum(v) { const s = String(v == null ? '' : v).trim(); return s !== '' && isFinite(Number(s)) ? Number(s) : null; }
 function readCSV(name) { if (!fs.existsSync(name)) { console.error('見つかりません:', process.cwd() + '/' + name); process.exit(1); } return parseCSV(fs.readFileSync(name, 'utf8')); }
 async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { const b = db.batch(); ops.slice(i, i + 400).forEach(o => b.set(o.ref, o.data, { merge: true })); await b.commit(); } }
 
@@ -41,20 +42,21 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
       const better = !cur || (inStock && !cur._inStock) || (inStock === cur._inStock && p750 && p750 < cur._p750);
       if (better) bestByBottle[m.teq_bottle_id] = { _p750: p750, _inStock: inStock,
         shop: SHOP, shopName, bottleId: m.teq_bottle_id, teqBottleJa: m.teq_bottleJa || '',
-        name: m.name || '', price: num(m.price), price750: p750, availability: m.availability || '', url: m.url || '',
+        name: m.name || '', price: num(m.price), price750: p750, volumeMl: num(m.volume_ml), abv: fnum(m.abv),
+        availability: m.availability || '', url: m.url || '',
         matchType: m.match_type, confidence: m.confidence, brandScore: parseFloat(m.brand_score) || null,
         source: 'crawl', updatedAt: FV.serverTimestamp() };
     } else {
       staging.push({ shop: SHOP, shopName, itemId: m.item_id, name: m.name || '', brandGuess: m.teq_bottleJa || '',
-        classGuess: m.m_class || '', price: num(m.price), price750: num(m.price750), availability: m.availability || '',
-        url: m.url || '', reason: m.match_type === 'brand-only' ? 'brand-only' : 'low-confidence',
+        classGuess: m.m_class || '', price: num(m.price), price750: num(m.price750), volumeMl: num(m.volume_ml), abv: fnum(m.abv),
+        availability: m.availability || '', url: m.url || '', reason: m.match_type === 'brand-only' ? 'brand-only' : 'low-confidence',
         suggestedBottleId: m.teq_bottle_id || '', status: 'pending', source: 'crawl', updatedAt: FV.serverTimestamp() });
     }
   }
   for (const u of unmatched) {
     staging.push({ shop: SHOP, shopName, itemId: u.item_id, name: u.name || '', brandGuess: u.brand_guess || '',
-      classGuess: u.class_guess || '', price: num(u.price), price750: num(u.price750), availability: u.availability || '',
-      url: u.url || '', reason: 'unmatched', suggestedBottleId: '', status: 'pending', source: 'crawl', updatedAt: FV.serverTimestamp() });
+      classGuess: u.class_guess || '', price: num(u.price), price750: num(u.price750), volumeMl: num(u.volume_ml), abv: fnum(u.abv),
+      availability: u.availability || '', url: u.url || '', reason: 'unmatched', suggestedBottleId: '', status: 'pending', source: 'crawl', updatedAt: FV.serverTimestamp() });
   }
   // 既存の手動処理(status: linked/ignored/registered)を保持し、再取込で pending に戻さない。
   // さらに手動で紐付け済み(linked)の銘柄は、marketPrices を最新の相場（価格・在庫）で更新する。
@@ -75,7 +77,7 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
       if (ex.status === 'linked' && ex.linkedBottleId) {   // 紐付け済みは相場を鮮度維持
         linkedOps.push({ ref: db.collection('marketPrices').doc(SHOP + '__' + ex.linkedBottleId),
           data: { shop: SHOP, shopName, bottleId: ex.linkedBottleId, name: s.name || '', price: s.price,
-                  price750: s.price750, availability: s.availability || '', url: s.url || '',
+                  price750: s.price750, volumeMl: s.volumeMl, abv: s.abv, availability: s.availability || '', url: s.url || '',
                   source: 'manual-link', updatedAt: FV.serverTimestamp() } });
       }
     }
