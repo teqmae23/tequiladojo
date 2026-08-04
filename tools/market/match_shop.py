@@ -94,23 +94,25 @@ def main():
             mtype, conf = "brand-only", ("mid" if best_r >= 0.9 else "low")
         rows.append({"shop": shop, "shopName": shopName, "item_id": m.get("id", ""), "name": name,
             "m_class": mclass, "price": m.get("price_yen", ""), "price750": m.get("price_750ml", ""),
+            "volume_ml": m.get("volume_ml", ""), "abv": m.get("abv", ""),
             "availability": m.get("availability", ""), "teq_bottle_id": bottle["id"], "teq_bottleJa": bottle["bottleJa"],
             "teq_classId": bottle.get("classId", ""), "brand_score": round(best_r, 3),
             "match_type": mtype, "confidence": conf, "url": m.get("url", "")})
 
-    mcols = ["shop","shopName","item_id","name","m_class","price","price750","availability",
+    mcols = ["shop","shopName","item_id","name","m_class","price","price750","volume_ml","abv","availability",
              "teq_bottle_id","teq_bottleJa","teq_classId","brand_score","match_type","confidence","url"]
     rows.sort(key=lambda x: (-x["brand_score"]))
     with open(f"{shop}_matched.csv", "w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=mcols); w.writeheader()
         for r in rows: w.writerow(r)
-    ucols = ["shop","shopName","item_id","name","brand_guess","class_guess","price","price750","availability","url"]
+    ucols = ["shop","shopName","item_id","name","brand_guess","class_guess","price","price750","volume_ml","abv","availability","url"]
     with open(f"{shop}_unmatched.csv", "w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=ucols, extrasaction="ignore"); w.writeheader()
         for u in unmatched:
             w.writerow({"shop": shop, "shopName": shopName, "item_id": u.get("id", ""), "name": u.get("name", ""),
                 "brand_guess": u.get("brand_guess", ""), "class_guess": u.get("class_guess", ""),
                 "price": u.get("price_yen", ""), "price750": u.get("price_750ml", ""),
+                "volume_ml": u.get("volume_ml", ""), "abv": u.get("abv", ""),
                 "availability": u.get("availability", ""), "url": u.get("url", "")})
 
     bc = sum(1 for r in rows if r["match_type"] == "brand+class")
