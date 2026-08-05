@@ -103,6 +103,8 @@ input,select,textarea{font-family:var(--sans)}
 #intlcmp-tw{max-height:calc(100vh - 250px);overflow:auto}
 #intlcmp-tw thead th{position:sticky;top:0;background:var(--white);z-index:3;box-shadow:inset 0 -1px 0 var(--border2)}
 #intlcmp-tw tr.cmp-row:hover td{background:var(--cream2)}
+#tbl-compare-wrap tr.cmp-row:hover td{background:var(--cream2)}
+#tbl-compare-wrap thead th{position:sticky;top:0;background:var(--white);z-index:3;box-shadow:inset 0 -1px 0 var(--border2)}
 #mk-bulkbar{min-height:42px}
 table{width:100%;border-collapse:collapse;font-size:12px}
 thead tr{border-bottom:1px solid var(--border2)}
@@ -2023,6 +2025,15 @@ function _cmpShopsPresent(){
   keys.sort(function(a,b){ var ia=CMP_SHOP_ORDER.indexOf(a),ib=CMP_SHOP_ORDER.indexOf(b); ia=ia<0?99:ia; ib=ib<0?99:ib; return ia-ib||a.localeCompare(b); });
   return keys.map(function(k){ return {shop:k,name:CMP_SHOP_SHORT[k]||set[k]}; });
 }
+var _domCmpRows=[];
+function _cmpSpec(m){   // 各店エントリの容量・度数・価格を整形（実容量優先・無ければ750ml換算から逆算）
+  var p=Number(m.price750||m.price||0), actual=Number(m.price||0);
+  var volReal=(m.volumeMl!=null&&m.volumeMl!=='')?Number(m.volumeMl):0;
+  var vol=volReal>0?volReal:((actual>0&&p>0)?Math.round(actual/p*750):0);
+  var abv=(m.abv!=null&&m.abv!=='')?Number(m.abv):null;
+  return {p:p,actual:actual,vol:vol,abv:abv,inStock:(m.availability==='在庫あり'),avail:m.availability||'',
+          shop:m.shop,shopName:m.shopName||m.shop,url:m.url||''};
+}
 function renderCompare(){
   if(!g('tb-compare')) return;
   var fcls=g('f-cmp-class');
@@ -2043,11 +2054,15 @@ function renderCompare(){
     var byShop=map[bid]; var r=_cmpBottle(bid);
     var first=byShop[Object.keys(byShop)[0]];
     var name=(r?(bdName(r,'es')||bdName(r,'ja')):'')||first.teqBottleJa||bid;
-    var priced=Object.keys(byShop).map(function(s){return Number(byShop[s].price750||byShop[s].price||0);}).filter(function(x){return x>0;});
-    var cheapest=priced.length?Math.min.apply(null,priced):null;
-    var maxp=priced.length?Math.max.apply(null,priced):null;
-    return {bid:bid,name:name,cls:_cmpClassLabel(bid),byShop:byShop,cheapest:cheapest,
-            spread:(maxp&&cheapest)?(maxp-cheapest):0,nshop:Object.keys(byShop).length};
+    var list=Object.keys(byShop).map(function(s){ return _cmpSpec(byShop[s]); });
+    list.sort(function(a,b){return (a.p||1e12)-(b.p||1e12);});
+    var priced=list.filter(function(x){return x.p>0;});
+    var stocked=priced.filter(function(x){return x.inStock;});
+    var base=stocked.length?stocked:priced;                       // 最安/最高は在庫店優先
+    var ps=base.map(function(x){return x.p;});
+    var cheapest=ps.length?Math.min.apply(null,ps):null, maxp=ps.length?Math.max.apply(null,ps):null;
+    return {bid:bid,name:name,cls:_cmpClassLabel(bid),list:list,cheapest:cheapest,maxp:maxp,
+            spread:(maxp&&cheapest)?(maxp-cheapest):0,nshop:list.length,stockN:stocked.length};
   });
   var watchId=gv('f-cmp-watch'), watchSet=null;
   if(watchId){ var wl=mktWatch.lists.find(function(l){return l.id===watchId;}); if(wl) watchSet=wl.brandIds||[]; }
@@ -2066,40 +2081,73 @@ function renderCompare(){
   });
   setCnt('compare',rows.length);
   var cc=g('cmp-count'); if(cc) cc.textContent=rows.length+' ボトル ・ '+shops.length+'店';
-  g('cmp-head').innerHTML='<th style="min-width:150px">ボトル</th><th style="width:70px">クラス</th>'
-    +shops.map(function(s){return '<th style="width:76px;text-align:right">'+escD(s.name)+'</th>';}).join('')
-    +'<th style="width:82px;text-align:right">最安</th>';
+  g('cmp-head').innerHTML='<th style="min-width:140px">ボトル</th><th style="width:64px">クラス</th>'
+    +'<th style="width:44px;text-align:center">店数</th><th style="width:84px;text-align:right">最安</th>'
+    +'<th style="width:84px;text-align:right">最高</th><th style="width:70px;text-align:right">価格差</th>';
   var tb=g('tb-compare');
-  if(!rows.length){ tb.innerHTML='<tr><td colspan="'+(shops.length+3)+'" class="ec">該当なし（取り込み済みの相場がありません）</td></tr>'; return; }
-  tb.innerHTML=rows.slice(0,500).map(function(row){
-    var cells=shops.map(function(s){
-      var m=row.byShop[s.shop];
-      if(!m) return '<td style="text-align:right;color:var(--ink3)">—</td>';
-      var p=Number(m.price750||m.price||0);
-      var actual=Number(m.price||0);
-      // 容量: 取得できていれば実容量、無ければ実売と750ml換算から逆算。度数(ABV)は取得時のみ。
-      var volReal=(m.volumeMl!=null&&m.volumeMl!=='')?Number(m.volumeMl):0;
-      var vol=volReal>0?volReal:((actual>0 && p>0)?Math.round(actual/p*750):0);
-      var abv=(m.abv!=null&&m.abv!=='')?Number(m.abv):null;
-      var odd=(vol>0 && (vol<690 || vol>810));
-      var volStr=vol>=1000?(Number((vol/1000).toFixed(2))+'L'):(vol+'ml');
-      var isMin=(p===row.cheapest && p>0);
-      var inStock=(m.availability==='在庫あり');
-      var dot=m.availability?('<span style="color:'+(inStock?'#1a6e58':'#b03020')+';font-size:9px">●</span>'):'';
-      // 価格の下に「度数/容量」を追記。大容量/小容量(700-750ml以外)は実売価格も併記。
-      var spec=[]; if(abv!=null) spec.push(abv+'%'); if(vol>0) spec.push(volStr);
-      var specStr=spec.join('/');
-      if(odd) specStr=(specStr?specStr+' ':'')+'実¥'+actual.toLocaleString();
-      var note=specStr?('<div class="dim" style="font-size:9px;line-height:1.15">'+specStr+'</div>'):'';
-      var inner='<span class="mono" style="font-weight:'+(isMin?'700':'400')+'">¥'+p.toLocaleString()+'</span> '+dot+note;
-      var tip=escD(m.name||'')+(specStr?(' ｜ '+(abv!=null?abv+'% ':'')+(vol>0?volStr+' ':'')+(odd?'実売¥'+actual.toLocaleString()+' → ':'')+'750ml換算¥'+p.toLocaleString()):'');
-      var cell=m.url?('<a href="'+escD(m.url)+'" target="_blank" rel="noopener" style="color:inherit;text-decoration:none" title="'+tip+'">'+inner+'</a>'):('<span title="'+tip+'">'+inner+'</span>');
-      return '<td style="text-align:right'+(isMin?';background:#fdf0d0':'')+'">'+cell+'</td>';
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="6" class="ec">該当なし（取り込み済みの相場がありません）</td></tr>'; return; }
+  _domCmpRows=rows.slice(0,500);
+  var vstr=function(v){ return v>=1000?(Number((v/1000).toFixed(2))+'L'):(v+'ml'); };
+  tb.innerHTML=_domCmpRows.map(function(row,i){
+    var head='<tr class="dim" style="font-size:10px"><td style="padding:2px 8px 2px 26px">店</td>'
+      +'<td style="text-align:right">容量</td><td style="text-align:right">度数</td><td style="text-align:right">実売</td>'
+      +'<td style="text-align:right">750ml換算</td><td style="text-align:center">在庫</td><td style="text-align:center">操作</td></tr>';
+    var det=row.list.map(function(x){
+      var docId=x.shop+'__'+row.bid;
+      var link=x.url?('<a href="'+escD(x.url)+'" target="_blank" rel="noopener">'+escD(x.shopName)+'</a>'):escD(x.shopName);
+      var stk=x.avail?('<span style="color:'+(x.inStock?'#1a6e58':'#b03020')+'">●</span>'):'<span class="dim">?</span>';
+      var hi=(x.inStock && x.p===row.cheapest && x.p>0);
+      return '<tr'+(hi?' style="background:#eafaf3"':'')+'>'
+        +'<td style="padding:3px 8px 3px 26px;font-size:11px">'+link+'</td>'
+        +'<td class="dim" style="text-align:right;font-size:11px">'+(x.vol>0?vstr(x.vol):'—')+'</td>'
+        +'<td class="dim" style="text-align:right;font-size:11px">'+(x.abv!=null?x.abv+'%':'—')+'</td>'
+        +'<td class="mono" style="text-align:right;font-size:11px">'+(x.actual>0?'¥'+x.actual.toLocaleString():'—')+'</td>'
+        +'<td class="mono" style="text-align:right;font-size:11px'+(hi?';color:#1a6e58;font-weight:700':'')+'">'+(x.p>0?'¥'+x.p.toLocaleString():'—')+'</td>'
+        +'<td style="text-align:center">'+stk+'</td>'
+        +'<td style="text-align:center"><button class="btn bd sm cmp-unlink" data-doc="'+escD(docId)+'" data-shop="'+escD(x.shopName)+'" data-bottle="'+escD(row.name)+'" title="この店の紐付けを解除" style="padding:1px 8px;font-size:10px">解除</button></td>'
+        +'</tr>';
     }).join('');
-    var nameCell='<div style="font-size:12px">'+escD(row.name)+'</div><div class="mono" style="font-size:9px;color:var(--ink3)">'+escD(row.bid)+'</div>';
-    return '<tr><td>'+nameCell+'</td><td>'+escD(row.cls||'—')+'</td>'+cells
-      +'<td style="text-align:right;font-weight:700;color:var(--gold-d)" class="mono">'+(row.cheapest?'¥'+row.cheapest.toLocaleString():'—')+'</td></tr>';
+    var min=row.cheapest?('¥'+row.cheapest.toLocaleString()):'—';
+    var max=row.maxp?('¥'+row.maxp.toLocaleString()):'—';
+    var spread=row.spread?('¥'+row.spread.toLocaleString()):'—';
+    var cntCell=row.nshop+(row.stockN<row.nshop?('<span class="dim" style="font-size:9px"> 在'+row.stockN+'</span>'):'');
+    return '<tr class="cmp-row" data-i="'+i+'" style="cursor:pointer">'
+      +'<td style="font-size:12px"><span class="cmp-caret dim" style="font-size:9px">▶</span> '+escD(row.name)+' <span class="mono dim" style="font-size:9px">'+escD(row.bid)+'</span></td>'
+      +'<td class="dim" style="font-size:11px">'+escD(row.cls||'')+'</td>'
+      +'<td style="text-align:center;font-weight:700">'+cntCell+'</td>'
+      +'<td class="mono" style="text-align:right;color:#1a6e58;font-weight:700">'+min+'</td>'
+      +'<td class="mono" style="text-align:right">'+max+'</td>'
+      +'<td class="mono" style="text-align:right;font-size:11px">'+spread+'</td></tr>'
+      +'<tr class="cmp-det" data-i="'+i+'" style="display:none"><td colspan="6" style="padding:0;background:var(--cream2)">'
+      +'<table style="width:100%;border-collapse:collapse">'+head+det+'</table></td></tr>';
   }).join('');
+}
+// 行クリックで店別内訳を開閉／詳細内の「解除」で誤紐付けを解除
+if(g('tb-compare')) g('tb-compare').addEventListener('click',function(e){
+  var ub=e.target.closest?e.target.closest('.cmp-unlink'):null;
+  if(ub){ e.stopPropagation(); _cmpUnlink(ub.getAttribute('data-doc'),ub.getAttribute('data-shop'),ub.getAttribute('data-bottle')); return; }
+  var row=e.target.closest?e.target.closest('.cmp-row'):null;
+  if(!row||row.tagName!=='TR') return;
+  var i=row.getAttribute('data-i');
+  var det=g('tb-compare').querySelector('.cmp-det[data-i="'+i+'"]');
+  if(det){ det.style.display=(det.style.display==='none')?'':'none'; }
+  var caret=row.querySelector('.cmp-caret'); if(caret) caret.textContent=(det&&det.style.display==='none')?'▶':'▼';
+});
+function _cmpUnlink(docId,shopName,bottleName){
+  if(!docId) return;
+  if(!confirm('「'+bottleName+'」と '+shopName+' の紐付けを解除しますか？\n（この店の相場をこのボトルから外します。誤紐付けの修正用）\n※自動マッチが原因の場合、次回の取り込みで再び紐付く可能性があります。')) return;
+  var parts=docId.split('__'); var shop=parts[0]; var bottleId=parts.slice(1).join('__');
+  db.collection('marketPrices').doc(docId).delete().then(function(){
+    cache.marketAll=(cache.marketAll||[]).filter(function(m){ return (m.shop+'__'+m.bottleId)!==docId; });
+    // 手動リンクだった場合は staging を保留へ戻す（相場照合で再処理できるように）
+    db.collection('marketStaging').where('shop','==',shop).get().then(function(sn){
+      var b=db.batch(); var n=0;
+      sn.forEach(function(d){ var x=d.data(); if(x.linkedBottleId===bottleId){ b.update(d.ref,{status:'pending',linkedBottleId:firebase.firestore.FieldValue.delete()}); n++; } });
+      if(n) b.commit();
+    }).catch(function(){});
+    toast(shopName+' の紐付けを解除しました');
+    renderCompare();
+  }).catch(function(e){ toast('解除失敗: '+e.message,'err'); });
 }
 ['s-cmp'].forEach(function(id){var e=g(id);if(e)e.addEventListener('input',renderCompare);});
 ['f-cmp-class','f-cmp-sort','f-cmp-watch'].forEach(function(id){var e=g(id);if(e)e.addEventListener('change',renderCompare);});
