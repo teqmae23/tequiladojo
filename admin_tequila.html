@@ -2221,8 +2221,18 @@ function renderMarket(){
     if(!gr.url && s.url) gr.url=s.url;
     gr.shops.push(s);
   });
-  var groups=Object.keys(gmap).map(function(k){
-    var gr=gmap[k];
+  // 同一店の商品が複数入ったグループは「別商品を誤って束ねた」とみなし、1商品ずつ個別行に展開する
+  //（例: ドン フリオ 1942 の別バッチ／ギフト箱などを金右衛門が複数掲載→まとめず各件で表示）
+  var groupList=[];
+  Object.keys(gmap).forEach(function(k){
+    var gr=gmap[k], seen={}, dup=false;
+    gr.shops.forEach(function(s){ var sk=s.shop||s.shopName||''; if(seen[sk]) dup=true; seen[sk]=1; });
+    if(!dup){ groupList.push(gr); return; }
+    gr.shops.forEach(function(s){
+      groupList.push({key:gr.key+'#'+s.id,name:s.name||gr.name,classGuess:s.classGuess||gr.classGuess,reason:s.reason||gr.reason,url:s.url||'',shops:[s]});
+    });
+  });
+  var groups=groupList.map(function(gr){
     gr.minPrice=gr.shops.reduce(function(m,s){var p=Number(s.price750||s.price||0);return (p&&(!m||p<m))?p:m;},0);
     gr.inStock=gr.shops.some(function(s){return s.availability==='在庫あり';});
     gr.pending=gr.shops.filter(function(s){return (s.status||'pending')==='pending';});
