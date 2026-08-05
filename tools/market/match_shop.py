@@ -87,7 +87,9 @@ def main():
             r = max((ratio(mbk, bk) for bk in b["keys"]), default=0.0)
             if r > best_r: bestk, best, best_r = k, b, r
         if not best or best_r < BRAND_THRESHOLD: unmatched.append(m); continue
-        bottle = next((x for x in best["bottles"] if x["label"] and x["label"] == mclass), None)
+        cands = [x for x in best["bottles"] if x["label"] and x["label"] == mclass]
+        # 同一クラス内で商品名に最も近いボトル名を選ぶ（Imperial等の特別版を通常版へ吸わせない）。
+        bottle = max(cands, key=lambda x: ratio(sep_strip(clean(name)), sep_strip(clean(x["bottleJa"])))) if cands else None
         if bottle: mtype, conf = "brand+class", ("high" if best_r >= 0.9 else "mid")
         else:
             bottle = best["bottles"][0] if best["bottles"] else {"id": "", "bottleJa": "", "classId": ""}
