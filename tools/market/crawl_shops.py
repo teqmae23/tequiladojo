@@ -302,18 +302,17 @@ def _parse_by_detail_links(html, base, detail_re, exclude_sidebar=False):
         # 在庫（明示要素が無いColorMe/EC-CUBE向け・複数シグナルで推定。不明は在庫あり側に倒す）:
         #   ①品切れ文言(SOLD OUT/売切れ/品切れ/在庫なし/完売/入荷待ち/再入荷通知) または
         #   ②カート/購入ボタンが disabled → 品切れ。それ以外で価格あり → 在庫あり。
-        avail = ""
-        if price is not None:
-            scope = node
-            soldout = bool(SOLDOUT_RE.search(scope.get_text(" ", strip=True)))
-            if not soldout:
-                for b in scope.find_all(["button", "input", "a"]):
-                    lbl = (b.get_text(" ", strip=True) + " " + (b.get("value") or "")).strip()
-                    if re.search(r"カート|購入|買い物|cart", lbl, re.I):
-                        cls = " ".join(b.get("class") or [])
-                        if b.has_attr("disabled") or re.search(r"disabled|sold ?out|nostock|out-?of-?stock", cls, re.I):
-                            soldout = True; break
-            avail = "品切れ" if soldout else "在庫あり"
+        scope = node
+        soldout = bool(SOLDOUT_RE.search(scope.get_text(" ", strip=True)))
+        if not soldout:
+            for b in scope.find_all(["button", "input", "a"]):
+                lbl = (b.get_text(" ", strip=True) + " " + (b.get("value") or "")).strip()
+                if re.search(r"カート|購入|買い物|cart", lbl, re.I):
+                    cls = " ".join(b.get("class") or [])
+                    if b.has_attr("disabled") or re.search(r"disabled|sold ?out|nostock|out-?of-?stock", cls, re.I):
+                        soldout = True; break
+        # 商品ページはあるが価格が取れない＝購入不可＝在庫切れ扱い（? ではなく品切れ=赤丸）
+        avail = "品切れ" if (soldout or price is None) else "在庫あり"
         prev = items.get(pid)
         if prev is None or (not prev["name"] and name) or (prev.get("price") is None and price is not None):
             items[pid] = {"id": pid, "name": name, "price": price, "availability": avail, "url": url, "volume_ml": vol_hint, "abv": abv_hint}
