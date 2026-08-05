@@ -133,6 +133,19 @@ def _abv_loose(text):
         except ValueError: continue
         if 35 <= v <= 75: return round(v, 1)
     return None
+def abv_ja(text):
+    """商品名・本文から日本語の度数表記を安全に抽出（"100% agave"/"25% off"等の誤検出回避）。
+    採用: 「40度」および「度数/アルコール分/アルコール度数 40%」。裸の「40%」は採らない。"""
+    t = text or ""
+    for m in re.finditer(r"(\d{2,3}(?:\.\d+)?)\s*度(?!数)", t):                 # 「40度」
+        try: v = float(m.group(1))
+        except ValueError: continue
+        if 35 <= v <= 75: return round(v, 1)
+    for m in re.finditer(r"(?:アルコール度数|アルコール分|度数|alc\.?|abv|alcohol)[^0-9]{0,6}(\d{2,3}(?:\.\d+)?)\s*[%％]", t, re.I):
+        try: v = float(m.group(1))
+        except ValueError: continue
+        if 35 <= v <= 75: return round(v, 1)
+    return None
 def finalize_row(shop, it):
     name = it["name"]; price = it.get("price")
     vol = it.get("volume_ml") or vol_from_name(name)
@@ -148,7 +161,7 @@ def finalize_row(shop, it):
         "availability": it.get("availability", ""), "is_drink": is_drink, "is_set": is_set,
         "shop": shop, "url": it.get("url", ""),
         "currency": SHOPS.get(shop, {}).get("currency", "JPY"),
-        "abv": (it.get("abv") if it.get("abv") is not None else abv_of(name)) or "",
+        "abv": (it.get("abv") if it.get("abv") is not None else (abv_of(name) or abv_ja(name))) or "",
     }
 
 # ── HTTP ──────────────────────────────────────────────────
@@ -203,9 +216,10 @@ def parse_shopify(data, base, only_tequila=False):
         price = round(min(prices)) if prices else None
         avail = any(v.get("available") for v in variants)
         handle = p.get("handle") or ""
+        hay = (p.get("title") or "") + " " + (p.get("body_html") or "")
         out.append({"id": str(p.get("id") or handle), "name": p.get("title") or handle,
                     "price": price, "availability": "在庫あり" if avail else "品切れ",
-                    "abv": abv_of((p.get("title") or "") + " " + (p.get("body_html") or "")),
+                    "abv": abv_of(hay) or abv_ja(hay),
                     "url": base + "/products/" + handle})
     return out
 
