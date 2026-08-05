@@ -32,25 +32,37 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
   const matched = readCSV(`${SHOP}_matched.csv`);
   const unmatched = readCSV(`${SHOP}_unmatched.csv`);
   const shopName = (matched[0] && matched[0].shopName) || (unmatched[0] && unmatched[0].shopName) || SHOP;
+  // 既存の手動処理を先に読む。手動判断（紐付け/対象外/登録＋自動紐付けの手動解除）は自動マッチより優先する。
+  const exSnap = await db.collection('marketStaging').where('shop', '==', SHOP).get();
+  const existing = {};
+  exSnap.forEach(d => { const x = d.data() || {}; existing[d.id] = { status: x.status || 'pending', linkedBottleId: x.linkedBottleId || '', manualUnlinked: !!x.manualUnlinked }; });
+  const MANUAL = new Set(['linked', 'ignored', 'registered']);
+  // その item に手動判断があるか（=自動マッチで marketPrices を作り直さない）
+  const isUserOverridden = itemId => { const e = existing[SHOP + '__' + itemId]; return !!(e && (e.manualUnlinked || MANUAL.has(e.status))); };
+
   const bestByBottle = {}; const staging = [];
   for (const m of matched) {
     const linkable = m.match_type === 'brand+class' && (m.confidence === 'high' || m.confidence === 'mid');
-    if (linkable && m.teq_bottle_id) {
+    if (linkable && m.teq_bottle_id && !isUserOverridden(m.item_id)) {
       const p750 = num(m.price750) || num(m.price) || 0;
       const inStock = m.availability === '在庫あり';
       const cur = bestByBottle[m.teq_bottle_id];
       const better = !cur || (inStock && !cur._inStock) || (inStock === cur._inStock && p750 && p750 < cur._p750);
       if (better) bestByBottle[m.teq_bottle_id] = { _p750: p750, _inStock: inStock,
-        shop: SHOP, shopName, bottleId: m.teq_bottle_id, teqBottleJa: m.teq_bottleJa || '',
+        shop: SHOP, shopName, bottleId: m.teq_bottle_id, itemId: m.item_id, teqBottleJa: m.teq_bottleJa || '',
         name: m.name || '', price: num(m.price), price750: p750, volumeMl: num(m.volume_ml), abv: fnum(m.abv),
         availability: m.availability || '', url: m.url || '',
         matchType: m.match_type, confidence: m.confidence, brandScore: parseFloat(m.brand_score) || null,
         source: 'crawl', updatedAt: FV.serverTimestamp() };
     } else {
-      staging.push({ shop: SHOP, shopName, itemId: m.item_id, name: m.name || '', brandGuess: m.teq_bottleJa || '',
+      const st = { shop: SHOP, shopName, itemId: m.item_id, name: m.name || '', brandGuess: m.teq_bottleJa || '',
         classGuess: m.m_class || '', price: num(m.price), price750: num(m.price750), volumeMl: num(m.volume_ml), abv: fnum(m.abv),
         availability: m.availability || '', url: m.url || '', reason: m.match_type === 'brand-only' ? 'brand-only' : 'low-confidence',
-        suggestedBottleId: m.teq_bottle_id || '', status: 'pending', source: 'crawl', updatedAt: FV.serverTimestamp() });
+        suggestedBottleId: m.teq_bottle_id || '', status: 'pending', source: 'crawl', updatedAt: FV.serverTimestamp() };
+      // 自動マッチ可能だが手動で解除された品は、解除状態を保って照合タブに残す（再取込で再紐付けしない）
+      const exStage = existing[SHOP + '__' + m.item_id];
+      if (exStage && exStage.manualUnlinked) st.manualUnlinked = true;
+      staging.push(st);
     }
   }
   for (const u of unmatched) {
@@ -60,10 +72,6 @@ async function commitChunked(ops) { for (let i = 0; i < ops.length; i += 400) { 
   }
   // 既存の手動処理(status: linked/ignored/registered)を保持し、再取込で pending に戻さない。
   // さらに手動で紐付け済み(linked)の銘柄は、marketPrices を最新の相場（価格・在庫）で更新する。
-  const exSnap = await db.collection('marketStaging').where('shop', '==', SHOP).get();
-  const existing = {};
-  exSnap.forEach(d => { const x = d.data() || {}; existing[d.id] = { status: x.status || 'pending', linkedBottleId: x.linkedBottleId || '' }; });
-  const MANUAL = new Set(['linked', 'ignored', 'registered']);
 
   const priceOps = Object.values(bestByBottle).map(v => { const { _p750, _inStock, ...data } = v; return { ref: db.collection('marketPrices').doc(SHOP + '__' + data.bottleId), data }; });
   const stageOps = []; const linkedOps = []; let kept = 0;
