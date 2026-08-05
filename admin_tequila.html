@@ -372,7 +372,7 @@ html.embed .mbg{background:transparent!important}
 
     <!-- 相場照合ページ -->
     <div class="page" id="page-market">
-      <div class="phead"><div><div class="ptitle">相場照合（未紐付け）</div><div class="pdesc">6店の未紐付け相場を銘柄ごとにまとめて表示。<b>マスタ登録</b>で未取扱いでも日本流通品としてボトルマスタ化／<b>在庫登録</b>で在庫化／既存ボトルへ紐付けできます。紐付け先は<b>ボトルマスタ(12桁)</b>です（ボトルデータが無くマスタだけのものも紐付け可）。</div></div><div style="display:flex;gap:8px"><button class="btn bs" id="btn-market-migrate" title="過去にボトルデータIDへ紐付けた相場をマスタIDへ貼り直します">⇄ マスタIDへ移行</button><button class="btn bs" id="btn-market-reload">↻ 再読み込み</button></div></div>
+      <div class="phead"><div><div class="ptitle">相場照合（未紐付け）</div><div class="pdesc">未紐付け相場を<b>店ごと（1店1商品＝1行）</b>に表示。紐付けは酒屋ごとに判断（同一銘柄を複数店まとめたい時はチェックで複数選択→一括操作）。<b>マスタ登録</b>で未取扱いでも日本流通品としてボトルマスタ化／<b>在庫登録</b>で在庫化／既存ボトルへ紐付けできます。紐付け先は<b>ボトルマスタ(12桁)</b>です（ボトルデータが無くマスタだけのものも紐付け可）。</div></div><div style="display:flex;gap:8px"><button class="btn bs" id="btn-market-migrate" title="過去にボトルデータIDへ紐付けた相場をマスタIDへ貼り直します">⇄ マスタIDへ移行</button><button class="btn bs" id="btn-market-reload">↻ 再読み込み</button></div></div>
       <div class="card">
         <div class="toolbar">
           <div class="sbox" style="max-width:240px"><input type="text" id="s-mk" placeholder="銘柄名で検索..."></div>
@@ -389,7 +389,7 @@ html.embed .mbg{background:transparent!important}
         </div>
         <div class="tw" id="mk-tw"><table id="tbl-market">
           <colgroup><col style="width:34px"><col><col style="width:80px"><col style="width:100px"><col style="width:60px"><col style="width:82px"><col style="width:280px"></colgroup>
-          <thead><tr><th style="text-align:center"><input type="checkbox" id="mk-selall" title="表示中を全選択"></th><th>銘柄（店舗横断）</th><th>クラス</th><th>相場/750ml</th><th>在庫</th><th>種別</th><th>操作</th></tr></thead>
+          <thead><tr><th style="text-align:center"><input type="checkbox" id="mk-selall" title="表示中を全選択"></th><th>銘柄（店ごと）</th><th>クラス</th><th>相場/750ml</th><th>在庫</th><th>種別</th><th>操作</th></tr></thead>
           <tbody id="tb-market"><tr><td colspan="7" class="ec">「相場照合」タブを開くと読み込みます</td></tr></tbody>
         </table></div>
       </div>
@@ -2197,15 +2197,6 @@ var _masterReconContext=null;// マスタ登録フロー {stagings:[...]}（複�
 var _mkGroups=[];            // renderMarketで構築するグループ配列
 var _mkSel={};               // 複数選択（グループkey→true）
 
-// 店舗横断で同一銘柄をまとめるための正規化キー
-function _normName(s){
-  return String(s||'').toLowerCase()
-    .replace(/【[^】]*】/g,' ').replace(/[（(][^）)]*[）)]/g,' ')
-    .replace(/[0-9]+\s*ml/gi,' ').replace(/[0-9]+(?:\.[0-9]+)?\s*l(?![a-z])/gi,' ')
-    .replace(/[\s　・,、。\-_/\\|]+/g,'');
-}
-function _groupKey(s){ return _normName(s.name)+'|'+(s.classGuess||''); }
-
 function loadMarketStaging(){
   _tblLoad('tb-market',7,'相場を読み込み中…','btn-market-reload');
   db.collection('marketStaging').get().then(function(snap){
@@ -2236,25 +2227,10 @@ function renderMarket(){
     if(q&&(s.name||'').toLowerCase().indexOf(q)<0) return false;
     return true;
   });
-  // 店舗横断で同一銘柄をまとめる（正規化名＋クラス）
-  var gmap={};
-  list.forEach(function(s){
-    var k=_groupKey(s); var gr=gmap[k];
-    if(!gr){ gr=gmap[k]={key:k,name:s.name||'',classGuess:s.classGuess||'',reason:s.reason||'',url:s.url||'',shops:[]}; }
-    if((s.name||'').length && (!gr.name || s.name.length<gr.name.length)) gr.name=s.name;
-    if(!gr.url && s.url) gr.url=s.url;
-    gr.shops.push(s);
-  });
-  // 同一店の商品が複数入ったグループは「別商品を誤って束ねた」とみなし、1商品ずつ個別行に展開する
-  //（例: ドン フリオ 1942 の別バッチ／ギフト箱などを金右衛門が複数掲載→まとめず各件で表示）
-  var groupList=[];
-  Object.keys(gmap).forEach(function(k){
-    var gr=gmap[k], seen={}, dup=false;
-    gr.shops.forEach(function(s){ var sk=s.shop||s.shopName||''; if(seen[sk]) dup=true; seen[sk]=1; });
-    if(!dup){ groupList.push(gr); return; }
-    gr.shops.forEach(function(s){
-      groupList.push({key:gr.key+'#'+s.id,name:s.name||gr.name,classGuess:s.classGuess||gr.classGuess,reason:s.reason||gr.reason,url:s.url||'',shops:[s]});
-    });
+  // 紐付けは酒屋ごとに判断すべきなので、店舗横断でまとめず「1店の1商品＝1行」で表示する。
+  //（同一銘柄を複数店まとめて紐付けたい時はチェックで複数選択→一括操作を使う）
+  var groupList=list.map(function(s){
+    return {key:s.id,name:s.name||'',classGuess:s.classGuess||'',reason:s.reason||'',url:s.url||'',shops:[s]};
   });
   var groups=groupList.map(function(gr){
     gr.minPrice=gr.shops.reduce(function(m,s){var p=Number(s.price750||s.price||0);return (p&&(!m||p<m))?p:m;},0);
@@ -2268,7 +2244,7 @@ function renderMarket(){
   // 選択状態を現在のグループ（保留ありのみ選択可）に整理
   var validKeys={}; groups.forEach(function(gr){ if(gr.anyPending) validKeys[gr.key]=true; });
   Object.keys(_mkSel).forEach(function(k){ if(!validKeys[k]) delete _mkSel[k]; });
-  var cnt=g('mk-count'); if(cnt) cnt.textContent=groups.length+' 銘柄（'+list.length+' 店舗価格）・ 保留 '+_pendingCount();
+  var cnt=g('mk-count'); if(cnt) cnt.textContent=list.length+' 件（店ごと）・ 保留 '+_pendingCount();
   var tb=g('tb-market');
   if(!groups.length){ tb.innerHTML='<tr><td colspan="7" class="ec">該当なし</td></tr>'; _mkUpdateBulkBar(); return; }
   tb.innerHTML=groups.slice(0,300).map(function(gr,idx){
@@ -2419,7 +2395,8 @@ function setStagingStatusGroup(idx,status){
 // 既存ボトルへ紐付け（グループの保留分をまとめて）
 function openMarketLinkGroup(idx){
   var gr=_group(idx); if(!gr||!gr.pending.length) return; _reconTarget=gr;
-  g('mk-link-target').innerHTML='<b>'+escD(gr.name||'')+'</b>　'+escD(gr.classGuess||'')+'　'+(gr.minPrice?'最安 ¥'+gr.minPrice.toLocaleString()+'/750ml':'')+'　<span style="color:var(--ink3)">'+gr.pending.length+'店をまとめて紐付け</span>';
+  var _shopLbl=(gr.pending[0]&&(gr.pending[0].shopName||gr.pending[0].shop))||'';
+  g('mk-link-target').innerHTML='<b>'+escD(gr.name||'')+'</b>　'+escD(gr.classGuess||'')+'　'+(gr.minPrice?'最安 ¥'+gr.minPrice.toLocaleString()+'/750ml':'')+'　<span style="color:var(--ink3)">'+(gr.pending.length>1?gr.pending.length+'店をまとめて紐付け':escD(_shopLbl)+' を紐付け')+'</span>';
   sv('mk-link-search', (gr.pending[0]&&gr.pending[0].brandGuess)||gr.name||'');
   renderLinkResults(); openM('m-market-link');
 }
