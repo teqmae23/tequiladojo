@@ -2137,17 +2137,41 @@ function _cmpUnlink(docId,shopName,bottleName){
   if(!docId) return;
   if(!confirm('「'+bottleName+'」と '+shopName+' の紐付けを解除しますか？\n（この店の相場をこのボトルから外します。誤紐付けの修正用）\n※自動マッチが原因の場合、次回の取り込みで再び紐付く可能性があります。')) return;
   var parts=docId.split('__'); var shop=parts[0]; var bottleId=parts.slice(1).join('__');
+  var mp=(cache.marketAll||[]).find(function(m){ return (m.shop+'__'+m.bottleId)===docId; }); // 削除前の相場データ（照合へ戻す用）
   db.collection('marketPrices').doc(docId).delete().then(function(){
     cache.marketAll=(cache.marketAll||[]).filter(function(m){ return (m.shop+'__'+m.bottleId)!==docId; });
     // 手動リンクだった場合は staging を保留へ戻す（相場照合で再処理できるように）
     db.collection('marketStaging').where('shop','==',shop).get().then(function(sn){
       var b=db.batch(); var n=0;
-      sn.forEach(function(d){ var x=d.data(); if(x.linkedBottleId===bottleId){ b.update(d.ref,{status:'pending',linkedBottleId:firebase.firestore.FieldValue.delete()}); n++; } });
-      if(n) b.commit();
-    }).catch(function(){});
-    toast(shopName+' の紐付けを解除しました');
+      sn.forEach(function(d){ var x=d.data(); if(x.linkedBottleId===bottleId){ b.update(d.ref,{status:'pending',linkedBottleId:firebase.firestore.FieldValue.delete(),manualUnlinked:true}); n++; } });
+      if(n){ b.commit(); }
+      else { _cmpMakeStaging(shop,shopName,bottleId,mp); } // 自動マッチ品は staging が無いので新規作成して照合タブに出す
+    }).catch(function(){ _cmpMakeStaging(shop,shopName,bottleId,mp); });
+    toast(shopName+' の紐付けを解除しました（相場照合に戻しました）');
     renderCompare();
   }).catch(function(e){ toast('解除失敗: '+e.message,'err'); });
+}
+// 自動マッチで staging が存在しない紐付けを解除したとき、相場照合に再登場させるための staging を作る
+function _cmpMakeStaging(shop,shopName,bottleId,mp){
+  mp=mp||{};
+  var itemId=mp.itemId||('unlinked_'+bottleId);      // itemId があれば再取込時も同一docで解除状態を維持
+  var docId=shop+'__'+itemId;
+  var data={ shop:shop, shopName:shopName||mp.shopName||shop, itemId:itemId,
+    name:mp.name||'', brandGuess:mp.teqBottleJa||'', classGuess:_classGuessFromBottleId(bottleId)||'',
+    price:(mp.price!=null?mp.price:null), price750:(mp.price750!=null?mp.price750:null),
+    volumeMl:(mp.volumeMl!=null?mp.volumeMl:null), abv:(mp.abv!=null?mp.abv:null),
+    availability:mp.availability||'', url:mp.url||'', reason:'unmatched', suggestedBottleId:'',
+    status:'pending', manualUnlinked:true, unlinkedFrom:bottleId,
+    source:'manual-unlink', updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
+  db.collection('marketStaging').doc(docId).set(data,{merge:true}).then(function(){
+    // 照合タブのキャッシュにも即反映（開いていれば再描画）
+    if(cache.staging){
+      var i=cache.staging.findIndex(function(s){return s.id===docId;});
+      var rec=Object.assign({id:docId},data); if(i>=0) cache.staging[i]=rec; else cache.staging.push(rec);
+      setCnt('market',cache.staging.filter(function(s){return (s.status||'pending')==='pending';}).length);
+      if(g('tb-market')) renderMarket();
+    }
+  }).catch(function(){});
 }
 ['s-cmp'].forEach(function(id){var e=g(id);if(e)e.addEventListener('input',renderCompare);});
 ['f-cmp-class','f-cmp-sort','f-cmp-watch'].forEach(function(id){var e=g(id);if(e)e.addEventListener('change',renderCompare);});

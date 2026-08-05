@@ -59,6 +59,7 @@ REPO=<repoのパス> NODE_PATH=~/functions/node_modules \
 ## Firestore
 - `marketPrices/{shop}__{bottleId}` … ボトル紐付け済み相場（admin_tequilaが表示。複数店は750ml換算 最安を採用）。
 - `marketStaging/{shop}__{itemId}` … 未紐付け（未マッチ＋brand-only/low）。相場照合タブで紐付け/新規登録/対象外。
+- 自動マッチ品は `marketStaging` を作らず `marketPrices` 直行だが、相場比較で「解除」すると `manualUnlinked:true` の staging を作成して照合タブに戻す。`import_market.js` は手動判断（linked/ignored/registered/manualUnlinked）のある item を自動マッチで作り直さない（`marketPrices` に `itemId` を保持して突合）。
 
 ## 注意（礼儀・規約）
 - robots.txt を確認し、`--delay`（既定1.5秒）で待機。巡回は週次程度に留める。
