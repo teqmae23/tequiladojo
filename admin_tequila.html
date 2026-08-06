@@ -310,7 +310,7 @@ html.embed .mbg{background:transparent!important}
       <div class="meta-bar" id="meta-bottles"></div>
       <div class="phead"><div><div class="ptitle">ボトルマスタ <span class="pcnt" id="pcnt-bottles">—</span></div><div class="pdesc">bottleId 12桁 = brandId7 + classId2 + 連番3 ／ ABV・生産区分・色素濾過・添加物</div></div>
         <div style="display:flex;gap:8px">
-          <button class="btn bs" id="btn-migrate-bottles" style="font-size:11px;color:var(--ink3)">⚙ IDを12桁に修正</button>
+          <button class="btn bs" id="btn-migrate-bottles" style="font-size:11px;color:var(--ink3)">⚙ ID・連番を修正</button>
           <button class="btn bp" id="btn-open-bottle">＋ ボトル登録</button>
         </div>
       </div>
@@ -1786,8 +1786,14 @@ g("btn-save-brand").addEventListener("click",function(){
   if(!editId.brand && cache.brands.some(function(b){return b.id===id;})){
     toast("ブランドID「"+id+"」は既に存在します。連番を変更してください","err"); return;
   }
-  db.collection("brands").doc(id).set({brandId:id,distilleryId:dis,seq:seq,brandType:gv("br-type")||"0",brandStatus:gv("br-st")||"0",salesCategory:parseInt(gv("br-sales")),brandEs:es,brandJa:gv("br-ja")||null,foundedYear:parseInt(gv("br-year"))||null,infoUrl:gv("br-info")||null,ammUrl:gv("br-amm")||null,annUrl:gv("br-ann")||null},{merge:true})
-    .then(function(){ toast(editId.brand?"ブランドを更新しました":"ブランドを登録しました"); _embedSaved=true; closeM("m-brand"); bumpAndRender("brands"); loadCol("brands"); })
+  var brSeqField=id.length>=7?id.slice(4,7):seq; // 連番はキー(brandId)を唯一の正とする
+  var brPayload={brandId:id,distilleryId:dis,seq:brSeqField,brandType:gv("br-type")||"0",brandStatus:gv("br-st")||"0",salesCategory:parseInt(gv("br-sales")),brandEs:es,brandJa:gv("br-ja")||null,foundedYear:parseInt(gv("br-year"))||null,infoUrl:gv("br-info")||null,ammUrl:gv("br-amm")||null,annUrl:gv("br-ann")||null};
+  db.collection("brands").doc(id).set(brPayload,{merge:true})
+    .then(function(){ toast(editId.brand?"ブランドを更新しました":"ブランドを登録しました"); _embedSaved=true;
+      var _i=cache.brands.findIndex(function(b){return b.id===id;});
+      var _rec=Object.assign({},(_i>=0?cache.brands[_i]:{}),brPayload,{id:id});
+      if(_i>=0) cache.brands[_i]=_rec; else cache.brands.push(_rec);
+      closeM("m-brand"); render("brands"); bumpAndRender("brands"); loadCol("brands"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
@@ -1843,7 +1849,7 @@ function openBottleModal(id){
     sv("bt-nom",nom);
     var brands=cache.brands.filter(function(b){return b.id.slice(0,4)===nom&&!b.hidden;});
     brSel.innerHTML='<option value="">選択...</option>'+brands.map(function(b){return '<option value="'+b.id+'">'+b.id+' — '+(b.brandEs||"")+(b.brandJa?" / "+b.brandJa:"")+'</option>';}).join("");
-    sv("bt-brand",r?r.brandId:""); sv("bt-seq",r?r.seq:""); updateClassSel(); sv("bt-class",r?r.classId:"");
+    sv("bt-brand",r?r.brandId:""); sv("bt-seq",r?((String(r.id).length>=12)?String(r.id).slice(9,12):(r.seq||"")):""); updateClassSel(); sv("bt-class",r?r.classId:"");
     nomEl.readOnly=true; nomEl.style.background="var(--cream2)"; brSel.disabled=true; brSel.style.background="var(--cream2)"; sqEl.readOnly=true; sqEl.style.background="var(--cream2)";
     sv("bt-es",r?r.bottleEs||"":""); sv("bt-ja",r?r.bottleJa||"":""); sv("bt-abv",r?r.abv:""); sv("bt-prod",r?r.production:"0"); sv("bt-flt",r?r.filtration:"0"); sv("bt-add",r?r.additive:"0"); sv("bt-serving",r&&r.servingStatus!==undefined?String(r.servingStatus):"0"); sv("bt-min-tasting",r&&r.minTasting!==undefined?String(r.minTasting):"10");
     g("bt-jpmarket").checked=!!(r&&r.jpMarket);
@@ -1918,18 +1924,26 @@ g("btn-save-bottle").addEventListener("click",function(){
   }
   var btEs=(gv("bt-es")||"").trim()||null;
   var btJa=(gv("bt-ja")||"").trim()||null;
-  db.collection("bottles").doc(id).set({bottleId:id,brandId:brandId,classId:classId,seq:seq,bottleEs:btEs,bottleJa:btJa,abv:parseFloat(gv("bt-abv"))||null,production:gv("bt-prod")||"0",filtration:gv("bt-flt")||"0",additive:gv("bt-add")||"0",servingStatus:parseInt(gv("bt-serving")||"0"),minTasting:parseInt(gv("bt-min-tasting")||"10"),jpMarket:g("bt-jpmarket").checked},{merge:true})
+  var seqField=id.length>=12?id.slice(9,12):seq; // 連番はキー(bottleId)を唯一の正とし、フィールドのズレを持ち込まない
+  var payload={bottleId:id,brandId:brandId,classId:classId,seq:seqField,bottleEs:btEs,bottleJa:btJa,abv:parseFloat(gv("bt-abv"))||null,production:gv("bt-prod")||"0",filtration:gv("bt-flt")||"0",additive:gv("bt-add")||"0",servingStatus:parseInt(gv("bt-serving")||"0"),minTasting:parseInt(gv("bt-min-tasting")||"10"),jpMarket:g("bt-jpmarket").checked};
+  db.collection("bottles").doc(id).set(payload,{merge:true})
     .then(function(){ toast(editId.bottle?"ボトルを更新しました":"ボトルを登録しました"); _embedSaved=true;
+      // 楽観的にキャッシュへ反映：再読込(loadCol)完了前に続けてコピー登録しても、最新を見て連番採番／重複判定できるようにする
+      var _i=cache.bottles.findIndex(function(b){return b.id===id;});
+      var _rec=Object.assign({},(_i>=0?cache.bottles[_i]:{}),payload,{id:id});
+      if(_i>=0) cache.bottles[_i]=_rec; else cache.bottles.push(_rec);
       var _mc=_masterReconContext;
       if(_mc){ afterMasterRegistered(id); }
-      closeM("m-bottle"); bumpAndRender("bottles"); loadCol("bottles"); })
+      closeM("m-bottle"); render("bottles"); bumpAndRender("bottles"); loadCol("bottles"); })
     .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
-// ボトルID移行ツール
+// ボトルID・連番修復ツール（①12桁でないID → 12桁へ移行、②12桁だがseqフィールドがキー末尾3桁と不一致 → seqを修復）
 g("btn-migrate-bottles").addEventListener("click",function(){
   var targets=cache.bottles.filter(function(b){return b.id&&b.id.length!==12;});
-  if(!targets.length){ toast("修正が必要なレコードはありません","inf"); return; }
+  // 12桁だが seq フィールドがキー(末尾3桁)と食い違う＝連番が正しくセットされていないレコード
+  var seqFix=cache.bottles.filter(function(b){ return b.id&&b.id.length===12 && String(b.seq==null?"":b.seq).padStart(3,"0")!==b.id.slice(9,12); });
+  if(!targets.length && !seqFix.length){ toast("修正が必要なレコードはありません","inf"); return; }
   var canFix=[],cannotFix=[];
   targets.forEach(function(r){
     var brandId=r.brandId||(r.id.length>=7?r.id.slice(0,7):"");
@@ -1938,11 +1952,20 @@ g("btn-migrate-bottles").addEventListener("click",function(){
     if(brandId.length===7&&classId.length===2&&seq.length===3) canFix.push({r:r,newId:brandId+classId+seq,brandId:brandId,classId:classId,seq:seq});
     else cannotFix.push(r.id+"（classId="+(classId||"なし")+"）");
   });
-  var msgLines=["【移行対象】"+targets.length+"件","✓ 自動補完可能: "+canFix.length+"件"];
-  canFix.forEach(function(x){msgLines.push("  "+x.r.id+" → "+x.newId);});
-  if(cannotFix.length){ msgLines.push("✕ 補完不能: "+cannotFix.length+"件"); cannotFix.forEach(function(x){msgLines.push("  "+x);}); }
-  msgLines.push(""); msgLines.push("自動補完可能な"+canFix.length+"件を移行しますか？");
-  if(!canFix.length){ alert(msgLines.join("\n")); return; }
+  var msgLines=[];
+  if(targets.length){
+    msgLines.push("【ID移行】"+targets.length+"件（12桁化）","✓ 自動補完可能: "+canFix.length+"件");
+    canFix.forEach(function(x){msgLines.push("  "+x.r.id+" → "+x.newId);});
+    if(cannotFix.length){ msgLines.push("✕ 補完不能: "+cannotFix.length+"件"); cannotFix.forEach(function(x){msgLines.push("  "+x);}); }
+  }
+  if(seqFix.length){
+    if(msgLines.length) msgLines.push("");
+    msgLines.push("【連番修復】"+seqFix.length+"件（seqフィールドをキー末尾3桁に合わせる）");
+    seqFix.slice(0,20).forEach(function(b){ msgLines.push("  "+b.id+"：seq "+(b.seq==null||b.seq===""?"(空)":b.seq)+" → "+b.id.slice(9,12)); });
+    if(seqFix.length>20) msgLines.push("  …ほか"+(seqFix.length-20)+"件");
+  }
+  msgLines.push(""); msgLines.push("上記を修正しますか？（キーは変更せず、連番修復はseqフィールドのみ更新）");
+  if(!canFix.length && !seqFix.length){ alert(msgLines.join("\n")); return; }
   if(!confirm(msgLines.join("\n"))) return;
   var batch=db.batch();
   canFix.forEach(function(item){
@@ -1952,9 +1975,10 @@ g("btn-migrate-bottles").addEventListener("click",function(){
     delete data.id;
     batch.set(db.collection("bottles").doc(item.newId),data);
   });
+  seqFix.forEach(function(b){ batch.set(db.collection("bottles").doc(b.id),{seq:b.id.slice(9,12)},{merge:true}); });
   batch.commit()
-    .then(function(){ toast(canFix.length+"件を12桁に移行しました"+(cannotFix.length?"（スキップ:"+cannotFix.length+"件）":""),cannotFix.length?"inf":"ok"); loadCol("bottles"); })
-    .catch(function(e){ toast("移行失敗: "+e.message,"err"); });
+    .then(function(){ toast("修正完了：ID移行 "+canFix.length+"件／連番修復 "+seqFix.length+"件"+(cannotFix.length?"（スキップ:"+cannotFix.length+"件）":""),cannotFix.length?"inf":"ok"); loadCol("bottles"); })
+    .catch(function(e){ toast("修正失敗: "+e.message,"err"); });
 });
 
 // ── ボトルデータ ───────────────────────────────────────────────
@@ -2920,8 +2944,8 @@ g("btn-save-bdata").addEventListener("click",function(){
   var bdAbv=gv("bd-abv")!=""?parseFloat(gv("bd-abv")):null;
   var bdProd=gv("bd-prod")||null;
   var bdFlt=gv("bd-flt")||null;
-  db.collection("bottleData").doc(id).set({
-    bottleDataId:id, bottleId:bottleId, brandId:b?b.brandId:gv("bd-brand"), seq:seq,
+  var bdPayload={
+    bottleDataId:id, bottleId:bottleId, brandId:b?b.brandId:gv("bd-brand"), seq:id,
     bottleEs:bdEs, bottleJa:bdJa, bottleEsBase:bdEsBase||null, bottleJaBase:bdJaBase||null, suffix:bdSuffix||null,
     classId:bdClassId, abv:bdAbv,
     production:bdProd, filtration:bdFlt, additive:b?b.additive||null:null,
@@ -2934,8 +2958,14 @@ g("btn-save-bdata").addEventListener("click",function(){
     purchaseDate:getDateFromInputs("bd-buy-date")||null, serveStart:getDateFromInputs("bd-start")||null, serveEnd:getDateFromInputs("bd-end")||null,
     cost:parseInt(gv("bd-cost"))||null, importType:gv("bd-import")||"0", domesticDist:gv("bd-domestic")||"0",
     lotType:parseInt(gv("bd-lottype")||"1")||1, note:gv("bd-note")||null
-  },{merge:true})
-  .then(function(){ toast(editId.bdata?"ボトルデータを更新しました":"ボトルデータを登録しました"); _embedSaved=true; closeM("m-bdata"); bumpAndRender("bottleData"); loadBdata(); afterBdataSaved(bottleId); })
+  };
+  db.collection("bottleData").doc(id).set(bdPayload,{merge:true})
+  .then(function(){ toast(editId.bdata?"ボトルデータを更新しました":"ボトルデータを登録しました"); _embedSaved=true;
+    // 楽観的にキャッシュへ反映：再読込前に続けてコピー登録しても連番が最新を見て採番される
+    var _i=cache.bdata.findIndex(function(d){return d.id===id;});
+    var _rec=Object.assign({},(_i>=0?cache.bdata[_i]:{}),bdPayload,{id:id});
+    if(_i>=0) cache.bdata[_i]=_rec; else cache.bdata.push(_rec);
+    closeM("m-bdata"); bumpAndRender("bottleData"); loadBdata(); afterBdataSaved(bottleId); })
   .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
 
