@@ -35,4 +35,9 @@ async function main() {
   );
 }
 
-main().catch(function(e) { console.error(e); process.exit(1); });
+// 完了後は明示的にプロセスを終了する。firebase-admin(Firestore)のgRPC接続が
+// keepaliveでイベントループを保持し、放置するとジョブがハングして cancelled になる
+// （※通常はidleで抜けるが競合でハングする日があった＝間欠失敗の原因）。
+main()
+  .then(function() { process.exit(0); })
+  .catch(function(e) { console.error(e); process.exit(1); });
