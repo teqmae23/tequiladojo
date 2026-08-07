@@ -602,15 +602,25 @@ exports.stripeWebhook = functions
       const cid = obj.customer;
       const line = (obj.lines && obj.lines.data && obj.lines.data[0]) || {};
       // StripeのAPIバージョン差異に耐性を持たせる（旧: line.price / 新: line.pricing.price_details.price）
-      const priceId = (line.price && line.price.id)
+      let priceId = (line.price && line.price.id)
         || (line.pricing && line.pricing.price_details && line.pricing.price_details.price)
         || (line.plan && line.plan.id) || null;
       // subscription も旧 invoice.subscription / 新 parent.subscription_details.subscription 等に対応
-      const subId = obj.subscription
+      let subId = obj.subscription
         || (obj.parent && obj.parent.subscription_details && obj.parent.subscription_details.subscription)
         || (line.parent && line.parent.subscription_item_details && line.parent.subscription_item_details.subscription)
         || null;
-      const periodEnd = (line.period && line.period.end) || obj.period_end || null;
+      let periodEnd = (line.period && line.period.end) || obj.period_end || null;
+      // 請求書(invoice)の形はAPIバージョンで揺れるため、取れない項目はサブスク本体から補完する
+      // （サブスクの items.data[0].price.id は版に依らず安定して取得できる）
+      if ((!priceId || !periodEnd) && subId) {
+        try {
+          const sub = await stripe.subscriptions.retrieve(subId);
+          const it = sub.items && sub.items.data && sub.items.data[0];
+          if (!priceId && it && it.price) priceId = it.price.id;
+          if (!periodEnd) periodEnd = sub.current_period_end || (it && it.current_period_end) || null;
+        } catch (e) { /* ignore */ }
+      }
       // plans コレクションから priceId→level を動的解決（無ければ旧マップにフォールバック）
       let grade = null;
       let planId = null;
@@ -657,9 +667,10 @@ exports.stripeWebhook = functions
           cancelAtPeriodEnd: false,
         });
       }
-    } else if (event.type === 'customer.subscription.updated') {
-      // サブスクの変更（プラン変更・期末解約予約・状態遷移）を members に反映する。
-      // ※ Stripe Dashboard の Webhook で customer.subscription.updated を有効化しておくこと。
+    } else if (event.type === 'customer.subscription.created' || event.type === 'customer.subscription.updated') {
+      // サブスクの作成・変更（申込直後のグレード付与／プラン変更・期末解約予約・状態遷移）を反映する。
+      // invoice.payment_succeeded の請求書パースはAPIバージョンで揺れるため、グレード付与は
+      // price.id が安定して取れる customer.subscription.* を主経路にする（created を必ず購読すること）。
       const cid = obj.customer;
       const item = (obj.items && obj.items.data && obj.items.data[0]) || {};
       const priceId = (item.price && item.price.id) || (item.plan && item.plan.id) || null;
