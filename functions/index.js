@@ -600,10 +600,17 @@ exports.stripeWebhook = functions
 
     if (event.type === 'invoice.payment_succeeded') {
       const cid = obj.customer;
-      const line = obj.lines.data[0];
-      const priceId = line && line.price && line.price.id;
-      const subId = obj.subscription;
-      const periodEnd = line && line.period && line.period.end;
+      const line = (obj.lines && obj.lines.data && obj.lines.data[0]) || {};
+      // StripeのAPIバージョン差異に耐性を持たせる（旧: line.price / 新: line.pricing.price_details.price）
+      const priceId = (line.price && line.price.id)
+        || (line.pricing && line.pricing.price_details && line.pricing.price_details.price)
+        || (line.plan && line.plan.id) || null;
+      // subscription も旧 invoice.subscription / 新 parent.subscription_details.subscription 等に対応
+      const subId = obj.subscription
+        || (obj.parent && obj.parent.subscription_details && obj.parent.subscription_details.subscription)
+        || (line.parent && line.parent.subscription_item_details && line.parent.subscription_item_details.subscription)
+        || null;
+      const periodEnd = (line.period && line.period.end) || obj.period_end || null;
       // plans コレクションから priceId→level を動的解決（無ければ旧マップにフォールバック）
       let grade = null;
       let planId = null;
@@ -625,7 +632,7 @@ exports.stripeWebhook = functions
             subscriptionPlanId: planId,
             stripeSubscriptionId: subId,
             subscriptionStatus: 'active',
-            subscriptionPeriodEnd: new Date(periodEnd * 1000),
+            subscriptionPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : null,
           });
         }
       }
@@ -647,7 +654,43 @@ exports.stripeWebhook = functions
           stripeSubscriptionId: null,
           subscriptionStatus: 'canceled',
           subscriptionPeriodEnd: null,
+          cancelAtPeriodEnd: false,
         });
+      }
+    } else if (event.type === 'customer.subscription.updated') {
+      // サブスクの変更（プラン変更・期末解約予約・状態遷移）を members に反映する。
+      // ※ Stripe Dashboard の Webhook で customer.subscription.updated を有効化しておくこと。
+      const cid = obj.customer;
+      const item = (obj.items && obj.items.data && obj.items.data[0]) || {};
+      const priceId = (item.price && item.price.id) || (item.plan && item.plan.id) || null;
+      let grade = null;
+      let planId = null;
+      if (priceId) {
+        try {
+          const psnap = await db.collection('plans')
+            .where('stripePriceId', '==', priceId).limit(1).get();
+          if (!psnap.empty) { grade = Number(psnap.docs[0].data().level) || 0; planId = psnap.docs[0].id; }
+        } catch (e) { /* ignore */ }
+        if (grade == null && PRICE_GRADE_MAP[priceId] != null) grade = PRICE_GRADE_MAP[priceId];
+      }
+      const status = obj.status; // active / trialing / past_due / canceled / unpaid / incomplete...
+      const periodEnd = obj.current_period_end || item.current_period_end || null;
+      const snap = await db.collection('members')
+        .where('stripeCustomerId', '==', cid).limit(1).get();
+      if (!snap.empty) {
+        const upd = {
+          stripeSubscriptionId: obj.id,
+          subscriptionStatus: (status === 'trialing' ? 'active' : status),
+          cancelAtPeriodEnd: !!obj.cancel_at_period_end,
+        };
+        if (periodEnd) upd.subscriptionPeriodEnd = new Date(periodEnd * 1000);
+        // 有効な間はグレードを最新プランへ追随（プラン変更に対応）。
+        // 失効（canceled/unpaid 等）は customer.subscription.deleted 側で grade=0 に落とす。
+        if (grade != null && (status === 'active' || status === 'trialing' || status === 'past_due')) {
+          upd.grade = grade;
+          upd.subscriptionPlanId = planId;
+        }
+        await snap.docs[0].ref.update(upd);
       }
     } else if (event.type === 'checkout.session.completed') {
       // 単発購入（セミナー等）の完了 → 購入記録を書き込み
