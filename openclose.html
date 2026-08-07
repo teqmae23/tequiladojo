@@ -168,6 +168,20 @@ td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle
   </div>
 </div>
 
+<div id="oc-close-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:var(--r);max-width:420px;width:100%;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.3)">
+    <div style="font-size:16px;font-weight:600;color:var(--ink2);margin-bottom:8px">🌙 閉店日時の確認</div>
+    <div id="oc-cd-msg" style="font-size:12px;color:var(--ink3);line-height:1.6;margin-bottom:14px"></div>
+    <label style="font-size:11px;color:var(--ink3);display:block;margin-bottom:4px">閉店時刻（営業時間表記／前日つながりは24時以降で入力）</label>
+    <input type="text" id="oc-cd-time" class="fi" inputmode="numeric" placeholder="例: 2530" autocomplete="off" style="width:100%;box-sizing:border-box;font-family:var(--mono);font-size:20px;text-align:center;padding:10px">
+    <div id="oc-cd-preview" style="font-size:12px;color:var(--ink3);margin-top:8px;text-align:center"></div>
+    <div style="display:flex;gap:8px;margin-top:18px">
+      <button id="oc-cd-cancel" class="btn bs" style="flex:1">キャンセル</button>
+      <button id="oc-cd-ok" class="btn bp" style="flex:1">この日時で閉店</button>
+    </div>
+  </div>
+</div>
+
 <div id="toasts"></div>
 
 <script>
@@ -200,6 +214,55 @@ function todayStr6(){
   var d=new Date();return String(d.getFullYear()).slice(2)+pad(d.getMonth()+1)+pad(d.getDate());
 }
 function fmtHHMM(t){if(!t||t.length<4)return t||"—";return t.slice(0,2)+":"+t.slice(2,4);}
+// 実カレンダー日付(YYMMDD)。todayStr6()は営業中はセッション開店日を返すため別途用意する
+function calYMD6(){var d=new Date();return String(d.getFullYear()).slice(2).padStart(2,"0")+pad(d.getMonth()+1)+pad(d.getDate());}
+function ymd6ToDate(s){if(!s||s.length<6)return null;return new Date(2000+(parseInt(s.slice(0,2))||0),(parseInt(s.slice(2,4))||1)-1,parseInt(s.slice(4,6))||1);}
+function dayDiff6(fromYmd,toYmd){var a=ymd6ToDate(fromYmd),b=ymd6ToDate(toYmd);if(!a||!b)return 0;return Math.round((b-a)/86400000);}
+// 営業時間表記(HHMM / HH:MM、時は前日つながりで24以降も可) → HHMMSS。不正はnull
+function parseBizTime(str){
+  var s=String(str||"").trim().replace(/[：:]/g,"");
+  if(!/^\d{3,4}$/.test(s))return null;
+  s=s.padStart(4,"0");
+  var hh=parseInt(s.slice(0,s.length-2),10),mm=parseInt(s.slice(-2),10);
+  if(isNaN(hh)||isNaN(mm)||mm>59||hh>71)return null;
+  return pad(hh)+pad(mm)+"00";
+}
+// 営業時間HHMMSS(24以降可)を、開店日基準の実カレンダー日時ラベルに変換
+function bizToCalLabel(bizHHMMSS,openDate){
+  var hh=parseInt(bizHHMMSS.slice(0,2))||0,mm=parseInt(bizHHMMSS.slice(2,4))||0;
+  var dOff=Math.floor(hh/24),rh=hh%24;
+  var base=ymd6ToDate(openDate)||new Date();
+  base.setDate(base.getDate()+dOff);
+  var wd=["日","月","火","水","木","金","土"][base.getDay()];
+  return (base.getMonth()+1)+"/"+base.getDate()+"("+wd+") "+pad(rh)+":"+pad(mm);
+}
+function updateCloseModalPreview(){
+  var parsed=parseBizTime(gv("oc-cd-time")),pv=g("oc-cd-preview");if(!pv)return;
+  if(!parsed){pv.innerHTML='<span style="color:#b03020">形式が不正です（例: 2530 / 25:30）</span>';return;}
+  pv.innerHTML="実日時: <b>"+bizToCalLabel(parsed,currentSessionDate)+"</b>　（記録: "+fmtHHMM(parsed)+"）";
+}
+function openCloseDateModal(){
+  var now=new Date();
+  var diff=Math.max(1,dayDiff6(currentSessionDate,calYMD6()));
+  var bizHour=diff*24+now.getHours(); // 前日つながり(+24×日数)で初期値をセット
+  sv("oc-cd-time",pad(bizHour)+pad(now.getMinutes()));
+  var openLabel=(currentSessionDate?bizToCalLabel((currentOpenTime||"000000"),currentSessionDate):"—");
+  g("oc-cd-msg").innerHTML="開店（<b>"+openLabel+"</b>）から日付をまたいでいます。<b>閉店忘れ</b>の可能性があるため閉店時刻を確認してください。翌日以降にまたぐ時間は <b>24時以降（前日つながり）</b>で表します（例: 深夜1:30 → 2530）。";
+  updateCloseModalPreview();
+  var m=g("oc-close-modal");if(m)m.style.display="flex";
+  var el=g("oc-cd-time");if(el){el.focus();if(el.select)el.select();}
+}
+if(g("oc-cd-time"))g("oc-cd-time").addEventListener("input",updateCloseModalPreview);
+if(g("oc-cd-cancel"))g("oc-cd-cancel").addEventListener("click",function(){g("oc-close-modal").style.display="none";});
+if(g("oc-cd-ok"))g("oc-cd-ok").addEventListener("click",function(){
+  var parsed=parseBizTime(gv("oc-cd-time"));
+  if(!parsed){toast("時刻の形式が不正です（例: 2530）","err");return;}
+  var openMin=(parseInt((currentOpenTime||"0").slice(0,2))||0)*60+(parseInt((currentOpenTime||"0").slice(2,4))||0);
+  var closeMin=(parseInt(parsed.slice(0,2))||0)*60+(parseInt(parsed.slice(2,4))||0);
+  if(closeMin<=openMin){toast("閉店時刻は開店時刻より後にしてください","err");return;}
+  g("oc-close-modal").style.display="none";
+  performClose(parsed);
+});
 
 var storeStatus="closed";
 var currentSessionId=null;
@@ -432,8 +495,12 @@ g("btn-break-store").addEventListener("click",function(){
 
 g("btn-close-store").addEventListener("click",function(){
   if(!currentSessionId){toast("営業セッションがありません","err");return;}
+  // 日付をまたいでいる場合は、閉店忘れの可能性を考慮して閉店日時の確認ダイアログを表示する
+  if(currentSessionDate && calYMD6()!==currentSessionDate){ openCloseDateModal(); return; }
   if(!confirm("閉店処理を実行しますか？"))return;
-  var closeTime=nowStr();
+  performClose(nowStr());
+});
+function performClose(closeTime){
   var closingSessionId=currentSessionId;
   var closingDate=currentSessionDate;
   var closingOpenTime=currentOpenTime; // リセット前に集計用へ退避
@@ -482,7 +549,7 @@ g("btn-close-store").addEventListener("click",function(){
         }).catch(function(e){console.warn("来場データ取得失敗:",e);});
       }
     }).catch(function(e){toast("閉店処理失敗: "+e.message,"err");});
-});
+}
 
 g("btn-oc-save-memo").addEventListener("click",function(){
   if(!currentSessionId){toast("営業セッションがありません","err");return;}
