@@ -597,6 +597,7 @@ exports.stripeWebhook = functions
     }
 
     const obj = event.data.object;
+    console.log('[WHDBG] event=' + event.type + ' customer=' + (obj && obj.customer));
 
     if (event.type === 'invoice.payment_succeeded') {
       const cid = obj.customer;
@@ -688,6 +689,8 @@ exports.stripeWebhook = functions
       const periodEnd = obj.current_period_end || item.current_period_end || null;
       const snap = await db.collection('members')
         .where('stripeCustomerId', '==', cid).limit(1).get();
+      console.log('[WHDBG] sub handler priceId=' + priceId + ' grade=' + grade + ' planId=' + planId
+        + ' status=' + status + ' memberFound=' + (!snap.empty) + (snap.empty ? '' : ' memberId=' + snap.docs[0].id));
       if (!snap.empty) {
         const upd = {
           stripeSubscriptionId: obj.id,
