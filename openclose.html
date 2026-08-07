@@ -436,17 +436,22 @@ g("btn-close-store").addEventListener("click",function(){
   var closeTime=nowStr();
   var closingSessionId=currentSessionId;
   var closingDate=currentSessionDate;
+  var closingOpenTime=currentOpenTime; // リセット前に集計用へ退避
   journaledUpdate("sessions",closingSessionId,{closeTime:closeTime})
     .then(function(){
       toast("閉店しました（"+closeTime+"）");
       autoCheckoutStaff(closeTime);
       currentSessionId=null;
       currentLayoutId=null;
+      // 営業日付・開店時刻もクリアする。残すと次回の開店で todayStr6()/nowStr() が
+      // 前セッションの営業日を引き継ぎ、日をまたいで開き直した際に新セッションが
+      // 前日日付で作られてしまう（閉店忘れ→翌日開店で「本日2回目」誤判定・日付矛盾の原因）。
+      currentOpenTime=null;
+      currentSessionDate=null;
       applyStoreStatus("closed");
       writePublicStatus('closed',{});
       // 来場数・売上合計をセッションに記録（セッション時間帯で絞り込み・IDプレフィックス補完）
       if(closingDate){
-        var closingOpenTime=currentOpenTime;
         Promise.all([
           db.collection("visits").where("visitDate","==",closingDate).get(),
           db.collection("visits")
