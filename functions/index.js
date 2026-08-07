@@ -759,28 +759,44 @@ exports.createSubscriptionCheckout = functions
       throw new functions.https.HttpsError('failed-precondition', 'このプランにはStripe Price IDが未設定です');
     }
 
-    // Stripe顧客を用意（無ければ作成して保存）
-    let customerId = member.stripeCustomerId;
-    if (!customerId) {
+    // Stripe顧客を作成して members に保存
+    async function createAndSaveCustomer() {
       const customer = await stripe.customers.create({
         email: member.email || member.authEmail || undefined,
         name: member.name || '',
         metadata: { memberId: memberId },
       });
-      customerId = customer.id;
-      await memberRef.update({ stripeCustomerId: customerId });
+      await memberRef.update({ stripeCustomerId: customer.id });
+      return customer.id;
+    }
+    function sessionParams(cust) {
+      return {
+        mode: 'subscription',
+        customer: cust,
+        line_items: [{ price: plan.stripePriceId, quantity: 1 }],
+        client_reference_id: memberId,
+        metadata: { memberId: memberId, planId: planId, level: String(plan.level != null ? plan.level : '') },
+        success_url: origin + '/member_subscription.html?checkout=success',
+        cancel_url: origin + '/member_subscription.html?checkout=cancel',
+        allow_promotion_codes: true,
+      };
     }
 
-    const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
-      customer: customerId,
-      line_items: [{ price: plan.stripePriceId, quantity: 1 }],
-      client_reference_id: memberId,
-      metadata: { memberId: memberId, planId: planId, level: String(plan.level != null ? plan.level : '') },
-      success_url: origin + '/member_subscription.html?checkout=success',
-      cancel_url: origin + '/member_subscription.html?checkout=cancel',
-      allow_promotion_codes: true,
-    });
+    // Stripe顧客を用意（無ければ作成して保存）
+    let customerId = member.stripeCustomerId || (await createAndSaveCustomer());
+
+    let session;
+    try {
+      session = await stripe.checkout.sessions.create(sessionParams(customerId));
+    } catch (e) {
+      // 保存済みの顧客IDが無効（別モード/削除済み等で No such customer）なら、
+      // 顧客を作り直して members を更新し、1度だけ再試行する（手動でのID削除を不要に）。
+      const missingCustomer = e && e.code === 'resource_missing'
+        && (e.param === 'customer' || String(e.message || '').toLowerCase().indexOf('customer') >= 0);
+      if (!missingCustomer) throw e;
+      customerId = await createAndSaveCustomer();
+      session = await stripe.checkout.sessions.create(sessionParams(customerId));
+    }
     return { url: session.url };
   });
 
