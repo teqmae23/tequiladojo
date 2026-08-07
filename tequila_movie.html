@@ -19,6 +19,7 @@ var FIREBASE_CONFIG={
 };
 </script>
 <script src="/auth-role.js?v=20260714"></script>
+<script src="/member-plan.js?v=20260714"></script>
 <style>
 :root{
   --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
@@ -109,6 +110,18 @@ button{cursor:pointer;font-family:var(--sans)}
   </div>
 </div>
 
+<!-- 有料会員限定ロック画面 -->
+<div id="locked-screen" style="display:none;min-height:100vh;align-items:center;justify-content:center;padding:24px">
+  <div class="lcard" style="text-align:center">
+    <div class="llogo">🔒</div>
+    <div class="lbrand">テキーラ動画</div>
+    <div class="lsub">有料会員限定</div>
+    <p id="locked-need" style="font-size:13px;color:var(--ink2);line-height:1.8;margin:18px 0 8px">この機能は有料会員向けです。</p>
+    <a class="lbtn" href="/member_subscription.html" style="display:block;text-decoration:none;text-align:center;box-sizing:border-box">プランを見る</a>
+    <a href="/member.html" style="display:inline-block;margin-top:14px;font-size:12px;color:var(--ink3);text-decoration:none">← マイページに戻る</a>
+  </div>
+</div>
+
 <!-- アプリ -->
 <div id="app">
   <div class="hdr">
@@ -158,14 +171,38 @@ function vimeoIdOf(raw){
 var videos=[], viewMode='tile';
 
 AuthRole.requireMember(auth, function(user){
-  g('app').style.display='block';
-  // 保存済みの表示モード
-  try{ var v=localStorage.getItem('v360_view'); if(v==='list'||v==='tile') viewMode=v; }catch(e){}
-  setView(viewMode);
-  loadVideos();
+  gateByPaid(user);
 }, function(){
   g('login-screen').style.display='flex';
 });
+
+// テキーラ動画は有料会員（movie機能を持つプラン）限定。非該当はロック画面を表示する。
+function gateByPaid(user){
+  Promise.all([
+    db.collection('members').where('authUid','==',user.uid).limit(1).get(),
+    MemberPlan.loadPlans(db)
+  ]).then(function(res){
+    var member=res[0].empty?{}:res[0].docs[0].data();
+    var plans=res[1]||[];
+    var eff=MemberPlan.effectivePlan(member, plans);
+    if(MemberPlan.hasFeature(eff,'movie')){
+      g('app').style.display='block';
+      try{ var v=localStorage.getItem('v360_view'); if(v==='list'||v==='tile') viewMode=v; }catch(e){}
+      setView(viewMode);
+      loadVideos();
+    }else{
+      var need=plans.filter(function(p){return MemberPlan.hasFeature(p,'movie');})
+        .sort(function(a,b){return (Number(a.level)||0)-(Number(b.level)||0);})[0];
+      if(g('locked-need')) g('locked-need').textContent=need
+        ? 'テキーラ動画は「'+(need.name||'有料会員')+'」以上でご覧いただけます。'
+        : 'テキーラ動画は有料会員向けのコンテンツです。';
+      g('locked-screen').style.display='flex';
+    }
+  }).catch(function(){
+    // 判定に失敗したら安全側（ロック）に倒す
+    g('locked-screen').style.display='flex';
+  });
+}
 g('lbtn').addEventListener('click',function(){
   auth.signInWithEmailAndPassword((g('lemail').value||'').trim(),g('lpass').value).catch(function(e){ g('lerr').textContent=e.message; });
 });
