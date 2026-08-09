@@ -474,26 +474,74 @@ exports.setStoreStatus = functions.region('asia-northeast1')
   });
 
 // ── 公開: 店頭ステータス＋来店数を返す（index.html用・認証不要） ──
+// ── TOPページのアクセス記録（同日・同IPで1件。IPはハッシュ化。国も記録） ──
+// IP はサーバー側でしか取れないため getStoreStatus に相乗り（data.logTop=true の時のみ）。
+async function lookupCountry(ip) {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 1500);
+    const r = await fetch('https://ipwho.is/' + encodeURIComponent(ip) + '?fields=success,country,country_code', { signal: ctrl.signal });
+    clearTimeout(t);
+    const j = await r.json();
+    if (j && j.success !== false) return { name: j.country || '', code: j.country_code || '' };
+  } catch (e) { /* ignore */ }
+  return { name: '', code: '' };
+}
+async function recordTopAccess(context) {
+  const req = context && context.rawRequest;
+  if (!req) return;
+  const xff = (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-appengine-user-ip'] || req.headers['fastly-client-ip'])) || '';
+  let ip = String(xff).split(',')[0].trim();
+  if (!ip && req.ip) ip = String(req.ip);
+  if (!ip) return;
+  const crypto = require('crypto');
+  const SALT = 'tequiladojo-topaccess-v1'; // 固定ソルト（必要なら将来Secret化）。生IPは保存しない。
+  const ipHash = crypto.createHash('sha256').update(SALT + '|' + ip).digest('hex').slice(0, 40);
+  const jd = new Date(Date.now() + 9 * 3600 * 1000); // JST
+  const p2 = (n) => String(n).padStart(2, '0');
+  const dayCompact = '' + jd.getUTCFullYear() + p2(jd.getUTCMonth() + 1) + p2(jd.getUTCDate());
+  const dayIso = jd.getUTCFullYear() + '-' + p2(jd.getUTCMonth() + 1) + '-' + p2(jd.getUTCDate());
+  const FV = admin.firestore.FieldValue;
+  const ref = db.collection('topAccessLogs').doc(dayCompact + '_' + ipHash);
+  const snap = await ref.get();
+  if (snap.exists) {
+    await ref.update({ hits: FV.increment(1), lastAt: FV.serverTimestamp() });
+    return;
+  }
+  const geo = await lookupCountry(ip);
+  await ref.set({
+    day: dayIso, ipHash,
+    country: geo.name || '', countryCode: geo.code || '',
+    hits: 1, firstAt: FV.serverTimestamp(), lastAt: FV.serverTimestamp(),
+  });
+}
+
 exports.getStoreStatus = functions.region('asia-northeast1')
   .https.onCall(async (data, context) => {
-    const doc = await db.collection('storeStatus').doc('current').get();
-    if (!doc.exists) return { status: 'closed' };
-    const sd = doc.data();
-    const out = { status: sd.status || 'closed' };
-    if (out.status === 'break') {
-      out.breakResumeTime = sd.breakResumeTime || null;
+    // TOPページからの呼び出し時のみアクセス記録（本来のステータス応答には影響させない）
+    const logP = (data && data.logTop) ? recordTopAccess(context).catch(() => {}) : Promise.resolve();
+    const statusP = (async () => {
+      const doc = await db.collection('storeStatus').doc('current').get();
+      if (!doc.exists) return { status: 'closed' };
+      const sd = doc.data();
+      const out = { status: sd.status || 'closed' };
+      if (out.status === 'break') {
+        out.breakResumeTime = sd.breakResumeTime || null;
+        return out;
+      }
+      if (out.status === 'open') {
+        if (sd.sessionDate) {
+          const vs = await db.collection('visits').where('visitDate', '==', sd.sessionDate).get();
+          out.active = vs.docs.filter((d) => !d.data().checkoutTime && !d.data().isStaff).length;
+        }
+        if (sd.layoutId) {
+          const l = await db.collection('layouts').doc(String(sd.layoutId)).get();
+          if (l.exists) out.seats = l.data().seats;
+        }
+      }
       return out;
-    }
-    if (out.status === 'open') {
-      if (sd.sessionDate) {
-        const vs = await db.collection('visits').where('visitDate', '==', sd.sessionDate).get();
-        out.active = vs.docs.filter((d) => !d.data().checkoutTime && !d.data().isStaff).length;
-      }
-      if (sd.layoutId) {
-        const l = await db.collection('layouts').doc(String(sd.layoutId)).get();
-        if (l.exists) out.seats = l.data().seats;
-      }
-    }
+    })();
+    const [out] = await Promise.all([statusP, logP]);
     return out;
   });
 
