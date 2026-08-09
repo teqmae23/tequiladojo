@@ -6,7 +6,7 @@
  *
  * accessLogs/{autoId}:
  *   memberId  会員ドキュメントID(realId)
- *   name      会員名（表示用の非正規化）
+ *   name      会員のニックネーム（無ければ会員名。表示用の非正規化）
  *   page      ページキー（下の PAGE_KEYS）
  *   authUid   認証UID（ルールで request.auth.uid と一致を強制）
  *   at        serverTimestamp
@@ -62,7 +62,7 @@
           var m = snap.docs[0].data() || {};
           db.collection('accessLogs').add({
             memberId: snap.docs[0].id,
-            name: m.name || '',
+            name: m.nickname || m.name || '',
             page: page,
             authUid: user.uid,
             at: firebase.firestore.FieldValue.serverTimestamp()
