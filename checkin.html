@@ -639,6 +639,7 @@ function loadAll(){
     var sessionsSnap=results[5];
     currentSession=session;
     cache.sessions=sessionsSnap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    updateCheckinBtnState();
     cache.allVisits=visitsSnap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
     cache.visits=cache.allVisits.filter(function(v){ return AuthRole.isVisitInSession(v, session); });
     var sessionIds=new Set(cache.visits.map(function(v){return v.id;}));
@@ -664,6 +665,7 @@ g('btn-refresh').addEventListener('click',function(){
     var session2=results[2];
     currentSession=session2; // グローバルに保存
     cache.sessions=results[3].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    updateCheckinBtnState();
     cache.allVisits=visitsSnap2.docs.map(function(d){return Object.assign({id:d.id},d.data());});
     cache.visits=cache.allVisits.filter(function(v){ return AuthRole.isVisitInSession(v, session2); });
     var sessionIds2=new Set(cache.visits.map(function(v){return v.id;}));
@@ -1739,7 +1741,27 @@ function generateRegCode(){
   return code;
 }
 
+// 営業中（当日〜2日以内で未閉店のセッションがある）かどうか。閉店中は新規来場を無効化する。
+function storeIsOpenNow(){
+  var now=new Date(), valid=[];
+  for(var o=0;o<=2;o++){ var d=new Date(now.getTime()-o*86400000);
+    valid.push(String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')); }
+  return (cache.sessions||[]).some(function(s){
+    if(s.closeTime) return false;                 // 閉店済み（closeTimeあり）は営業中でない
+    var sd=String(s.date||s.id||'').slice(0,6);
+    return sd && valid.indexOf(sd)>=0;            // 直近の未閉店セッション＝営業中
+  });
+}
+function updateCheckinBtnState(){
+  var btn=document.getElementById('btn-checkin'); if(!btn) return;
+  var open=storeIsOpenNow();
+  btn.disabled=!open;
+  btn.style.opacity=open?'':'0.45';
+  btn.style.cursor=open?'':'not-allowed';
+  btn.title=open?'':'閉店中は新規来場を登録できません';
+}
 g('btn-checkin').addEventListener('click',async function(){
+  if(!storeIsOpenNow()){ toast('閉店中は新規来場を登録できません','err'); return; }
   var today=todayStr6();
   _nextSeq=await calcNextSeq(today);
   _checkinGroup={ id: await calcNextGroupId(today), total:1, current:1 };
