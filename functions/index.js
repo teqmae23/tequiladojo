@@ -489,11 +489,11 @@ async function lookupCountry(ip) {
 }
 async function recordTopAccess(context) {
   const req = context && context.rawRequest;
-  if (!req) return;
+  if (!req) { console.warn('[topAccess] no rawRequest'); return; }
   const xff = (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-appengine-user-ip'] || req.headers['fastly-client-ip'])) || '';
   let ip = String(xff).split(',')[0].trim();
   if (!ip && req.ip) ip = String(req.ip);
-  if (!ip) return;
+  if (!ip) { console.warn('[topAccess] no ip (xff=' + JSON.stringify(xff) + ')'); return; }
   const crypto = require('crypto');
   const SALT = 'tequiladojo-topaccess-v1'; // 固定ソルト（必要なら将来Secret化）。生IPは保存しない。
   const ipHash = crypto.createHash('sha256').update(SALT + '|' + ip).digest('hex').slice(0, 40);
@@ -506,6 +506,7 @@ async function recordTopAccess(context) {
   const snap = await ref.get();
   if (snap.exists) {
     await ref.update({ hits: FV.increment(1), lastAt: FV.serverTimestamp() });
+    console.log('[topAccess] hit++ ' + dayCompact + '_' + ipHash.slice(0, 8));
     return;
   }
   const geo = await lookupCountry(ip);
@@ -514,12 +515,16 @@ async function recordTopAccess(context) {
     country: geo.name || '', countryCode: geo.code || '',
     hits: 1, firstAt: FV.serverTimestamp(), lastAt: FV.serverTimestamp(),
   });
+  console.log('[topAccess] new ' + dayCompact + '_' + ipHash.slice(0, 8) + ' country=' + (geo.name || '?'));
 }
 
 exports.getStoreStatus = functions.region('asia-northeast1')
   .https.onCall(async (data, context) => {
     // TOPページからの呼び出し時のみアクセス記録（本来のステータス応答には影響させない）
-    const logP = (data && data.logTop) ? recordTopAccess(context).catch(() => {}) : Promise.resolve();
+    console.log('[topAccess] getStoreStatus called, logTop=' + !!(data && data.logTop));
+    const logP = (data && data.logTop)
+      ? recordTopAccess(context).catch((e) => console.error('[topAccess] error:', (e && e.message) || e))
+      : Promise.resolve();
     const statusP = (async () => {
       const doc = await db.collection('storeStatus').doc('current').get();
       if (!doc.exists) return { status: 'closed' };
