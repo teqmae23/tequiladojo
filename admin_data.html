@@ -3120,6 +3120,7 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
 
   var totalOrders=visibleOrders.filter(function(o){return o.served!==0;}).length;
   var totalAmt=visibleVisits.reduce(function(s,v){return s+(v.amount||0);},0);
+  var totalCardAmt=visibleVisits.reduce(function(s,v){return (String(v.payment)==='2')?s+(v.amount||0):s;},0);
 
   // 以後は visible なものだけ使う
   visits=visibleVisits; orders=visibleOrders;
@@ -3133,7 +3134,8 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
     +' &nbsp;セッション: <strong>'+sessions.length+'</strong>'
     +' &nbsp;来場: <strong>'+visits.filter(function(v){return !v.isStaff;}).length+'</strong>'
     +' &nbsp;注文: <strong>'+totalOrders+'</strong>'
-    +' &nbsp;売上合計: <strong>¥'+totalAmt.toLocaleString()+'</strong>'+hiddenNote+'</div>'
+    +' &nbsp;売上合計: <strong>¥'+totalAmt.toLocaleString()+'</strong>'
+    +' &nbsp;<span style="color:var(--gold-d)">💳カード: <strong>¥'+totalCardAmt.toLocaleString()+'</strong></span>'+hiddenNote+'</div>'
     +'<div style="display:flex;gap:6px">'
     +'<button class="btn bs sm" onclick="batchHideVisits(\''+yymmdd+'\')" title="この日の来場データを全件 hidden:true にする" style="font-size:10px">⚠ 異常来場を非表示</button>'
     +'<button class="btn bs sm" onclick="exportTreeCSV(\''+yymmdd+'\')" title="セッション・来場・注文をCSVでダウンロード">CSVバックアップ</button>'
@@ -3448,6 +3450,7 @@ function printDayReport(yymmdd){
   var totalVisits=visits.filter(function(v){return !v.isStaff;}).length;
   var totalOrders=orders.filter(function(o){return o.served!==0&&!o.deleted;}).length;
   var totalSales=visits.filter(function(v){return !v.isStaff;}).reduce(function(s,v){return s+(v.amount||0);},0);
+  var totalCard=visits.filter(function(v){return !v.isStaff;}).reduce(function(s,v){return (String(v.payment)==='2')?s+(v.amount||0):s;},0);
 
   var dt=yymmddToDate(yymmdd);
   var DOW=['日','月','火','水','木','金','土'];
@@ -3494,7 +3497,8 @@ function printDayReport(yymmdd){
     +'セッション <strong>'+sessions.length+'</strong>　'
     +'来場 <strong>'+totalVisits+'</strong>名　'
     +'注文 <strong>'+totalOrders+'</strong>件　'
-    +'売上合計 <strong>'+yen(totalSales)+'</strong>'
+    +'売上合計 <strong>'+yen(totalSales)+'</strong>　'
+    +'カード決済 <strong>'+yen(totalCard)+'</strong>'
     +'</div>';
 
   sessions.forEach(function(ses){
@@ -3502,13 +3506,14 @@ function printDayReport(yymmdd){
     var guestVisits=sesVisits.filter(function(v){return !v.isStaff;});
     var staffVisits=sesVisits.filter(function(v){return v.isStaff;});
     var sesSales=guestVisits.reduce(function(s,v){return s+(v.amount||0);},0);
+    var sesCard=guestVisits.reduce(function(s,v){return (String(v.payment)==='2')?s+(v.amount||0):s;},0);
     var openDisp=ses.openTime?fmtTime(ses.openTime):'—';
     var closeDisp=ses.closeTime?fmtTime(ses.closeTime):'—';
 
     html+='<div class="session">'
       +'<div class="ses-head">'
       +'<span>セッション '+escHtml(ses.id)+'　'+openDisp+' 〜 '+closeDisp+'</span>'
-      +'<span>来場 '+guestVisits.length+'名　売上 '+yen(sesSales)+'</span>'
+      +'<span>来場 '+guestVisits.length+'名　売上 '+yen(sesSales)+(sesCard>0?'（カード '+yen(sesCard)+'）':'')+'</span>'
       +'</div>';
 
     guestVisits.sort(function(a,b){return (a.visitTime||a.id).localeCompare(b.visitTime||b.id);});
@@ -5813,6 +5818,7 @@ async function loadPerfCal(){
         var dayVis=visList.filter(function(v){return v.visitDate===yymmdd;});
         var guestCount=dayVis.filter(function(v){return !v.isStaff;}).length;
         var sales=dayVis.reduce(function(s,v){return s+(v.amount||0);},0);
+        var cardSales=dayVis.reduce(function(s,v){return (String(v.payment)==='2')?s+(v.amount||0):s;},0);
         var dayVisIdSet={};
         dayVis.forEach(function(v){dayVisIdSet[v.id]=true;});
 
@@ -5827,12 +5833,12 @@ async function loadPerfCal(){
           tequilaMl=dayVis.reduce(function(s,v){return s+(v.tequilaAmount||0);},0);
         }
 
-        dayData[yymmdd]={sessions:daySes,guestCount:guestCount,sales:sales,tequilaMl:tequilaMl,hasVisits:dayVis.length>0};
+        dayData[yymmdd]={sessions:daySes,guestCount:guestCount,sales:sales,cardSales:cardSales,tequilaMl:tequilaMl,hasVisits:dayVis.length>0};
       })(yy+mm+String(dd).padStart(2,'0'));
     }
 
     // 月全体の集計: セッションのある日のみ（セルに表示される日と一致させる）
-    var totalGuests=0,totalMl=0,totalSales=0;
+    var totalGuests=0,totalMl=0,totalSales=0,totalCard=0;
     var orphanGuests=0; // セッションのない日の来場数
     Object.keys(dayData).forEach(function(k){
       var dd=dayData[k];
@@ -5840,6 +5846,7 @@ async function loadPerfCal(){
         totalGuests+=dd.guestCount;
         totalMl+=dd.tequilaMl;
         totalSales+=dd.sales;
+        totalCard+=dd.cardSales||0;
       } else if(dd.hasVisits){
         orphanGuests+=dd.guestCount;
       }
@@ -5848,7 +5855,8 @@ async function loadPerfCal(){
     var summaryHtml=''
       +'<div class="perf-summary-chip"><span class="lbl">月間来場人数</span><span class="val">'+totalGuests+'<small style="font-size:12px;font-weight:400"> 名</small></span></div>'
       +'<div class="perf-summary-chip"><span class="lbl">提供テキーラ合計</span><span class="val">'+totalMl+'<small style="font-size:12px;font-weight:400"> ml</small></span></div>'
-      +'<div class="perf-summary-chip"><span class="lbl">月間会計合計</span><span class="val">¥'+Number(totalSales).toLocaleString()+'</span></div>';
+      +'<div class="perf-summary-chip"><span class="lbl">月間会計合計</span><span class="val">¥'+Number(totalSales).toLocaleString()+'</span></div>'
+      +'<div class="perf-summary-chip"><span class="lbl">うちカード決済</span><span class="val" style="color:var(--gold-d)">¥'+Number(totalCard).toLocaleString()+'</span></div>';
     // 孤立来場（セッションのない日の来場）がある場合は警告表示
     if(orphanGuests>0){
       summaryHtml+='<div class="perf-summary-chip" style="border-color:rgba(140,40,24,.3);background:#fdf0ee">'
@@ -5905,6 +5913,7 @@ function renderPerfCal(y,mo,daysInMonth,dayData){
       html+='<div class="perf-time">'+openT+' – '+closeT+'</div>';
       html+='<div class="perf-stat">'+d.guestCount+'名 / '+d.tequilaMl+'ml</div>';
       html+='<div class="perf-sales">¥'+Number(d.sales).toLocaleString()+'</div>';
+      if(d.cardSales>0) html+='<div class="perf-card-sales" style="font-size:10px;font-weight:600;color:var(--gold-d)">💳¥'+Number(d.cardSales).toLocaleString()+'</div>';
     } else if(hasOrphan){
       // セッションのない日に来場データあり → 異常データとして表示
       html+='<div style="font-size:9px;color:var(--red);font-weight:600">⚠ 異常</div>';
