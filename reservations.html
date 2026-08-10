@@ -174,6 +174,15 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       </div>
     </div>
 
+    <!-- 会員からの予約申請（承認待ち） -->
+    <div class="card" id="req-card" style="margin-bottom:18px;display:none">
+      <div class="toolbar" style="justify-content:space-between">
+        <div style="font-weight:600;color:var(--gold-d);font-size:13px">会員からの予約申請 <span id="req-count" style="color:var(--red)"></span></div>
+        <button class="btn bs sm" id="btn-reload-req">再読込</button>
+      </div>
+      <div id="req-body" style="padding:6px 14px 14px"></div>
+    </div>
+
     <!-- 一覧テーブル -->
     <div class="card">
       <div class="toolbar">
@@ -361,6 +370,7 @@ AuthRole.requireOwner(auth,
     g("temail").textContent=user.email;
     loadReservations();
     loadMembers();
+    loadRequests();
   },
   function(){
     g("login-screen").style.display="flex";
@@ -461,6 +471,95 @@ function setNonMemberMode(non){
     updateCustomerName();
     closePicker();
   });
+})();
+
+// ── 会員からの予約申請（承認制） ─────────────────────────────
+var requests = [];
+function loadRequests(){
+  db.collection("reservationRequests").where("status","==","pending").get()
+    .then(function(snap){
+      requests = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+      requests.sort(function(a,b){ return String(a.reservationDate||"").localeCompare(String(b.reservationDate||"")); });
+      renderRequests();
+    })
+    .catch(function(){ var c=g("req-card"); if(c) c.style.display="none"; });
+}
+function renderRequests(){
+  var card=g("req-card"), body=g("req-body"), cnt=g("req-count");
+  if(!requests.length){ if(card) card.style.display="none"; return; }
+  if(card) card.style.display="";
+  if(cnt) cnt.textContent="（"+requests.length+"件）";
+  body.innerHTML = requests.map(function(r){
+    return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 0;border-bottom:1px solid var(--border)">'
+      +'<span class="mono" style="min-width:74px">'+fmtDate(r.reservationDate)+'</span>'
+      +'<span class="mono dim">'+fmtTime(r.startTime)+'〜'+fmtTime(r.endTime)+'</span>'
+      +'<span style="font-weight:600">'+(r.guests||"?")+'名</span>'
+      +'<span>'+escHtml(r.memberName||"")+(r.memberId?' <span class="mono dim">('+escHtml(r.memberId)+')</span>':'')+'</span>'
+      +(r.memo?'<span class="dim" style="font-size:11px">'+escHtml(r.memo)+'</span>':'')
+      +'<span style="margin-left:auto;display:flex;gap:6px">'
+        +'<button class="btn bp sm" data-approve="'+escHtml(r.id)+'">承認</button>'
+        +'<button class="btn bd sm" data-reject="'+escHtml(r.id)+'">却下</button>'
+      +'</span></div>';
+  }).join("");
+}
+function schKeyOf(ymd){ return "20"+ymd.slice(0,2)+ymd.slice(2,4)+ymd.slice(4,6); }
+function approveRequest(id){
+  var req = requests.find(function(r){ return r.id===id; }); if(!req) return;
+  var date=req.reservationDate, start=req.startTime, end=req.endTime, guests=parseInt(req.guests)||0;
+  // 貸切の重なりは承認不可
+  var cc = reservations.find(function(r){ return r.reservationDate===date && isCharter(r) && timeOverlap(start,end,r.startTime,r.endTime); });
+  if(cc){ toast("その時間帯は貸切のため承認できません（"+cc.id+"）","err"); return; }
+  // 定員（席数）チェック: 重なる確定予約の人数合計＋今回
+  db.collection("schedules").doc(schKeyOf(date)).get().then(function(doc){
+    var cap=(doc.exists && doc.data().capacity!=null)?parseInt(doc.data().capacity)||6:6;
+    var used=reservations.reduce(function(s,r){ return (r.reservationDate===date && timeOverlap(start,end,r.startTime,r.endTime))?s+(parseInt(r.guests)||0):s; }, 0);
+    var total=used+guests;
+    if(total>cap && !confirm("この時間帯は席数"+cap+"名に対し、確定"+used+"名＋今回"+guests+"名＝"+total+"名で定員を超えます。\nこのまま承認して確定しますか？")) return;
+    doApprove(req);
+  }).catch(function(){ doApprove(req); });
+}
+function doApprove(req){
+  var newId=genRsvId();
+  if(reservations.some(function(r){ return r.id===newId; })){ toast("予約IDが重複しました。再読込してください","err"); return; }
+  rsvSeqCounter++;
+  journaledSet("reservations",newId,{
+    reservationId:  newId,
+    reservationDate: req.reservationDate,
+    startTime:      req.startTime,
+    endTime:        req.endTime,
+    customerCode:   String(req.memberId||"").padStart(6,"0"),
+    customerName:   req.memberName||null,
+    nonMember:      false,
+    guests:         parseInt(req.guests)||0,
+    charterType:    0,
+    memo:           req.memo||null,
+    source:         "member_request",
+    createdAt:      firebase.firestore.FieldValue.serverTimestamp()
+  },{merge:true})
+  .then(function(){
+    return db.collection("reservationRequests").doc(req.id).update({
+      status:"approved", reservationId:newId,
+      approvedAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+  })
+  .then(function(){ toast("承認して予約を確定しました（ID: "+newId+"）"); loadReservations(); loadRequests(); })
+  .catch(function(e){ toast("承認失敗: "+e.message,"err"); });
+}
+function rejectRequest(id){
+  if(!confirm("この予約申請を却下しますか？")) return;
+  db.collection("reservationRequests").doc(id).update({
+    status:"rejected", rejectedAt:firebase.firestore.FieldValue.serverTimestamp()
+  })
+  .then(function(){ toast("却下しました"); loadRequests(); })
+  .catch(function(e){ toast("却下失敗: "+e.message,"err"); });
+}
+(function(){
+  var rb=g("req-body");
+  if(rb) rb.addEventListener("click", function(e){
+    var a=e.target.closest("[data-approve]"); if(a){ approveRequest(a.getAttribute("data-approve")); return; }
+    var j=e.target.closest("[data-reject]");  if(j){ rejectRequest(j.getAttribute("data-reject")); return; }
+  });
+  var rl=g("btn-reload-req"); if(rl) rl.addEventListener("click", loadRequests);
 })();
 
 // ── 統計 ─────────────────────────────────────────────────────
