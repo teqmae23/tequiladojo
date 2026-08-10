@@ -1460,3 +1460,28 @@ exports.terminalListReaders = functions
     } catch (_) { /* locationsの取得失敗は致命的でない */ }
     return { readers, locations };
   });
+
+// カード決済の返金（全額 or 一部）。リーダー非依存でサーバー側APIで実行。
+exports.terminalRefund = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onCall(async (data, context) => {
+    await assertStaff(context);
+    const stripe = require('stripe')(stripeSecretKey.value());
+    const piId = data && data.paymentIntentId;
+    if (!piId) throw new functions.https.HttpsError('invalid-argument', 'paymentIntentId が必要です');
+    const params = { payment_intent: String(piId) };
+    if (data && data.amount != null && data.amount !== '') {
+      const amt = Math.round(Number(data.amount));
+      if (!Number.isInteger(amt) || amt <= 0) {
+        throw new functions.https.HttpsError('invalid-argument', '返金額（円）が不正です');
+      }
+      params.amount = amt; // JPYはゼロ十進のため円そのまま
+    }
+    let refund;
+    try {
+      refund = await stripe.refunds.create(params);
+    } catch (e) {
+      throw new functions.https.HttpsError('failed-precondition', '返金に失敗しました: ' + e.message);
+    }
+    return { ok: true, refundId: refund.id, status: refund.status, amount: refund.amount };
+  });

@@ -985,6 +985,7 @@ function renderVisCard(v, status){
       +'<span style="font-size:13px;font-weight:500;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+'</span>'
       +'<span style="font-size:12px;font-family:var(--mono);color:var(--ink);white-space:nowrap;flex-shrink:0">¥'+totalAmt.toLocaleString()+'</span>'
       +'<button class="btn bs sm" onclick="reprintReceipt(\''+v.id+'\')" style="padding:3px 7px;font-size:10px;flex-shrink:0">🖨</button>'
+      +cardRefundBtn(v)
       +mpBtn
       +'<button class="btn bs sm" data-orders-visit="'+v.id+'" data-orders-name="'+escHtml(name)+'" style="padding:3px 7px;font-size:10px;flex-shrink:0">詳細</button>'
       +'</div>'
@@ -995,6 +996,7 @@ function renderVisCard(v, status){
   var gcClass=v.checkinGroupId&&(window._groupColorMap||{})[v.checkinGroupId]?' '+(window._groupColorMap||{})[v.checkinGroupId]:'';
   var actionBtn=isPaid
     ?'<button class="btn bs sm" onclick="reprintReceipt(\''+v.id+'\')" style="padding:3px 7px;font-size:10px;flex-shrink:0">🖨</button>'
+      +cardRefundBtn(v)
       +'<button class="btn bs sm" data-checkout-time="'+v.id+'" style="padding:3px 7px;font-size:10px;color:var(--teal);border-color:var(--teal);flex-shrink:0">🚪退場</button>'
     :'<button class="btn bs sm" data-checkout-visit="'+v.id+'" style="padding:3px 7px;font-size:10px;flex-shrink:0">💳会計</button>';
 
@@ -2516,6 +2518,39 @@ function closeTerminalConfig(){ g('m-terminal-config').style.display='none'; }
       .catch(function(e){ toast('保存失敗（オーナー権限が必要）: '+e.message,'err'); });
   });
 })();
+
+// ── カード返金 ─────────────────────────────────────────────────
+function cardRefundBtn(v){
+  if(!v || v.payment!=='2' || !v.stripePaymentIntentId) return '';
+  var maxAmt=parseInt(v.amount)||0, already=parseInt(v.refundedAmount)||0;
+  if(maxAmt-already<=0) return '<span style="font-size:9px;color:#8c2818;flex-shrink:0">返金済</span>';
+  return '<button class="btn bs sm" data-refund-visit="'+v.id+'" style="padding:3px 7px;font-size:10px;color:#8c2818;border-color:#8c2818;flex-shrink:0">↩返金</button>';
+}
+document.addEventListener('click', function(e){
+  var b=e.target.closest('[data-refund-visit]'); if(!b) return;
+  var vid=b.getAttribute('data-refund-visit');
+  var v=cache.visits.find(function(x){ return x.id===vid; });
+  if(!v||!v.stripePaymentIntentId){ toast('カード決済情報が見つかりません','err'); return; }
+  var maxAmt=parseInt(v.amount)||0, already=parseInt(v.refundedAmount)||0, refundable=maxAmt-already;
+  if(refundable<=0){ toast('返金可能額がありません','inf'); return; }
+  var inp=prompt('返金額を入力（最大 ¥'+refundable.toLocaleString()+'）\n※空欄で全額返金', String(refundable));
+  if(inp===null) return;
+  var amt=(String(inp).trim()==='')?refundable:(parseInt(String(inp).replace(/[^0-9]/g,''))||0);
+  if(amt<=0||amt>refundable){ toast('返金額が不正です','err'); return; }
+  if(!confirm('¥'+amt.toLocaleString()+' を返金します。よろしいですか？')) return;
+  b.disabled=true;
+  stripeFns.httpsCallable('terminalRefund')({paymentIntentId:v.stripePaymentIntentId, amount:amt}).then(function(res){
+    var newRefunded=already+amt;
+    return db.collection('visits').doc(vid).update({
+      refundedAmount:newRefunded, lastRefundId:(res.data&&res.data.refundId)||null, refundedAt:nowHHMMSS()
+    }).then(function(){
+      if(v) v.refundedAmount=newRefunded;
+      if(typeof writeJournal==='function'){ try{ writeJournal('update','visits',vid,{refundedAmount:already},{refundedAmount:newRefunded}); }catch(_){} }
+      toast('返金しました（¥'+amt.toLocaleString()+'）');
+      renderVisitorList();
+    });
+  }).catch(function(err){ b.disabled=false; toast('返金失敗: '+(err.message||''),'err'); });
+});
 
 function doCheckoutSave(){
   var btn=g('m-checkout-save');
