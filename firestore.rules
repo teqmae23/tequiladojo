@@ -101,6 +101,29 @@ service cloud.firestore {
 
     match /attendance/{id} { allow read, write: if isStaff(); }
     match /reservations/{id} { allow read, write: if isStaff(); }
+
+    // 会員セルフ来場予約リクエスト（承認制）。
+    // 会員本人が自分の申請を作成／閲覧／取消（pendingのみ）でき、
+    // 承認・却下（確定予約の作成は reservations 側）はスタッフが行う。
+    // 作成時は authUid を本人に固定し、status=pending・想定フィールドのみ許可。
+    match /reservationRequests/{id} {
+      allow read: if isStaff()
+        || (realUser() && resource.data.get('authUid', '') == request.auth.uid);
+      allow create: if realUser()
+        && request.resource.data.authUid == request.auth.uid
+        && request.resource.data.get('status', '') == 'pending'
+        && request.resource.data.keys().hasOnly(
+             ['authUid', 'memberId', 'memberName', 'reservationDate',
+              'startTime', 'endTime', 'guests', 'memo', 'status', 'createdAt'])
+        && request.resource.data.reservationDate is string
+        && request.resource.data.guests is int
+        && request.resource.data.guests > 0
+        && request.resource.data.guests <= 50;
+      allow update: if isStaff();
+      allow delete: if isStaff()
+        || (realUser() && resource.data.get('authUid', '') == request.auth.uid
+            && resource.data.get('status', '') == 'pending');
+    }
     match /staffRoles/{uid} {
       allow read: if isStaff() || (signedIn() && request.auth.uid == uid);
       allow write: if isOwner();
