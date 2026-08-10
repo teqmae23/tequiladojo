@@ -438,10 +438,10 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       <!-- 会計入力 -->
       <div class="frow" style="margin-bottom:10px;margin-top:10px">
         <div class="fg" style="margin-bottom:0">
-          <label class="fl">会計方法 <span onclick="openTerminalConfig()" style="color:#7a5610;cursor:pointer;font-size:10px;text-decoration:underline">⚙️端末</span></label>
+          <label class="fl">会計方法</label>
           <select class="fs" id="co-payment">
             <option value="0">0: 現金</option>
-            <option value="2">2: カード（Stripe）</option>
+            <option value="2">2: カード</option>
             <option value="1">1: PayPay</option>
             <option value="3">3: PayPal</option>
             <option value="5">5: ツケ</option>
@@ -503,52 +503,12 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
 </div>
 
 
-<!-- カード決済オーバーレイ（Stripe Terminal） -->
-<div id="terminal-overlay" style="position:fixed;inset:0;background:rgba(24,17,10,.72);z-index:3000;display:none;align-items:center;justify-content:center;padding:20px">
-  <div style="background:#fff;border-radius:16px;max-width:360px;width:100%;padding:28px 24px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.3)">
-    <div style="font-size:40px;margin-bottom:8px">💳</div>
-    <div style="font-size:13px;color:#4a3820;margin-bottom:4px">カード決済</div>
-    <div id="terminal-amount" style="font-size:30px;font-weight:700;color:#18110a;margin-bottom:14px">¥0</div>
-    <div id="terminal-status" style="font-size:14px;color:#7a5610;min-height:44px;margin-bottom:18px;white-space:pre-line">端末に金額を送信中...</div>
-    <button id="terminal-cancel-btn" style="width:100%;padding:12px;border:1px solid #ccc;border-radius:8px;background:#f5f2ec;color:#8c2818;font-size:14px;font-weight:600">決済をキャンセル</button>
-  </div>
-</div>
-
-<!-- カード端末設定 -->
-<div id="m-terminal-config" style="position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:2500;display:none;align-items:center;justify-content:center;padding:16px">
-  <div style="background:#fff;border-radius:14px;max-width:460px;width:100%;max-height:92vh;overflow-y:auto">
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid #eee">
-      <div style="font-size:16px;font-weight:700;color:#7a5610">💳 カード端末設定</div>
-      <button id="tc-close" style="background:none;border:none;font-size:20px;color:#999">✕</button>
-    </div>
-    <div style="padding:18px 20px">
-      <div style="font-size:12px;color:#888;margin-bottom:4px">Reader ID（端末ID）</div>
-      <input id="tc-reader" placeholder="tmr_xxx など" style="width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:14px;margin-bottom:10px">
-      <div style="display:flex;gap:8px;margin-bottom:12px">
-        <button id="tc-list" style="flex:1;padding:10px;border:1px solid #ccc;border-radius:8px;background:#f5f2ec;font-size:13px">端末一覧を取得</button>
-        <button id="tc-save" style="flex:1;padding:10px;border:none;border-radius:8px;background:#7a5610;color:#fff;font-size:13px;font-weight:600">保存</button>
-      </div>
-      <div id="tc-readers" style="font-size:13px"></div>
-      <div style="font-size:11px;color:#999;margin-top:12px;line-height:1.6">
-        ※ 保存はオーナー権限が必要です。端末はStripeダッシュボード（Terminal → ロケーション／リーダー）で登録し、そのReader IDを設定してください。
-      </div>
-    </div>
-  </div>
-</div>
-
 <div id="toasts"></div>
 
 <script>
 if (!firebase.apps.length) { firebase.initializeApp(FIREBASE_CONFIG); }
 var auth = firebase.auth();
 var db   = firebase.firestore();
-// Stripe決済系のCloud Functionsは us-central1（サブスク決済関数と同リージョン）
-var stripeFns = firebase.app().functions('us-central1');
-
-// ── Stripe Terminal（対面カード決済）状態 ──────────────────────
-var _cardPaid = false;              // 当該会計でカード決済が完了したか
-var _cardPaymentIntentId = null;    // 完了したPaymentIntent ID
-var _terminalPoll = null;           // {iv, piId, readerId, reject}
 
 // ── ユーティリティ ─────────────────────────────────────────────
 function g(id){ return document.getElementById(id); }
@@ -865,6 +825,41 @@ async function rejectCheckinRequest(reqId){
   }catch(e){ toast('却下失敗: '+e.message,'err'); }
 }
 
+// ── カード返金（記録のみ・端末は非連動） ───────────────────────
+// カード決済（payment=2）はStripe端末側で集金・返金を行い、当POSでは記録のみ。
+function cardRefundBtn(v){
+  if(!v || v.payment!=='2') return '';
+  var maxAmt=parseInt(v.amount)||0, already=parseInt(v.refundedAmount)||0;
+  if(maxAmt>0 && maxAmt-already<=0) return '<span style="font-size:9px;color:#8c2818;flex-shrink:0">返金済</span>';
+  return '<button class="btn bs sm" data-refund-visit="'+v.id+'" style="padding:3px 7px;font-size:10px;color:#8c2818;border-color:#8c2818;flex-shrink:0">↩返金</button>';
+}
+document.addEventListener('click', function(e){
+  var b=e.target.closest('[data-refund-visit]'); if(!b) return;
+  var vid=b.getAttribute('data-refund-visit');
+  var v=cache.visits.find(function(x){ return x.id===vid; });
+  if(!v){ toast('来場情報が見つかりません','err'); return; }
+  var maxAmt=parseInt(v.amount)||0, already=parseInt(v.refundedAmount)||0;
+  var refundable=maxAmt>0?(maxAmt-already):0;
+  var def=refundable>0?String(refundable):'';
+  var inp=prompt('返金額（円）を入力してください。\n※端末（Stripe）側で返金操作を行った上で、記録します。'
+    +(maxAmt>0?'\n会計額 ¥'+maxAmt.toLocaleString()+(already>0?' / 返金済 ¥'+already.toLocaleString():''):''), def);
+  if(inp===null) return;
+  var amt=parseInt(String(inp).replace(/[^0-9]/g,''))||0;
+  if(amt<=0){ toast('返金額が不正です','err'); return; }
+  if(maxAmt>0 && amt>refundable){ toast('返金可能額（¥'+refundable.toLocaleString()+'）を超えています','err'); return; }
+  if(!confirm('¥'+amt.toLocaleString()+' の返金を記録します。\n（実際の返金は端末側で操作してください）')) return;
+  var newRefunded=already+amt;
+  db.collection('visits').doc(vid).update({ refundedAmount:newRefunded, refundedAt:nowHHMMSS() })
+    .then(function(){
+      if(v) v.refundedAmount=newRefunded;
+      var av=cache.allVisits&&cache.allVisits.find(function(x){return x.id===vid;}); if(av) av.refundedAmount=newRefunded;
+      if(typeof writeJournal==='function'){ try{ writeJournal('update','visits',vid,{refundedAmount:already},{refundedAmount:newRefunded}); }catch(_){} }
+      toast('返金を記録しました（¥'+amt.toLocaleString()+'）');
+      renderVisitorList();
+    })
+    .catch(function(err){ toast('返金記録に失敗: '+(err.message||''),'err'); });
+});
+
 function renderVisitorList(){
   var el=g('visitor-list');
 
@@ -985,6 +980,7 @@ function renderVisCard(v, status){
       +'<span style="font-size:13px;font-weight:500;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+'</span>'
       +'<span style="font-size:12px;font-family:var(--mono);color:var(--ink);white-space:nowrap;flex-shrink:0">¥'+totalAmt.toLocaleString()+'</span>'
       +'<button class="btn bs sm" onclick="reprintReceipt(\''+v.id+'\')" style="padding:3px 7px;font-size:10px;flex-shrink:0">🖨</button>'
+      +cardRefundBtn(v)
       +mpBtn
       +'<button class="btn bs sm" data-orders-visit="'+v.id+'" data-orders-name="'+escHtml(name)+'" style="padding:3px 7px;font-size:10px;flex-shrink:0">詳細</button>'
       +'</div>'
@@ -995,6 +991,7 @@ function renderVisCard(v, status){
   var gcClass=v.checkinGroupId&&(window._groupColorMap||{})[v.checkinGroupId]?' '+(window._groupColorMap||{})[v.checkinGroupId]:'';
   var actionBtn=isPaid
     ?'<button class="btn bs sm" onclick="reprintReceipt(\''+v.id+'\')" style="padding:3px 7px;font-size:10px;flex-shrink:0">🖨</button>'
+      +cardRefundBtn(v)
       +'<button class="btn bs sm" data-checkout-time="'+v.id+'" style="padding:3px 7px;font-size:10px;color:var(--teal);border-color:var(--teal);flex-shrink:0">🚪退場</button>'
     :'<button class="btn bs sm" data-checkout-visit="'+v.id+'" style="padding:3px 7px;font-size:10px;flex-shrink:0">💳会計</button>';
 
@@ -2080,8 +2077,6 @@ function recalcDiscount(){
 function openBulkCheckout(directKeys){
   bulkCheckoutVisitKeys=directKeys||getSelectedVisitIds();
   if(!bulkCheckoutVisitKeys.length) return;
-  // カード決済状態をリセット（新しい会計）
-  _cardPaid=false; _cardPaymentIntentId=null;
 
   // Firestoreから最新注文を取得して表示
   g('checkout-persons-area').innerHTML='<div class="loading">読み込み中...</div>';
@@ -2425,98 +2420,6 @@ function applyPayerDepTab(payerMid, grand, depPay, depAdd, tabMode, tabSettle){
 }
 
 // お会計確定ボタンはonclickでも対応（disabledによるlistener無効化を回避）
-// ── Stripe Terminal 決済（対面カード） ─────────────────────────
-function terminalErrMsg(e){ return (e&&e.message)?('カード決済エラー: '+e.message):'カード決済に失敗しました'; }
-function showTerminalOverlay(amount,msg){ var a=g('terminal-amount'); if(a) a.textContent='¥'+(amount||0).toLocaleString(); setTerminalStatus(msg||''); var ov=g('terminal-overlay'); if(ov) ov.style.display='flex'; }
-function setTerminalStatus(msg){ var el=g('terminal-status'); if(el) el.textContent=msg||''; }
-function hideTerminalOverlay(){ var el=g('terminal-overlay'); if(el) el.style.display='none'; }
-function doTerminalCancel(piId, readerId){ return stripeFns.httpsCallable('terminalCancelPayment')({paymentIntentId:piId, readerId:readerId}).catch(function(){}); }
-
-function runTerminalPayment(amount){
-  return new Promise(function(resolve,reject){
-    db.collection('settings').doc('terminalConfig').get().then(function(doc){
-      var readerId=(doc.exists&&doc.data().readerId)?String(doc.data().readerId):null;
-      if(!readerId){ reject('カード端末が未設定です。会計方法の「⚙️端末」から登録してください。'); return; }
-      showTerminalOverlay(amount,'端末に金額を送信中...');
-      var sessionDate=(typeof cache!=='undefined'&&cache.session&&cache.session.sessionDate)||'';
-      stripeFns.httpsCallable('terminalCollectPayment')({
-        amount:amount, readerId:readerId, description:'テキーラ道場 お会計',
-        reference:bulkCheckoutVisitKeys.join(','), sessionDate:sessionDate
-      }).then(function(res){
-        var piId=res.data&&res.data.paymentIntentId;
-        if(!piId){ hideTerminalOverlay(); reject('決済の開始に失敗しました'); return; }
-        setTerminalStatus('カードを端末にタッチ／挿入してください');
-        pollTerminal(piId, readerId, resolve, reject);
-      }).catch(function(e){ hideTerminalOverlay(); reject(terminalErrMsg(e)); });
-    }).catch(function(){ reject('端末設定の読み込みに失敗しました'); });
-  });
-}
-function pollTerminal(piId, readerId, resolve, reject){
-  var tries=0, maxTries=72; // 72 × 2.5s = 180秒
-  if(_terminalPoll&&_terminalPoll.iv) clearInterval(_terminalPoll.iv);
-  var iv=setInterval(function(){
-    tries++;
-    stripeFns.httpsCallable('terminalPaymentStatus')({paymentIntentId:piId}).then(function(res){
-      var st=res.data&&res.data.status;
-      if(st==='succeeded'){ clearInterval(iv); _terminalPoll=null; hideTerminalOverlay(); toast('カード決済が完了しました'); resolve(piId); return; }
-      if(st==='canceled'){ clearInterval(iv); _terminalPoll=null; hideTerminalOverlay(); reject('決済がキャンセルされました'); return; }
-      if(st==='requires_payment_method'){ setTerminalStatus('カードを読み取ってください'+(res.data.lastError?'\n（'+res.data.lastError+'）':'')); }
-      else if(st==='processing'){ setTerminalStatus('処理中...'); }
-      else if(st==='requires_capture'){ setTerminalStatus('確定処理中...'); }
-      else { setTerminalStatus('端末で操作してください...'); }
-      if(tries>=maxTries){ clearInterval(iv); _terminalPoll=null; doTerminalCancel(piId, readerId); reject('タイムアウトしました。もう一度お試しください。'); }
-    }).catch(function(){ if(tries>=maxTries){ clearInterval(iv); _terminalPoll=null; reject('通信エラーが発生しました'); } });
-  }, 2500);
-  _terminalPoll={iv:iv, piId:piId, readerId:readerId, reject:reject};
-}
-(function(){
-  var cb=g('terminal-cancel-btn');
-  if(cb) cb.addEventListener('click', function(){
-    if(!_terminalPoll){ hideTerminalOverlay(); return; }
-    var p=_terminalPoll; _terminalPoll=null;
-    if(p.iv) clearInterval(p.iv);
-    setTerminalStatus('キャンセル中...');
-    doTerminalCancel(p.piId, p.readerId).then(function(){ hideTerminalOverlay(); if(p.reject) p.reject('決済をキャンセルしました'); });
-  });
-})();
-
-// ── カード端末設定 ─────────────────────────────────────────────
-function openTerminalConfig(){
-  var rd=g('tc-readers'); if(rd) rd.innerHTML='';
-  db.collection('settings').doc('terminalConfig').get().then(function(doc){
-    sv('tc-reader',(doc.exists&&doc.data().readerId)?doc.data().readerId:'');
-  }).catch(function(){});
-  g('m-terminal-config').style.display='flex';
-}
-function closeTerminalConfig(){ g('m-terminal-config').style.display='none'; }
-(function(){
-  var cl=g('tc-close'); if(cl) cl.addEventListener('click', closeTerminalConfig);
-  var bg=g('m-terminal-config'); if(bg) bg.addEventListener('click', function(e){ if(e.target===this) closeTerminalConfig(); });
-  var lst=g('tc-list'); if(lst) lst.addEventListener('click', function(){
-    var box=g('tc-readers'); box.innerHTML='<div style="color:#999">取得中...</div>';
-    stripeFns.httpsCallable('terminalListReaders')({}).then(function(res){
-      var rs=(res.data&&res.data.readers)||[];
-      if(!rs.length){ box.innerHTML='<div style="color:#999">登録済みの端末がありません。Stripeダッシュボードで登録してください。</div>'; return; }
-      box.innerHTML=rs.map(function(r){
-        return '<div class="tc-reader-row" data-id="'+r.id+'" style="display:flex;justify-content:space-between;gap:8px;padding:9px 10px;border:1px solid #eee;border-radius:8px;margin-bottom:6px;cursor:pointer">'
-          +'<span>'+(r.label||r.id)+' <span style="color:#999;font-size:11px">'+(r.deviceType||'')+'</span></span>'
-          +'<span style="font-size:11px;color:'+(r.status==='online'?'#1a6640':'#999')+'">'+(r.status||'')+'</span></div>';
-      }).join('');
-    }).catch(function(e){ box.innerHTML='<div style="color:#8c2818">取得失敗: '+(e.message||'')+'</div>'; });
-  });
-  var box=g('tc-readers'); if(box) box.addEventListener('click', function(e){
-    var row=e.target.closest('.tc-reader-row'); if(!row) return;
-    sv('tc-reader', row.getAttribute('data-id'));
-  });
-  var sv2=g('tc-save'); if(sv2) sv2.addEventListener('click', function(){
-    var rid=gv('tc-reader'); if(!rid){ toast('reader IDを入力してください','err'); return; }
-    db.collection('settings').doc('terminalConfig').set(
-      {readerId:rid, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
-      .then(function(){ toast('端末設定を保存しました'); closeTerminalConfig(); })
-      .catch(function(e){ toast('保存失敗（オーナー権限が必要）: '+e.message,'err'); });
-  });
-})();
-
 function doCheckoutSave(){
   var btn=g('m-checkout-save');
   if(btn && btn.disabled) return;
@@ -2541,23 +2444,6 @@ function doCheckoutSave(){
     if(_dt.tabMode) payment='5';                                  // ツケ
     else if(_dt.depPay>0 && _dt.depPay>=_dt.grand) payment='6';   // デポジット全額
   }
-
-  // カード（Stripe Terminal）: 未決済なら先に端末で決済し、成功後に会計を確定する
-  if(payment==='2' && !_cardPaid){
-    var _cardAmt=parseInt((g('co-grand-total').textContent||'0').replace(/[^0-9]/g,''))||0;
-    if(_cardAmt<=0){ toast('金額が0円のためカード決済できません','err'); return; }
-    if(btn) btn.disabled=true;
-    runTerminalPayment(_cardAmt).then(function(piId){
-      _cardPaid=true; _cardPaymentIntentId=piId;
-      if(btn) btn.disabled=false;  // 冒頭ガードを通すため再開放してから再入
-      doCheckoutSave();  // 決済成功後に本処理を続行
-    }).catch(function(msg){
-      if(msg) toast(msg,'err');
-      if(btn) btn.disabled=false;
-    });
-    return;
-  }
-
   var receipt=gv('co-receipt')||'0';
   var now=nowHHMMSS();
   var alsoCheckout=g('co-also-checkout')&&g('co-also-checkout').checked;
@@ -2577,7 +2463,6 @@ function doCheckoutSave(){
       checkoutPayTime: now
     };
     if(alsoCheckout) updateData.checkoutTime=now;
-    if(payment==='2' && _cardPaymentIntentId) updateData.stripePaymentIntentId=_cardPaymentIntentId;
     // 支払者の来店には、デポジット/ツケの利用内訳を証跡として保存
     if(_dt.used && visitKey===_dt.payerVk){
       updateData.depositUsed=_dt.depPay||0;
