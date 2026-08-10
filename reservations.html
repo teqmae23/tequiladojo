@@ -240,9 +240,19 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <input class="fi mono" id="rsv-date" maxlength="6" placeholder="250409">
         </div>
         <div class="fg">
-          <label class="fl">顧客コード（6桁）<span class="req">*</span> <span style="font-weight:400;color:#888;font-size:11px">タップで会員選択</span></label>
-          <input class="fi mono" id="rsv-customer" maxlength="6" placeholder="タップして本会員を選択" readonly style="cursor:pointer" onclick="openMemberPicker()">
-          <div id="rsv-customer-name" style="font-size:11px;color:#1a6e58;margin-top:3px;min-height:14px"></div>
+          <label class="fl" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span>顧客<span class="req">*</span></span>
+            <label style="display:inline-flex;align-items:center;gap:4px;font-weight:400;color:#555;font-size:11px;cursor:pointer">
+              <input type="checkbox" id="rsv-nonmember" style="width:14px;height:14px;cursor:pointer">非会員
+            </label>
+          </label>
+          <div id="rsv-member-mode">
+            <input class="fi mono" id="rsv-customer" maxlength="6" placeholder="タップして本会員を選択" readonly style="cursor:pointer" onclick="openMemberPicker()">
+            <div id="rsv-customer-name" style="font-size:11px;color:#1a6e58;margin-top:3px;min-height:14px"></div>
+          </div>
+          <div id="rsv-nonmember-mode" style="display:none">
+            <input class="fi" id="rsv-customer-freetext" placeholder="お名前（自由入力）">
+          </div>
         </div>
       </div>
       <div class="frow">
@@ -433,7 +443,14 @@ function updateCustomerName(){
   var m = members.find(function(x){ var c=memberCode(x); return c===code || c.padStart(6,"0")===code; });
   el.textContent = m ? ("→ "+(m.nickname||m.name||"")) : "";
 }
+// 非会員トグル: 会員選択 or 自由入力 の切替
+function setNonMemberMode(non){
+  var mm=g("rsv-member-mode"), nm=g("rsv-nonmember-mode");
+  if(mm) mm.style.display = non ? "none" : "";
+  if(nm) nm.style.display = non ? "" : "none";
+}
 (function(){
+  var nb=g("rsv-nonmember"); if(nb) nb.addEventListener("change", function(){ setNonMemberMode(this.checked); });
   var s=g("picker-search"); if(s) s.addEventListener("input", function(){ renderPicker(this.value); });
   var x=g("mx-picker"); if(x) x.addEventListener("click", closePicker);
   var bg=g("m-picker"); if(bg) bg.addEventListener("click", function(e){ if(e.target===this) closePicker(); });
@@ -463,7 +480,7 @@ function renderTable(){
   var dateF= gv("f-rsv-date");
 
   list = list.filter(function(r){
-    if(q && (r.id||"").indexOf(q)<0 && (r.customerCode||"").indexOf(q)<0) return false;
+    if(q && (r.id||"").indexOf(q)<0 && (r.customerCode||"").indexOf(q)<0 && (r.customerName||"").toLowerCase().indexOf(q)<0) return false;
     if(dateF){
       var yy=dateF.slice(2,4), mm=dateF.slice(5,7), dd=dateF.slice(8,10);
       if(r.reservationDate !== yy+mm+dd) return false;
@@ -491,7 +508,7 @@ function renderTable(){
       +'<td class="mono dim">'+fmtDate(r.reservationDate)+'</td>'
       +'<td class="mono dim">'+fmtTime(r.startTime)+'</td>'
       +'<td class="mono dim">'+fmtTime(r.endTime)+'</td>'
-      +'<td class="mono">'+(r.customerCode||"—")+'</td>'
+      +'<td'+(r.nonMember?'':' class="mono"')+'>'+(r.nonMember?(escHtml(r.customerName||"—")+' <span style="font-size:9px;color:#888;border:1px solid #ccc;border-radius:3px;padding:0 4px">非会員</span>'):(r.customerCode||"—"))+'</td>'
       +'<td style="text-align:center">'+(r.guests||"—")+'</td>'
       +'<td style="text-align:center">'+(isCharter(r)?'<span style="display:inline-block;font-size:10px;font-weight:700;color:#7a5610;background:#f5d580;border-radius:3px;padding:1px 6px">貸切</span>':'—')+'</td>'
       +'<td class="dim" style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(r.memo||"—")+'</td>'
@@ -554,12 +571,18 @@ function openModal(id){
     sv("rsv-guests",   r ? String(r.guests) : "");
     sv("rsv-memo",     r ? r.memo||"" : "");
     g("rsv-charter").checked = isCharter(r);
+    var non = r ? !!r.nonMember : false;
+    g("rsv-nonmember").checked = non;
+    sv("rsv-customer-freetext", r ? (r.customerName||"") : "");
+    setNonMemberMode(non);
     updateCustomerName();
     g("kb-rsv").innerHTML='<span class="keypart kp-nom">'+id+'</span><span class="klabel">reservationId</span>';
   } else {
-    ["rsv-date","rsv-start","rsv-end","rsv-customer","rsv-memo"].forEach(function(i){ sv(i,""); });
+    ["rsv-date","rsv-start","rsv-end","rsv-customer","rsv-memo","rsv-customer-freetext"].forEach(function(i){ sv(i,""); });
     sv("rsv-guests","");
     g("rsv-charter").checked = false;
+    g("rsv-nonmember").checked = false;
+    setNonMemberMode(false);
     updateCustomerName();
     updateKeybox();
   }
@@ -572,7 +595,7 @@ function closeModal(){
 }
 
 function hasInput(){
-  return ["rsv-date","rsv-start","rsv-end","rsv-customer"].some(function(id){ return gv(id)!==""; });
+  return ["rsv-date","rsv-start","rsv-end","rsv-customer","rsv-customer-freetext"].some(function(id){ return gv(id)!==""; });
 }
 
 function genRsvId(){
@@ -592,11 +615,17 @@ g("btn-save-rsv").addEventListener("click",function(){
   var end    = gv("rsv-end");
   var cust   = gv("rsv-customer");
   var guests = gv("rsv-guests");
+  var nonMember = g("rsv-nonmember").checked;
+  var custName  = gv("rsv-customer-freetext");
 
   if(!date||date.length!==6)         { toast("予約日（6桁）は必須です","err"); return; }
   if(!start||start.length!==6)       { toast("開始時間（6桁）は必須です","err"); return; }
   if(!end||end.length!==6)           { toast("終了時間（6桁）は必須です","err"); return; }
-  if(!cust||!/^\d{1,6}$/.test(cust)) { toast("顧客コード（6桁以内の数字）は必須です","err"); return; }
+  if(nonMember){
+    if(!custName)                    { toast("非会員のお名前を入力してください","err"); return; }
+  } else {
+    if(!cust||!/^\d{1,6}$/.test(cust)){ toast("顧客コード（本会員を選択）は必須です","err"); return; }
+  }
   if(!guests)                         { toast("人数は必須です","err"); return; }
   if(start>=end)                      { toast("終了時間は開始時間より後にしてください","err"); return; }
 
@@ -628,7 +657,9 @@ g("btn-save-rsv").addEventListener("click",function(){
     reservationDate: date,
     startTime:      start,
     endTime:        end,
-    customerCode:   cust.padStart(6,"0"),
+    customerCode:   nonMember ? "" : cust.padStart(6,"0"),
+    customerName:   nonMember ? custName : null,
+    nonMember:      nonMember,
     guests:         parseInt(guests),
     charterType:    charter ? 1 : 0,
     memo:           gv("rsv-memo")||null,
@@ -648,7 +679,8 @@ g("btn-export").addEventListener("click",function(){
   var header="予約ID,予約日,開始時間,終了時間,顧客コード,人数,貸切,備考";
   var rows = reservations.map(function(r){
     var memo = (r.memo||"").replace(/,/g,"、");
-    return [r.id, r.reservationDate, r.startTime, r.endTime, r.customerCode, r.guests, isCharter(r)?"貸切":"", memo].join(",");
+    var who = r.nonMember ? ((r.customerName||"")+"（非会員）").replace(/,/g,"、") : r.customerCode;
+    return [r.id, r.reservationDate, r.startTime, r.endTime, who, r.guests, isCharter(r)?"貸切":"", memo].join(",");
   });
   var csv = "\uFEFF"+header+"\n"+rows.join("\n");
   var blob = new Blob([csv],{type:"text/csv;charset=utf-8;"});
