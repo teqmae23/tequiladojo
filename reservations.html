@@ -201,7 +201,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <colgroup>
             <col style="width:90px"><col style="width:80px"><col style="width:80px">
             <col style="width:80px"><col style="width:90px"><col style="width:50px">
-            <col style="width:200px"><col style="width:110px">
+            <col style="width:54px"><col style="width:200px"><col style="width:110px">
           </colgroup>
           <thead><tr>
             <th>予約ID</th>
@@ -210,11 +210,12 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <th>終了時間</th>
             <th>顧客コード</th>
             <th>人数</th>
+            <th>貸切</th>
             <th>備考</th>
             <th>✏️ レコード操作</th>
           </tr></thead>
           <tbody id="tb-rsv">
-            <tr><td colspan="8" class="ec">読み込み中...</td></tr>
+            <tr><td colspan="9" class="ec">読み込み中...</td></tr>
           </tbody>
         </table>
       </div>
@@ -239,8 +240,9 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <input class="fi mono" id="rsv-date" maxlength="6" placeholder="250409">
         </div>
         <div class="fg">
-          <label class="fl">顧客コード（6桁）<span class="req">*</span></label>
-          <input class="fi mono" id="rsv-customer" maxlength="6" placeholder="250001">
+          <label class="fl">顧客コード（6桁）<span class="req">*</span> <span style="font-weight:400;color:#888;font-size:11px">タップで会員選択</span></label>
+          <input class="fi mono" id="rsv-customer" maxlength="6" placeholder="タップして本会員を選択" readonly style="cursor:pointer" onclick="openMemberPicker()">
+          <div id="rsv-customer-name" style="font-size:11px;color:#1a6e58;margin-top:3px;min-height:14px"></div>
         </div>
       </div>
       <div class="frow">
@@ -262,6 +264,12 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         </select>
       </div>
       <div class="fg">
+        <label class="fl" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="rsv-charter" style="width:16px;height:16px;cursor:pointer">
+          <span>貸切営業にする（この日時は他の予約を入力不可）</span>
+        </label>
+      </div>
+      <div class="fg">
         <label class="fl">備考</label>
         <input class="fi" id="rsv-memo" placeholder="特記事項...">
       </div>
@@ -269,6 +277,20 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
     <div class="mfoot">
       <button class="btn bg2" id="btn-cancel-rsv">キャンセル</button>
       <button class="btn bp" id="btn-save-rsv">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 会員選択（本会員のみ） -->
+<div class="mbg" id="m-picker">
+  <div class="modal">
+    <div class="mhead">
+      <div class="mtitle">会員選択（本会員）</div>
+      <button class="mx" id="mx-picker">✕</button>
+    </div>
+    <div class="mbody">
+      <input class="fi" id="picker-search" placeholder="会員名・ニックネーム・IDで検索..." style="margin-bottom:8px">
+      <div id="picker-list" style="max-height:52vh;overflow-y:auto;border:1px solid #ddd;border-radius:8px;background:#fff"></div>
     </div>
   </div>
 </div>
@@ -297,6 +319,9 @@ var col  = db.collection("reservations");
 function g(id)      { return document.getElementById(id); }
 function gv(id)     { var el=g(id); return el?el.value.trim():""; }
 function sv(id,val) { var el=g(id); if(el) el.value=(val==null?"":val); }
+function escHtml(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function isCharter(r){ return r && (r.charterType===1||r.charterType==="1"); }
+function timeOverlap(s1,e1,s2,e2){ return String(s1)<String(e2) && String(s2)<String(e1); }
 
 function toast(msg,type) {
   var el=document.createElement("div");
@@ -312,6 +337,7 @@ function todayStr6(){ var d=new Date(); return String(d.getFullYear()).slice(2)+
 
 // ── 状態 ────────────────────────────────────────────────────
 var reservations = [];
+var members = [];      // 本会員のみ（顧客選択用）
 var editId = null;
 var rsvSeqCounter = 1;
 var sortState = { key:"id", dir:"asc" };
@@ -324,6 +350,7 @@ AuthRole.requireOwner(auth,
     g("app").style.display="block";
     g("temail").textContent=user.email;
     loadReservations();
+    loadMembers();
   },
   function(){
     g("login-screen").style.display="flex";
@@ -362,6 +389,63 @@ function loadReservations(){
     .catch(function(e){ toast("読込失敗: "+e.message,"err"); });
 }
 
+// ── 会員選択（本会員のみ・来場者選択と同様の絞り込み） ──────────
+function loadMembers(){
+  db.collection("members").get()
+    .then(function(snap){
+      members = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); })
+        .filter(function(m){
+          return !m.deleted && !m.isGuest && !m.pendingEmail
+            && m.email && m.email.indexOf("@tequiladojo.member") < 0; // 本会員のみ
+        });
+    })
+    .catch(function(){ /* 権限やネットワーク不調時は選択不可（手動入力もreadonly） */ });
+}
+function memberCode(m){ return String(m.displayId || m.memberId || m.id || ""); }
+function openMemberPicker(){
+  g("picker-search").value = "";
+  renderPicker("");
+  g("m-picker").classList.add("open");
+  setTimeout(function(){ var s=g("picker-search"); if(s) s.focus(); }, 50);
+}
+function closePicker(){ g("m-picker").classList.remove("open"); }
+function renderPicker(q){
+  q = (q||"").toLowerCase();
+  var list = members.filter(function(m){
+    if(!q) return true;
+    var hay = ((m.nickname||"")+" "+(m.name||"")+" "+(m.nameKana||"")+" "+memberCode(m)).toLowerCase();
+    return hay.indexOf(q) >= 0;
+  }).sort(function(a,b){ return memberCode(a).localeCompare(memberCode(b)); });
+  var el = g("picker-list");
+  if(!list.length){ el.innerHTML='<div style="padding:16px;text-align:center;color:#999;font-size:13px">該当する本会員がいません</div>'; return; }
+  el.innerHTML = list.slice(0,300).map(function(m){
+    var code = memberCode(m), nm = m.nickname||m.name||"—";
+    return '<div class="picker-row" data-code="'+escHtml(code)+'" style="padding:9px 12px;border-bottom:1px solid #eee;cursor:pointer;display:flex;gap:10px;align-items:center">'
+      +'<span class="mono" style="font-size:12px;color:#333;min-width:64px">'+escHtml(code)+'</span>'
+      +'<span style="font-size:13px">'+escHtml(nm)+'</span>'
+      +((m.name&&m.nickname)?'<span style="font-size:11px;color:#999">'+escHtml(m.name)+'</span>':'')
+      +'</div>';
+  }).join("");
+}
+function updateCustomerName(){
+  var code = gv("rsv-customer"), el = g("rsv-customer-name"); if(!el) return;
+  if(!code){ el.textContent = ""; return; }
+  var m = members.find(function(x){ var c=memberCode(x); return c===code || c.padStart(6,"0")===code; });
+  el.textContent = m ? ("→ "+(m.nickname||m.name||"")) : "";
+}
+(function(){
+  var s=g("picker-search"); if(s) s.addEventListener("input", function(){ renderPicker(this.value); });
+  var x=g("mx-picker"); if(x) x.addEventListener("click", closePicker);
+  var bg=g("m-picker"); if(bg) bg.addEventListener("click", function(e){ if(e.target===this) closePicker(); });
+  var pl=g("picker-list");
+  if(pl) pl.addEventListener("click", function(e){
+    var row=e.target.closest(".picker-row"); if(!row) return;
+    sv("rsv-customer", String(row.getAttribute("data-code")).padStart(6,"0"));
+    updateCustomerName();
+    closePicker();
+  });
+})();
+
 // ── 統計 ─────────────────────────────────────────────────────
 function updateStats(){
   var today = todayStr6();
@@ -398,17 +482,18 @@ function renderTable(){
 
   var tb = g("tb-rsv");
   if(!list.length){
-    tb.innerHTML='<tr><td colspan="8" class="ec">予約データがありません</td></tr>';
+    tb.innerHTML='<tr><td colspan="9" class="ec">予約データがありません</td></tr>';
     return;
   }
   tb.innerHTML = list.map(function(r){
-    return '<tr>'
+    return '<tr'+(isCharter(r)?' style="background:#fff8e6"':'')+'>'
       +'<td class="mono">'+r.id+'</td>'
       +'<td class="mono dim">'+fmtDate(r.reservationDate)+'</td>'
       +'<td class="mono dim">'+fmtTime(r.startTime)+'</td>'
       +'<td class="mono dim">'+fmtTime(r.endTime)+'</td>'
       +'<td class="mono">'+(r.customerCode||"—")+'</td>'
       +'<td style="text-align:center">'+(r.guests||"—")+'</td>'
+      +'<td style="text-align:center">'+(isCharter(r)?'<span style="display:inline-block;font-size:10px;font-weight:700;color:#7a5610;background:#f5d580;border-radius:3px;padding:1px 6px">貸切</span>':'—')+'</td>'
       +'<td class="dim" style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(r.memo||"—")+'</td>'
       +'<td><div class="acts">'
         +'<button class="btn bs sm" data-edit="'+r.id+'">編集</button>'
@@ -468,10 +553,14 @@ function openModal(id){
     sv("rsv-customer", r ? r.customerCode : "");
     sv("rsv-guests",   r ? String(r.guests) : "");
     sv("rsv-memo",     r ? r.memo||"" : "");
+    g("rsv-charter").checked = isCharter(r);
+    updateCustomerName();
     g("kb-rsv").innerHTML='<span class="keypart kp-nom">'+id+'</span><span class="klabel">reservationId</span>';
   } else {
     ["rsv-date","rsv-start","rsv-end","rsv-customer","rsv-memo"].forEach(function(i){ sv(i,""); });
     sv("rsv-guests","");
+    g("rsv-charter").checked = false;
+    updateCustomerName();
     updateKeybox();
   }
   g("m-rsv").classList.add("open");
@@ -516,6 +605,22 @@ g("btn-save-rsv").addEventListener("click",function(){
   if(!editId && reservations.some(function(r){ return r.id===id; })){
     toast("予約ID「"+id+"」は既に存在します","err"); return;
   }
+
+  // 貸切ブロック: 同日で時間が重なる予約のうち「既存が貸切」or「今回が貸切」があれば登録不可
+  var charter = g("rsv-charter").checked;
+  var conflict = reservations.find(function(r){
+    if(r.id===id) return false;
+    if(r.reservationDate!==date) return false;
+    if(!timeOverlap(start,end,r.startTime,r.endTime)) return false;
+    return charter || isCharter(r);
+  });
+  if(conflict){
+    var msg = isCharter(conflict)
+      ? "その時間帯は貸切営業のため予約できません（貸切予約 "+conflict.id+"）"
+      : "既存予約（"+conflict.id+"）と時間が重なるため貸切にできません";
+    toast(msg,"err"); return;
+  }
+
   if(!editId) rsvSeqCounter++;
 
   journaledSet("reservations",id,{
@@ -525,6 +630,7 @@ g("btn-save-rsv").addEventListener("click",function(){
     endTime:        end,
     customerCode:   cust.padStart(6,"0"),
     guests:         parseInt(guests),
+    charterType:    charter ? 1 : 0,
     memo:           gv("rsv-memo")||null,
     createdAt:      firebase.firestore.FieldValue.serverTimestamp()
   },{merge:true})
@@ -539,10 +645,10 @@ g("btn-save-rsv").addEventListener("click",function(){
 // ── CSV エクスポート ──────────────────────────────────────────
 g("btn-export").addEventListener("click",function(){
   if(!reservations.length){ toast("データがありません","inf"); return; }
-  var header="予約ID,予約日,開始時間,終了時間,顧客コード,人数,備考";
+  var header="予約ID,予約日,開始時間,終了時間,顧客コード,人数,貸切,備考";
   var rows = reservations.map(function(r){
     var memo = (r.memo||"").replace(/,/g,"、");
-    return [r.id, r.reservationDate, r.startTime, r.endTime, r.customerCode, r.guests, memo].join(",");
+    return [r.id, r.reservationDate, r.startTime, r.endTime, r.customerCode, r.guests, isCharter(r)?"貸切":"", memo].join(",");
   });
   var csv = "\uFEFF"+header+"\n"+rows.join("\n");
   var blob = new Blob([csv],{type:"text/csv;charset=utf-8;"});
