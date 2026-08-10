@@ -821,6 +821,9 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <div class="fg"><label class="fl">営業終了（HHMM）</label><input class="fi mono" id="sch-close" maxlength="4" placeholder="HHMM"></div>
         </div>
       </div>
+      <div class="fg" id="sch-seats-fg"><label class="fl">席数（定員） <span class="db-field">capacity</span></label>
+        <select class="fs" id="sch-seats"></select>
+      </div>
       <div class="fg"><label class="fl">メモ</label><input class="fi" id="sch-memo" placeholder="特記事項..."></div>
     </div>
     <div class="mfoot"><button class="btn bg2" data-close="m-schedule">キャンセル</button><button class="btn bp" id="btn-save-schedule">保存</button></div>
@@ -2303,15 +2306,37 @@ function calShowScheduleModal(y,m,d){
     } else {
       sv('sch-type','0'); sv('sch-open',''); sv('sch-close',''); sv('sch-memo','');
     }
+    var _capVal=(doc.exists&&doc.data().capacity!=null)?doc.data().capacity:6;
+    calEnsureLayouts(function(){ calFillSeatOptions(_capVal); });
     calSchTypeChange(g('sch-type'));
     g('m-schedule').__calKey=key;
     openM('m-schedule');
   }).catch(function(){ openM('m-schedule'); });
 }
+function calSeatMaster(){
+  var set={};
+  (cache.layouts||[]).forEach(function(l){ if(l.seats) set[parseInt(l.seats)]=true; });
+  set[6]=true; // 既定席数
+  return Object.keys(set).map(Number).filter(function(n){return n>0;}).sort(function(a,b){return a-b;});
+}
+function calFillSeatOptions(sel){
+  var el=g('sch-seats'); if(!el) return;
+  var opts=calSeatMaster();
+  var v=(sel==null||sel==='')?6:parseInt(sel);
+  if(!(v>0)) v=6;
+  if(opts.indexOf(v)<0){ opts.push(v); opts.sort(function(a,b){return a-b;}); }
+  el.innerHTML=opts.map(function(n){ return '<option value="'+n+'"'+(n===v?' selected':'')+'>'+n+'席</option>'; }).join('');
+}
+function calEnsureLayouts(cb){
+  if(cache.layouts&&cache.layouts.length){ cb(); return; }
+  db.collection('layouts').get().then(function(snap){ cache.layouts=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }); cb(); }).catch(function(){ cb(); });
+}
 function calSchTypeChange(sel){
   var v=sel?sel.value:'0';
   var tf=g('sch-time-fields');
   if(tf) tf.style.display=(v==='4'||v==='5'||v==='8')?'none':'';
+  var sf=g('sch-seats-fg');
+  if(sf) sf.style.display=(v==='4'||v==='5'||v==='8')?'none':'';
   var openEl=g('sch-open'), closeEl=g('sch-close');
   if(v==='4'||v==='5'||v==='8'){
     if(openEl) openEl.value='';
@@ -2324,8 +2349,8 @@ function calSchTypeChange(sel){
 function saveSchRow(key,container,cb){
   var typeVal=gv('sch-type');
   var data={scheduleId:key,businessType:parseInt(typeVal),memo:gv('sch-memo')||null};
-  if(typeVal!=='4'&&typeVal!=='5'&&typeVal!=='8'){ data.openTime=gv('sch-open')||null; data.closeTime=gv('sch-close')||null; }
-  else { data.openTime=null; data.closeTime=null; }
+  if(typeVal!=='4'&&typeVal!=='5'&&typeVal!=='8'){ data.openTime=gv('sch-open')||null; data.closeTime=gv('sch-close')||null; data.capacity=parseInt(gv('sch-seats'))||6; }
+  else { data.openTime=null; data.closeTime=null; data.capacity=null; }
   journaledSet('schedules',key,data,{merge:true}).then(function(){ if(cb)cb(); }).catch(function(e){ toast('保存失敗: '+e.message,'err'); });
 }
 g('btn-save-schedule').addEventListener('click',function(){
