@@ -768,12 +768,14 @@ function loadStoreStatus(){
 
   // 来店数などの詳細はCloud Functions（getStoreStatus・認証不要）から取得する
   // （visits はスタッフ限定読み取りのため直接は読まない）
-  function callGetStatus(){
+  // logOnly:true のときは表示を触らずアクセス記録だけ行う（RTDBで表示済みの場合）
+  function callGetStatus(opts){
+    var doRender = !(opts && opts.logOnly);
     try{
       firebase.app().functions('asia-northeast1').httpsCallable('getStoreStatus')({ logTop: true })
-        .then(function(res){ renderStatus(res.data||{status:'closed'}); })
-        .catch(function(){ showClosedFromSchedules(); });
-    }catch(e){ showClosedFromSchedules(); }
+        .then(function(res){ if(doRender) renderStatus(res.data||{status:'closed'}); })
+        .catch(function(){ if(doRender) showClosedFromSchedules(); });
+    }catch(e){ if(doRender) showClosedFromSchedules(); }
   }
 
   render('<span style="color:#aaa;font-size:12px;letter-spacing:.02em;">確認中...</span>');
@@ -786,8 +788,10 @@ function loadStoreStatus(){
   .then(function(d){
     if(!d||!d.status) throw new Error('empty');
     renderStatus({status:d.status, breakResumeTime:d.breakResumeTime});
-    // 営業中なら来場者数をFunctionsで上書き表示
+    // 営業中は来場者数をFunctionsで上書き表示。閉店中でもTOPアクセス記録の
+    // ため getStoreStatus を必ず呼ぶ（閉店中は表示は触らず記録のみ）。
     if(d.status==='open') callGetStatus();
+    else callGetStatus({ logOnly:true });
   })
   .catch(function(){
     // RTDB未設定またはエラー → Functionsにフォールバック
