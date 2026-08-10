@@ -201,6 +201,7 @@ body::before{
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
+<script src="/news-read.js?v=20260810"></script>
 <script>
 
 var FIREBASE_CONFIG = {
@@ -616,6 +617,25 @@ var NEWS_TYPES={info:'お知らせ',event:'イベント',feature:'新機能',men
 var NEWS_TYPE_COLORS={info:'#378ADD',event:'#D4730A',feature:'#2CA44E',menu:'#8B5CF6',newarrival:'#F87171',other:'#64748B'};
 function g(id){return document.getElementById(id);}
 function escNews(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+// ── ニュース既読/未読（会員ログイン時のみ） ──
+var _newsReadsMap=null, _newsUid=null, _newsRendered=false;
+function decorateUnread(){
+  if(!_newsReadsMap || !_newsRendered || typeof NewsRead==='undefined') return;
+  var items=document.querySelectorAll('#news-list .news-item[data-news-id]');
+  Array.prototype.forEach.call(items,function(el){
+    var id=el.getAttribute('data-news-id');
+    var r=(window._newsRows||[]).find(function(x){return x.id===id;});
+    if(!r) return;
+    var already=el.querySelector('.news-unread-badge');
+    if(NewsRead.isUnread(r,_newsReadsMap)){
+      if(!already){
+        var t=el.querySelector('.news-title');
+        if(t) t.insertAdjacentHTML('afterbegin', NewsRead.badgeHtml()+' ');
+      }
+    } else if(already){ already.parentNode.removeChild(already); }
+  });
+}
+
 function loadIndexNews(){
   if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
   var db=firebase.firestore();
@@ -651,7 +671,7 @@ function loadIndexNews(){
       var isNew=(r.publishStart||r.createdAt||'')>=threeDaysAgo;
       var hasBody=!!(r.body&&(r.body.replace(/<[^>]*>/g,'').trim()||/<img[\s>]/i.test(r.body)));
       var globalIdx=rows.indexOf(r);
-      return '<div class="news-item" onclick="nmOpen('+globalIdx+')" style="'+(hasBody?'':'cursor:default')+'">'
+      return '<div class="news-item" data-news-id="'+escNews(r.id)+'" onclick="nmOpen('+globalIdx+')" style="'+(hasBody?'':'cursor:default')+'">'
         +'<span class="news-badge" style="background:'+tc+'">'+tl+'</span>'
         +'<div class="news-text">'
           +'<div class="news-title">'+escNews(r.title)+(hasBody?' <span style="font-size:10px;color:#3a7d5e;margin-left:4px;">▶</span>':'')+'</div>'
@@ -663,6 +683,8 @@ function loadIndexNews(){
       +'</div>';
     }).join('')
     +'<a href="/news.html" style="display:block;text-align:right;padding:8px 16px 10px;margin-top:4px;font-size:14px;font-weight:600;color:#1a2e28;text-decoration:none;">📰 過去のニュースはこちら →</a>';
+    _newsRendered=true;
+    decorateUnread();
   }).catch(function(e){
     console.error('news load error:',e);
     var list=g('news-list');
@@ -672,6 +694,11 @@ function loadIndexNews(){
 
 function nmOpen(i){
   var r=(window._newsRows||[])[i]; if(!r) return;
+  // 会員ログイン時は開いた記事を既読化（本文が無い記事もタップで既読に）
+  if(_newsUid && _newsReadsMap && typeof NewsRead!=='undefined' && NewsRead.isUnread(r,_newsReadsMap)){
+    NewsRead.markRead(firebase.firestore(), _newsUid, r, _newsReadsMap);
+    decorateUnread();
+  }
   if(!r.body||(!r.body.replace(/<[^>]*>/g,'').trim()&&!/<img[\s>]/i.test(r.body))) return;
   var tc=NEWS_TYPE_COLORS[r.type]||'#64748B';
   var tl=NEWS_TYPES[r.type]||'その他';
@@ -803,6 +830,18 @@ window.addEventListener('DOMContentLoaded',function(){
   idxBuildSchedule();
   loadIndexNews();
   loadStoreStatus();
+  // 会員ログイン時: 未読ニュースにバッジを表示
+  try{
+    if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    firebase.auth().onAuthStateChanged(function(u){
+      if(u && !u.isAnonymous){
+        _newsUid=u.uid;
+        NewsRead.load(firebase.firestore(), u.uid).then(function(m){ _newsReadsMap=m; decorateUnread(); });
+      } else {
+        _newsUid=null; _newsReadsMap=null; decorateUnread();
+      }
+    });
+  }catch(e){}
   // ニュース本文モーダル内画像クリック→ライトボックス
   var nmBody=document.getElementById('nm-body');
   if(nmBody) nmBody.addEventListener('click',function(e){

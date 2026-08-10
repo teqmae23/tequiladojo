@@ -366,7 +366,9 @@ body::before{
 </div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="/news-read.js?v=20260810"></script>
 <script>
 var FIREBASE_CONFIG = {
   apiKey: "AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -387,6 +389,8 @@ var PAGE_SIZE = 20;
 var allDocs = [];         // all published+active docs
 var filteredDocs = [];    // after applying filters
 var currentPage = 1;
+var _newsReadsMap = null;  // 会員ログイン時: 既読マップ（newsReads/{uid}.items）
+var _newsUid = null;
 var activeCategories = {}; // key -> true/false
 var debounceTimer = null;
 
@@ -538,12 +542,17 @@ function renderPage(page){
       var dateStr = formatDate(r.publishStart || r.createdAt);
       var hasBody = !!(r.body && stripHtml(r.body));
       var newBadge = isNew(r.publishStart || r.createdAt) ? '<span class="news-new-badge">NEW</span>' : '';
-      return '<div class="news-item '+(hasBody?'clickable':'not-clickable')+'"'
-        + (hasBody ? ' onclick="nmOpen('+i+')"' : '')
+      var unread = (typeof NewsRead!=='undefined' && NewsRead.isUnread(r, _newsReadsMap));
+      var unreadBadge = unread ? NewsRead.badgeHtml() : '';
+      // 会員ログイン時は本文の有無に関わらずタップで既読化できるようにする
+      var clickable = hasBody || (_newsUid && unread);
+      return '<div class="news-item '+(clickable?'clickable':'not-clickable')+'" data-news-id="'+escNews(r.id)+'"'
+        + (clickable ? ' onclick="nmOpen('+i+')"' : '')
         + '>'
         + '<span class="news-badge" style="background:'+tc+'">'+tl+'</span>'
         + '<div class="news-text">'
           + '<div class="news-title-row">'
+            + unreadBadge
             + '<span class="news-title">'+escNews(r.title)+'</span>'
             + newBadge
           + '</div>'
@@ -625,6 +634,12 @@ function goPage(p){
 function nmOpen(i){
   var r = (window._newsPageItems || [])[i];
   if(!r) return;
+  // 会員ログイン時は開いた記事を既読化（本文が無い記事もタップで既読に）
+  if(_newsUid && _newsReadsMap && typeof NewsRead!=='undefined' && NewsRead.isUnread(r, _newsReadsMap)){
+    var db = firebase.firestore();
+    NewsRead.markRead(db, _newsUid, r, _newsReadsMap);
+    renderPage(currentPage); // バッジ再描画
+  }
   if(!r.body || !stripHtml(r.body)) return;
   var typeKey = r.type || 'other';
   var tc = NEWS_TYPE_COLORS[typeKey] || '#64748B';
@@ -729,6 +744,23 @@ function initWithCustomTypes(){
 }
 
 initWithCustomTypes();
+
+// 会員ログイン時: 既読情報をロードして未読バッジを反映
+(function(){
+  if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+  firebase.auth().onAuthStateChanged(function(u){
+    if(u && !u.isAnonymous){
+      _newsUid = u.uid;
+      NewsRead.load(firebase.firestore(), u.uid).then(function(m){
+        _newsReadsMap = m;
+        if(allDocs.length) renderPage(currentPage); // 読み込み済みなら再描画（未ロードなら loadNews が反映）
+      });
+    } else {
+      _newsUid = null; _newsReadsMap = null;
+      if(allDocs.length) renderPage(currentPage);
+    }
+  });
+})();
 </script>
 </body>
 </html>

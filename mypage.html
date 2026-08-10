@@ -234,6 +234,13 @@ select.fi{min-width:80px}
       <span style="font-size:20px;font-weight:700;color:var(--ink);letter-spacing:.04em">会員マイページ</span>
 
     </div>
+
+    <!-- 未読ニュースのお知らせ -->
+    <a id="unread-news-banner" href="/news.html" style="display:none;margin-bottom:16px;padding:12px 16px;background:#fff4f2;border:1.5px solid #e8130a;border-radius:10px;text-decoration:none;color:#b0180a;font-weight:700;font-size:14px;align-items:center;gap:10px;box-shadow:0 2px 10px rgba(232,19,10,.12);">
+      <span style="font-size:18px;flex-shrink:0;">📰</span>
+      <span id="unread-news-text"></span>
+      <span style="margin-left:auto;font-size:13px;color:#e8130a;white-space:nowrap;">ニュースを見る →</span>
+    </a>
     <!-- プロフィールバー -->
     <div class="profile-bar" id="profile-bar">
       <div class="profile-avatar" id="prof-avatar">
@@ -344,6 +351,7 @@ select.fi{min-width:80px}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
+<script src="/news-read.js?v=20260810"></script>
 <script>
 // ─── Firebase初期化 ───
 firebase.initializeApp({
@@ -453,6 +461,7 @@ auth.onAuthStateChanged(async user=>{
     var _hs=document.getElementById('auth-hide-style'); if(_hs)_hs.remove();
     document.getElementById('login-screen').style.display='none';
     document.getElementById('main-screen').style.display='block';
+    loadUnreadNewsBanner(user); // 未読ニュース件数（非同期・メイン処理を待たせない）
     await initMyPage(user);
   }else{
     var _hs2=document.getElementById('auth-hide-style'); if(_hs2)_hs2.remove();
@@ -463,6 +472,32 @@ auth.onAuthStateChanged(async user=>{
     document.getElementById('l-err').textContent='';
   }
 });
+
+// ─── 未読ニュース件数のバナー表示 ───
+async function loadUnreadNewsBanner(user){
+  try{
+    if(!user || user.isAnonymous || typeof NewsRead==='undefined') return;
+    const nowIso=new Date().toISOString();
+    const reads=await NewsRead.load(db, user.uid);
+    const snap=await db.collection('news').get();
+    const rows=snap.docs.map(d=>Object.assign({id:d.id},d.data()))
+      .filter(r=>{
+        if(!r.published) return false;
+        if(r.publishStart && r.publishStart>nowIso) return false;
+        if(r.publishEnd && r.publishEnd<nowIso) return false;
+        return true;
+      });
+    const n=NewsRead.countUnread(rows, reads);
+    const banner=document.getElementById('unread-news-banner');
+    const txt=document.getElementById('unread-news-text');
+    if(banner && txt && n>0){
+      txt.textContent='未読のニュースが'+n+'件あります';
+      banner.style.display='flex';
+    } else if(banner){
+      banner.style.display='none';
+    }
+  }catch(e){ console.warn('unread news banner error:',e); }
+}
 
 // ─── 管理者プレビュー: 呼び出し元へ戻る ───
 function previewGoBack(){
