@@ -1341,3 +1341,41 @@ exports.placeMemberOrder = functions.region('asia-northeast1')
     created.forEach((c) => writeServerJournal('create', 'orders', c.id, null, c.data, 'placeMemberOrder'));
     return { ok: true, count: created.length, orderGroupId, batchId };
   });
+
+// ── Stripe Terminal SDK（WisePad 3 等のBluetooth端末・アプリ組込用） ──────
+// Androidアプリ（terminal-app-android）から呼ぶ。スタッフ認証必須。
+
+// 接続トークン発行（Terminal SDK の ConnectionTokenProvider が要求する）
+exports.terminalConnectionToken = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onCall(async (data, context) => {
+    await assertStaff(context);
+    const stripe = require('stripe')(stripeSecretKey.value());
+    const token = await stripe.terminal.connectionTokens.create();
+    return { secret: token.secret };
+  });
+
+// 決済用 PaymentIntent を作成し client_secret を返す（SDKが読み取り〜確定する）。
+// JPYはゼロ十進のため amount は「円」そのまま。capture は即時。
+exports.terminalCreatePaymentIntent = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onCall(async (data, context) => {
+    await assertStaff(context);
+    const stripe = require('stripe')(stripeSecretKey.value());
+    const amount = Math.round(Number(data && data.amount));
+    if (!Number.isInteger(amount) || amount <= 0) {
+      throw new functions.https.HttpsError('invalid-argument', '金額（amount, 円）が不正です');
+    }
+    if (amount > 1000000) {
+      throw new functions.https.HttpsError('invalid-argument', '金額が上限（¥1,000,000）を超えています');
+    }
+    const pi = await stripe.paymentIntents.create({
+      amount,
+      currency: 'jpy',
+      payment_method_types: ['card_present'],
+      capture_method: 'automatic',
+      description: (data && data.description) ? String(data.description).slice(0, 200) : 'テキーラ道場 お会計',
+      metadata: { source: 'wisepad3' },
+    });
+    return { id: pi.id, clientSecret: pi.client_secret };
+  });
