@@ -1379,3 +1379,108 @@ exports.terminalCreatePaymentIntent = functions
     });
     return { id: pi.id, clientSecret: pi.client_secret };
   });
+
+// ── 個人テキーラログ: 道場注文からの自動登録 ─────────────────────
+// 会員(有料)の道場注文(tequila/cocktail)を個人ログ(source=auto)へ同期する。
+// 冪等: ログID = 'auto_' + orderId。注文の追加/編集/削除に追従。
+// 会員のメモ・評価は自動更新で上書きしない（初回作成時のみ初期化）。
+
+// 会員の有料レベルを解決（手動plan優先 > 有効サブスクgrade > 0）
+async function memberPaidLevel(m) {
+  if (!m) return 0;
+  if (m.plan) {
+    const pd = await db.collection('plans').doc(String(m.plan)).get();
+    return pd.exists ? (Number(pd.data().level) || 0) : 0;
+  }
+  if (m.subscriptionStatus === 'active' && m.grade != null && m.grade !== '') {
+    const ps = await db.collection('plans').where('level', '==', Number(m.grade)).limit(1).get();
+    if (!ps.empty) return Number(ps.docs[0].data().level) || 0;
+    return Number(m.grade) || 0;
+  }
+  return 0;
+}
+
+// 注文 → ログ項目（対象外なら null）
+function orderToLogFields(o) {
+  if (!o || o.served === 0 || o.isAdjustment) return null;
+  const pt = String(o.productType || '');
+  let bottleId = null; let style = null; let ml = 0;
+  if (pt === 'tequila') { bottleId = o.productCode; style = 'straight'; ml = Number(o.qty) || 0; } else if (pt === 'cocktail') { bottleId = o.baseProductCode || null; style = 'cocktail'; ml = Number(o.baseSpiritMl) || 0; } else return null;
+  if (!bottleId) return null;
+  const od = String(o.orderDate || ''); const ot = String(o.orderTime || '');
+  if (od.length < 6) return null;
+  const drunkAt = '20' + od.slice(0, 6) + (ot.length >= 4 ? ot.slice(0, 4) : '0000'); // JST
+  return { bottleId: String(bottleId), style, amountMl: ml, drunkAt };
+}
+
+// 1注文分を同期（作成/更新/削除）。orderData が null なら削除扱い。
+async function syncOneOrderLog(orderId, orderData) {
+  const logRef = db.collection('tequilaLogs').doc('auto_' + orderId);
+  const mapped = orderData ? orderToLogFields(orderData) : null;
+  // 対象外/削除 → 対応ログを削除
+  if (!mapped) { await logRef.delete().catch(() => {}); return 'deleted'; }
+  const customerId = orderData.customerId;
+  if (!customerId) { await logRef.delete().catch(() => {}); return 'deleted'; }
+  const mdoc = await db.collection('members').doc(String(customerId)).get();
+  if (!mdoc.exists) { await logRef.delete().catch(() => {}); return 'skipped'; }
+  const m = mdoc.data();
+  const level = await memberPaidLevel(m);
+  // 未有料 → 新規作成しない（既存ログは残す＝解約後も保持）
+  if (!(level > 0) || !m.authUid) return 'skipped';
+  // ボトル名（denormalize）
+  let bottleName = orderData.productName || mapped.bottleId;
+  try { const bd = await db.collection('bottles').doc(mapped.bottleId).get(); if (bd.exists) { const b = bd.data(); bottleName = b.bottleJa || b.bottleEs || b.bottleEn || bottleName; } } catch (e) { /* noop */ }
+  const existing = await logRef.get();
+  const base = {
+    authUid: m.authUid, memberId: String(m.memberId || customerId), memberName: String(m.nickname || m.name || ''),
+    drunkAt: mapped.drunkAt, drunkAtLocal: mapped.drunkAt, tz: 'Asia/Tokyo',
+    bottleId: mapped.bottleId, bottleName, style: mapped.style, amountMl: mapped.amountMl,
+    barId: 'B00000', barText: null, source: 'auto', orderRef: orderId,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  if (!existing.exists) { base.note = null; base.rating = 0; base.createdAt = admin.firestore.FieldValue.serverTimestamp(); }
+  await logRef.set(base, { merge: true });
+  return existing.exists ? 'updated' : 'created';
+}
+
+// Firestoreトリガー: 注文の書込に追従
+exports.syncTequilaLogFromOrder = functions.region('asia-northeast1')
+  .firestore.document('orders/{orderId}')
+  .onWrite(async (change, context) => {
+    try {
+      const after = change.after.exists ? change.after.data() : null;
+      await syncOneOrderLog(context.params.orderId, after);
+    } catch (e) { console.error('syncTequilaLogFromOrder', e.message); }
+    return null;
+  });
+
+// 過去注文からの取り込み（バックフィル）。
+// - 会員本人が呼ぶと自分の分を取り込む（途中入会時など）。
+// - スタッフは memberId 指定で任意会員分を取り込める。
+exports.backfillTequilaLogs = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    if (!context.auth || context.auth.token.firebase.sign_in_provider === 'anonymous') {
+      throw new functions.https.HttpsError('unauthenticated', 'ログインが必要です');
+    }
+    const claimRole = context.auth.token.role;
+    const isStaffCaller = (claimRole === 'owner' || claimRole === 'staff');
+    let memberId = data && data.memberId;
+    if (!isStaffCaller) {
+      // 会員は自分の分のみ
+      const ms = await db.collection('members').where('authUid', '==', context.auth.uid).limit(1).get();
+      if (ms.empty) throw new functions.https.HttpsError('not-found', '会員情報が見つかりません');
+      memberId = ms.docs[0].id;
+    }
+    if (!memberId) throw new functions.https.HttpsError('invalid-argument', 'memberId が必要です');
+    const snap = await db.collection('orders').where('customerId', '==', String(memberId)).get();
+    let created = 0; let updated = 0; let skipped = 0;
+    for (const d of snap.docs) {
+      const res = await syncOneOrderLog(d.id, d.data());
+      if (res === 'created') created++; else if (res === 'updated') updated++; else skipped++;
+    }
+    // 一度取り込んだら会員に実行済みフラグを立てる（会員ページの初回バナー制御用）
+    await db.collection('members').doc(String(memberId))
+      .set({ tequilaLogBackfilledAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+      .catch(() => {});
+    return { ok: true, orders: snap.size, created, updated, skipped };
+  });
