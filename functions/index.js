@@ -1478,5 +1478,9 @@ exports.backfillTequilaLogs = functions.region('asia-northeast1')
       const res = await syncOneOrderLog(d.id, d.data());
       if (res === 'created') created++; else if (res === 'updated') updated++; else skipped++;
     }
+    // 一度取り込んだら会員に実行済みフラグを立てる（会員ページの初回バナー制御用）
+    await db.collection('members').doc(String(memberId))
+      .set({ tequilaLogBackfilledAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+      .catch(() => {});
     return { ok: true, orders: snap.size, created, updated, skipped };
   });
