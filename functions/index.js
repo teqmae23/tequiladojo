@@ -849,9 +849,48 @@ exports.createSubscriptionCheckout = functions
       };
     }
 
-    // 保存済み顧客IDが無効なら作り直してから発行（無効なcustomerで400になるのを防ぐ）
-    const customerId = await resolveValidCustomerId(stripe, memberRef, member, memberId);
-    const session = await stripe.checkout.sessions.create(sessionParams(customerId));
+    // 保存済み顧客IDが無効なら作り直してから発行（無効なcustomerで400になるのを防ぐ）。
+    // resolveValidCustomerId をすり抜けて古い customer が渡り
+    // "No such customer"(resource_missing / param=customer) になった場合は、
+    // 顧客を作り直して members を更新し、1回だけ再試行する（自己修復）。
+    // それ以外のStripe失敗（無効/一回課金/テスト・本番不一致のPrice等）は素の
+    // INTERNAL に潰さず、原因が分かるメッセージにして返す。
+    async function freshCustomerId() {
+      const c = await stripe.customers.create({
+        email: (member && (member.email || member.authEmail)) || undefined,
+        name: (member && member.name) || '',
+        metadata: { memberId: String(memberId || '') },
+      });
+      await memberRef.update({ stripeCustomerId: c.id });
+      return c.id;
+    }
+    let session;
+    try {
+      const customerId = await resolveValidCustomerId(stripe, memberRef, member, memberId);
+      session = await stripe.checkout.sessions.create(sessionParams(customerId));
+    } catch (e) {
+      const staleCustomer = e && e.code === 'resource_missing' && e.param === 'customer';
+      if (staleCustomer) {
+        try {
+          const cid = await freshCustomerId();
+          session = await stripe.checkout.sessions.create(sessionParams(cid));
+        } catch (e2) {
+          console.error('createSubscriptionCheckout retry error', {
+            memberId: memberId, planId: planId, priceId: plan.stripePriceId,
+            code: e2 && e2.code, type: e2 && e2.type, message: e2 && e2.message,
+          });
+          throw new functions.https.HttpsError('failed-precondition',
+            '申込に失敗しました: ' + ((e2 && e2.message) || 'Stripe処理でエラーが発生しました'));
+        }
+      } else {
+        console.error('createSubscriptionCheckout stripe error', {
+          memberId: memberId, planId: planId, priceId: plan.stripePriceId,
+          code: e && e.code, type: e && e.type, message: e && e.message,
+        });
+        throw new functions.https.HttpsError('failed-precondition',
+          '申込に失敗しました: ' + ((e && e.message) || 'Stripe処理でエラーが発生しました'));
+      }
+    }
     return { url: session.url };
   });
 
@@ -871,10 +910,19 @@ exports.createCustomerPortal = functions
     if (!member.stripeCustomerId) {
       throw new functions.https.HttpsError('failed-precondition', 'サブスク情報がありません');
     }
-    const session = await stripe.billingPortal.sessions.create({
-      customer: member.stripeCustomerId,
-      return_url: origin + '/member_subscription.html',
-    });
+    let session;
+    try {
+      session = await stripe.billingPortal.sessions.create({
+        customer: member.stripeCustomerId,
+        return_url: origin + '/member_subscription.html',
+      });
+    } catch (e) {
+      console.error('createCustomerPortal stripe error', {
+        customerId: member.stripeCustomerId, code: e && e.code, type: e && e.type, message: e && e.message,
+      });
+      const detail = (e && e.message) ? e.message : 'Stripe処理でエラーが発生しました';
+      throw new functions.https.HttpsError('failed-precondition', 'ポータルを開けませんでした: ' + detail);
+    }
     return { url: session.url };
   });
 
