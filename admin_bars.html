@@ -125,6 +125,9 @@ td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
       <div class="fg"><label>電話 国番号</label><input class="fi" id="bar-phoneCc" placeholder="+81"></div>
       <div class="fg"><label>電話番号</label><input class="fi" id="bar-phone"></div>
     </div>
+    <div class="fg"><label>評価サイトURL（日本は食べログ・自動生成可）</label>
+      <div class="inl"><input class="fi" id="bar-review"><button type="button" class="btn bs sm" onclick="buildReviewFromForm()">生成</button></div>
+    </div>
     <div class="fg"><label>Google Map URL（店名・住所から自動取得も可）</label>
       <div class="inl"><input class="fi" id="bar-mapUrl" oninput="onBarMapUrl()"><button type="button" class="btn bs sm" onclick="onBarMapUrl(true)">座標抽出</button><button type="button" class="btn bp sm" onclick="barGeocode()">地名から取得</button></div>
     </div>
@@ -322,14 +325,40 @@ function parseLatLng(url){
 }
 // 地名→座標（Nominatim・無料/キー不要）。国コードで精度を上げる。
 function isoOfCountry(nameEn){ var m={'Japan':'jp','United States':'us','Mexico':'mx'}; return m[nameEn]||''; }
+function phoneCcOf(iso){ var m={'jp':'+81','us':'+1','mx':'+52'}; return m[iso]||''; }
 function gmapUrlOf(lat,lng){ return 'https://www.google.com/maps/search/?api=1&query='+lat+','+lng; }
+// 住所コンポーネント→表示用住所文字列（国により並び順を変える）
+function composeAddress(a, iso){
+  if(!a) return '';
+  var order = (iso==='jp')
+    ? ['state','province','city','county','city_district','ward','suburb','quarter','neighbourhood','town','village','road','house_number','building']
+    : ['house_number','road','neighbourhood','suburb','quarter','city','town','village','county','state','province'];
+  var parts=[];
+  order.forEach(function(k){ if(a[k] && parts.indexOf(a[k])<0) parts.push(a[k]); });
+  if(!parts.length) return '';
+  return parts.join(iso==='jp' ? '' : ' ');
+}
+// 評価サイトURL: 日本＝食べログ検索、米国＝Yelp検索、その他＝Google検索
+function buildReviewUrl(name, iso){
+  var kw=(name||'').trim();
+  if(!kw) return '';
+  if(iso==='jp') return 'https://tabelog.com/rst/rstsearch/?sw='+encodeURIComponent(kw);
+  if(iso==='us') return 'https://www.yelp.com/search?find_desc='+encodeURIComponent(kw);
+  return 'https://www.google.com/search?q='+encodeURIComponent(kw+' review');
+}
 async function geocodeName(query, iso){
-  var url='https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(query);
+  var url='https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=1&extratags=1&q='+encodeURIComponent(query);
   if(iso) url+='&countrycodes='+iso;
   var res=await fetch(url,{headers:{'Accept-Language':'ja,en','User-Agent':'TequilaDojoAdmin/1.0'}});
   var arr=await res.json();
   if(!arr||!arr.length) return null;
-  return {lat:parseFloat(arr[0].lat),lng:parseFloat(arr[0].lon),display:arr[0].display_name};
+  var a=arr[0].address||{}, x=arr[0].extratags||{};
+  return {
+    lat:parseFloat(arr[0].lat), lng:parseFloat(arr[0].lon), display:arr[0].display_name,
+    postcode:a.postcode||'', address:composeAddress(a, iso),
+    phone:x.phone||x['contact:phone']||x['contact:mobile']||'',
+    website:x.website||x['contact:website']||''
+  };
 }
 async function cityGeocode(){
   var name=gv('ci-nameJa')||gv('ci-nameEn');
@@ -346,19 +375,35 @@ async function cityGeocode(){
     toast('取得: '+r.display,'inf');
   }catch(e){ toast('取得失敗（通信）','err'); }
 }
+function buildReviewFromForm(){
+  var name=gv('bar-nameJa')||gv('bar-nameEn')||gv('bar-nameEs');
+  if(!name){ toast('先に店名を入力してください','err'); return; }
+  var cty=countryOf(gv('bar-country')); var iso=cty?isoOfCountry(cty.nameEn):'';
+  sv('bar-review', buildReviewUrl(name, iso));
+  toast('評価サイトURLを生成しました','inf');
+}
 async function barGeocode(){
   var name=gv('bar-nameJa')||gv('bar-nameEn')||gv('bar-nameEs');
   var addr=gv('bar-address');
   var q=[name,addr].filter(Boolean).join(', ');
   if(!q){ toast('店名か住所を入力してください','err'); return; }
   var cty=countryOf(gv('bar-country'));
+  var iso=cty?isoOfCountry(cty.nameEn):'';
   toast('地名を検索中...','inf');
   try{
-    var r=await geocodeName(q, cty?isoOfCountry(cty.nameEn):'');
+    var r=await geocodeName(q, iso);
     if(!r){ toast('該当が見つかりませんでした（店名＋住所を具体的に）','err'); return; }
     sv('bar-lat',r.lat); sv('bar-lng',r.lng); sv('bar-mapUrl',gmapUrlOf(r.lat,r.lng));
     fetchElevInto('bar-lat','bar-lng','bar-elev');
-    toast('取得: '+r.display,'inf');
+    // 住所・郵便番号・電話（空欄のときのみ補完）
+    if(!gv('bar-postal') && r.postcode) sv('bar-postal', r.postcode);
+    if(!gv('bar-address') && r.address) sv('bar-address', r.address);
+    if(!gv('bar-phone') && r.phone){ sv('bar-phone', r.phone); if(!gv('bar-phoneCc')) sv('bar-phoneCc', phoneCcOf(iso)); }
+    // 評価サイトURL（空欄のときのみ自動生成）
+    if(!gv('bar-review')) sv('bar-review', buildReviewUrl(name, iso));
+    var msg='取得: '+r.display;
+    if(!r.phone) msg+='（電話番号はOSMに登録が無く未取得の場合あり）';
+    toast(msg,'inf');
   }catch(e){ toast('取得失敗（通信）','err'); }
 }
 // 標高取得: SRTM30m(30m・沿岸低地に強い)を優先し、無ければ open-meteo(90m)へ。
@@ -457,6 +502,7 @@ function openBar(id){
   fillCitySel("bar-city",b?b.regionId:"",b?b.cityId:"");
   sv("bar-postal",b?b.postalCode:"");sv("bar-address",b?b.address:"");
   sv("bar-phoneCc",b?b.phoneCountryCode:"");sv("bar-phone",b?b.phone:"");
+  sv("bar-review",b?b.reviewUrl:"");
   sv("bar-mapUrl",b?b.mapUrl:"");sv("bar-lat",b?b.lat:"");sv("bar-lng",b?b.lng:"");sv("bar-elev",b?b.elevation:"");
   openM("m-bar");
 }
@@ -484,6 +530,7 @@ g("btn-save-bar").addEventListener("click",function(){
     countryId:gv("bar-country")||null,regionId:gv("bar-region")||null,cityId:gv("bar-city")||null,
     postalCode:gv("bar-postal")||null,address:gv("bar-address")||null,
     phoneCountryCode:gv("bar-phoneCc")||null,phone:gv("bar-phone")||null,
+    reviewUrl:gv("bar-review")||null,
     mapUrl:gv("bar-mapUrl")||null,
     lat:gv("bar-lat")!==""?parseFloat(gv("bar-lat")):null,lng:gv("bar-lng")!==""?parseFloat(gv("bar-lng")):null,
     elevation:gv("bar-elev")!==""?parseInt(gv("bar-elev")):null,
