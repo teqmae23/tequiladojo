@@ -850,8 +850,20 @@ exports.createSubscriptionCheckout = functions
     }
 
     // 保存済み顧客IDが無効なら作り直してから発行（無効なcustomerで400になるのを防ぐ）
-    const customerId = await resolveValidCustomerId(stripe, memberRef, member, memberId);
-    const session = await stripe.checkout.sessions.create(sessionParams(customerId));
+    // Stripe側の失敗（無効/一回課金/テスト・本番不一致のPrice等）は素の INTERNAL に
+    // 潰さず、原因が分かるメッセージにして返す。
+    let session;
+    try {
+      const customerId = await resolveValidCustomerId(stripe, memberRef, member, memberId);
+      session = await stripe.checkout.sessions.create(sessionParams(customerId));
+    } catch (e) {
+      console.error('createSubscriptionCheckout stripe error', {
+        memberId: memberId, planId: planId, priceId: plan.stripePriceId,
+        code: e && e.code, type: e && e.type, message: e && e.message,
+      });
+      const detail = (e && e.message) ? e.message : 'Stripe処理でエラーが発生しました';
+      throw new functions.https.HttpsError('failed-precondition', '申込に失敗しました: ' + detail);
+    }
     return { url: session.url };
   });
 
@@ -871,10 +883,19 @@ exports.createCustomerPortal = functions
     if (!member.stripeCustomerId) {
       throw new functions.https.HttpsError('failed-precondition', 'サブスク情報がありません');
     }
-    const session = await stripe.billingPortal.sessions.create({
-      customer: member.stripeCustomerId,
-      return_url: origin + '/member_subscription.html',
-    });
+    let session;
+    try {
+      session = await stripe.billingPortal.sessions.create({
+        customer: member.stripeCustomerId,
+        return_url: origin + '/member_subscription.html',
+      });
+    } catch (e) {
+      console.error('createCustomerPortal stripe error', {
+        customerId: member.stripeCustomerId, code: e && e.code, type: e && e.type, message: e && e.message,
+      });
+      const detail = (e && e.message) ? e.message : 'Stripe処理でエラーが発生しました';
+      throw new functions.https.HttpsError('failed-precondition', 'ポータルを開けませんでした: ' + detail);
+    }
     return { url: session.url };
   });
 
