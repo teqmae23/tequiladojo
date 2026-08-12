@@ -169,9 +169,10 @@ input,select,textarea{font-family:var(--sans)}
         </div>
       </div>
       <div class="fg" id="fg-bar">
-        <label>飲んだ場所</label>
-        <select id="e-bar"><option value="B00000">テキーラ道場</option><option value="B900001">その他（自由入力）</option></select>
-        <input id="e-bar-text" type="text" placeholder="例）自宅、〇〇バー" style="margin-top:8px;display:none">
+        <label>飲んだ場所（BAR）</label>
+        <div class="pick"><div class="pv" id="e-bar-view" onclick="openBarPicker()">タップして選択</div></div>
+        <input id="e-bar-text" type="text" placeholder="場所名（自由入力）" style="margin-top:8px;display:none">
+        <div id="e-bar-tz" style="font-size:11px;color:var(--ink3);margin-top:4px"></div>
       </div>
       <div class="fg">
         <label>評価</label>
@@ -193,6 +194,17 @@ input,select,textarea{font-family:var(--sans)}
     <div class="mbody">
       <input id="bottle-search" placeholder="銘柄名で検索..." style="width:100%;padding:11px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:15px;background:var(--cream);margin-bottom:8px">
       <div id="bottle-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- BAR選択モーダル -->
+<div class="mbg" id="m-bar">
+  <div class="modal">
+    <div class="mhead"><div class="mtitle">場所（BAR）を選択</div><button class="mx" id="bar-close">✕</button></div>
+    <div class="mbody">
+      <input id="bar-search" placeholder="BAR名・街で検索..." style="width:100%;padding:11px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:15px;background:var(--cream);margin-bottom:8px">
+      <div id="bar-list"></div>
     </div>
   </div>
 </div>
@@ -223,6 +235,8 @@ let logs=[];
 let editId=null;       // 編集中のログID（null=新規）
 let editSource='manual';
 let pickedBottleId='', pickedBottleName='';
+let bars=[], cities=[];
+let pickedBarId='B00000', pickedBarText='';
 let ratingVal=0;
 
 function g(id){return document.getElementById(id);}
@@ -234,6 +248,29 @@ function pad2(n){return String(n).padStart(2,'0');}
 function dtLocalToStore(v){ if(!v) return ''; return v.replace(/[-T:]/g,'').slice(0,12); }
 function storeToDtLocal(s){ if(!s||s.length<12) return ''; return s.slice(0,4)+'-'+s.slice(4,6)+'-'+s.slice(6,8)+'T'+s.slice(8,10)+':'+s.slice(10,12); }
 function nowDtLocal(){ var d=new Date(); return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+'T'+pad2(d.getHours())+':'+pad2(d.getMinutes()); }
+
+// ── タイムゾーン: 現地の壁時計時刻(store形式) → JST(store形式) ──
+// tzOffsetMs: 指定UTC時刻における tz のオフセット(ms) = (tzの壁時計) - UTC
+function tzOffsetMs(utcMs, tz){
+  try{
+    var dtf=new Intl.DateTimeFormat('en-US',{timeZone:tz,hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    var o={}; dtf.formatToParts(new Date(utcMs)).forEach(function(p){ o[p.type]=p.value; });
+    var asUtc=Date.UTC(+o.year,+o.month-1,+o.day,+(o.hour==='24'?0:o.hour),+o.minute,+o.second);
+    return asUtc-utcMs;
+  }catch(e){ return 0; }
+}
+function localStoreToJst(localStore, tz){
+  if(!localStore||localStore.length<12) return localStore;
+  if(!tz || tz==='Asia/Tokyo') return localStore; // 既にJST相当
+  var y=+localStore.slice(0,4),mo=+localStore.slice(4,6),d=+localStore.slice(6,8),h=+localStore.slice(8,10),mi=+localStore.slice(10,12);
+  var guess=Date.UTC(y,mo-1,d,h,mi);
+  var utc=guess-tzOffsetMs(guess,tz);       // 現地壁時計→UTC
+  var jst=new Date(utc+9*3600000);          // JST = UTC+9
+  return String(jst.getUTCFullYear())+pad2(jst.getUTCMonth()+1)+pad2(jst.getUTCDate())+pad2(jst.getUTCHours())+pad2(jst.getUTCMinutes());
+}
+function barById(id){ return bars.find(function(b){return b.id===id;}); }
+function barDispName(b){ return b?(b.nameJa||b.nameEn||b.nameEs||b.id):''; }
+function tzOfBar(id){ var b=barById(id); if(!b) return 'Asia/Tokyo'; var c=b.cityId?cities.find(function(x){return x.id===b.cityId;}):null; return (c&&c.tz)||'Asia/Tokyo'; }
 
 // ── ログイン ────────────────────────────────────────────────
 async function doLogin(){
@@ -281,8 +318,17 @@ auth.onAuthStateChanged(async function(user){
   g('gate').style.display='none'; g('log-ui').style.display='block';
   buildStyleOptions();
   await loadBottles();
+  await loadBars();
   await loadLogs();
 });
+
+async function loadBars(){
+  try{
+    const [bs,cs]=await Promise.all([ db.collection('bars').get(), db.collection('cities').get() ]);
+    bars=bs.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    cities=cs.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+  }catch(e){ console.warn('bars load', e); bars=[]; cities=[]; }
+}
 
 function isPaid(){
   if(typeof MemberPlan==='undefined') return false;
@@ -353,12 +399,15 @@ function renderTree(){
 }
 
 function logCard(l){
-  var t=String(l.drunkAt||''); var tm=t.length>=12?t.slice(8,10)+':'+t.slice(10,12):'';
+  var loc=String(l.drunkAtLocal||l.drunkAt||''); var tm=loc.length>=12?loc.slice(8,10)+':'+loc.slice(10,12):'';
+  var jstS=String(l.drunkAt||''); var jstTm=jstS.length>=12?jstS.slice(8,10)+':'+jstS.slice(10,12):'';
+  var showJst=(l.tz&&l.tz!=='Asia/Tokyo'&&jstTm&&jstTm!==tm);
   var isAuto=(l.source==='auto');
-  var barLabel=l.barId==='B00000'?'テキーラ道場':(l.barId==='B900001'?(l.barText||'その他'):(l.barText||l.barId||''));
+  var bmst=barById(l.barId);
+  var barLabel=l.barId==='B900001'?(l.barText||'その他'):(bmst?barDispName(bmst):(l.barId==='B00000'?'テキーラ道場':(l.barText||l.barId||'')));
   var meta=[STYLE_MAP[l.style]||l.style||'', (l.amountMl?l.amountMl+'ml':''), barLabel].filter(Boolean).join(' ・ ');
   return '<div class="log">'
-    +'<div class="l1"><span class="ltime">'+tm+'</span>'
+    +'<div class="l1"><span class="ltime">'+tm+(showJst?' <span style="color:var(--ink3)">(JST '+jstTm+')</span>':'')+'</span>'
       +'<span class="lbottle">'+esc(l.bottleName||bottleName(l.bottleId))+'</span>'
       +(isAuto?'<span class="badge b-dojo">道場自動</span>':'')+'</div>'
     +'<div class="lmeta">'+esc(meta)+'　<span class="stars">'+starStr(l.rating)+'</span></div>'
@@ -375,7 +424,17 @@ function buildStyleOptions(){
 }
 function setRating(v){ ratingVal=v; var sp=g('e-rate').children; for(var i=0;i<sp.length;i++){ sp[i].classList.toggle('on', (i+1)<=v); } }
 g('e-rate').addEventListener('click',function(e){ var s=e.target.closest('span'); if(!s) return; setRating(parseInt(s.getAttribute('data-v'))); });
-g('e-bar').addEventListener('change',function(){ g('e-bar-text').style.display=(this.value==='B900001')?'block':'none'; });
+function setBar(id, text){
+  pickedBarId=id||'B00000'; pickedBarText=text||'';
+  var b=barById(pickedBarId);
+  var label=pickedBarId==='B900001'?'その他（自由入力）':(b?barDispName(b):(pickedBarId==='B00000'?'テキーラ道場':pickedBarId));
+  g('e-bar-view').textContent=label;
+  var isOther=(pickedBarId==='B900001');
+  g('e-bar-text').style.display=isOther?'block':'none';
+  g('e-bar-text').value=pickedBarText;
+  var tz=tzOfBar(pickedBarId);
+  g('e-bar-tz').textContent=(tz&&tz!=='Asia/Tokyo')?('現地TZ: '+tz+' → 入力は現地時刻、JSTに換算して保存'):'';
+}
 
 function openAdd(){
   editId=null; editSource='manual';
@@ -385,7 +444,7 @@ function openAdd(){
   g('e-datetime').value=nowDtLocal();
   pickedBottleId=''; pickedBottleName=''; g('e-bottle-view').textContent='タップして選択';
   g('e-style').value='straight'; g('e-amount').value='30';
-  g('e-bar').value='B00000'; g('e-bar-text').value=''; g('e-bar-text').style.display='none';
+  setBar('B00000','');
   setRating(0); g('e-note').value='';
   g('m-edit').classList.add('open');
 }
@@ -397,12 +456,11 @@ function openEdit(id){
   g('fg-auto-note').style.display=isAuto?'block':'none';
   // 道場自動分は基本情報を編集不可（メモ・評価のみ）
   ['fg-bottle','fg-style','fg-amount','fg-bar'].forEach(function(fid){ g(fid).style.display=isAuto?'none':''; });
-  g('e-datetime').value=storeToDtLocal(l.drunkAt); g('e-datetime').disabled=isAuto;
+  g('e-datetime').value=storeToDtLocal(l.drunkAtLocal||l.drunkAt); g('e-datetime').disabled=isAuto;
   pickedBottleId=l.bottleId||''; pickedBottleName=l.bottleName||bottleName(l.bottleId);
   g('e-bottle-view').textContent=pickedBottleName||'タップして選択';
   g('e-style').value=l.style||'straight'; g('e-amount').value=l.amountMl||30;
-  g('e-bar').value=l.barId||'B00000'; g('e-bar-text').value=l.barText||'';
-  g('e-bar-text').style.display=(l.barId==='B900001')?'block':'none';
+  setBar(l.barId||'B00000', l.barText||'');
   setRating(Number(l.rating)||0); g('e-note').value=l.note||'';
   g('m-edit').classList.add('open');
 }
@@ -421,21 +479,25 @@ g('e-save').addEventListener('click',async function(){
     }catch(e){ toast('更新に失敗しました'); }
     return;
   }
-  var dt=dtLocalToStore(g('e-datetime').value);
-  if(!dt||dt.length<12){ toast('日時を入力してください'); return; }
-  if(dt>dtLocalToStore(nowDtLocal())){ toast('未来の日時は記録できません'); return; }
+  var localStore=dtLocalToStore(g('e-datetime').value);
+  if(!localStore||localStore.length<12){ toast('日時を入力してください'); return; }
   if(!pickedBottleId){ toast('ボトルを選択してください'); return; }
   var amount=parseInt(g('e-amount').value)||0;
   if(amount<=0||amount>999){ toast('量が不正です'); return; }
-  var barId=g('e-bar').value;
+  var barId=pickedBarId||'B00000';
   var barText=(barId==='B900001')?(g('e-bar-text').value||'').trim():'';
   if(barId==='B900001'&&!barText){ toast('場所を入力してください'); return; }
+  var tz=tzOfBar(barId);
+  var dt=localStoreToJst(localStore, tz);   // 現地時刻→JST（保存はJST）
+  if(dt>dtLocalToStore(nowDtLocal())){ toast('未来の日時は記録できません'); return; }
 
   var data={
     authUid: auth.currentUser.uid,
     memberId: String(currentMember.memberId||currentMember.id||''),
     memberName: String(currentMember.nickname||currentMember.name||''),
     drunkAt: dt,
+    drunkAtLocal: localStore,
+    tz: tz,
     bottleId: pickedBottleId,
     bottleName: pickedBottleName||bottleName(pickedBottleId),
     style: g('e-style').value,
@@ -492,6 +554,38 @@ g('bottle-list').addEventListener('click',function(e){
   pickedBottleName=b?b.full:pickedBottleId;
   g('e-bottle-view').textContent=pickedBottleName;
   g('m-bottle').classList.remove('open');
+});
+
+// ── BAR選択 ─────────────────────────────────────────────────
+function barsForPicker(){
+  var arr=bars.slice();
+  if(!arr.find(function(b){return b.id==='B00000';})) arr.unshift({id:'B00000',nameJa:'テキーラ道場'});
+  if(!arr.find(function(b){return b.id==='B900001';})) arr.push({id:'B900001',nameJa:'その他（自由入力）'});
+  return arr;
+}
+function openBarPicker(){ g('bar-search').value=''; renderBarList(''); g('m-bar').classList.add('open'); setTimeout(function(){ g('bar-search').focus(); },50); }
+function renderBarList(q){
+  q=(q||'').toLowerCase();
+  var special=['B00000','B900001'];
+  var list=barsForPicker().sort(function(a,b){
+    var sa=special.indexOf(a.id), sb=special.indexOf(b.id);
+    if(sa<0)sa=50; if(sb<0)sb=50;
+    if(sa!==sb) return sa-sb;
+    return barDispName(a).localeCompare(barDispName(b));
+  }).filter(function(b){ return !q || (barDispName(b)+' '+(b.nameEn||'')+' '+(b.address||'')).toLowerCase().indexOf(q)>=0; });
+  var el=g('bar-list');
+  if(!list.length){ el.innerHTML='<div class="empty">該当するBARがありません</div>'; return; }
+  el.innerHTML=list.slice(0,200).map(function(b){
+    var sub=(b.id==='B900001')?'場所を自由入力':(b.address||b.id);
+    return '<div class="brow" data-id="'+esc(b.id)+'"><div class="bn">'+esc(barDispName(b))+'</div><div class="bb">'+esc(sub)+'</div></div>';
+  }).join('');
+}
+g('bar-search').addEventListener('input',function(){ renderBarList(this.value); });
+g('bar-close').addEventListener('click',function(){ g('m-bar').classList.remove('open'); });
+g('bar-list').addEventListener('click',function(e){
+  var row=e.target.closest('.brow'); if(!row) return;
+  setBar(row.getAttribute('data-id'), (row.getAttribute('data-id')===pickedBarId)?pickedBarText:'');
+  g('m-bar').classList.remove('open');
 });
 </script>
 </body>
