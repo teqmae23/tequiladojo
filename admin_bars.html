@@ -324,7 +324,8 @@ function parseLatLng(url){
   return m?{lat:parseFloat(m[1]),lng:parseFloat(m[2])}:null;
 }
 // 地名→座標（Nominatim・無料/キー不要）。国コードで精度を上げる。
-function isoOfCountry(nameEn){ var m={'Japan':'jp','United States':'us','Mexico':'mx'}; return m[nameEn]||''; }
+function isoOfCountry(name){ var m={'Japan':'jp','日本':'jp','United States':'us','United States of America':'us','USA':'us','アメリカ':'us','アメリカ合衆国':'us','Mexico':'mx','México':'mx','メキシコ':'mx'}; return m[(name||'').trim()]||''; }
+function isoOf(cty){ if(!cty) return ''; return isoOfCountry(cty.nameEn)||isoOfCountry(cty.nameJa)||isoOfCountry(cty.nameEs); }
 function phoneCcOf(iso){ var m={'jp':'+81','us':'+1','mx':'+52'}; return m[iso]||''; }
 function gmapUrlOf(lat,lng){ return 'https://www.google.com/maps/search/?api=1&query='+lat+','+lng; }
 // 住所コンポーネント→表示用住所文字列（国により並び順を変える）
@@ -342,7 +343,7 @@ function composeAddress(a, iso){
 function buildReviewUrl(name, iso){
   var kw=(name||'').trim();
   if(!kw) return '';
-  if(iso==='jp') return 'https://tabelog.com/rst/rstsearch/?sw='+encodeURIComponent(kw);
+  if(iso==='jp') return 'https://tabelog.com/rstLst/?sw='+encodeURIComponent(kw);
   if(iso==='us') return 'https://www.yelp.com/search?find_desc='+encodeURIComponent(kw);
   return 'https://www.google.com/search?q='+encodeURIComponent(kw+' review');
 }
@@ -367,7 +368,7 @@ async function cityGeocode(){
   var parts=[name]; if(reg) parts.push(reg.nameEn||reg.nameJa); if(cty) parts.push(cty.nameEn||cty.nameJa);
   toast('地名を検索中...','inf');
   try{
-    var r=await geocodeName(parts.join(', '), cty?isoOfCountry(cty.nameEn):'');
+    var r=await geocodeName(parts.join(', '), isoOf(cty));
     if(!r){ toast('地名が見つかりませんでした','err'); return; }
     sv('ci-lat',r.lat); sv('ci-lng',r.lng); sv('ci-mapUrl',gmapUrlOf(r.lat,r.lng));
     fetchElevInto('ci-lat','ci-lng','ci-elev');
@@ -378,7 +379,7 @@ async function cityGeocode(){
 function buildReviewFromForm(){
   var name=gv('bar-nameJa')||gv('bar-nameEn')||gv('bar-nameEs');
   if(!name){ toast('先に店名を入力してください','err'); return; }
-  var cty=countryOf(gv('bar-country')); var iso=cty?isoOfCountry(cty.nameEn):'';
+  var iso=isoOf(countryOf(gv('bar-country')));
   sv('bar-review', buildReviewUrl(name, iso));
   toast('評価サイトURLを生成しました','inf');
 }
@@ -387,8 +388,7 @@ async function barGeocode(){
   var addr=gv('bar-address');
   var q=[name,addr].filter(Boolean).join(', ');
   if(!q){ toast('店名か住所を入力してください','err'); return; }
-  var cty=countryOf(gv('bar-country'));
-  var iso=cty?isoOfCountry(cty.nameEn):'';
+  var iso=isoOf(countryOf(gv('bar-country')));
   toast('地名を検索中...','inf');
   try{
     var r=await geocodeName(q, iso);
