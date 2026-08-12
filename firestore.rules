@@ -129,6 +129,36 @@ service cloud.firestore {
       allow write: if isOwner();
     }
 
+    // 個人テキーラログ（有料会員の飲酒記録）。本人のみ閲覧、手入力(source=manual)の
+    // 作成・編集・削除が可能。道場自動記録(source=auto)はスタッフ/Functionsが作成し、
+    // 本人は note/rating のみ編集可・削除不可。（有料判定はクライアント側で制御）
+    match /tequilaLogs/{id} {
+      allow read: if isStaff()
+        || (realUser() && resource.data.get('authUid', '') == request.auth.uid);
+      allow create: if realUser()
+        && request.resource.data.authUid == request.auth.uid
+        && request.resource.data.get('source', 'manual') == 'manual'
+        && request.resource.data.keys().hasOnly(
+             ['authUid', 'memberId', 'memberName', 'drunkAt', 'bottleId', 'bottleName',
+              'style', 'amountMl', 'barId', 'barText', 'note', 'rating',
+              'source', 'orderRef', 'createdAt', 'updatedAt'])
+        && request.resource.data.amountMl is number
+        && request.resource.data.rating is number
+        && request.resource.data.rating >= 0 && request.resource.data.rating <= 5;
+      allow update: if isStaff()
+        || (realUser() && resource.data.get('authUid', '') == request.auth.uid
+            && request.resource.data.authUid == resource.data.authUid
+            && request.resource.data.get('source', 'manual') == resource.data.get('source', 'manual')
+            && (resource.data.get('source', 'manual') == 'manual'
+                ? !request.resource.data.diff(resource.data).affectedKeys()
+                    .hasAny(['authUid', 'memberId', 'source', 'orderRef', 'createdAt'])
+                : request.resource.data.diff(resource.data).affectedKeys()
+                    .hasOnly(['note', 'rating', 'updatedAt'])));
+      allow delete: if isStaff()
+        || (realUser() && resource.data.get('authUid', '') == request.auth.uid
+            && resource.data.get('source', 'manual') == 'manual');
+    }
+
     // ── 日常業務（開店閉店・来場退場・注文・会計）: スタッフのみ ──
     // 会員向けページはCloud Functions（getMemberActivity / getStoreStatus）経由で
     // 本人分・公開情報のみ取得する
