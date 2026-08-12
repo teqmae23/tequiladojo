@@ -167,8 +167,8 @@ td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
       <div class="fg"><label>街名 EN</label><input class="fi" id="ci-nameEn"></div>
       <div class="fg"><label>街名 JP</label><input class="fi" id="ci-nameJa"></div>
     </div>
-    <div class="fg"><label>タイムゾーン（IANA）</label>
-      <input class="fi" id="ci-tz" list="tzlist" placeholder="Asia/Tokyo">
+    <div class="fg"><label>タイムゾーン（IANA・座標から自動取得可）</label>
+      <div class="inl"><input class="fi" id="ci-tz" list="tzlist" placeholder="Asia/Tokyo"><button type="button" class="btn bs sm" onclick="fetchTzInto('ci-lat','ci-lng','ci-tz')">自動取得</button></div>
       <datalist id="tzlist"><option value="Asia/Tokyo"><option value="America/Mexico_City"><option value="America/Tijuana"><option value="America/Los_Angeles"><option value="America/Denver"><option value="America/Chicago"><option value="America/New_York"></datalist>
     </div>
     <div class="fg"><label>Google Map URL（地名から自動取得も可）</label>
@@ -333,6 +333,7 @@ async function cityGeocode(){
     if(!r){ toast('地名が見つかりませんでした','err'); return; }
     sv('ci-lat',r.lat); sv('ci-lng',r.lng); sv('ci-mapUrl',gmapUrlOf(r.lat,r.lng));
     fetchElevInto('ci-lat','ci-lng','ci-elev');
+    fetchTzInto('ci-lat','ci-lng','ci-tz');
     toast('取得: '+r.display,'inf');
   }catch(e){ toast('取得失敗（通信）','err'); }
 }
@@ -372,6 +373,22 @@ async function getElevation(lat,lng){
   var nonZero=vals.filter(function(v){return Math.abs(v)>0.5;});
   return nonZero.length?nonZero[0]:vals[0];
 }
+// 座標→タイムゾーン(IANA)。open-meteoの timezone=auto を利用（キー不要）。
+async function fetchTimezone(lat,lng){
+  try{
+    var r=await fetch("https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lng+"&current=temperature_2m&timezone=auto");
+    var j=await r.json();
+    if(j&&j.timezone) return j.timezone;
+  }catch(e){}
+  return null;
+}
+async function fetchTzInto(latId,lngId,tzId){
+  var lat=parseFloat(gv(latId)),lng=parseFloat(gv(lngId));
+  if(isNaN(lat)||isNaN(lng)){toast("先に緯度経度を入れてください","err");return;}
+  toast("TZ取得中...","inf");
+  var tz=await fetchTimezone(lat,lng);
+  if(tz){sv(tzId,tz);toast("TZ: "+tz,"inf");}else toast("TZ取得失敗","err");
+}
 async function fetchElevInto(latId,lngId,elevId){
   var lat=parseFloat(gv(latId)),lng=parseFloat(gv(lngId));
   if(isNaN(lat)||isNaN(lng)){toast("先に緯度経度を入れてください","err");return;}
@@ -385,7 +402,7 @@ async function fetchElevInto(latId,lngId,elevId){
 var _barElevT=null;
 function scheduleBarElev(){clearTimeout(_barElevT);_barElevT=setTimeout(function(){if(gv("bar-lat")&&gv("bar-lng")&&!gv("bar-elev"))fetchElevInto("bar-lat","bar-lng","bar-elev");},600);}
 function onBarMapUrl(force){var ll=parseLatLng(gv("bar-mapUrl"));if(ll){sv("bar-lat",ll.lat);sv("bar-lng",ll.lng);scheduleBarElev();}else if(force)toast("URLから座標を抽出できませんでした","err");}
-function onCityMapUrl(force){var ll=parseLatLng(gv("ci-mapUrl"));if(ll){sv("ci-lat",ll.lat);sv("ci-lng",ll.lng);if(!gv("ci-elev"))fetchElevInto("ci-lat","ci-lng","ci-elev");}else if(force)toast("URLから座標を抽出できませんでした","err");}
+function onCityMapUrl(force){var ll=parseLatLng(gv("ci-mapUrl"));if(ll){sv("ci-lat",ll.lat);sv("ci-lng",ll.lng);if(!gv("ci-elev"))fetchElevInto("ci-lat","ci-lng","ci-elev");if(!gv("ci-tz"))fetchTzInto("ci-lat","ci-lng","ci-tz");}else if(force)toast("URLから座標を抽出できませんでした","err");}
 
 // ── モーダル開閉 ─────────────────────────────────────
 function openM(id){g(id).classList.add("open");}
