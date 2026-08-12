@@ -208,6 +208,15 @@ function countryOf(id){return countries.find(function(c){return c.id===id;});}
 function regionOf(id){return regions.find(function(r){return r.id===id;});}
 function cityOf(id){return cities.find(function(c){return c.id===id;});}
 function barCountFor(field,val){return bars.filter(function(b){return b[field]===val;}).length;}
+// 2点間の距離(m)。重複チェックの近接判定に使用。
+function distMeters(la1,lo1,la2,lo2){
+  if(la1==null||lo1==null||la2==null||lo2==null) return Infinity;
+  var R=6371000,tr=Math.PI/180;
+  var dLa=(la2-la1)*tr,dLo=(lo2-lo1)*tr;
+  var a=Math.sin(dLa/2)*Math.sin(dLa/2)+Math.cos(la1*tr)*Math.cos(la2*tr)*Math.sin(dLo/2)*Math.sin(dLo/2);
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function normName(s){return String(s==null?"":s).trim().toLowerCase();}
 
 // ── 認証 ─────────────────────────────────────────────
 AuthRole.requireOwner(auth,function(user){
@@ -415,6 +424,22 @@ g("btn-save-bar").addEventListener("click",function(){
   var id=editBarId||nextBarId();
   var nameJa=gv("bar-nameJa"),nameEn=gv("bar-nameEn"),nameEs=gv("bar-nameEs");
   if(!nameJa&&!nameEn&&!nameEs){toast("名前を1つ以上入力してください","err");return;}
+  // 重複チェック（同名 / 住所一致 / 座標が近接80m以内）
+  var _blat=gv("bar-lat")!==""?parseFloat(gv("bar-lat")):null,_blng=gv("bar-lng")!==""?parseFloat(gv("bar-lng")):null;
+  var _bnames=[nameJa,nameEn,nameEs].filter(Boolean).map(normName);
+  var _baddr=normName(gv("bar-address"));
+  var dupBar=bars.find(function(b){
+    if(b.id===id||b.id==="B00000"||b.id==="B900001") return false;
+    var bn=[b.nameJa,b.nameEn,b.nameEs].filter(Boolean).map(normName);
+    var sameName=_bnames.some(function(x){return bn.indexOf(x)>=0;});
+    var sameAddr=_baddr&&normName(b.address)===_baddr;
+    var near=(_blat!=null&&_blng!=null)&&distMeters(_blat,_blng,b.lat,b.lng)<=80;
+    return sameName||sameAddr||near;
+  });
+  if(dupBar){
+    var _r=dupBar.lat!=null&&_blat!=null?Math.round(distMeters(_blat,_blng,dupBar.lat,dupBar.lng)):null;
+    if(!confirm("⚠ 重複の可能性があります。\n既存: "+dupBar.id+"「"+barName(dupBar)+"」"+(dupBar.address?"\n"+dupBar.address:"")+(_r!=null?"\n距離 約"+_r+"m":"")+"\n\nこのまま登録しますか？")) return;
+  }
   var data={barId:id,nameJa:nameJa||null,nameEn:nameEn||null,nameEs:nameEs||null,
     countryId:gv("bar-country")||null,regionId:gv("bar-region")||null,cityId:gv("bar-city")||null,
     postalCode:gv("bar-postal")||null,address:gv("bar-address")||null,
@@ -454,6 +479,18 @@ g("btn-save-city").addEventListener("click",function(){
   var rr=gv("ci-region");if(!rr){toast("地域を選択してください","err");return;}
   if(!gv("ci-nameEn")&&!gv("ci-nameJa")){toast("街名を入力してください","err");return;}
   var reg=regionOf(rr);
+  // 重複チェック（同一地域で同名 / 座標が近接1km以内）
+  var _cJa=normName(gv("ci-nameJa")),_cEn=normName(gv("ci-nameEn"));
+  var _clat=gv("ci-lat")!==""?parseFloat(gv("ci-lat")):null,_clng=gv("ci-lng")!==""?parseFloat(gv("ci-lng")):null;
+  var dupCity=cities.find(function(c){
+    if(editCityId&&c.id===editCityId) return false;
+    var sameName=c.regionId===rr&&((_cJa&&normName(c.nameJa)===_cJa)||(_cEn&&normName(c.nameEn)===_cEn));
+    var near=(_clat!=null&&_clng!=null)&&distMeters(_clat,_clng,c.lat,c.lng)<=1000;
+    return sameName||near;
+  });
+  if(dupCity){
+    if(!confirm("⚠ 重複の可能性があります。\n既存: "+dupCity.id+"「"+geoName(dupCity)+"」（"+geoName(regionOf(dupCity.regionId))+"）\n\nこのまま登録しますか？")) return;
+  }
   var id=editCityId||nextCityId(rr);
   journaledSet("cities",id,{cityId:id,regionId:rr,countryId:reg?reg.countryId:null,
     nameEn:gv("ci-nameEn")||null,nameJa:gv("ci-nameJa")||null,tz:gv("ci-tz")||null,
