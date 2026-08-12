@@ -125,8 +125,8 @@ td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
       <div class="fg"><label>電話 国番号</label><input class="fi" id="bar-phoneCc" placeholder="+81"></div>
       <div class="fg"><label>電話番号</label><input class="fi" id="bar-phone"></div>
     </div>
-    <div class="fg"><label>Google Map URL（緯度経度を含むURL）</label>
-      <div class="inl"><input class="fi" id="bar-mapUrl" oninput="onBarMapUrl()"><button type="button" class="btn bs sm" onclick="onBarMapUrl(true)">座標抽出</button></div>
+    <div class="fg"><label>Google Map URL（店名・住所から自動取得も可）</label>
+      <div class="inl"><input class="fi" id="bar-mapUrl" oninput="onBarMapUrl()"><button type="button" class="btn bs sm" onclick="onBarMapUrl(true)">座標抽出</button><button type="button" class="btn bp sm" onclick="barGeocode()">地名から取得</button></div>
     </div>
     <div class="frow3">
       <div class="fg"><label>緯度</label><input class="fi" id="bar-lat" oninput="scheduleBarElev()"></div>
@@ -171,8 +171,8 @@ td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
       <input class="fi" id="ci-tz" list="tzlist" placeholder="Asia/Tokyo">
       <datalist id="tzlist"><option value="Asia/Tokyo"><option value="America/Mexico_City"><option value="America/Tijuana"><option value="America/Los_Angeles"><option value="America/Denver"><option value="America/Chicago"><option value="America/New_York"></datalist>
     </div>
-    <div class="fg"><label>Google Map URL</label>
-      <div class="inl"><input class="fi" id="ci-mapUrl" oninput="onCityMapUrl()"><button type="button" class="btn bs sm" onclick="onCityMapUrl(true)">座標抽出</button></div>
+    <div class="fg"><label>Google Map URL（地名から自動取得も可）</label>
+      <div class="inl"><input class="fi" id="ci-mapUrl" oninput="onCityMapUrl()"><button type="button" class="btn bs sm" onclick="onCityMapUrl(true)">座標抽出</button><button type="button" class="btn bp sm" onclick="cityGeocode()">地名から取得</button></div>
     </div>
     <div class="frow3">
       <div class="fg"><label>緯度</label><input class="fi" id="ci-lat"></div>
@@ -304,9 +304,52 @@ function nextBarId(){var mx=0;bars.forEach(function(b){if(/^B\d{5}$/.test(b.id))
 // ── geoユーティリティ ────────────────────────────────
 function parseLatLng(url){
   if(!url) return null;
-  var m=url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)||url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)
-    ||url.match(/[?&](?:q|query|ll|sll|center)=(-?\d+\.\d+),\s*(-?\d+\.\d+)/);
+  // 施設ピンの正確な座標(!3d..!4d..) を最優先。次にクエリ座標。最後に地図中心(@..)。
+  // 地図中心(@)は店の位置とズレることがあるため優先度を下げる。
+  var m=url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)
+    ||url.match(/[?&](?:q|query|ll|sll|daddr|destination)=(-?\d+\.\d+),\s*(-?\d+\.\d+)/)
+    ||url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
   return m?{lat:parseFloat(m[1]),lng:parseFloat(m[2])}:null;
+}
+// 地名→座標（Nominatim・無料/キー不要）。国コードで精度を上げる。
+function isoOfCountry(nameEn){ var m={'Japan':'jp','United States':'us','Mexico':'mx'}; return m[nameEn]||''; }
+function gmapUrlOf(lat,lng){ return 'https://www.google.com/maps/search/?api=1&query='+lat+','+lng; }
+async function geocodeName(query, iso){
+  var url='https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(query);
+  if(iso) url+='&countrycodes='+iso;
+  var res=await fetch(url,{headers:{'Accept-Language':'ja,en','User-Agent':'TequilaDojoAdmin/1.0'}});
+  var arr=await res.json();
+  if(!arr||!arr.length) return null;
+  return {lat:parseFloat(arr[0].lat),lng:parseFloat(arr[0].lon),display:arr[0].display_name};
+}
+async function cityGeocode(){
+  var name=gv('ci-nameJa')||gv('ci-nameEn');
+  if(!name){ toast('先に街名を入力してください','err'); return; }
+  var reg=regionOf(gv('ci-region')); var cty=reg?countryOf(reg.countryId):null;
+  var parts=[name]; if(reg) parts.push(reg.nameEn||reg.nameJa); if(cty) parts.push(cty.nameEn||cty.nameJa);
+  toast('地名を検索中...','inf');
+  try{
+    var r=await geocodeName(parts.join(', '), cty?isoOfCountry(cty.nameEn):'');
+    if(!r){ toast('地名が見つかりませんでした','err'); return; }
+    sv('ci-lat',r.lat); sv('ci-lng',r.lng); sv('ci-mapUrl',gmapUrlOf(r.lat,r.lng));
+    fetchElevInto('ci-lat','ci-lng','ci-elev');
+    toast('取得: '+r.display,'inf');
+  }catch(e){ toast('取得失敗（通信）','err'); }
+}
+async function barGeocode(){
+  var name=gv('bar-nameJa')||gv('bar-nameEn')||gv('bar-nameEs');
+  var addr=gv('bar-address');
+  var q=[name,addr].filter(Boolean).join(', ');
+  if(!q){ toast('店名か住所を入力してください','err'); return; }
+  var cty=countryOf(gv('bar-country'));
+  toast('地名を検索中...','inf');
+  try{
+    var r=await geocodeName(q, cty?isoOfCountry(cty.nameEn):'');
+    if(!r){ toast('該当が見つかりませんでした（店名＋住所を具体的に）','err'); return; }
+    sv('bar-lat',r.lat); sv('bar-lng',r.lng); sv('bar-mapUrl',gmapUrlOf(r.lat,r.lng));
+    fetchElevInto('bar-lat','bar-lng','bar-elev');
+    toast('取得: '+r.display,'inf');
+  }catch(e){ toast('取得失敗（通信）','err'); }
 }
 function fetchElevInto(latId,lngId,elevId){
   var lat=parseFloat(gv(latId)),lng=parseFloat(gv(lngId));
