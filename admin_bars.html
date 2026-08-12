@@ -351,13 +351,36 @@ async function barGeocode(){
     toast('取得: '+r.display,'inf');
   }catch(e){ toast('取得失敗（通信）','err'); }
 }
-function fetchElevInto(latId,lngId,elevId){
+// 標高取得: SRTM30m(30m・沿岸低地に強い)を優先し、無ければ open-meteo(90m)へ。
+// 沿岸の点で 0m/null しか返らない場合は他方を試し、より妥当な値を採用する。
+async function getElevation(lat,lng){
+  var vals=[];
+  // 1) OpenTopoData SRTM30m
+  try{
+    var r=await fetch("https://api.opentopodata.org/v1/srtm30m?locations="+lat+","+lng);
+    var j=await r.json();
+    if(j&&j.results&&j.results.length&&j.results[0].elevation!=null) vals.push(j.results[0].elevation);
+  }catch(e){}
+  // 2) open-meteo (Copernicus 90m)
+  try{
+    var r2=await fetch("https://api.open-meteo.com/v1/elevation?latitude="+lat+"&longitude="+lng);
+    var j2=await r2.json();
+    if(j2&&j2.elevation&&j2.elevation.length) vals.push(j2.elevation[0]);
+  }catch(e){}
+  if(!vals.length) return null;
+  // 0(海判定)より、非0の値があればそちらを優先
+  var nonZero=vals.filter(function(v){return Math.abs(v)>0.5;});
+  return nonZero.length?nonZero[0]:vals[0];
+}
+async function fetchElevInto(latId,lngId,elevId){
   var lat=parseFloat(gv(latId)),lng=parseFloat(gv(lngId));
   if(isNaN(lat)||isNaN(lng)){toast("先に緯度経度を入れてください","err");return;}
-  fetch("https://api.open-meteo.com/v1/elevation?latitude="+lat+"&longitude="+lng)
-    .then(function(r){return r.json();})
-    .then(function(j){if(j.elevation&&j.elevation.length){sv(elevId,Math.round(j.elevation[0]));toast("標高: "+Math.round(j.elevation[0])+"m","inf");}else toast("標高取得失敗","err");})
-    .catch(function(){toast("標高取得失敗（通信）","err");});
+  toast("標高取得中...","inf");
+  try{
+    var v=await getElevation(lat,lng);
+    if(v==null){toast("標高取得失敗","err");return;}
+    sv(elevId,Math.round(v));toast("標高: "+Math.round(v)+"m","inf");
+  }catch(e){toast("標高取得失敗（通信）","err");}
 }
 var _barElevT=null;
 function scheduleBarElev(){clearTimeout(_barElevT);_barElevT=setTimeout(function(){if(gv("bar-lat")&&gv("bar-lng")&&!gv("bar-elev"))fetchElevInto("bar-lat","bar-lng","bar-elev");},600);}
