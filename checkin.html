@@ -29,6 +29,7 @@ var FIREBASE_CONFIG = {
 <script src="/auth-role.js?v=20260714"></script>
 <script>window.JOURNAL_PAGE='checkin';</script>
 <script src="/journal.js?v=20260706"></script>
+<script src="/member-plan.js?v=20260810"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -101,6 +102,8 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
 /* 来場者カード */
 .visitor-list{display:flex;flex-direction:column;gap:8px}
 .vis-card{background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:10px 14px}
+.vis-premium{border-left:4px solid var(--gold,#c8921e)!important;background:rgba(200,146,30,.07)}
+.badge-premium{display:inline-block;font-size:9px;font-weight:700;color:#5a3d00;background:#f2c94c;border-radius:3px;padding:0 5px;margin-left:4px;vertical-align:middle;white-space:nowrap}
 .vis-row1{display:flex;align-items:center;gap:8px;margin-bottom:7px;flex-wrap:nowrap;min-width:0}
 .vis-name{font-size:15px;font-weight:500;color:var(--ink);flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
 .vis-meta-inline{display:flex;gap:10px;font-size:11px;color:var(--ink3);flex:1;min-width:0;align-items:center;flex-wrap:nowrap;overflow:hidden}
@@ -633,7 +636,11 @@ function loadAll(){
     db.collection('memberPrivate').get().then(function(snap){
       cache.memberNotes={};
       snap.docs.forEach(function(d){ var ns=(d.data().noteShort||'').trim(); if(ns) cache.memberNotes[d.id]=ns; });
-    }).catch(function(){ cache.memberNotes={}; })
+    }).catch(function(){ cache.memberNotes={}; }),
+    // 有料会員判定用のプラン一覧（末尾に追加＝上のresults添字は不変）
+    (typeof MemberPlan!=='undefined'
+      ? MemberPlan.loadPlans(db).then(function(arr){ cache.plans=arr||[]; }).catch(function(){ cache.plans=[]; })
+      : Promise.resolve())
   ]).then(function(results){
     var visitsSnap=results[2];   // 0:members 1:blindMarks 2:visits 3:orders 4:session 5:sessions 6:memberPrivate
     var session=results[4];
@@ -964,20 +971,29 @@ function renderVisitorList(){
   });
 }
 
+// 有料会員（有効プランのレベル>0）判定
+function isPaidMemberCI(mem){
+  if(!mem || typeof MemberPlan==='undefined' || !cache.plans) return false;
+  var p=MemberPlan.effectivePlan(mem, cache.plans);
+  return !!(p && Number(p.level)>0);
+}
+
 function renderVisCard(v, status){
   var isDone=(status==='done');
   var isPaid=(status==='paid');
   var mem=getMemberInfo(v.memberId);
   var name=mem?(mem.nickname||mem.name||(mem.displayId||mem.memberId||mem.id)):(v.memberId?'非会員':'非会員');
+  var premium=isPaidMemberCI(mem);
+  var pBadge=premium?'<span class="badge-premium">👑有料</span>':'';
   var totalAmt=v.amount||calcAmount(getVisitOrders(v.id));
   var mpBtn=mem?'<button class="btn bs sm" onclick="openMemberMypage(\''+escHtml(mem.id)+'\')" style="padding:3px 7px;font-size:10px;flex-shrink:0" title="マイページ（来店ログ）">📋MP</button>':'';
 
   if(isDone){
     var timeStr=fmtHHMM(v.checkoutTime||'');
-    return '<div class="vis-card" style="padding:0">'
+    return '<div class="vis-card'+(premium?' vis-premium':'')+'" style="padding:0">'
       +'<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;min-width:0">'
       +'<span style="font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0">退'+timeStr+'</span>'
-      +'<span style="font-size:13px;font-weight:500;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+'</span>'
+      +'<span style="font-size:13px;font-weight:500;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+pBadge+'</span>'
       +'<span style="font-size:12px;font-family:var(--mono);color:var(--ink);white-space:nowrap;flex-shrink:0">¥'+totalAmt.toLocaleString()+'</span>'
       +'<button class="btn bs sm" onclick="reprintReceipt(\''+v.id+'\')" style="padding:3px 7px;font-size:10px;flex-shrink:0">🖨</button>'
       +cardRefundBtn(v)
@@ -997,11 +1013,11 @@ function renderVisCard(v, status){
 
   var chk='<input type="checkbox" class="vis-select-chk" data-visit-id="'+v.id+'" data-status="'+(isPaid?'paid':'active')+'" onchange="onVisitCheckChange()" style="width:16px;height:16px;flex-shrink:0;margin:0;cursor:pointer">';
 
-  return '<div class="vis-card'+gcClass+'" style="padding:0">'
+  return '<div class="vis-card'+gcClass+(premium?' vis-premium':'')+'" style="padding:0">'
     +'<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;min-width:0">'
     +chk
     +'<span style="font-size:11px;color:var(--ink3);white-space:nowrap;flex-shrink:0">'+timeStr2+'</span>'
-    +'<span style="font-size:14px;font-weight:500;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+'</span>'
+    +'<span style="font-size:14px;font-weight:500;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(name)+pBadge+'</span>'
     +(isPaid?'<span class="badge" style="background:#e8b84b;color:#5a3800;font-size:9px;flex-shrink:0">会計済</span>':'')
     +'<span style="font-size:12px;font-family:var(--mono);color:var(--ink);white-space:nowrap;flex-shrink:0">¥'+totalAmt.toLocaleString()+'</span>'
     +actionBtn
@@ -1571,10 +1587,11 @@ function filterMembers(){
   var html=filtered.slice(0,50).map(function(m){
     var name=m.nickname||m.name||m.id;
     var mDispId=m.displayId||m.memberId||m.id;
-    return '<div data-mid="'+escHtml(m.id)+'" class="ci-member-item" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border2);font-size:13px">'
+    var pBadge=isPaidMemberCI(m)?'<span class="badge-premium">👑有料</span>':'';
+    return '<div data-mid="'+escHtml(m.id)+'" class="ci-member-item'+(isPaidMemberCI(m)?' vis-premium':'')+'" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border2);font-size:13px">'
       +'<button type="button" data-mp="'+escHtml(m.id)+'" style="float:right;background:var(--cream2);border:1px solid var(--border2);border-radius:5px;font-size:10px;padding:2px 7px;cursor:pointer" title="マイページ（来店ログ）">📋MP</button>'
       +'<span style="font-family:var(--mono);font-size:11px;color:var(--ink3);margin-right:8px">'+mDispId+'</span>'
-      +escHtml(name)+ciNoteParen(m.id)
+      +escHtml(name)+pBadge+ciNoteParen(m.id)
       +'<span style="font-size:11px;color:var(--ink3);margin-left:8px">'+(m.rank||'')+'・'+(m.visitCount||0)+'回</span></div>';
   }).join('');
   list.innerHTML=html;
