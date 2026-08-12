@@ -920,7 +920,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <div class="keybox" id="kb-reservation">—<span class="klabel">reservationId（西暦2桁+通番4桁）</span></div>
       <div class="frow">
         <div class="fg"><label class="fl">予約日（YYMMDD）<span class="req">*</span> <span class="db-field">reservationDate</span></label><input class="fi mono" id="rsv-date" maxlength="6" placeholder="YYMMDD"></div>
-        <div class="fg"><label class="fl">顧客コード（6桁）<span class="req">*</span> <span class="db-field">customerCode</span></label><input class="fi mono" id="rsv-customer" maxlength="6" placeholder=""></div>
+        <div class="fg"><label class="fl">顧客コード（6桁）<span class="req">*</span> <span class="db-field">customerCode</span> <span onclick="openRsvMemberPicker()" style="color:var(--gold-d,#7a5610);cursor:pointer;font-size:10px;text-decoration:underline">会員選択</span></label><input class="fi mono" id="rsv-customer" maxlength="6" placeholder="タップで会員選択（手入力可）" onclick="openRsvMemberPicker()"><div id="rsv-customer-name" style="font-size:11px;color:var(--teal);margin-top:3px;min-height:14px"></div></div>
       </div>
       <div class="frow">
         <div class="fg"><label class="fl">開始時間（HHMMSS）<span class="req">*</span> <span class="db-field">startTime</span></label><input class="fi mono" id="rsv-start" maxlength="6" placeholder="HHMMSS"></div>
@@ -936,6 +936,17 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <div id="rsv-hours-warn" style="display:none;font-size:12px;color:var(--red);padding:6px 10px;background:var(--red-l);border-radius:var(--r);margin-top:4px"></div>
     </div>
     <div class="mfoot"><button class="btn bg2" data-close="m-reservation">キャンセル</button><button class="btn bp" id="btn-save-reservation">保存</button></div>
+  </div>
+</div>
+
+<!-- 予約: 会員選択モーダル（本会員） -->
+<div class="mbg" id="m-rsv-picker">
+  <div class="modal">
+    <div class="mhead"><div class="mtitle">会員選択（本会員）</div><button class="mx" data-close="m-rsv-picker">✕</button></div>
+    <div class="mbody">
+      <input class="fi" id="rsv-picker-search" placeholder="会員名・ニックネーム・IDで検索..." style="margin-bottom:8px">
+      <div id="rsv-picker-list" style="max-height:52vh;overflow-y:auto;border:1px solid var(--border2);border-radius:var(--r);background:var(--white)"></div>
+    </div>
   </div>
 </div>
 
@@ -1936,10 +1947,65 @@ function openReservationModal(id){
     var nid=genRsvId();
     g("kb-reservation").innerHTML='<span class="keypart kp-nom">'+nid.slice(0,2)+'</span><span class="keypart kp-seq">'+nid.slice(2)+'</span><span class="klabel">reservationId</span>';
   }
+  updateRsvCustomerName();
   openM("m-reservation");
 }
 
 FORM_MODALS.push("m-reservation");
+
+// ── 予約: 本会員選択ピッカー ─────────────────────────────────
+function rsvMemberCode(m){ return String(m.displayId||m.memberId||m.id||""); }
+function rsvEnsureMembers(cb){
+  if(cache.members && cache.members.length){ cb(); return; }
+  db.collection("members").get().then(function(snap){
+    cache.members=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    cb();
+  }).catch(function(){ cb(); });
+}
+function rsvIsFullMember(m){
+  return !m.deleted && !m.isGuest && !m.pendingEmail && m.email && m.email.indexOf("@tequiladojo.member")<0;
+}
+function openRsvMemberPicker(){
+  g("rsv-picker-search").value="";
+  g("rsv-picker-list").innerHTML='<div style="padding:16px;text-align:center;color:var(--ink3);font-size:13px">読み込み中...</div>';
+  rsvEnsureMembers(function(){ renderRsvPicker(""); });
+  openM("m-rsv-picker");
+  setTimeout(function(){ var s=g("rsv-picker-search"); if(s) s.focus(); },50);
+}
+function renderRsvPicker(q){
+  q=(q||"").toLowerCase();
+  var list=(cache.members||[]).filter(rsvIsFullMember).filter(function(m){
+    if(!q) return true;
+    var hay=((m.nickname||"")+" "+(m.name||"")+" "+(m.nameKana||"")+" "+rsvMemberCode(m)).toLowerCase();
+    return hay.indexOf(q)>=0;
+  }).sort(function(a,b){ return rsvMemberCode(a).localeCompare(rsvMemberCode(b)); });
+  var el=g("rsv-picker-list");
+  if(!list.length){ el.innerHTML='<div style="padding:16px;text-align:center;color:var(--ink3);font-size:13px">該当する本会員がいません</div>'; return; }
+  el.innerHTML=list.slice(0,300).map(function(m){
+    var code=rsvMemberCode(m), nm=m.nickname||m.name||"—";
+    return '<div class="rsv-picker-row" data-code="'+escHtml(code)+'" style="padding:9px 12px;border-bottom:1px solid var(--border2);cursor:pointer;display:flex;gap:10px;align-items:center">'
+      +'<span class="mono" style="font-size:12px;color:var(--ink);min-width:64px">'+escHtml(code)+'</span>'
+      +'<span style="font-size:13px">'+escHtml(nm)+'</span>'
+      +((m.name&&m.nickname)?'<span style="font-size:11px;color:var(--ink3)">'+escHtml(m.name)+'</span>':'')
+      +'</div>';
+  }).join("");
+}
+function updateRsvCustomerName(){
+  var code=gv("rsv-customer"), el=g("rsv-customer-name"); if(!el) return;
+  if(!code){ el.textContent=""; return; }
+  var m=(cache.members||[]).find(function(x){ var c=rsvMemberCode(x); return c===code || c.padStart(6,"0")===code; });
+  el.textContent=m?("→ "+(m.nickname||m.name||"")):"";
+}
+(function(){
+  var s=g("rsv-picker-search"); if(s) s.addEventListener("input", function(){ renderRsvPicker(this.value); });
+  var pl=g("rsv-picker-list");
+  if(pl) pl.addEventListener("click", function(e){
+    var row=e.target.closest(".rsv-picker-row"); if(!row) return;
+    sv("rsv-customer", String(row.getAttribute("data-code")).padStart(6,"0"));
+    updateRsvCustomerName();
+    closeM("m-rsv-picker");
+  });
+})();
 
 function checkRsvBusinessHours(date,start,end,cb){
   var fullDate="20"+date;
