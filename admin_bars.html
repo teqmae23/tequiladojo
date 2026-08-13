@@ -268,12 +268,19 @@ function render(){
 function renderBars(q){
   g("thead").innerHTML="<tr><th>ID</th><th>名前</th><th>国/地域/街</th><th>住所</th><th>地図</th><th>操作</th></tr>";
   var list=bars.filter(function(b){return !q||(b.id+" "+barName(b)+" "+(b.address||"")).toLowerCase().indexOf(q)>=0;})
-    .sort(function(a,b){return a.id.localeCompare(b.id);});
+    .sort(function(a,b){
+      var pa=(a.status==='pending')?0:1, pb=(b.status==='pending')?0:1;   // 承認待ちを先頭に
+      if(pa!==pb) return pa-pb;
+      return a.id.localeCompare(b.id);
+    });
   g("tbody").innerHTML=list.length?list.map(function(b){
     var loc=[geoName(countryOf(b.countryId)),geoName(regionOf(b.regionId)),geoName(cityOf(b.cityId))].filter(Boolean).join(" / ");
-    return "<tr><td class='mono'>"+b.id+"</td><td>"+esc(barName(b))+"</td><td class='dim'>"+esc(loc||"—")+"</td><td class='dim' style='max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+esc(b.address||"—")+"</td>"
+    var pending=(b.status==='pending');
+    var nameCell=(pending?"<span style='display:inline-block;background:#fae0c0;color:#8a5a00;font-size:10px;font-weight:600;border-radius:4px;padding:1px 6px;margin-right:5px'>承認待</span>":"")+esc(barName(b))
+      +(pending&&b.createdByName?"<div class='dim' style='font-size:10px'>申請: "+esc(b.createdByName)+"</div>":"");
+    return "<tr"+(pending?" style='background:#fff8ee'":"")+"><td class='mono'>"+b.id+"</td><td>"+nameCell+"</td><td class='dim'>"+esc(loc||"—")+"</td><td class='dim' style='max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+esc(b.address||"—")+"</td>"
       +"<td>"+(b.mapUrl?"<a href='"+esc(b.mapUrl)+"' target='_blank'>🗺</a>":"—")+"</td>"
-      +"<td><div class='acts'><button class='btn bs sm' data-edit-bar='"+b.id+"'>編集</button><button class='btn bd sm' data-del='bars' data-id='"+b.id+"'>削除</button></div></td></tr>";
+      +"<td><div class='acts'>"+(pending?"<button class='btn bp sm' data-approve-bar='"+b.id+"'>承認</button>":"")+"<button class='btn bs sm' data-edit-bar='"+b.id+"'>編集</button><button class='btn bd sm' data-del='bars' data-id='"+b.id+"'>削除</button></div></td></tr>";
   }).join(""):"<tr><td colspan='6' class='ec'>データがありません</td></tr>";
 }
 function renderCountries(q){
@@ -531,6 +538,7 @@ document.addEventListener("click",function(e){
   var c=e.target.closest("[data-close]");if(c){closeM(c.dataset.close);return;}
   if(e.target.classList.contains("mbg")&&e.target.id){closeM(e.target.id);return;}
   var b=e.target.closest("button");if(!b)return;
+  if(b.dataset.approveBar){approveBar(b.dataset.approveBar);return;}
   if(b.dataset.editBar){openBar(b.dataset.editBar);return;}
   if(b.dataset.editCountry){openCountry(b.dataset.editCountry);return;}
   if(b.dataset.editRegion){openRegion(b.dataset.editRegion);return;}
@@ -538,6 +546,12 @@ document.addEventListener("click",function(e){
   if(b.dataset.del){ if(confirm("削除しますか？")) delDoc(b.dataset.del,b.dataset.id); return; }
 });
 function delDoc(col,id){ journaledDelete(col,id).then(function(){toast("削除しました");loadAll();}).catch(function(e){toast("削除失敗: "+e.message,"err");}); }
+function approveBar(id){
+  var b=bars.find(function(x){return x.id===id;});
+  if(!confirm("この場所を承認しますか？\n"+(b?barName(b):id))) return;
+  journaledSet("bars",id,{status:"approved",updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .then(function(){toast("承認しました");loadAll();}).catch(function(e){toast("承認失敗: "+e.message,"err");});
+}
 
 g("btn-add").addEventListener("click",function(){
   if(curTab==="bars")openBar(null);
