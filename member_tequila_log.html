@@ -147,6 +147,23 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
 .pickrow .ps{font-size:11px;color:var(--ink3)}
 .pickrow.on{background:var(--cream2)}
 .pickrow .mk{font-size:12px;color:var(--green);font-weight:700}
+/* お気に入り選択（選択済み上部・頭文字ナビ） */
+.pickwrap{display:flex;gap:4px}
+.picklist{flex:1;min-width:0;max-height:60vh;overflow-y:auto;border:1px solid var(--border2);border-radius:var(--r);background:var(--white)}
+.navbar{flex:0 0 auto;display:flex;flex-direction:column;gap:0;align-self:flex-start}
+.navb{font-size:10px;line-height:1.15;padding:1px 4px;border:none;background:none;color:var(--gold-d);border-radius:3px;cursor:pointer}
+.navb.off{color:var(--cream3);cursor:default}
+.pickrow.sel{background:var(--gold-d)}
+.pickrow.sel .pn{color:var(--cream)}
+.pickrow.sel .ps{color:rgba(255,255,255,.72)}
+.pickrow .rmx{background:none;border:none;color:var(--cream);font-size:15px;line-height:1;flex:0 0 auto}
+.pickdiv{height:0;border-top:2px solid var(--gold-l);margin:0}
+.grphead{position:sticky;top:0;background:var(--cream2);color:var(--ink2);font-size:11px;font-weight:700;padding:3px 10px;border-bottom:1px solid var(--border);z-index:1}
+/* 記録の場所選択（1行: ★ 名前 街） */
+.brow1{display:flex;align-items:center;gap:6px;padding:11px 12px;border-bottom:1px solid var(--border);cursor:pointer}
+.brow1 .star{color:var(--gold);font-size:12px;flex:0 0 auto}
+.brow1 .nm{font-size:14px;font-weight:600;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.brow1 .ct{font-size:12px;color:var(--ink3);margin-left:auto;flex:0 0 auto;white-space:nowrap}
 </style>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -193,14 +210,12 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
     <div class="addbar">
       <button class="addbtn" id="btn-add">＋ 記録する</button>
     </div>
-    <!-- 設定: 居住県・お気に入りブランド・お気に入り店 -->
+    <!-- 居住県（会員マスタから取得・表示） -->
+    <div id="residence-line" style="font-size:12px;color:var(--ink3);margin-bottom:12px"></div>
+    <!-- お気に入り設定（ブランド・店舗） -->
     <div class="setpanel" id="setpanel" data-open="0">
-      <div class="sethead" onclick="toggleSet()"><span class="caret">▾</span>⚙ 設定（居住県・お気に入り）</div>
+      <div class="sethead" onclick="toggleSet()"><span class="caret">▾</span>⭐ お気に入り設定（ブランド・店舗）</div>
       <div class="setbody">
-        <div class="setrow">
-          <label>居住県（場所選択の地区で最上位に表示）</label>
-          <select id="set-region"><option value="">未設定</option></select>
-        </div>
         <div class="setrow">
           <label>お気に入りブランド（最大8・ボトル選択にボタン表示）</label>
           <div class="favchips" id="fav-brand-chips"></div>
@@ -307,7 +322,7 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
     <div class="mhead"><div class="mtitle">お気に入りブランド（最大8）</div><button class="mx" id="brandpick-close">✕</button></div>
     <div class="mbody">
       <input id="brandpick-search" placeholder="ブランド名・NOM番号で検索..." style="width:100%;padding:11px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:15px;background:var(--cream);margin-bottom:8px">
-      <div id="brandpick-list"></div>
+      <div class="pickwrap"><div class="picklist" id="brandpick-list"></div><div class="navbar" id="brandpick-nav"></div></div>
     </div>
   </div>
 </div>
@@ -318,7 +333,7 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
     <div class="mhead"><div class="mtitle">お気に入り店</div><button class="mx" id="favbar-close">✕</button></div>
     <div class="mbody">
       <input id="favbar-search" placeholder="BAR名・街で検索..." style="width:100%;padding:11px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:15px;background:var(--cream);margin-bottom:8px">
-      <div id="favbar-list"></div>
+      <div class="pickwrap"><div class="picklist" id="favbar-list"></div><div class="navbar" id="favbar-nav"></div></div>
     </div>
   </div>
 </div>
@@ -384,6 +399,16 @@ let bottleOpen={};        // {brandId:true} 展開中
 let barPickerCity='';     // 街選択フィルタ(cityId)
 function regionName(r){ return r?(r.nameJa||r.nameEn||r.id):''; }
 function cityName(c){ return c?(c.nameJa||c.nameEn||c.id):''; }
+function cityNameOfBar(b){ if(!b||!b.cityId) return ''; var c=cities.find(function(x){return x.id===b.cityId;}); return c?cityName(c):''; }
+// 頭文字グルーピング（お気に入り選択のナビ）
+var _AZ=[]; for(var _i=65;_i<=90;_i++) _AZ.push(String.fromCharCode(_i));
+const BRAND_NAV=['0'].concat(_AZ);
+const BAR_NAV=['あ','か','さ','た','な','は','ま','や','ら','わ','0'].concat(_AZ);
+const KANA_ROWS=[['あ','あいうえおぁぃぅぇぉゔ'],['か','かきくけこがぎぐげご'],['さ','さしすせそざじずぜぞ'],['た','たちつてとだぢづでどっ'],['な','なにぬねの'],['は','はひふへほばびぶべぼぱぴぷぺぽ'],['ま','まみむめも'],['や','やゆよゃゅょ'],['ら','らりるれろ'],['わ','わをんゎ']];
+function kataToHira(ch){ var c=ch.charCodeAt(0); return (c>=0x30A1&&c<=0x30F6)?String.fromCharCode(c-0x60):ch; }
+function kanaRow(ch){ for(var i=0;i<KANA_ROWS.length;i++){ if(KANA_ROWS[i][1].indexOf(ch)>=0) return KANA_ROWS[i][0]; } return ''; }
+function brandInitial(name){ var ch=String(name||'').trim().charAt(0); return /[A-Za-z]/.test(ch)?ch.toUpperCase():'0'; }
+function barInitial(name){ var ch=String(name||'').trim().charAt(0); if(!ch) return '0'; if(/[A-Za-z]/.test(ch)) return ch.toUpperCase(); if(/[0-9]/.test(ch)) return '0'; return kanaRow(kataToHira(ch))||'0'; }
 
 let currentMember=null;
 let plans=[];
@@ -487,7 +512,16 @@ auth.onAuthStateChanged(async function(user){
 function loadPrefs(){
   favoriteBarIds=Array.isArray(currentMember.favoriteBarIds)?currentMember.favoriteBarIds.slice():[];
   favoriteBrandIds=Array.isArray(currentMember.favoriteBrandIds)?currentMember.favoriteBrandIds.slice():[];
-  residenceRegionId=currentMember.residenceRegionId||'';
+  // 居住県は会員マスタ(prefecture)から取得。地区マスタ(regions)と名称一致すれば街選択で最上位に。
+  var pref=(currentMember.prefecture||'').trim();
+  var rg=pref?regions.find(function(r){ return (r.nameJa||'')===pref || (r.nameEn||'')===pref; }):null;
+  residenceRegionId=rg?rg.id:'';
+}
+function renderResidence(){
+  var pref=(currentMember.prefecture||'').trim();
+  var el=g('residence-line'); if(!el) return;
+  if(pref){ el.innerHTML='🏠 居住県: <b style="color:var(--ink2)">'+esc(pref)+'</b>'; }
+  else { el.innerHTML='🏠 居住県が未設定です <a href="/profile_edit.html" class="linkbtn" style="margin-left:6px">プロフィール編集で設定</a>'; }
 }
 function savePref(field, value){
   var upd={}; upd[field]=value; upd.updatedAt=firebase.firestore.FieldValue.serverTimestamp();
@@ -864,30 +898,36 @@ function clearBarCity(){ barPickerCity=''; renderBarList(g('bar-search').value);
 function renderBarList(q){
   q=(q||'').toLowerCase();
   var el=g('bar-list');
-  var rows=[{id:'HOME',label:'自宅',sub:'自宅で飲んだ記録'},{id:'B900001',label:'その他（自由入力）',sub:'場所を自由入力'}];
   var favSet={}; favoriteBarIds.forEach(function(id){favSet[id]=1;});
+  // 1行表示: [★=お気に入り] 名前  街。回数は非表示。
+  var rows=[{id:'HOME',label:'自宅',city:'',fav:false},{id:'B900001',label:'その他（自由入力）',city:'',fav:false}];
   // お気に入り店（街フィルタ時は該当街のみ）
   favoriteBarIds.forEach(function(id){
-    var b=barById(id); if(!b) return;
+    var b=barById(id); if(!b || b.id==='B900001') return;
     if(barPickerCity && b.cityId!==barPickerCity) return;
-    rows.push({id:id, label:barDispName(b), sub:'★お気に入り'+(b.address?' ・ '+b.address:'')});
+    rows.push({id:id, label:barDispName(b), city:cityNameOfBar(b), fav:true});
   });
-  // 記録回数順（お気に入り以外）
-  var pool=barsAllWithDojo().filter(function(b){ return !favSet[b.id] && (!barPickerCity || b.cityId===barPickerCity); });
+  // 記録回数順（お気に入り・特殊(自宅/その他)以外）
+  var pool=barsAllWithDojo().filter(function(b){
+    if(b.id==='B900001'||b.id==='HOME') return false;
+    if(favSet[b.id]) return false;
+    if(barPickerCity && b.cityId!==barPickerCity) return false;
+    return true;
+  });
   pool.sort(function(a,b){ var ca=barCounts[a.id]||0, cb=barCounts[b.id]||0; if(ca!==cb) return cb-ca; return barDispName(a).localeCompare(barDispName(b)); });
-  pool.forEach(function(b){ var c=barCounts[b.id]||0; rows.push({id:b.id, label:barDispName(b), sub:(c?c+'回':'')+(b.address?((c?' ・ ':'')+b.address):'')}); });
-  if(q){ rows=rows.filter(function(r){ var b=barById(r.id); return (r.label+' '+(b?((b.nameEn||'')+' '+(b.address||'')):'')).toLowerCase().indexOf(q)>=0; }); }
+  pool.forEach(function(b){ rows.push({id:b.id, label:barDispName(b), city:cityNameOfBar(b), fav:false}); });
+  if(q){ rows=rows.filter(function(r){ var b=barById(r.id); return (r.label+' '+r.city+' '+(b?((b.nameEn||'')+' '+(b.address||'')):'')).toLowerCase().indexOf(q)>=0; }); }
   var note='';
   if(barPickerCity){ var cc=cities.find(function(x){return x.id===barPickerCity;}); note='<div class="filternote" style="display:block">街で絞り込み中: '+esc(cityName(cc))+'<button onclick="clearBarCity()">解除</button></div>'; }
   if(!rows.length){ el.innerHTML=note+'<div class="empty">該当する場所がありません</div>'; return; }
   el.innerHTML=note+rows.slice(0,300).map(function(r){
-    return '<div class="brow" data-id="'+esc(r.id)+'"><div class="bn">'+esc(r.label)+'</div><div class="bb">'+esc(r.sub||'')+'</div></div>';
+    return '<div class="brow1" data-id="'+esc(r.id)+'">'+(r.fav?'<span class="star">★</span>':'')+'<span class="nm">'+esc(r.label)+'</span>'+(r.city?'<span class="ct">'+esc(r.city)+'</span>':'')+'</div>';
   }).join('');
 }
 g('bar-search').addEventListener('input',function(){ renderBarList(this.value); });
 g('bar-close').addEventListener('click',function(){ g('m-bar').classList.remove('open'); });
 g('bar-list').addEventListener('click',function(e){
-  var row=e.target.closest('.brow'); if(!row) return;
+  var row=e.target.closest('.brow1'); if(!row) return;
   setBar(row.getAttribute('data-id'), (row.getAttribute('data-id')===pickedBarId)?pickedBarText:'');
   g('m-bar').classList.remove('open');
 });
@@ -921,11 +961,9 @@ g('area-close').addEventListener('click',function(){ g('m-area').classList.remov
 // ── 設定（居住県・お気に入りブランド・お気に入り店） ──────────
 function toggleSet(){ var p=g('setpanel'); p.setAttribute('data-open', p.getAttribute('data-open')==='1'?'0':'1'); }
 function initSettingsUI(){
-  var rlist=regions.slice().sort(function(a,b){ return regionName(a).localeCompare(regionName(b)); });
-  g('set-region').innerHTML='<option value="">未設定</option>'+rlist.map(function(r){ return '<option value="'+esc(r.id)+'"'+(r.id===residenceRegionId?' selected':'')+'>'+esc(regionName(r))+'</option>'; }).join('');
+  renderResidence();
   renderFavBrandChips(); renderFavBarChips();
 }
-g('set-region').addEventListener('change',function(){ residenceRegionId=this.value; savePref('residenceRegionId', residenceRegionId||null); });
 
 function renderFavBrandChips(){
   var el=g('fav-brand-chips'); var html='';
@@ -951,19 +989,39 @@ function brandListAll(){
   bottles.forEach(function(b){ if(!seen[b.brandId]){ seen[b.brandId]=1; arr.push({id:b.brandId, name:(b.brand||('NOM '+b.nom)), nom:b.nom}); } });
   arr.sort(function(a,b){ return a.name.localeCompare(b.name); }); return arr;
 }
-function openBrandPick(){ g('brandpick-search').value=''; renderBrandPick(''); g('m-brandpick').classList.add('open'); setTimeout(function(){g('brandpick-search').focus();},50); }
-function renderBrandPick(q){
-  q=(q||'').toLowerCase();
-  var list=brandListAll().filter(function(b){ return !q || (b.name+' '+b.nom).toLowerCase().indexOf(q)>=0; }).slice(0,300);
-  var el=g('brandpick-list');
-  if(!list.length){ el.innerHTML='<div class="empty">該当するブランドがありません</div>'; return; }
-  el.innerHTML=list.map(function(b){
-    var on=favoriteBrandIds.indexOf(b.id)>=0;
-    return '<div class="pickrow'+(on?' on':'')+'" data-id="'+esc(b.id)+'"><div><div class="pn">'+esc(b.name)+'</div><div class="ps">NOM '+esc(b.nom||'—')+'</div></div>'+(on?'<span class="mk">✓</span>':'')+'</div>';
-  }).join('');
+// 選択済みを上部（濃色・✕）＋横線＋未選択（頭文字グループ）＋右ナビで頭文字ジャンプ
+function renderPicker(o){
+  var q=(o.query||'').trim().toLowerCase();
+  var selSet={}; o.selected.forEach(function(id){selSet[id]=1;});
+  var sel=[], un=[];
+  o.items.forEach(function(it){
+    if(q && (it.name+' '+(it.extra||'')).toLowerCase().indexOf(q)<0) return;
+    (selSet[it.id]?sel:un).push(it);
+  });
+  function gi(x){ var i=o.groupOrder.indexOf(x); return i<0?999:i; }
+  function cmp(a,b){ var d=gi(a.initial)-gi(b.initial); return d||(a.sortKey||a.name).localeCompare(b.sortKey||b.name,'ja'); }
+  sel.sort(cmp); un.sort(cmp);
+  var html='', present={};
+  sel.forEach(function(it){ html+='<div class="pickrow sel" data-id="'+esc(it.id)+'"><div><div class="pn">'+esc(it.name)+'</div>'+(it.sub?'<div class="ps">'+esc(it.sub)+'</div>':'')+'</div><button class="rmx" data-id="'+esc(it.id)+'">✕</button></div>'; });
+  if(sel.length) html+='<div class="pickdiv"></div>';
+  var lastG=null;
+  un.forEach(function(it){
+    if(it.initial!==lastG){ html+='<div class="grphead" id="'+o.anchor+it.initial+'">'+esc(it.initial)+'</div>'; lastG=it.initial; present[it.initial]=1; }
+    html+='<div class="pickrow" data-id="'+esc(it.id)+'"><div><div class="pn">'+esc(it.name)+'</div>'+(it.sub?'<div class="ps">'+esc(it.sub)+'</div>':'')+'</div></div>';
+  });
+  if(!sel.length && !un.length) html='<div class="empty">該当がありません</div>';
+  o.listEl.innerHTML=html;
+  o.navEl.innerHTML=o.groupOrder.map(function(gp){ var on=!!present[gp]; return '<button class="navb'+(on?'':' off')+'"'+(on?' data-anchor="'+o.anchor+gp+'"':'')+'>'+esc(gp)+'</button>'; }).join('');
 }
+function navScroll(e){ var b=e.target.closest('[data-anchor]'); if(!b) return; var a=document.getElementById(b.getAttribute('data-anchor')); if(a) a.scrollIntoView({block:'start'}); }
+
+// お気に入りブランド選択
+function brandItems(){ return brandListAll().map(function(b){ return {id:b.id, name:b.name, sub:'NOM '+(b.nom||'—'), extra:b.nom||'', initial:brandInitial(b.name)}; }); }
+function openBrandPick(){ g('brandpick-search').value=''; renderBrandPick(''); g('m-brandpick').classList.add('open'); setTimeout(function(){g('brandpick-search').focus();},50); }
+function renderBrandPick(q){ renderPicker({items:brandItems(), selected:favoriteBrandIds, groupOrder:BRAND_NAV, listEl:g('brandpick-list'), navEl:g('brandpick-nav'), anchor:'branav-', query:q}); }
 g('brandpick-search').addEventListener('input',function(){ renderBrandPick(this.value); });
 g('brandpick-close').addEventListener('click',function(){ g('m-brandpick').classList.remove('open'); });
+g('brandpick-nav').addEventListener('click',navScroll);
 g('brandpick-list').addEventListener('click',function(e){
   var row=e.target.closest('.pickrow'); if(!row) return;
   var id=row.getAttribute('data-id'), idx=favoriteBrandIds.indexOf(id);
@@ -973,20 +1031,12 @@ g('brandpick-list').addEventListener('click',function(e){
 });
 
 // お気に入り店選択
+function favBarItems(){ return bars.filter(function(b){return b.id!=='B900001';}).map(function(b){ var nm=barDispName(b); var kana=b.nameKana||''; return {id:b.id, name:nm, sub:cityNameOfBar(b)||b.address||'', extra:(b.nameEn||'')+' '+(b.address||'')+' '+kana, initial:barInitial(kana||nm), sortKey:(kana||nm)}; }); }
 function openFavBar(){ g('favbar-search').value=''; renderFavBarPick(''); g('m-favbar').classList.add('open'); setTimeout(function(){g('favbar-search').focus();},50); }
-function renderFavBarPick(q){
-  q=(q||'').toLowerCase();
-  var list=bars.slice().sort(function(a,b){ return barDispName(a).localeCompare(barDispName(b)); })
-    .filter(function(b){ return !q || (barDispName(b)+' '+(b.nameEn||'')+' '+(b.address||'')).toLowerCase().indexOf(q)>=0; }).slice(0,300);
-  var el=g('favbar-list');
-  if(!list.length){ el.innerHTML='<div class="empty">該当するBARがありません</div>'; return; }
-  el.innerHTML=list.map(function(b){
-    var on=favoriteBarIds.indexOf(b.id)>=0;
-    return '<div class="pickrow'+(on?' on':'')+'" data-id="'+esc(b.id)+'"><div><div class="pn">'+esc(barDispName(b))+'</div><div class="ps">'+esc(b.address||b.id)+'</div></div>'+(on?'<span class="mk">✓</span>':'')+'</div>';
-  }).join('');
-}
+function renderFavBarPick(q){ renderPicker({items:favBarItems(), selected:favoriteBarIds, groupOrder:BAR_NAV, listEl:g('favbar-list'), navEl:g('favbar-nav'), anchor:'barnav-', query:q}); }
 g('favbar-search').addEventListener('input',function(){ renderFavBarPick(this.value); });
 g('favbar-close').addEventListener('click',function(){ g('m-favbar').classList.remove('open'); });
+g('favbar-nav').addEventListener('click',navScroll);
 g('favbar-list').addEventListener('click',function(e){
   var row=e.target.closest('.pickrow'); if(!row) return;
   var id=row.getAttribute('data-id'), idx=favoriteBarIds.indexOf(id);
