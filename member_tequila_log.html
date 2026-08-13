@@ -62,6 +62,8 @@ input,select,textarea{font-family:var(--sans)}
 .tmonth>.tbody{padding-left:6px}
 .tdh{font-size:12px;font-weight:600;color:var(--ink2);padding:6px 2px}
 .tday>.tbody{padding-left:6px;padding-bottom:4px}
+.tph{font-size:12px;font-weight:600;color:var(--gold-d);padding:5px 2px}
+.tplace>.tbody{padding-left:6px}
 /* 明細行（1行コンパクト） */
 .ent{display:flex;align-items:center;gap:6px;padding:7px 4px;border-bottom:1px solid var(--border);font-size:12px}
 .ent .etime{font-family:var(--mono);font-size:11px;color:var(--ink3);flex:0 0 auto}
@@ -390,9 +392,9 @@ async function loadBottles(){
       var b=d.data(); var brand=brandsMap[b.brandId]||{};
       var bn=b.bottleJa||b.bottleEs||b.bottleEn||d.id;
       var brn=brand.brandEs||brand.brandJa||'';
+      // リスト表示はブランド名なしの銘柄名（例: 「1800 Anejo」）
       var esn=b.bottleEs||b.bottleEn||bn;
-      var brEs=brand.brandEs||brn;
-      return { id:d.id, name:bn, brand:brn, full:(brn?brn+' ':'')+bn, es:(brEs?brEs+' ':'')+esn };
+      return { id:d.id, name:bn, brand:brn, full:(brn?brn+' ':'')+bn, es:esn };
     }).sort(function(a,b){ return a.full.localeCompare(b.full); });
   }catch(e){ console.warn('bottles load', e); bottles=[]; }
 }
@@ -442,7 +444,21 @@ function renderTree(){
       html+='<div class="tnode tday" data-open="1">'
         +'<div class="thead tdh" onclick="toggleNode(this)"><span class="caret">▾</span>'+parseInt(dd,10)+'日<span class="cnt">'+items.length+'件</span></div>'
         +'<div class="tbody">';
-      items.forEach(function(l){ html+=entRow(l); });
+      // 場所ごとにグルーピング（時刻ソート順の出現順を保持）
+      var pOrder=[], pMap={};
+      items.forEach(function(l){
+        var pk=(l.barId==='B900001')?('B900001:'+(l.barText||'')):(l.barId||'');
+        if(!pMap[pk]){ pMap[pk]={label:barLabelOf(l), items:[]}; pOrder.push(pk); }
+        pMap[pk].items.push(l);
+      });
+      pOrder.forEach(function(pk){
+        var pg=pMap[pk];
+        html+='<div class="tnode tplace" data-open="1">'
+          +'<div class="thead tph" onclick="toggleNode(this)"><span class="caret">▾</span>'+esc(pg.label)+'<span class="cnt">'+pg.items.length+'件</span></div>'
+          +'<div class="tbody">';
+        pg.items.forEach(function(l){ html+=entRow(l); });
+        html+='</div></div>';
+      });
       html+='</div></div>';
     });
     html+='</div></div>';
