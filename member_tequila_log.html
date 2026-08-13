@@ -376,10 +376,7 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
       <div style="font-size:12px;color:var(--ink2);background:var(--cream2);padding:8px 10px;border-radius:var(--r);margin-bottom:12px;line-height:1.6">登録内容は管理者の承認後に正式登録されます。承認までは名前の前に「（承認待）」と表示されます。</div>
       <div class="fg"><label>店名（日本語）<span style="color:var(--red)">※必須</span></label><input id="nb-nameJa" type="text"></div>
       <div class="fg"><label>店名（フリガナ）<span style="color:var(--red)">※必須</span></label><input id="nb-kana" type="text"></div>
-      <div class="frow">
-        <div class="fg"><label>店名（英語）</label><input id="nb-nameEn" type="text"></div>
-        <div class="fg"><label>店名（西語）</label><input id="nb-nameEs" type="text"></div>
-      </div>
+      <div class="fg"><label>店名（英・墨）</label><input id="nb-nameEn" type="text"></div>
       <div class="frow">
         <div class="fg"><label>国</label><select id="nb-country"></select></div>
         <div class="fg"><label>都道府県（州）</label><select id="nb-region"></select></div>
@@ -1167,7 +1164,7 @@ async function zipSearch(){
 }
 g('nb-zip').addEventListener('click',zipSearch);
 function openNewBar(){
-  ['nb-nameJa','nb-nameEn','nb-nameEs','nb-kana','nb-postal','nb-address','nb-phone'].forEach(function(i){ g(i).value=''; });
+  ['nb-nameJa','nb-nameEn','nb-kana','nb-postal','nb-address','nb-phone'].forEach(function(i){ g(i).value=''; });
   fillNbCountry(); g('nb-region').innerHTML='<option value="">—</option>'; g('nb-city').innerHTML='<option value="">—</option>';
   updatePrefPrefix(); g('m-newbar').classList.add('open');
 }
@@ -1181,7 +1178,7 @@ g('nb-save').addEventListener('click',async function(){
   if(!kana){ toast('店名（フリガナ）を入力してください'); return; }
   var id=nextBarIdMember();   // 申請時点で連番採番（B#####・最大値+1）
   var data={ barId:id, nameJa:nameJa,
-    nameEn:(g('nb-nameEn').value||'').trim()||null, nameEs:(g('nb-nameEs').value||'').trim()||null,
+    nameEn:(g('nb-nameEn').value||'').trim()||null, nameEs:(g('nb-nameEn').value||'').trim()||null,
     nameKana:(g('nb-kana').value||'').trim()||null,
     countryId:g('nb-country').value||null, regionId:g('nb-region').value||null, cityId:g('nb-city').value||null,
     postalCode:(g('nb-postal').value||'').replace(/[^0-9]/g,'')||null, address:(g('nb-address').value||'').trim()||null,
@@ -1332,7 +1329,15 @@ async function gsiGeocode(q){
 // 自宅住所→座標（できるだけ番地レベルで正確に）。
 // フル住所で照合し、市区町村が一致していれば採用（都道府県への粗い誤マッチを排除）。
 // ダメなら町域まで、最後は Nominatim（番地に強い）でフォールバック。
+async function geocodeByZip(zip){
+  zip=(zip||'').replace(/[^0-9]/g,''); if(zip.length!==7) return null;
+  try{ var res=await fetch('https://geoapi.heartrails.com/api/json?method=searchByPostal&postal='+zip);
+    var j=await res.json(); var loc=j&&j.response&&j.response.location;
+    if(loc&&loc.length&&loc[0].x&&loc[0].y) return {lat:parseFloat(loc[0].y),lng:parseFloat(loc[0].x)}; }catch(e){}
+  return null;
+}
 async function geocodeHome(){
+  var z=await geocodeByZip(currentMember.zip); if(z) return z;   // 郵便番号優先（町域レベル）
   var pref=(currentMember.prefecture||'').trim();
   var addr=(currentMember.address||'').trim();
   if(!addr) return null;
