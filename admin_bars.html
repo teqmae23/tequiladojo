@@ -117,19 +117,23 @@ td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
     </div>
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:11px">
       <div class="fg" style="margin-bottom:0;flex:0 0 118px"><label>郵便番号 <button type="button" class="btn bs sm" style="padding:2px 7px;font-size:10px;text-transform:none" onclick="barZipSearch()">住所検索</button></label><input class="fi" id="bar-postal" maxlength="7" inputmode="numeric"></div>
-      <div class="fg" style="margin-bottom:0;flex:0 0 auto"><label>国番号</label><div class="inl" style="gap:4px"><input class="fi" id="bar-phoneCc" maxlength="4" style="width:52px;flex:0 0 auto"><button type="button" class="btn bs sm" style="padding:3px 8px" onclick="setPhoneCc('+81')">日</button><button type="button" class="btn bs sm" style="padding:3px 8px" onclick="setPhoneCc('+1')">米</button><button type="button" class="btn bs sm" style="padding:3px 8px" onclick="setPhoneCc('+52')">墨</button></div></div>
+      <div class="fg" style="margin-bottom:0;flex:0 0 160px"><label>国番号</label><select class="fs" id="bar-phoneCc"></select></div>
       <div class="fg" style="margin-bottom:0;flex:1 1 150px"><label>電話番号</label><input class="fi" id="bar-phone" maxlength="13" inputmode="numeric"></div>
     </div>
-    <div class="fg"><label>住所</label><input class="fi" id="bar-address" onblur="autoBarGeocode()"></div>
-    <div class="fg"><label>評価サイトURL（日本は食べログ・自動生成）</label>
+    <div class="fg"><label>住所</label><input class="fi" id="bar-address"></div>
+    <div class="fg"><label>評価サイトURL</label>
       <div class="inl"><input class="fi" id="bar-review"><button type="button" class="btn bs sm" onclick="openUrlOf('bar-review')">表示</button></div>
     </div>
-    <div class="fg"><label>Google Map URL（住所→座標で自動取得）</label>
-      <div class="inl"><input class="fi" id="bar-mapUrl" oninput="onBarMapUrl()"><button type="button" class="btn bs sm" onclick="openUrlOf('bar-mapUrl')">表示</button></div>
+    <div class="fg"><label>Google Map URL</label>
+      <div class="inl"><input class="fi" id="bar-mapUrl"><button type="button" class="btn bs sm" onclick="barMapFromCoords()">座標から取得</button><button type="button" class="btn bs sm" onclick="openUrlOf('bar-mapUrl')">表示</button></div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <label style="font-size:10px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase">座標・標高</label>
+      <button type="button" class="btn bs sm" style="text-transform:none" onclick="barGeoFromAddress()">住所から取得</button>
     </div>
     <div class="frow3">
-      <div class="fg"><label>緯度</label><input class="fi" id="bar-lat" oninput="scheduleBarElev()"></div>
-      <div class="fg"><label>経度</label><input class="fi" id="bar-lng" oninput="scheduleBarElev()"></div>
+      <div class="fg"><label>緯度</label><input class="fi" id="bar-lat"></div>
+      <div class="fg"><label>経度</label><input class="fi" id="bar-lng"></div>
       <div class="fg"><label>標高(m)</label><input class="fi" id="bar-elev"></div>
     </div>
   </div>
@@ -280,7 +284,7 @@ function render(){
 }
 
 function renderBars(q){
-  g("thead").innerHTML="<tr><th>ID</th><th>名前</th><th>国/地域/街</th><th>住所</th><th>地図</th><th>操作</th></tr>";
+  g("thead").innerHTML="<tr><th>ID</th><th>名前</th><th>国/地域/街</th><th>住所</th><th>評価</th><th>地図</th><th>操作</th></tr>";
   function stRank(b){ return b.status==='pending'?0:(b.status==='rejected'?1:2); }  // 承認待ち→非承認→その他
   var list=bars.filter(function(b){return !q||(b.id+" "+barName(b)+" "+(b.address||"")).toLowerCase().indexOf(q)>=0;})
     .sort(function(a,b){
@@ -297,9 +301,10 @@ function renderBars(q){
       +((pending||rejected)&&b.createdByName?"<div class='dim' style='font-size:10px'>申請: "+esc(b.createdByName)+"</div>":"");
     var rowStyle=pending?" style='background:#fff8ee'":(rejected?" style='background:#fbeeeb'":"");
     return "<tr"+rowStyle+"><td class='mono'>"+b.id+"</td><td>"+nameCell+"</td><td class='dim'>"+esc(loc||"—")+"</td><td class='dim' style='max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+esc(b.address||"—")+"</td>"
+      +"<td>"+(b.reviewUrl?"<a href='"+esc(b.reviewUrl)+"' target='_blank'>★</a>":"—")+"</td>"
       +"<td>"+(b.mapUrl?"<a href='"+esc(b.mapUrl)+"' target='_blank'>🗺</a>":"—")+"</td>"
       +"<td><div class='acts'>"+((pending||rejected)?"<button class='btn bp sm' data-approve-bar='"+b.id+"'>審査</button>":"")+"<button class='btn bs sm' data-edit-bar='"+b.id+"'>編集</button><button class='btn bd sm' data-del='bars' data-id='"+b.id+"'>削除</button></div></td></tr>";
-  }).join(""):"<tr><td colspan='6' class='ec'>データがありません</td></tr>";
+  }).join(""):"<tr><td colspan='7' class='ec'>データがありません</td></tr>";
 }
 function renderCountries(q){
   g("thead").innerHTML="<tr><th>ID</th><th>国名JP</th><th>国名EN</th><th>登録店舗数</th><th>操作</th></tr>";
@@ -459,43 +464,26 @@ async function cityGeocode(){
     toast('取得: '+r.display,'inf');
   }catch(e){ toast('取得失敗（通信）','err'); }
 }
-function buildReviewFromForm(){
-  var name=gv('bar-nameJa')||gv('bar-nameEn')||gv('bar-nameEs');
-  if(!name){ toast('先に店名を入力してください','err'); return; }
-  var iso=isoOf(countryOf(gv('bar-country')));
-  sv('bar-review', buildReviewUrl(name, iso));
-  toast('評価サイトURLを生成しました','inf');
-}
-async function barGeocode(){
-  var name=gv('bar-nameJa')||gv('bar-nameEn')||gv('bar-nameEs');
+// 住所→座標・標高（手動）。GSI/Nominatimで住所をジオコーディングし、標高も取得。
+async function barGeoFromAddress(){
   var addr=gv('bar-address');
-  if(!addr && !name){ toast('住所か店名を入力してください','err'); return; }
+  if(!addr){ toast('先に住所を入力してください','err'); return; }
   var iso=isoOf(countryOf(gv('bar-country')));
-  toast('住所を検索中...','inf');
+  toast('住所から座標を取得中...','inf');
   try{
-    // POI検索（住所・郵便番号・電話の補完に使う。座標のフォールバックにも）。
-    // 住所があれば店名+住所で、無ければ店名+街で（Nominatim→Overpass）特定を試みる。
-    var poi=null;
-    if(addr){ try{ poi=await geocodeName([name,addr].filter(Boolean).join(', '), iso); }catch(e){} }
-    else if(name){ try{ poi=await geocodePOI(name, iso); }catch(e){} }
-    // 座標は「住所→座標」を最優先（名前検索より確実）。無ければPOI座標。
-    var geo=null;
-    var addrForGeo=addr || (poi&&poi.address) || '';
-    if(addrForGeo){ try{ geo=await geocodeAddress(addrForGeo, iso); }catch(e){} }
-    if(!geo && poi) geo={lat:poi.lat, lng:poi.lng, display:poi.display};
-    if(!geo){ toast('該当が見つかりませんでした（住所を具体的に入力してください）','err'); return; }
-    sv('bar-lat',geo.lat); sv('bar-lng',geo.lng); sv('bar-mapUrl',gmapUrlOf(geo.lat,geo.lng));
-    fetchElevInto('bar-lat','bar-lng','bar-elev');
-    // 住所・郵便番号・電話（POI検索で取れたら空欄のみ補完）
-    if(poi){
-      if(!gv('bar-postal') && poi.postcode) sv('bar-postal', poi.postcode);
-      if(!gv('bar-address') && poi.address) sv('bar-address', poi.address);
-      if(!gv('bar-phone') && poi.phone){ sv('bar-phone', poi.phone); if(!gv('bar-phoneCc')) sv('bar-phoneCc', phoneCcOf(iso)); }
-    }
-    // 評価サイトURL（空欄のときのみ自動生成）
-    if(!gv('bar-review')) sv('bar-review', buildReviewUrl(name, iso));
-    toast('取得: '+geo.display,'inf');
+    var geo=await geocodeAddress(addr, iso);
+    if(!geo){ toast('座標が取得できませんでした（住所を具体的に入力してください）','err'); return; }
+    sv('bar-lat',geo.lat); sv('bar-lng',geo.lng);
+    await fetchElevInto('bar-lat','bar-lng','bar-elev');
+    toast('取得: '+(geo.display||''),'inf');
   }catch(e){ toast('取得失敗（通信）','err'); }
+}
+// 座標→Google Map URL（手動）。緯度経度からURLを生成。
+function barMapFromCoords(){
+  var lat=gv('bar-lat'), lng=gv('bar-lng');
+  if(lat===''||lng===''){ toast('先に緯度・経度を入力してください','err'); return; }
+  sv('bar-mapUrl', gmapUrlOf(lat,lng));
+  toast('座標からMap URLを生成しました','inf');
 }
 // 標高取得: SRTM30m(30m・沿岸低地に強い)を優先し、無ければ open-meteo(90m)へ。
 // 沿岸の点で 0m/null しか返らない場合は他方を試し、より妥当な値を採用する。
@@ -544,9 +532,6 @@ async function fetchElevInto(latId,lngId,elevId){
     sv(elevId,Math.round(v));toast("標高: "+Math.round(v)+"m","inf");
   }catch(e){toast("標高取得失敗（通信）","err");}
 }
-var _barElevT=null;
-function scheduleBarElev(){clearTimeout(_barElevT);_barElevT=setTimeout(function(){if(gv("bar-lat")&&gv("bar-lng")&&!gv("bar-elev"))fetchElevInto("bar-lat","bar-lng","bar-elev");},600);}
-function onBarMapUrl(force){var ll=parseLatLng(gv("bar-mapUrl"));if(ll){sv("bar-lat",ll.lat);sv("bar-lng",ll.lng);scheduleBarElev();}else if(force)toast("URLから座標を抽出できませんでした","err");}
 function onCityMapUrl(force){var ll=parseLatLng(gv("ci-mapUrl"));if(ll){sv("ci-lat",ll.lat);sv("ci-lng",ll.lng);if(!gv("ci-elev"))fetchElevInto("ci-lat","ci-lng","ci-elev");if(!gv("ci-tz"))fetchTzInto("ci-lat","ci-lng","ci-tz");}else if(force)toast("URLから座標を抽出できませんでした","err");}
 
 // ── モーダル開閉 ─────────────────────────────────────
@@ -602,10 +587,16 @@ var editBarId=null;
 function onBarCountryChange(){fillRegionSel("bar-region",gv("bar-country"),"");fillCitySel("bar-city","","");}
 function onBarRegionChange(){fillCitySel("bar-city",gv("bar-region"),"");}
 function onBarCityPick(){var c=cityOf(gv("bar-city"));if(c){if(c.mapUrl&&!gv("bar-mapUrl"))sv("bar-mapUrl",c.mapUrl);}}
-function setPhoneCc(cc){ sv("bar-phoneCc",cc); }
+// 国番号セレクト: 日本・メキシコ・アメリカを上位固定、あとは国名(日本語)順。
+var PHONE_CC_TOP=[["日本","+81"],["メキシコ","+52"],["アメリカ","+1"]];
+var PHONE_CC_REST=[["アイスランド","+354"],["アイルランド","+353"],["アゼルバイジャン","+994"],["アフガニスタン","+93"],["アラブ首長国連邦","+971"],["アルジェリア","+213"],["アルゼンチン","+54"],["アルバニア","+355"],["アルメニア","+374"],["アンゴラ","+244"],["アンドラ","+376"],["イエメン","+967"],["イスラエル","+972"],["イタリア","+39"],["イラク","+964"],["イラン","+98"],["インド","+91"],["インドネシア","+62"],["ウガンダ","+256"],["ウクライナ","+380"],["ウズベキスタン","+998"],["ウルグアイ","+598"],["エクアドル","+593"],["エジプト","+20"],["エストニア","+372"],["エチオピア","+251"],["エルサルバドル","+503"],["オーストラリア","+61"],["オーストリア","+43"],["オマーン","+968"],["オランダ","+31"],["ガーナ","+233"],["カザフスタン","+7"],["カタール","+974"],["カナダ","+1"],["ガボン","+241"],["カメルーン","+237"],["韓国","+82"],["ガンビア","+220"],["カンボジア","+855"],["北マケドニア","+389"],["ギニア","+224"],["キプロス","+357"],["キューバ","+53"],["ギリシャ","+30"],["キルギス","+996"],["グアテマラ","+502"],["クウェート","+965"],["クロアチア","+385"],["ケニア","+254"],["コートジボワール","+225"],["コスタリカ","+506"],["コロンビア","+57"],["コンゴ民主共和国","+243"],["サウジアラビア","+966"],["ザンビア","+260"],["ジャマイカ","+1"],["ジョージア","+995"],["シリア","+963"],["シンガポール","+65"],["ジンバブエ","+263"],["スイス","+41"],["スウェーデン","+46"],["スーダン","+249"],["スペイン","+34"],["スリランカ","+94"],["スロバキア","+421"],["スロベニア","+386"],["セネガル","+221"],["セルビア","+381"],["タイ","+66"],["台湾","+886"],["タジキスタン","+992"],["タンザニア","+255"],["チェコ","+420"],["チュニジア","+216"],["チリ","+56"],["中国","+86"],["デンマーク","+45"],["ドイツ","+49"],["トルコ","+90"],["トルクメニスタン","+993"],["ナイジェリア","+234"],["ニカラグア","+505"],["ニュージーランド","+64"],["ネパール","+977"],["ノルウェー","+47"],["バーレーン","+973"],["パキスタン","+92"],["パナマ","+507"],["パラグアイ","+595"],["ハンガリー","+36"],["バングラデシュ","+880"],["フィジー","+679"],["フィリピン","+63"],["フィンランド","+358"],["ブラジル","+55"],["フランス","+33"],["ブルガリア","+359"],["ブルネイ","+673"],["ベトナム","+84"],["ベネズエラ","+58"],["ベラルーシ","+375"],["ペルー","+51"],["ベルギー","+32"],["ポーランド","+48"],["ボスニア・ヘルツェゴビナ","+387"],["ボリビア","+591"],["ポルトガル","+351"],["香港","+852"],["ホンジュラス","+504"],["マカオ","+853"],["マルタ","+356"],["マレーシア","+60"],["南アフリカ","+27"],["ミャンマー","+95"],["モナコ","+377"],["モロッコ","+212"],["モンゴル","+976"],["モンテネグロ","+382"],["ヨルダン","+962"],["ラオス","+856"],["ラトビア","+371"],["リトアニア","+370"],["リビア","+218"],["リヒテンシュタイン","+423"],["ルーマニア","+40"],["ルクセンブルク","+352"],["レバノン","+961"],["ロシア","+7"]];
+function fillPhoneCcSel(val){
+  var rest=PHONE_CC_REST.slice().sort(function(a,b){return a[0].localeCompare(b[0],"ja");});
+  var opts="<option value=''>—</option>"+PHONE_CC_TOP.concat(rest).map(function(x){return "<option value='"+x[1]+"'>"+esc(x[0])+"（"+x[1]+"）</option>";}).join("");
+  var sel=g("bar-phoneCc"); sel.innerHTML=opts;
+  if(val){ sel.value=val; if(sel.value!==val){ var o=document.createElement("option"); o.value=val; o.textContent=val; sel.insertBefore(o,sel.firstChild); sel.value=val; } }
+}
 function openUrlOf(id){ var u=gv(id); if(!u){ toast("URLがありません","err"); return; } window.open(u,"_blank"); }
-// 住所を入れてフォーカスを外したら、座標が空なら自動でジオコーディング
-function autoBarGeocode(){ if(gv("bar-lat")||gv("bar-lng")) return; if(!gv("bar-address")&&!gv("bar-nameJa")&&!gv("bar-nameEn")&&!gv("bar-nameEs")) return; barGeocode(); }
 // 郵便番号(7桁)→住所（zipcloud）。国=日本・都道府県を自動選択し住所欄に市区町村以下をセット。
 async function barZipSearch(){
   var zip=gv("bar-postal").replace(/[^0-9]/g,"");
@@ -636,7 +627,7 @@ function openBar(id){
   fillRegionSel("bar-region",b?b.countryId:"",b?b.regionId:"");
   fillCitySel("bar-city",b?b.regionId:"",b?b.cityId:"");
   sv("bar-postal",b?b.postalCode:"");sv("bar-address",b?b.address:"");
-  sv("bar-phoneCc",b?b.phoneCountryCode:"");sv("bar-phone",b?b.phone:"");
+  fillPhoneCcSel(b?b.phoneCountryCode:"");sv("bar-phone",b?b.phone:"");
   sv("bar-review",b?b.reviewUrl:"");
   sv("bar-mapUrl",b?b.mapUrl:"");sv("bar-lat",b?b.lat:"");sv("bar-lng",b?b.lng:"");sv("bar-elev",b?b.elevation:"");
   openM("m-bar");
