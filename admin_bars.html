@@ -128,8 +128,8 @@ td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
     <div class="fg"><label>評価サイトURL（日本は食べログ・自動生成可）</label>
       <div class="inl"><input class="fi" id="bar-review"><button type="button" class="btn bs sm" onclick="buildReviewFromForm()">生成</button></div>
     </div>
-    <div class="fg"><label>Google Map URL（店名・住所から自動取得も可）</label>
-      <div class="inl"><input class="fi" id="bar-mapUrl" oninput="onBarMapUrl()"><button type="button" class="btn bs sm" onclick="onBarMapUrl(true)">座標抽出</button><button type="button" class="btn bp sm" onclick="barGeocode()">地名から取得</button></div>
+    <div class="fg"><label>Google Map URL（住所→座標で自動取得。住所優先・店名でも可）</label>
+      <div class="inl"><input class="fi" id="bar-mapUrl" oninput="onBarMapUrl()"><button type="button" class="btn bs sm" onclick="onBarMapUrl(true)">座標抽出</button><button type="button" class="btn bp sm" onclick="barGeocode()">住所から取得</button></div>
     </div>
     <div class="frow3">
       <div class="fg"><label>緯度</label><input class="fi" id="bar-lat" oninput="scheduleBarElev()"></div>
@@ -361,6 +361,63 @@ async function geocodeName(query, iso){
     website:x.website||x['contact:website']||''
   };
 }
+// 日本の住所→座標（国土地理院 住所ジオコーダ・キー不要・日本住所に高精度）。
+// 住所文字列を渡すと最有力候補の座標を返す。日本以外や不発時は null。
+async function geocodeJP(address){
+  if(!address) return null;
+  var url='https://msearch.gsi.go.jp/address-search/AddressSearch?q='+encodeURIComponent(address);
+  var res=await fetch(url);
+  var arr=await res.json();
+  if(!arr||!arr.length) return null;
+  var f=arr[0], c=f.geometry&&f.geometry.coordinates;
+  if(!c||c.length<2) return null;
+  return {lat:c[1], lng:c[0], display:(f.properties&&f.properties.title)||address};
+}
+// 住所→座標を最優先で高精度に解決（日本=GSI、それ以外/不発時=Nominatim）。
+async function geocodeAddress(address, iso){
+  if(iso==='jp'){ var g=await geocodeJP(address); if(g) return g; }
+  return await geocodeName(address, iso);
+}
+// 選択中の街（無ければ地域・国）から検索の中心座標と街名を得る。
+async function areaCenter(){
+  var c=cityOf(gv('bar-city'));
+  if(c && c.lat!=null && c.lng!=null) return {lat:Number(c.lat), lng:Number(c.lng), name:(c.nameJa||c.nameEn||'')};
+  var reg=regionOf(gv('bar-region')), cty=countryOf(gv('bar-country'));
+  var parts=[]; if(c) parts.push(c.nameJa||c.nameEn); if(reg) parts.push(reg.nameJa||reg.nameEn); if(cty) parts.push(cty.nameJa||cty.nameEn);
+  if(!parts.length) return null;
+  try{ var g=await geocodeName(parts.join(', '), isoOf(cty)); if(g) return {lat:g.lat, lng:g.lng, name:(c?(c.nameJa||c.nameEn):parts[0])}; }catch(e){}
+  return null;
+}
+// Overpass: 中心から半径内で name 部分一致（大小無視）のPOIを面で検索。OSM登録店を拾う。
+async function overpassPOI(name, center){
+  if(!name||!center) return null;
+  var esc=name.replace(/["\\]/g,'\\$&');
+  var around='(around:3000,'+center.lat+','+center.lng+')';
+  var q='[out:json][timeout:20];('
+      +'node["name"~"'+esc+'",i]'+around+';'
+      +'way["name"~"'+esc+'",i]'+around+';'
+      +');out center 5;';
+  var res=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(q)});
+  var j=await res.json();
+  if(!j||!j.elements||!j.elements.length) return null;
+  var el=j.elements[0];
+  var lat=(el.lat!=null)?el.lat:(el.center&&el.center.lat), lng=(el.lon!=null)?el.lon:(el.center&&el.center.lon);
+  if(lat==null||lng==null) return null;
+  var t=el.tags||{};
+  var addr=[t['addr:province'],t['addr:city'],t['addr:ward'],t['addr:suburb'],t['addr:neighbourhood'],t['addr:quarter'],t['addr:block_number'],t['addr:housenumber']].filter(Boolean).join('');
+  return {lat:Number(lat), lng:Number(lng), display:(t.name||name),
+    address:addr||'', postcode:t['addr:postcode']||'', phone:t.phone||t['contact:phone']||t['contact:mobile']||''};
+}
+// 店名＋街から座標/住所を特定（無料）。Nominatim(名前+街名) → Overpass(面検索)。
+async function geocodePOI(name, iso){
+  var center=await areaCenter();
+  var cityName=center&&center.name?center.name:'';
+  var r=null;
+  try{ r=await geocodeName([name,cityName].filter(Boolean).join(' '), iso); }catch(e){}
+  if(r) return r;
+  if(center){ try{ var o=await overpassPOI(name, center); if(o) return o; }catch(e){} }
+  return null;
+}
 async function cityGeocode(){
   var name=gv('ci-nameJa')||gv('ci-nameEn');
   if(!name){ toast('先に街名を入力してください','err'); return; }
@@ -386,24 +443,32 @@ function buildReviewFromForm(){
 async function barGeocode(){
   var name=gv('bar-nameJa')||gv('bar-nameEn')||gv('bar-nameEs');
   var addr=gv('bar-address');
-  var q=[name,addr].filter(Boolean).join(', ');
-  if(!q){ toast('店名か住所を入力してください','err'); return; }
+  if(!addr && !name){ toast('住所か店名を入力してください','err'); return; }
   var iso=isoOf(countryOf(gv('bar-country')));
-  toast('地名を検索中...','inf');
+  toast('住所を検索中...','inf');
   try{
-    var r=await geocodeName(q, iso);
-    if(!r){ toast('該当が見つかりませんでした（店名＋住所を具体的に）','err'); return; }
-    sv('bar-lat',r.lat); sv('bar-lng',r.lng); sv('bar-mapUrl',gmapUrlOf(r.lat,r.lng));
+    // POI検索（住所・郵便番号・電話の補完に使う。座標のフォールバックにも）。
+    // 住所があれば店名+住所で、無ければ店名+街で（Nominatim→Overpass）特定を試みる。
+    var poi=null;
+    if(addr){ try{ poi=await geocodeName([name,addr].filter(Boolean).join(', '), iso); }catch(e){} }
+    else if(name){ try{ poi=await geocodePOI(name, iso); }catch(e){} }
+    // 座標は「住所→座標」を最優先（名前検索より確実）。無ければPOI座標。
+    var geo=null;
+    var addrForGeo=addr || (poi&&poi.address) || '';
+    if(addrForGeo){ try{ geo=await geocodeAddress(addrForGeo, iso); }catch(e){} }
+    if(!geo && poi) geo={lat:poi.lat, lng:poi.lng, display:poi.display};
+    if(!geo){ toast('該当が見つかりませんでした（住所を具体的に入力してください）','err'); return; }
+    sv('bar-lat',geo.lat); sv('bar-lng',geo.lng); sv('bar-mapUrl',gmapUrlOf(geo.lat,geo.lng));
     fetchElevInto('bar-lat','bar-lng','bar-elev');
-    // 住所・郵便番号・電話（空欄のときのみ補完）
-    if(!gv('bar-postal') && r.postcode) sv('bar-postal', r.postcode);
-    if(!gv('bar-address') && r.address) sv('bar-address', r.address);
-    if(!gv('bar-phone') && r.phone){ sv('bar-phone', r.phone); if(!gv('bar-phoneCc')) sv('bar-phoneCc', phoneCcOf(iso)); }
+    // 住所・郵便番号・電話（POI検索で取れたら空欄のみ補完）
+    if(poi){
+      if(!gv('bar-postal') && poi.postcode) sv('bar-postal', poi.postcode);
+      if(!gv('bar-address') && poi.address) sv('bar-address', poi.address);
+      if(!gv('bar-phone') && poi.phone){ sv('bar-phone', poi.phone); if(!gv('bar-phoneCc')) sv('bar-phoneCc', phoneCcOf(iso)); }
+    }
     // 評価サイトURL（空欄のときのみ自動生成）
     if(!gv('bar-review')) sv('bar-review', buildReviewUrl(name, iso));
-    var msg='取得: '+r.display;
-    if(!r.phone) msg+='（電話番号はOSMに登録が無く未取得の場合あり）';
-    toast(msg,'inf');
+    toast('取得: '+geo.display,'inf');
   }catch(e){ toast('取得失敗（通信）','err'); }
 }
 // 標高取得: SRTM30m(30m・沿岸低地に強い)を優先し、無ければ open-meteo(90m)へ。
