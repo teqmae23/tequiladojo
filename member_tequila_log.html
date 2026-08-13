@@ -309,7 +309,21 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
       <input id="bottle-search" placeholder="銘柄名・NOM番号(4桁)で検索..." style="width:100%;padding:11px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:15px;background:var(--cream);margin-bottom:8px">
       <div class="btnrow" id="class-btns"></div>
       <div class="btnrow" id="fav-brand-btns"></div>
+      <div style="margin-bottom:8px"><button type="button" class="hbtn" id="btn-bottlereq" style="width:100%">🆕 マスタにない銘柄を登録依頼</button></div>
       <div class="pickwrap"><div id="bottle-list" class="btree picklist"></div><div class="navbar" id="bottle-nav"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ボトル登録依頼モーダル -->
+<div class="mbg" id="m-bottlereq">
+  <div class="modal">
+    <div class="mhead"><div class="mtitle">銘柄の登録依頼</div><button class="mx" id="bottlereq-close">✕</button></div>
+    <div class="mbody">
+      <div style="font-size:12px;color:var(--ink2);background:var(--cream2);padding:8px 10px;border-radius:var(--r);margin-bottom:12px;line-height:1.6">マスタにない銘柄を管理者に登録依頼できます。登録までは「(登録依頼中)」と表示され、登録後に自動でマスタ銘柄に置き換わります。</div>
+      <div class="fg"><label>銘柄名 <span style="color:var(--red)">※必須</span></label><input id="breq-name" type="text"></div>
+      <div class="fg"><label>メモ（ブランド・NOM・度数・入手先など／任意）</label><textarea id="breq-note" rows="2"></textarea></div>
+      <button class="submit" id="breq-save">登録依頼する</button>
     </div>
   </div>
 </div>
@@ -688,6 +702,8 @@ async function loadBottles(){
 
 function bottleName(id){ var b=bottles.find(function(x){return x.id===id;}); return b?b.full:id; }
 function bottleEsName(id, fallback){ var b=bottles.find(function(x){return x.id===id;}); return b?b.es:(fallback||id); }
+function isBottleReq(id){ return String(id||'').slice(0,2)==='BR'; }   // 登録依頼中のボトル
+function bottleDisp(l){ return (isBottleReq(l.bottleId)?'(登録依頼中) ':'')+bottleEsName(l.bottleId, l.bottleName); }
 
 // ── 自分のログ読み込み ──────────────────────────────────────
 async function loadLogs(){
@@ -696,6 +712,7 @@ async function loadLogs(){
     logs=snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
     logs.sort(function(a,b){ return String(b.drunkAt||'').localeCompare(String(a.drunkAt||'')); });
     await reconcilePendingPlaces();   // 承認待ち→本採用 / 非承認・削除→その他(店名)
+    await reconcileBottleRequests();  // 登録依頼中→登録されたらマスタ銘柄に置換
     barCounts={}; logs.forEach(function(l){ var k=l.barId||''; barCounts[k]=(barCounts[k]||0)+1; });
     renderTree();
   }catch(e){ g('tree').innerHTML='<div class="empty">読み込みに失敗しました</div>'; }
@@ -780,7 +797,7 @@ function renderTree(){
 function entRow(l){
   var loc=String(l.drunkAtLocal||l.drunkAt||''); var tm=loc.length>=12?loc.slice(8,10)+':'+loc.slice(10,12):'';
   var isAuto=(l.source==='auto');
-  var nm=bottleEsName(l.bottleId, l.bottleName);
+  var nm=bottleDisp(l);
   return '<div class="ent">'
     +'<span class="etime">'+tm+'</span>'
     +'<span class="ename">'+esc(nm)+'</span>'
@@ -815,7 +832,7 @@ function openDetail(id){
     +((l.tz&&l.tz!=='Asia/Tokyo')?' <span style="color:var(--ink3);font-size:11px">'+esc(l.tz)+'</span>':'');
   var rows=[
     ['日時', dt],
-    ['テキーラ', esc(bottleEsName(l.bottleId, l.bottleName))],
+    ['テキーラ', esc(bottleDisp(l))],
     ['飲み方', esc(STYLE_MAP[l.style]||l.style||'')+(l.amountMl?'（'+l.amountMl+'ml）':'')],
     ['場所', esc(barLabelOf(l))],
     ['評価', '<span class="stars">'+starStr(l.rating)+'</span>'],
@@ -1044,6 +1061,43 @@ g('bottle-list').addEventListener('click',function(e){
   g('e-bottle-view').textContent=pickedBottleName;
   g('m-bottle').classList.remove('open');
 });
+
+// ── マスタにない銘柄の登録依頼 ───────────────────────────────
+function openBottleReq(pre){ g('breq-name').value=(pre||'').trim(); g('breq-note').value=''; g('m-bottlereq').classList.add('open'); setTimeout(function(){ g('breq-name').focus(); },50); }
+g('btn-bottlereq').addEventListener('click',function(){ openBottleReq(g('bottle-search').value); });
+g('bottlereq-close').addEventListener('click',function(){ g('m-bottlereq').classList.remove('open'); });
+g('breq-save').addEventListener('click',async function(){
+  var name=(g('breq-name').value||'').trim(); if(!name){ toast('銘柄名を入力してください'); return; }
+  var note=(g('breq-note').value||'').trim();
+  var id='BR'+Date.now().toString(36)+Math.floor(Math.random()*1000);
+  var btn=g('breq-save'); btn.disabled=true;
+  try{
+    await db.collection('bottleRequests').doc(id).set({
+      authUid:auth.currentUser.uid, memberId:String(currentMember.memberId||currentMember.id||''),
+      memberName:String(currentMember.nickname||currentMember.name||''),
+      name:name, note:note||null, status:'pending', bottleId:null,
+      createdAt:firebase.firestore.FieldValue.serverTimestamp(), updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    pickedBottleId=id; pickedBottleName=name;
+    g('e-bottle-view').textContent='(登録依頼中) '+name;
+    toast('登録依頼しました');
+    g('m-bottlereq').classList.remove('open'); g('m-bottle').classList.remove('open');
+  }catch(e){ toast('依頼に失敗しました: '+(e.message||'')); }
+  btn.disabled=false;
+});
+// 登録依頼中のボトルを点検：管理者が登録(registered)したらマスタ銘柄に置換。
+async function reconcileBottleRequests(){
+  var ids={}; logs.forEach(function(l){ if(isBottleReq(l.bottleId)) ids[l.bottleId]=1; });
+  var idList=Object.keys(ids); if(!idList.length) return;
+  var reqMap={};
+  for(var i=0;i<idList.length;i++){ try{ var d=await db.collection('bottleRequests').doc(idList[i]).get(); if(d.exists) reqMap[idList[i]]=d.data(); }catch(e){} }
+  for(var j=0;j<logs.length;j++){ var l=logs[j]; if(!isBottleReq(l.bottleId)) continue;
+    var r=reqMap[l.bottleId]; if(!r || r.status!=='registered' || !r.bottleId) continue;
+    var realName=bottleName(r.bottleId);
+    try{ await db.collection('tequilaLogs').doc(l.id).update({ bottleId:r.bottleId, bottleName:realName, updatedAt:firebase.firestore.FieldValue.serverTimestamp() });
+      l.bottleId=r.bottleId; l.bottleName=realName; }catch(e){}
+  }
+}
 
 // ── BAR選択（自宅 / その他 / お気に入り / 記録回数順・街で絞込可） ──
 function barsAllWithDojo(){
@@ -1307,7 +1361,7 @@ function storePopupHtml(b){
   h+='<div style="font-size:12px;margin:5px 0;color:#7a5610;font-weight:600">来店 '+n+'回</div>';
   if(n){
     h+='<div style="max-height:150px;overflow:auto">'+mylogs.slice(0,10).map(function(l){
-      return '<div style="font-size:11px;border-top:1px solid #eee;padding:3px 0">'+fmtDate8(l.drunkAtLocal||l.drunkAt)+' '+esc(bottleEsName(l.bottleId,l.bottleName))+' <span style="color:#9a8470">'+esc(styleIcon(l.style))+'</span></div>';
+      return '<div style="font-size:11px;border-top:1px solid #eee;padding:3px 0">'+fmtDate8(l.drunkAtLocal||l.drunkAt)+' '+esc(bottleDisp(l))+' <span style="color:#9a8470">'+esc(styleIcon(l.style))+'</span></div>';
     }).join('')+(n>10?'<div style="font-size:10px;color:#9a8470">…他 '+(n-10)+'件</div>':'')+'</div>';
   } else { h+='<div style="font-size:11px;color:#9a8470">来店記録はありません</div>'; }
   h+='</div>'; return h;
