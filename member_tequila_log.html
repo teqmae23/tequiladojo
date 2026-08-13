@@ -1311,19 +1311,29 @@ function buildMapMarkers(){
     markersLayer.addLayer(mk);
   });
 }
+async function gsiGeocode(q){
+  try{ var res=await fetch('https://msearch.gsi.go.jp/address-search/AddressSearch?q='+encodeURIComponent(q));
+    var arr=await res.json(); if(arr&&arr.length){ var f=arr[0], c=f.geometry&&f.geometry.coordinates; if(c&&c.length>=2) return {lat:c[1],lng:c[0],title:(f.properties&&f.properties.title)||''}; } }catch(e){}
+  return null;
+}
+// 自宅住所→座標（できるだけ番地レベルで正確に）。
+// フル住所で照合し、市区町村が一致していれば採用（都道府県への粗い誤マッチを排除）。
+// ダメなら町域まで、最後は Nominatim（番地に強い）でフォールバック。
 async function geocodeHome(){
   var pref=(currentMember.prefecture||'').trim();
   var addr=(currentMember.address||'').trim();
   if(!addr) return null;
-  // 番地・号・建物名以降を除去し「都道府県＋市区町村＋町域」で照合する。
-  // （GSIは番地付きフル住所だと都道府県レベルの粗い一致に落ちることがあるため）
-  var core=addr.replace(/[0-9０-９].*$/,'').trim()||addr;
-  var q=(pref && core.indexOf(pref)!==0) ? (pref+core) : core;   // 都道府県の重複を避ける
-  try{ var res=await fetch('https://msearch.gsi.go.jp/address-search/AddressSearch?q='+encodeURIComponent(q));
-    var arr=await res.json(); if(arr&&arr.length){ var c=arr[0].geometry&&arr[0].geometry.coordinates; if(c&&c.length>=2) return {lat:c[1],lng:c[0]}; } }catch(e){}
-  try{ var r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q),{headers:{'Accept-Language':'ja'}});
+  var cityTok=(addr.match(/^.{1,12}?[市区町村]/)||[''])[0];   // 例: 東金市
+  function withPref(s){ return (pref && s.indexOf(pref)!==0) ? (pref+s) : s; }
+  var full=withPref(addr);
+  var core=addr.replace(/[0-9０-９\-−ー－].*$/,'').trim();
+  var coreQ=core?withPref(core):'';
+  function ok(g){ return g && (!cityTok || (g.title||'').indexOf(cityTok)>=0); }
+  var g1=await gsiGeocode(full);          if(ok(g1)) return g1;   // 番地レベル
+  var g2=coreQ?await gsiGeocode(coreQ):null; if(ok(g2)) return g2; // 町域レベル
+  try{ var r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(full),{headers:{'Accept-Language':'ja'}});
     var a=await r.json(); if(a&&a.length) return {lat:parseFloat(a[0].lat),lng:parseFloat(a[0].lon)}; }catch(e){}
-  return null;
+  return g1||g2||null;
 }
 async function addHomeMarker(){
   var addr=(currentMember.address||'').trim();
