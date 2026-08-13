@@ -191,6 +191,25 @@ td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
   <div class="mfoot"><button class="btn bs" data-close="m-city">キャンセル</button><button class="btn bp" id="btn-save-city">保存</button></div>
 </div></div>
 
+<!-- 場所申請の審査モーダル -->
+<div class="mbg" id="m-approve"><div class="modal" style="max-width:420px">
+  <div class="mhead"><div class="mtitle">場所申請の審査</div><button class="mx" data-close="m-approve">✕</button></div>
+  <div class="mbody">
+    <div id="ap-name" style="font-weight:600;margin-bottom:4px">—</div>
+    <div id="ap-sub" class="dim" style="font-size:12px;margin-bottom:14px"></div>
+    <div style="font-size:12px;color:var(--ink3);line-height:1.7;margin-bottom:14px">
+      <b>承認</b>：会員側で正式表示。<br>
+      <b>非承認</b>：会員側は非表示（管理側には残り、再承認も可能）。<br>
+      <b>削除</b>：レコードを削除（番号は空番になります）。
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn bp" style="flex:1" onclick="setBarStatus('approved')">承認</button>
+      <button class="btn bs" style="flex:1" onclick="setBarStatus('rejected')">非承認</button>
+      <button class="btn bd" style="flex:1" onclick="deleteApproveTarget()">削除</button>
+    </div>
+  </div>
+</div></div>
+
 <div id="toasts"></div>
 
 <script>
@@ -267,20 +286,24 @@ function render(){
 
 function renderBars(q){
   g("thead").innerHTML="<tr><th>ID</th><th>名前</th><th>国/地域/街</th><th>住所</th><th>地図</th><th>操作</th></tr>";
+  function stRank(b){ return b.status==='pending'?0:(b.status==='rejected'?1:2); }  // 承認待ち→非承認→その他
   var list=bars.filter(function(b){return !q||(b.id+" "+barName(b)+" "+(b.address||"")).toLowerCase().indexOf(q)>=0;})
     .sort(function(a,b){
-      var pa=(a.status==='pending')?0:1, pb=(b.status==='pending')?0:1;   // 承認待ちを先頭に
+      var pa=stRank(a), pb=stRank(b);
       if(pa!==pb) return pa-pb;
       return a.id.localeCompare(b.id);
     });
   g("tbody").innerHTML=list.length?list.map(function(b){
     var loc=[geoName(countryOf(b.countryId)),geoName(regionOf(b.regionId)),geoName(cityOf(b.cityId))].filter(Boolean).join(" / ");
-    var pending=(b.status==='pending');
-    var nameCell=(pending?"<span style='display:inline-block;background:#fae0c0;color:#8a5a00;font-size:10px;font-weight:600;border-radius:4px;padding:1px 6px;margin-right:5px'>承認待</span>":"")+esc(barName(b))
-      +(pending&&b.createdByName?"<div class='dim' style='font-size:10px'>申請: "+esc(b.createdByName)+"</div>":"");
-    return "<tr"+(pending?" style='background:#fff8ee'":"")+"><td class='mono'>"+b.id+"</td><td>"+nameCell+"</td><td class='dim'>"+esc(loc||"—")+"</td><td class='dim' style='max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+esc(b.address||"—")+"</td>"
+    var pending=(b.status==='pending'), rejected=(b.status==='rejected');
+    var badge=pending?"<span style='display:inline-block;background:#fae0c0;color:#8a5a00;font-size:10px;font-weight:600;border-radius:4px;padding:1px 6px;margin-right:5px'>承認待</span>"
+      :(rejected?"<span style='display:inline-block;background:#f3d4cd;color:#8c2818;font-size:10px;font-weight:600;border-radius:4px;padding:1px 6px;margin-right:5px'>非承認</span>":"");
+    var nameCell=badge+esc(barName(b))
+      +((pending||rejected)&&b.createdByName?"<div class='dim' style='font-size:10px'>申請: "+esc(b.createdByName)+"</div>":"");
+    var rowStyle=pending?" style='background:#fff8ee'":(rejected?" style='background:#fbeeeb'":"");
+    return "<tr"+rowStyle+"><td class='mono'>"+b.id+"</td><td>"+nameCell+"</td><td class='dim'>"+esc(loc||"—")+"</td><td class='dim' style='max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+esc(b.address||"—")+"</td>"
       +"<td>"+(b.mapUrl?"<a href='"+esc(b.mapUrl)+"' target='_blank'>🗺</a>":"—")+"</td>"
-      +"<td><div class='acts'>"+(pending?"<button class='btn bp sm' data-approve-bar='"+b.id+"'>承認</button>":"")+"<button class='btn bs sm' data-edit-bar='"+b.id+"'>編集</button><button class='btn bd sm' data-del='bars' data-id='"+b.id+"'>削除</button></div></td></tr>";
+      +"<td><div class='acts'>"+((pending||rejected)?"<button class='btn bp sm' data-approve-bar='"+b.id+"'>審査</button>":"")+"<button class='btn bs sm' data-edit-bar='"+b.id+"'>編集</button><button class='btn bd sm' data-del='bars' data-id='"+b.id+"'>削除</button></div></td></tr>";
   }).join(""):"<tr><td colspan='6' class='ec'>データがありません</td></tr>";
 }
 function renderCountries(q){
@@ -546,11 +569,23 @@ document.addEventListener("click",function(e){
   if(b.dataset.del){ if(confirm("削除しますか？")) delDoc(b.dataset.del,b.dataset.id); return; }
 });
 function delDoc(col,id){ journaledDelete(col,id).then(function(){toast("削除しました");loadAll();}).catch(function(e){toast("削除失敗: "+e.message,"err");}); }
+var approveTargetId=null;
 function approveBar(id){
+  approveTargetId=id;
   var b=bars.find(function(x){return x.id===id;});
-  if(!confirm("この場所を承認しますか？\n"+(b?barName(b):id))) return;
-  journaledSet("bars",id,{status:"approved",updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
-    .then(function(){toast("承認しました");loadAll();}).catch(function(e){toast("承認失敗: "+e.message,"err");});
+  g("ap-name").textContent=(b?barName(b):id)+"（"+id+"）";
+  g("ap-sub").textContent=(b&&b.createdByName?"申請者: "+b.createdByName:"");
+  openM("m-approve");
+}
+function setBarStatus(status){
+  var id=approveTargetId; if(!id) return; closeM("m-approve");
+  journaledSet("bars",id,{status:status,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .then(function(){toast(status==="approved"?"承認しました":"非承認にしました");loadAll();}).catch(function(e){toast("更新失敗: "+e.message,"err");});
+}
+function deleteApproveTarget(){
+  var id=approveTargetId; if(!id) return;
+  if(!confirm("このレコードを削除します（番号は空番になります）。よろしいですか？")) return;
+  closeM("m-approve"); delDoc("bars",id);
 }
 
 g("btn-add").addEventListener("click",function(){
@@ -596,7 +631,7 @@ g("btn-save-bar").addEventListener("click",function(){
   var _bnames=[nameJa,nameEn,nameEs].filter(Boolean).map(normName);
   var _baddr=normName(gv("bar-address"));
   var dupBar=bars.find(function(b){
-    if(b.id===id||b.id==="B00000"||b.id==="B900001") return false;
+    if(b.id===id||b.id==="B00000"||b.id==="B900001"||b.id==="B90001") return false;
     var bn=[b.nameJa,b.nameEn,b.nameEs].filter(Boolean).map(normName);
     var sameName=_bnames.some(function(x){return bn.indexOf(x)>=0;});
     var sameAddr=_baddr&&normName(b.address)===_baddr;
@@ -692,14 +727,14 @@ g("btn-init").addEventListener("click",async function(){
         regions.push({id:rid,regionId:rid,countryId:cid,nameEn:rEn,nameJa:rJa});made++;
       }
     }
-    // テキーラ道場(B00000)・その他(B900001) を用意
+    // テキーラ道場(B00000)・その他(B90001) を用意
     if(!bars.find(function(b){return b.id==="B00000";})){
       var jp=countries.find(function(c){return c.nameEn==="Japan";});
       await db.collection("bars").doc("B00000").set({barId:"B00000",nameJa:"テキーラ道場",nameEn:"Tequila Dojo",countryId:jp?jp.id:null});
       made++;
     }
-    if(!bars.find(function(b){return b.id==="B900001";})){
-      await db.collection("bars").doc("B900001").set({barId:"B900001",nameJa:"その他（自由入力）",nameEn:"Other"});
+    if(!bars.find(function(b){return b.id==="B900001"||b.id==="B90001";})){
+      await db.collection("bars").doc("B90001").set({barId:"B90001",nameJa:"その他（自由入力）",nameEn:"Other"});
       made++;
     }
     toast("初期データ生成 完了（"+made+"件追加）","inf");
