@@ -509,6 +509,10 @@ function barById(id){ return bars.find(function(b){return b.id===id;}); }
 function barDispName(b){ return b?(b.nameJa||b.nameEn||b.nameEs||b.id):''; }
 function isPendingBar(b){ return !!(b && b.status==='pending'); }
 function dispBarName(b){ return (isPendingBar(b)?'（承認待）':'')+barDispName(b); }
+var OTHER_ID='B90001';                                   // その他（自由入力）
+function isOther(id){ return id==='B90001'||id==='B900001'; } // 旧ID B900001 も互換
+function notRejected(b){ return !b || b.status!=='rejected'; } // 非承認は会員側非表示
+function nextBarIdMember(){ var mx=0; bars.forEach(function(b){ if(/^B\d{5}$/.test(b.id)){ var n=parseInt(b.id.slice(1))||0; if(n>mx&&n<90000) mx=n; } }); return 'B'+String(mx+1).padStart(5,'0'); }
 function tzOfBar(id){ var b=barById(id); if(!b) return 'Asia/Tokyo'; var c=b.cityId?cities.find(function(x){return x.id===b.cityId;}):null; return (c&&c.tz)||'Asia/Tokyo'; }
 
 // ── ログイン ────────────────────────────────────────────────
@@ -632,9 +636,30 @@ async function loadLogs(){
     const snap=await db.collection('tequilaLogs').where('authUid','==',auth.currentUser.uid).get();
     logs=snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
     logs.sort(function(a,b){ return String(b.drunkAt||'').localeCompare(String(a.drunkAt||'')); });
+    await reconcilePendingPlaces();   // 承認待ち→本採用 / 非承認・削除→その他(店名)
     barCounts={}; logs.forEach(function(l){ var k=l.barId||''; barCounts[k]=(barCounts[k]||0)+1; });
     renderTree();
   }catch(e){ g('tree').innerHTML='<div class="empty">読み込みに失敗しました</div>'; }
+}
+// 履歴の場所が承認待ちのものを点検。承認済み→そのまま／非承認・削除→その他(店名)に更新。
+async function reconcilePendingPlaces(){
+  var jobs=[];
+  logs.forEach(function(l){
+    if(l.source!=='manual') return;                       // 自動(道場)分は対象外
+    var id=l.barId||'';
+    if(id==='HOME'||id==='B00000'||isOther(id)||!id) return;
+    var b=barById(id);
+    if(!b){ jobs.push({log:l, name:(l.barText||'不明な場所')}); }          // 削除済み
+    else if(b.status==='rejected'){ jobs.push({log:l, name:(l.barText||barDispName(b))}); } // 非承認
+    // pending: 承認待ちのまま / approved(または通常): 本採用（変更なし）
+  });
+  for(var i=0;i<jobs.length;i++){
+    var j=jobs[i];
+    try{
+      await db.collection('tequilaLogs').doc(j.log.id).update({ barId:OTHER_ID, barText:j.name, updatedAt:firebase.firestore.FieldValue.serverTimestamp() });
+      j.log.barId=OTHER_ID; j.log.barText=j.name;   // ローカルにも反映
+    }catch(e){}
+  }
 }
 
 function starStr(n){ n=Number(n)||0; var s=''; for(var i=1;i<=5;i++) s+=(i<=n?'★':'☆'); return s; }
@@ -642,7 +667,7 @@ function starStr(n){ n=Number(n)||0; var s=''; for(var i=1;i<=5;i++) s+=(i<=n?'�
 function barLabelOf(l){
   if(l.barId==='HOME') return '自宅';
   var bmst=barById(l.barId);
-  return l.barId==='B900001'?(l.barText||'その他'):(bmst?dispBarName(bmst):(l.barId==='B00000'?'テキーラ道場':(l.barText||l.barId||'')));
+  return isOther(l.barId)?(l.barText||'その他'):(bmst?dispBarName(bmst):(l.barId==='B00000'?'テキーラ道場':(l.barText||l.barId||'')));
 }
 
 function renderTree(){
@@ -673,7 +698,7 @@ function renderTree(){
       // 場所ごとにグルーピング（時刻ソート順の出現順を保持）
       var pOrder=[], pMap={};
       items.forEach(function(l){
-        var pk=(l.barId==='B900001')?('B900001:'+(l.barText||'')):(l.barId||'');
+        var pk=isOther(l.barId)?('OTHER:'+(l.barText||'')):(l.barId||'');
         if(!pMap[pk]){ pMap[pk]={label:barLabelOf(l), items:[]}; pOrder.push(pk); }
         pMap[pk].items.push(l);
       });
@@ -754,12 +779,12 @@ function setBar(id, text){
   pickedBarId=id||'HOME'; pickedBarText=text||'';
   var label;
   if(pickedBarId==='HOME') label='自宅';
-  else if(pickedBarId==='B900001') label='その他（自由入力）';
+  else if(isOther(pickedBarId)) label='その他（自由入力）';
   else if(pickedBarId==='B00000') label='テキーラ道場';
   else { var b=barById(pickedBarId); label=b?dispBarName(b):pickedBarId; }
   g('e-bar-view').textContent=label;
-  var isOther=(pickedBarId==='B900001');
-  g('e-bar-text').style.display=isOther?'block':'none';
+  var otherFree=isOther(pickedBarId);
+  g('e-bar-text').style.display=otherFree?'block':'none';
   g('e-bar-text').value=pickedBarText;
   var tz=tzOfBar(pickedBarId);
   g('e-bar-tz').textContent=(tz&&tz!=='Asia/Tokyo')?('現地TZ: '+tz+' → 入力は現地時刻、JSTに換算して保存'):'';
@@ -828,8 +853,10 @@ g('e-save').addEventListener('click',async function(){
   var amount=parseInt(g('e-amount').value)||0;
   if(amount<=0||amount>999){ toast('量が不正です'); return; }
   var barId=pickedBarId||'B00000';
-  var barText=(barId==='B900001')?(g('e-bar-text').value||'').trim():'';
-  if(barId==='B900001'&&!barText){ toast('場所を入力してください'); return; }
+  var barText=isOther(barId)?(g('e-bar-text').value||'').trim():'';
+  if(isOther(barId)){ if(!barText){ toast('場所を入力してください'); return; } barId=OTHER_ID; }
+  // 承認待ちの場所は店名をスナップショット保存（非承認/削除時に「その他（店名）」へ復元するため）
+  if(!barText && barId!=='HOME' && barId!=='B00000'){ var _sb=barById(barId); if(_sb && _sb.status==='pending') barText=barDispName(_sb); }
   var tz=tzOfBar(barId);
   var dt=localStoreToJst(localStore, tz);   // 現地時刻→JST（保存はJST）
   if(dt>dtLocalToStore(nowDtLocal())){ toast('未来の日時は記録できません'); return; }
@@ -974,17 +1001,18 @@ function renderBarList(q){
   var el=g('bar-list');
   var favSet={}; favoriteBarIds.forEach(function(id){favSet[id]=1;});
   // 1行表示: [★=お気に入り] 名前  街。回数は非表示。
-  var rows=[{id:'HOME',label:'自宅',city:'',fav:false},{id:'B900001',label:'その他（自由入力）',city:'',fav:false}];
-  // お気に入り店（街フィルタ時は該当街のみ）
+  var rows=[{id:'HOME',label:'自宅',city:'',fav:false},{id:OTHER_ID,label:'その他（自由入力）',city:'',fav:false}];
+  // お気に入り店（街フィルタ時は該当街のみ）。非承認は非表示。
   favoriteBarIds.forEach(function(id){
-    var b=barById(id); if(!b || b.id==='B900001') return;
+    var b=barById(id); if(!b || isOther(b.id) || !notRejected(b)) return;
     if(barPickerCity && b.cityId!==barPickerCity) return;
     rows.push({id:id, label:dispBarName(b), city:cityNameOfBar(b), fav:true});
   });
-  // 記録回数順（お気に入り・特殊(自宅/その他)以外）
+  // 記録回数順（お気に入り・特殊(自宅/その他)・非承認 以外）
   var pool=barsAllWithDojo().filter(function(b){
-    if(b.id==='B900001'||b.id==='HOME') return false;
+    if(isOther(b.id)||b.id==='HOME') return false;
     if(favSet[b.id]) return false;
+    if(!notRejected(b)) return false;
     if(barPickerCity && b.cityId!==barPickerCity) return false;
     return true;
   });
@@ -1090,7 +1118,7 @@ g('nb-save').addEventListener('click',async function(){
   var kana=(g('nb-kana').value||'').trim();
   if(!nameJa){ toast('店名（日本語）を入力してください'); return; }
   if(!kana){ toast('店名（フリガナ）を入力してください'); return; }
-  var id='BU'+Date.now().toString(36)+Math.floor(Math.random()*1000);
+  var id=nextBarIdMember();   // 申請時点で連番採番（B#####・最大値+1）
   var data={ barId:id, nameJa:nameJa,
     nameEn:(g('nb-nameEn').value||'').trim()||null, nameEs:(g('nb-nameEs').value||'').trim()||null,
     nameKana:(g('nb-kana').value||'').trim()||null,
@@ -1185,7 +1213,7 @@ g('brandpick-list').addEventListener('click',function(e){
 });
 
 // お気に入り店選択
-function favBarItems(){ return bars.filter(function(b){return b.id!=='B900001';}).map(function(b){ var nm=barDispName(b); var kana=b.nameKana||''; return {id:b.id, name:dispBarName(b), sub:cityNameOfBar(b), extra:(b.nameEn||'')+' '+(b.address||'')+' '+kana, initial:barInitial(kana||nm), sortKey:(kana||nm)}; }); }
+function favBarItems(){ return bars.filter(function(b){return !isOther(b.id) && notRejected(b);}).map(function(b){ var nm=barDispName(b); var kana=b.nameKana||''; return {id:b.id, name:dispBarName(b), sub:cityNameOfBar(b), extra:(b.nameEn||'')+' '+(b.address||'')+' '+kana, initial:barInitial(kana||nm), sortKey:(kana||nm)}; }); }
 function openFavBar(){ g('favbar-search').value=''; renderFavBarPick(''); g('m-favbar').classList.add('open'); setTimeout(function(){g('favbar-search').focus();},50); }
 function renderFavBarPick(q){ renderPicker({items:favBarItems(), selected:favoriteBarIds, groupOrder:BAR_NAV, listEl:g('favbar-list'), navEl:g('favbar-nav'), anchor:'barnav-', query:q, selClass:'selb'}); }
 g('favbar-search').addEventListener('input',function(){ renderFavBarPick(this.value); });
