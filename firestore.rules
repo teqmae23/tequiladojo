@@ -159,6 +159,20 @@ service cloud.firestore {
             && resource.data.get('source', 'manual') == 'manual');
     }
 
+    // ボトル登録依頼（マスタ未登録の銘柄を会員が申請）。本人が pending 作成、
+    // 本人／スタッフ閲覧、登録(bottleId付与)・却下はスタッフ。
+    match /bottleRequests/{id} {
+      allow read: if isStaff()
+        || (realUser() && resource.data.get('authUid', '') == request.auth.uid);
+      allow create: if realUser()
+        && request.resource.data.authUid == request.auth.uid
+        && request.resource.data.get('status', '') == 'pending'
+        && request.resource.data.keys().hasOnly(
+             ['authUid', 'memberId', 'memberName', 'name', 'note',
+              'status', 'bottleId', 'createdAt', 'updatedAt']);
+      allow update, delete: if isStaff();
+    }
+
     // ── 日常業務（開店閉店・来場退場・注文・会計）: スタッフのみ ──
     // 会員向けページはCloud Functions（getMemberActivity / getStoreStatus）経由で
     // 本人分・公開情報のみ取得する
