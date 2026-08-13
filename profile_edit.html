@@ -1032,7 +1032,17 @@ async function _gsiGeo(q){
     var arr=await res.json(); if(arr&&arr.length){ var f=arr[0],c=f.geometry&&f.geometry.coordinates; if(c&&c.length>=2) return {lat:c[1],lng:c[0],title:(f.properties&&f.properties.title)||''}; } }catch(e){}
   return null;
 }
-async function geocodeHomeAddress(pref, addr){
+// 郵便番号(7桁)→町域の座標。HeartRails Geo API（無料・日本）。市区町村を誤らない。
+async function geocodeByZip(zip){
+  zip=(zip||'').replace(/[^0-9]/g,''); if(zip.length!==7) return null;
+  try{ var res=await fetch('https://geoapi.heartrails.com/api/json?method=searchByPostal&postal='+zip);
+    var j=await res.json(); var loc=j&&j.response&&j.response.location;
+    if(loc&&loc.length&&loc[0].x&&loc[0].y) return {lat:parseFloat(loc[0].y),lng:parseFloat(loc[0].x)}; }catch(e){}
+  return null;
+}
+async function geocodeHomeAddress(pref, addr, zip){
+  // まず郵便番号で町域座標（rural大字でも市区町村を誤らない）
+  var z=await geocodeByZip(zip); if(z) return z;
   pref=(pref||'').trim(); addr=(addr||'').trim(); if(!addr) return null;
   var cityTok=(addr.match(/^.{1,12}?[市区町村]/)||[''])[0];
   function wp(s){ return (pref && s.indexOf(pref)!==0) ? (pref+s) : s; }
@@ -1076,9 +1086,9 @@ async function saveProfile(){
   // 自宅住所→座標を取得して保存（マップの自宅ピン用）。取得できたら更新、
   // 住所が空なら座標クリア、取得失敗時は既存座標を維持。
   try{
-    var pos = await geocodeHomeAddress(gv('f-pref'), gv('f-addr'));
+    var pos = await geocodeHomeAddress(gv('f-pref'), gv('f-addr'), gv('f-zip'));
     if(pos){ data.homeLat = pos.lat; data.homeLng = pos.lng; }
-    else if(!gv('f-addr')){ data.homeLat = null; data.homeLng = null; }
+    else if(!gv('f-addr') && !gv('f-zip')){ data.homeLat = null; data.homeLng = null; }
   }catch(e){}
 
   db.collection('members').doc(memberId).update(data)
