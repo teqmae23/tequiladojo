@@ -362,21 +362,32 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
     <div class="mhead"><div class="mtitle">場所を新規登録</div><button class="mx" id="newbar-close">✕</button></div>
     <div class="mbody">
       <div style="font-size:12px;color:var(--ink2);background:var(--cream2);padding:8px 10px;border-radius:var(--r);margin-bottom:12px;line-height:1.6">登録内容は管理者の承認後に正式登録されます。承認までは名前の前に「（承認待）」と表示されます。</div>
-      <div class="fg"><label>店名（日本語）※必須</label><input id="nb-nameJa" type="text"></div>
+      <div class="fg"><label>店名（日本語）<span style="color:var(--red)">※必須</span></label><input id="nb-nameJa" type="text"></div>
+      <div class="fg"><label>店名（フリガナ）<span style="color:var(--red)">※必須</span></label><input id="nb-kana" type="text"></div>
       <div class="frow">
         <div class="fg"><label>店名（英語）</label><input id="nb-nameEn" type="text"></div>
         <div class="fg"><label>店名（西語）</label><input id="nb-nameEs" type="text"></div>
       </div>
-      <div class="fg"><label>フリガナ</label><input id="nb-kana" type="text" placeholder="ヤキトリサンキュウ"></div>
       <div class="frow">
         <div class="fg"><label>国</label><select id="nb-country"></select></div>
-        <div class="fg"><label>地域</label><select id="nb-region"></select></div>
+        <div class="fg"><label>都道府県（州）</label><select id="nb-region"></select></div>
       </div>
       <div class="frow">
         <div class="fg"><label>街</label><select id="nb-city"></select></div>
-        <div class="fg"><label>郵便番号</label><input id="nb-postal" type="text"></div>
+        <div class="fg"><label>郵便番号（ハイフンなし）</label>
+          <div style="display:flex;gap:6px">
+            <input id="nb-postal" type="text" inputmode="numeric" placeholder="1500001" style="flex:1">
+            <button type="button" class="hbtn" id="nb-zip" style="flex:0 0 auto">住所検索</button>
+          </div>
+        </div>
       </div>
-      <div class="fg"><label>住所</label><input id="nb-address" type="text" placeholder="東京都◯◯区…"></div>
+      <div class="fg"><label>住所（市区町村以下）</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span id="nb-pref-prefix" style="flex:0 0 auto;font-size:12px;color:var(--ink3);white-space:nowrap">（都道府県）</span>
+          <input id="nb-address" type="text" style="flex:1" placeholder="◯◯区△△1-2-3">
+        </div>
+      </div>
+      <div class="fg"><label>電話番号</label><input id="nb-phone" type="tel" placeholder="03-1234-5678"></div>
       <button class="submit" id="nb-save">登録する（承認待）</button>
     </div>
   </div>
@@ -1036,31 +1047,56 @@ function fillNbCountry(){
   g('nb-country').innerHTML='<option value="">選択...</option>'+cs.map(function(c){ return '<option value="'+esc(c.id)+'">'+esc(c.nameJa||c.nameEn||c.id)+'</option>'; }).join('');
 }
 function fillNbRegion(cid){
-  var rs=regions.filter(function(r){ return r.countryId===cid; }).sort(function(a,b){ return regionName(a).localeCompare(regionName(b),'ja'); });
+  var rs=regions.filter(function(r){ return r.countryId===cid; }).sort(function(a,b){ return String(a.id).localeCompare(String(b.id)); });
   g('nb-region').innerHTML='<option value="">選択...</option>'+rs.map(function(r){ return '<option value="'+esc(r.id)+'">'+esc(regionName(r))+'</option>'; }).join('');
 }
 function fillNbCity(rid){
   var cs=cities.filter(function(c){ return c.regionId===rid; }).sort(function(a,b){ return cityName(a).localeCompare(cityName(b),'ja'); });
   g('nb-city').innerHTML='<option value="">選択...</option>'+cs.map(function(c){ return '<option value="'+esc(c.id)+'">'+esc(cityName(c))+'</option>'; }).join('');
 }
-function openNewBar(){
-  ['nb-nameJa','nb-nameEn','nb-nameEs','nb-kana','nb-postal','nb-address'].forEach(function(i){ g(i).value=''; });
-  fillNbCountry(); g('nb-region').innerHTML='<option value="">—</option>'; g('nb-city').innerHTML='<option value="">—</option>';
-  g('m-newbar').classList.add('open');
+function updatePrefPrefix(){ var rid=g('nb-region').value; var r=rid?regions.find(function(x){return x.id===rid;}):null; g('nb-pref-prefix').textContent=r?regionName(r):'（都道府県）'; }
+function phoneCcByCountry(cid){ var r=countryRank(cid); return r===0?'+81':r===1?'+1':r===2?'+52':null; }
+function selectJapan(){ var jp=countries.find(function(c){ return countryRank(c.id)===0; }); if(!jp) return ''; g('nb-country').value=jp.id; fillNbRegion(jp.id); return jp.id; }
+function setRegionByName(name){ name=(name||'').trim(); if(!name) return false; var r=regions.find(function(x){ return (x.nameJa||'')===name || (x.nameEn||'')===name; }); if(r){ g('nb-region').value=r.id; fillNbCity(r.id); return true; } return false; }
+async function zipSearch(){
+  var zip=(g('nb-postal').value||'').replace(/[^0-9]/g,'');
+  if(zip.length!==7){ toast('郵便番号は7桁（ハイフンなし）で入力してください'); return; }
+  g('nb-postal').value=zip;
+  var btn=g('nb-zip'); btn.disabled=true; toast('住所を検索中...');
+  try{
+    var res=await fetch('https://zipcloud.ibsnet.co.jp/api/search?zipcode='+zip);
+    var j=await res.json();
+    if(!j||!j.results||!j.results.length){ toast('該当する住所が見つかりませんでした'); btn.disabled=false; return; }
+    var r=j.results[0];
+    selectJapan();
+    var matched=setRegionByName(r.address1||'');
+    g('nb-address').value=(matched?'':(r.address1||''))+(r.address2||'')+(r.address3||'');
+    updatePrefPrefix();
+    toast('住所をセットしました');
+  }catch(e){ toast('住所検索に失敗しました（通信）'); }
+  btn.disabled=false;
 }
-g('nb-country').addEventListener('change',function(){ fillNbRegion(this.value); g('nb-city').innerHTML='<option value="">—</option>'; });
-g('nb-region').addEventListener('change',function(){ fillNbCity(this.value); });
+g('nb-zip').addEventListener('click',zipSearch);
+function openNewBar(){
+  ['nb-nameJa','nb-nameEn','nb-nameEs','nb-kana','nb-postal','nb-address','nb-phone'].forEach(function(i){ g(i).value=''; });
+  fillNbCountry(); g('nb-region').innerHTML='<option value="">—</option>'; g('nb-city').innerHTML='<option value="">—</option>';
+  updatePrefPrefix(); g('m-newbar').classList.add('open');
+}
+g('nb-country').addEventListener('change',function(){ fillNbRegion(this.value); g('nb-city').innerHTML='<option value="">—</option>'; updatePrefPrefix(); });
+g('nb-region').addEventListener('change',function(){ fillNbCity(this.value); updatePrefPrefix(); });
 g('newbar-close').addEventListener('click',function(){ g('m-newbar').classList.remove('open'); });
 g('nb-save').addEventListener('click',async function(){
   var nameJa=(g('nb-nameJa').value||'').trim();
+  var kana=(g('nb-kana').value||'').trim();
   if(!nameJa){ toast('店名（日本語）を入力してください'); return; }
+  if(!kana){ toast('店名（フリガナ）を入力してください'); return; }
   var id='BU'+Date.now().toString(36)+Math.floor(Math.random()*1000);
   var data={ barId:id, nameJa:nameJa,
     nameEn:(g('nb-nameEn').value||'').trim()||null, nameEs:(g('nb-nameEs').value||'').trim()||null,
     nameKana:(g('nb-kana').value||'').trim()||null,
     countryId:g('nb-country').value||null, regionId:g('nb-region').value||null, cityId:g('nb-city').value||null,
-    postalCode:(g('nb-postal').value||'').trim()||null, address:(g('nb-address').value||'').trim()||null,
-    phoneCountryCode:null, phone:null, reviewUrl:null, mapUrl:null, lat:null, lng:null, elevation:null,
+    postalCode:(g('nb-postal').value||'').replace(/[^0-9]/g,'')||null, address:(g('nb-address').value||'').trim()||null,
+    phoneCountryCode:phoneCcByCountry(g('nb-country').value), phone:(g('nb-phone').value||'').trim()||null, reviewUrl:null, mapUrl:null, lat:null, lng:null, elevation:null,
     status:'pending', createdByUid:auth.currentUser.uid,
     createdByName:String(currentMember.nickname||currentMember.name||currentMember.memberId||currentMember.id||''),
     createdAt:firebase.firestore.FieldValue.serverTimestamp(), updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
