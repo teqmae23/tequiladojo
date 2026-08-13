@@ -245,7 +245,12 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
         <option value="asc">古い順</option>
       </select>
       <div class="spacer"></div>
-      <button id="btn-toggle-all">すべて折りたたむ</button>
+      <select id="depth-level" title="展開の深さ">
+        <option value="ym">年月</option>
+        <option value="ymd">年月日</option>
+        <option value="place">店舗まで</option>
+        <option value="all">全展開</option>
+      </select>
     </div>
     <div id="tree"><div class="empty">読み込み中...</div></div>
   </div>
@@ -469,7 +474,7 @@ const STYLE_ICON={straight:'ス',soda:'ソ',mizuwari:'水',rock:'氷',oyuwari:'�
 function styleIcon(s){ return STYLE_ICON[s]||'他'; }
 
 let sortOrder='desc';   // 'desc'=新しい順 / 'asc'=古い順
-let allOpen=true;       // すべて展開状態か
+let treeDepth='ym';     // 展開の深さ: 'ym'=年月 / 'ymd'=年月日 / 'place'=店舗まで / 'all'=全展開
 
 // テキーラのクラス（bottleId 9桁目 = classId の2桁目）。BJRAX = Blanco/Joven/Reposado/Añejo/eXtra Añejo
 const CLASSES=[['1','B','Blanco'],['2','J','Joven/Gold'],['3','R','Reposado'],['4','A','Añejo'],['5','X','Extra Añejo']];
@@ -627,9 +632,15 @@ function loadPrefs(){
 }
 function renderResidence(){
   var pref=(currentMember.prefecture||'').trim();
+  var hasHome=!!(currentMember.address||'').trim();
   var el=g('residence-line'); if(!el) return;
-  if(pref){ el.innerHTML='🏠 居住県: <b style="color:var(--ink2)">'+esc(pref)+'</b>'; }
-  else { el.innerHTML='🏠 居住県が未設定です <a href="/profile_edit.html" class="linkbtn" style="margin-left:6px">プロフィール編集で設定</a>'; }
+  var prefHtml=pref
+    ? ('🏠 居住県: <b style="color:var(--ink2)">'+esc(pref)+'</b>')
+    : ('🏠 居住県が未設定です <a href="/profile_edit.html" class="linkbtn" style="margin-left:6px">プロフィール編集で設定</a>');
+  var homeHtml=hasHome
+    ? ' <span style="margin-left:8px">｜ 自宅設定: <b style="color:var(--teal)">あり</b></span>'
+    : ' <span style="margin-left:8px">｜ 自宅設定: <b style="color:var(--red)">なし</b> <a href="/profile_edit.html" class="linkbtn" style="margin-left:4px">自宅設定</a></span>';
+  el.innerHTML=prefHtml+homeHtml;
 }
 function savePref(field, value){
   var upd={}; upd[field]=value; upd.updatedAt=firebase.firestore.FieldValue.serverTimestamp();
@@ -763,7 +774,7 @@ function renderTree(){
     html+='</div></div>';
   });
   el.innerHTML=html;
-  if(!allOpen) setAllOpen(false);
+  setTreeDepth(treeDepth);
 }
 
 function entRow(l){
@@ -783,14 +794,16 @@ function entRow(l){
 
 // ── ツリー折りたたみ / ソート / 詳細 ────────────────────────
 function toggleNode(head){ var n=head.parentNode; n.setAttribute('data-open', n.getAttribute('data-open')==='1'?'0':'1'); }
-function setAllOpen(open){
-  allOpen=open;
-  var ns=document.querySelectorAll('#tree .tnode');
-  for(var i=0;i<ns.length;i++) ns[i].setAttribute('data-open', open?'1':'0');
-  g('btn-toggle-all').textContent=open?'すべて折りたたむ':'すべて展開';
+// 展開の深さ: ym=年月 / ymd=年月日 / place=店舗まで / all=全展開
+function setTreeDepth(level){
+  treeDepth=level;
+  var mo=(level!=='ym'), da=(level==='place'||level==='all'), pl=(level==='all');
+  document.querySelectorAll('#tree .tmonth').forEach(function(n){ n.setAttribute('data-open', mo?'1':'0'); });
+  document.querySelectorAll('#tree .tday').forEach(function(n){ n.setAttribute('data-open', da?'1':'0'); });
+  document.querySelectorAll('#tree .tplace').forEach(function(n){ n.setAttribute('data-open', pl?'1':'0'); });
 }
 g('sort-order').addEventListener('change',function(){ sortOrder=this.value; renderTree(); });
-g('btn-toggle-all').addEventListener('click',function(){ setAllOpen(!allOpen); });
+g('depth-level').addEventListener('change',function(){ setTreeDepth(this.value); });
 
 function fmtStore(s){ s=String(s||''); return s.length>=12?(s.slice(0,4)+'/'+s.slice(4,6)+'/'+s.slice(6,8)+' '+s.slice(8,10)+':'+s.slice(10,12)):''; }
 function openDetail(id){
@@ -1325,9 +1338,13 @@ async function geocodeHome(){
     var a=await r.json(); if(a&&a.length) return {lat:parseFloat(a[0].lat),lng:parseFloat(a[0].lon)}; }catch(e){}
   return null;
 }
+// 国の外接矩形（日本 / アメリカ本土 / メキシコ）
+var COUNTRY_BBOX=[[[24,122],[46,146]],[[24,-125],[49,-66]],[[14,-118],[33,-86]]];
 async function addHomeMarker(){
   var addr=(currentMember.address||'').trim();
-  if(!addr){ g('map-home-banner').style.display='block'; return; }
+  // プロフィール保存時に取得済みの座標を優先。無ければ住所からその場でジオコーディング。
+  if(currentMember.homeLat!=null && currentMember.homeLng!=null) homeLatLng={lat:Number(currentMember.homeLat),lng:Number(currentMember.homeLng)};
+  if(!addr && !homeLatLng){ g('map-home-banner').style.display='block'; return; }
   g('map-home-banner').style.display='none';
   if(!homeLatLng) homeLatLng=await geocodeHome();
   if(!homeLatLng) return;
@@ -1336,12 +1353,15 @@ async function addHomeMarker(){
 }
 function fitCountry(rank){
   ensureMap();
+  // アメリカ・メキシコは国全体が画面いっぱいになるよう外接矩形にフィット
+  if(rank===1||rank===2){ mapObj.fitBounds(COUNTRY_BBOX[rank],{padding:[20,20]}); return; }
+  // 日本は店舗＋自宅にフィット（無ければ日本全体）
   var pts=[];
-  bars.forEach(function(b){ if(!notRejected(b)||isOther(b.id)) return; if(countryRank(b.countryId)!==rank) return; var lat=parseFloat(b.lat),lng=parseFloat(b.lng); if(!isNaN(lat)&&!isNaN(lng)) pts.push([lat,lng]); });
-  if(rank===0 && homeLatLng) pts.push([homeLatLng.lat,homeLatLng.lng]);
+  bars.forEach(function(b){ if(!notRejected(b)||isOther(b.id)) return; if(countryRank(b.countryId)!==0) return; var lat=parseFloat(b.lat),lng=parseFloat(b.lng); if(!isNaN(lat)&&!isNaN(lng)) pts.push([lat,lng]); });
+  if(homeLatLng) pts.push([homeLatLng.lat,homeLatLng.lng]);
   if(pts.length>1){ mapObj.fitBounds(pts,{padding:[30,30],maxZoom:14}); }
   else if(pts.length===1){ mapObj.setView(pts[0],13); }
-  else { var c=[[36,138],[39,-98],[23,-102]][rank]||[20,0]; mapObj.setView(c, rank===0?5:4); toast('この国の登録店舗がありません'); }
+  else { mapObj.fitBounds(COUNTRY_BBOX[0],{padding:[20,20]}); }
 }
 function openMap(){
   g('m-map').classList.add('open');
