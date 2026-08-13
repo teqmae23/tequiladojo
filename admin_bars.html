@@ -112,30 +112,24 @@ td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
       <div class="fg"><label>名前 EN</label><input class="fi" id="bar-nameEn"></div>
       <div class="fg"><label>名前 ES</label><input class="fi" id="bar-nameEs"></div>
     </div>
-    <div class="fg"><label>フリガナ（並び順・カナ）</label><input class="fi" id="bar-kana" placeholder="ヤキトリサンキュウ"></div>
+    <div class="fg"><label>フリガナ（並び順・カナ）</label><input class="fi" id="bar-kana"></div>
     <div class="frow3">
       <div class="fg"><label>国</label><select class="fs" id="bar-country" onchange="onBarCountryChange()"></select></div>
       <div class="fg"><label>地域</label><select class="fs" id="bar-region" onchange="onBarRegionChange()"></select></div>
       <div class="fg"><label>街</label><select class="fs" id="bar-city" onchange="onBarCityPick()"></select></div>
     </div>
-    <div class="frow">
-      <div class="fg"><label>郵便番号</label><input class="fi" id="bar-postal"></div>
-      <div class="fg"><label>住所</label><input class="fi" id="bar-address"></div>
+    <div class="frow3">
+      <div class="fg"><label>郵便番号 <button type="button" class="btn bs sm" style="padding:2px 7px;font-size:10px;text-transform:none" onclick="barZipSearch()">住所検索</button></label><input class="fi" id="bar-postal" maxlength="7" inputmode="numeric"></div>
+      <div class="fg"><label>国番号</label><div class="inl" style="gap:4px"><input class="fi" id="bar-phoneCc" maxlength="4" style="min-width:0"><button type="button" class="btn bs sm" style="padding:3px 7px" onclick="setPhoneCc('+81')">日</button><button type="button" class="btn bs sm" style="padding:3px 7px" onclick="setPhoneCc('+1')">米</button><button type="button" class="btn bs sm" style="padding:3px 7px" onclick="setPhoneCc('+52')">墨</button></div></div>
+      <div class="fg"><label>電話番号</label><input class="fi" id="bar-phone" maxlength="13" inputmode="numeric"></div>
     </div>
-    <div class="frow">
-      <div class="fg"><label>電話 国番号</label><input class="fi" id="bar-phoneCc" placeholder="+81"></div>
-      <div class="fg"><label>電話番号</label><input class="fi" id="bar-phone"></div>
-    </div>
-    <div class="fg"><label>評価サイトURL（日本は食べログ・自動生成可）</label>
-      <div class="inl"><input class="fi" id="bar-review"><button type="button" class="btn bs sm" onclick="buildReviewFromForm()">生成</button></div>
-    </div>
-    <div class="fg"><label>Google Map URL（住所→座標で自動取得。住所優先・店名でも可）</label>
-      <div class="inl"><input class="fi" id="bar-mapUrl" oninput="onBarMapUrl()"><button type="button" class="btn bs sm" onclick="onBarMapUrl(true)">座標抽出</button><button type="button" class="btn bp sm" onclick="barGeocode()">住所から取得</button></div>
-    </div>
+    <div class="fg"><label>住所</label><input class="fi" id="bar-address" onblur="autoBarGeocode()"></div>
+    <div class="fg"><label>評価サイトURL（日本は食べログ・自動生成）</label><input class="fi" id="bar-review"></div>
+    <div class="fg"><label>Google Map URL（住所→座標で自動取得）</label><input class="fi" id="bar-mapUrl" oninput="onBarMapUrl()"></div>
     <div class="frow3">
       <div class="fg"><label>緯度</label><input class="fi" id="bar-lat" oninput="scheduleBarElev()"></div>
       <div class="fg"><label>経度</label><input class="fi" id="bar-lng" oninput="scheduleBarElev()"></div>
-      <div class="fg"><label>標高(m)</label><div class="inl"><input class="fi" id="bar-elev"><button type="button" class="btn bs sm" onclick="fetchElevInto('bar-lat','bar-lng','bar-elev')">取得</button></div></div>
+      <div class="fg"><label>標高(m)</label><input class="fi" id="bar-elev"></div>
     </div>
   </div>
   <div class="mfoot"><button class="btn bs" data-close="m-bar">キャンセル</button><button class="btn bp" id="btn-save-bar">保存</button></div>
@@ -607,6 +601,29 @@ var editBarId=null;
 function onBarCountryChange(){fillRegionSel("bar-region",gv("bar-country"),"");fillCitySel("bar-city","","");}
 function onBarRegionChange(){fillCitySel("bar-city",gv("bar-region"),"");}
 function onBarCityPick(){var c=cityOf(gv("bar-city"));if(c){if(c.mapUrl&&!gv("bar-mapUrl"))sv("bar-mapUrl",c.mapUrl);}}
+function setPhoneCc(cc){ sv("bar-phoneCc",cc); }
+// 住所を入れてフォーカスを外したら、座標が空なら自動でジオコーディング
+function autoBarGeocode(){ if(gv("bar-lat")||gv("bar-lng")) return; if(!gv("bar-address")&&!gv("bar-nameJa")&&!gv("bar-nameEn")&&!gv("bar-nameEs")) return; barGeocode(); }
+// 郵便番号(7桁)→住所（zipcloud）。国=日本・都道府県を自動選択し住所欄に市区町村以下をセット。
+async function barZipSearch(){
+  var zip=gv("bar-postal").replace(/[^0-9]/g,"");
+  if(zip.length!==7){ toast("郵便番号は半角数字7桁で入力してください","err"); return; }
+  sv("bar-postal",zip);
+  toast("住所を検索中...","inf");
+  try{
+    var res=await fetch("https://zipcloud.ibsnet.co.jp/api/search?zipcode="+zip);
+    var j=await res.json();
+    if(!j||!j.results||!j.results.length){ toast("該当する住所が見つかりませんでした","err"); return; }
+    var r=j.results[0];
+    var jp=countries.find(function(c){ return isoOfCountry(c.nameEn||c.nameJa)==="jp"; });
+    if(jp){ sv("bar-country",jp.id); fillRegionSel("bar-region",jp.id,""); }
+    var reg=regions.find(function(x){ return (!jp||x.countryId===jp.id) && (geoName(x)===r.address1 || x.nameJa===r.address1); });
+    if(reg){ sv("bar-region",reg.id); fillCitySel("bar-city",reg.id,""); }
+    sv("bar-address",(reg?"":(r.address1||""))+(r.address2||"")+(r.address3||""));
+    if(!gv("bar-phoneCc")) sv("bar-phoneCc","+81");
+    toast("住所をセットしました","inf");
+  }catch(e){ toast("住所検索に失敗しました（通信）","err"); }
+}
 function openBar(id){
   editBarId=id;g("mt-bar").textContent=id?"BAR編集":"BAR登録";
   var b=id?bars.find(function(x){return x.id===id;}):null;
