@@ -1026,7 +1026,25 @@ function togglePubLbl(checkId, lblId){
   }
 }
 
-function saveProfile(){
+// 住所→座標（できるだけ番地レベル）。GSIフル→市区町村検証→町域→Nominatim。
+async function _gsiGeo(q){
+  try{ var res=await fetch('https://msearch.gsi.go.jp/address-search/AddressSearch?q='+encodeURIComponent(q));
+    var arr=await res.json(); if(arr&&arr.length){ var f=arr[0],c=f.geometry&&f.geometry.coordinates; if(c&&c.length>=2) return {lat:c[1],lng:c[0],title:(f.properties&&f.properties.title)||''}; } }catch(e){}
+  return null;
+}
+async function geocodeHomeAddress(pref, addr){
+  pref=(pref||'').trim(); addr=(addr||'').trim(); if(!addr) return null;
+  var cityTok=(addr.match(/^.{1,12}?[市区町村]/)||[''])[0];
+  function wp(s){ return (pref && s.indexOf(pref)!==0) ? (pref+s) : s; }
+  var full=wp(addr), core=addr.replace(/[0-9０-９\-−ー－].*$/,'').trim(), coreQ=core?wp(core):'';
+  function ok(gp){ return gp && (!cityTok || (gp.title||'').indexOf(cityTok)>=0); }
+  var g1=await _gsiGeo(full); if(ok(g1)) return g1;
+  var g2=coreQ?await _gsiGeo(coreQ):null; if(ok(g2)) return g2;
+  try{ var r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(full),{headers:{'Accept-Language':'ja'}});
+    var a=await r.json(); if(a&&a.length) return {lat:parseFloat(a[0].lat),lng:parseFloat(a[0].lon)}; }catch(e){}
+  return g1||g2||null;
+}
+async function saveProfile(){
   if(!currentUser){ toast('ログインしてください', 'err'); return; }
   var memberId = g('profile-member-id') ? g('profile-member-id').textContent : '';
   if(!memberId){ toast('会員情報が読み込まれていません', 'err'); return; }
@@ -1054,6 +1072,14 @@ function saveProfile(){
     prefPublic: !!(g('f-pref-public') && g('f-pref-public').checked),
     snsPublic:  !!(g('f-sns-public')  && g('f-sns-public').checked)
   };
+
+  // 自宅住所→座標を取得して保存（マップの自宅ピン用）。取得できたら更新、
+  // 住所が空なら座標クリア、取得失敗時は既存座標を維持。
+  try{
+    var pos = await geocodeHomeAddress(gv('f-pref'), gv('f-addr'));
+    if(pos){ data.homeLat = pos.lat; data.homeLng = pos.lng; }
+    else if(!gv('f-addr')){ data.homeLat = null; data.homeLng = null; }
+  }catch(e){}
 
   db.collection('members').doc(memberId).update(data)
     .then(function(){
