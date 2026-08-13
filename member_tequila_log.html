@@ -175,6 +175,8 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <script src="/member-plan.js?v=20260810"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
 
@@ -214,6 +216,7 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
   <div id="log-ui" style="display:none">
     <div class="addbar">
       <button class="addbtn" id="btn-add">＋ 記録する</button>
+      <button class="addbtn" id="btn-map" style="flex:0 0 auto;background:var(--green)">🗺 マップ</button>
     </div>
     <!-- 居住県（会員マスタから取得・表示） -->
     <div id="residence-line" style="font-size:12px;color:var(--ink3);margin-bottom:12px"></div>
@@ -393,6 +396,28 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
       </div>
       <div class="fg"><label>電話番号</label><input id="nb-phone" type="tel"></div>
       <button class="submit" id="nb-save">登録する（承認待）</button>
+    </div>
+  </div>
+</div>
+
+<!-- 店舗マップモーダル -->
+<div class="mbg" id="m-map">
+  <div class="modal" style="max-width:680px;height:90vh;display:flex;flex-direction:column;overflow:hidden">
+    <div class="mhead"><div class="mtitle">店舗マップ</div>
+      <div class="hbtns"><button class="hbtn" id="map-jp">日本</button><button class="hbtn" id="map-us">アメリカ</button><button class="hbtn" id="map-mx">メキシコ</button></div>
+      <button class="mx" id="map-close">✕</button></div>
+    <div id="map" style="flex:1;min-height:0"></div>
+    <div id="map-home-banner" style="display:none;padding:8px 14px;font-size:12px;color:var(--ink2);background:var(--green-l);border-top:1px solid #bfe0cd">
+      自宅住所が未登録です <a href="/profile_edit.html" class="linkbtn" style="margin-left:6px">自宅住所を登録</a>
+    </div>
+    <div style="padding:7px 14px;font-size:11px;color:var(--ink3);border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span>来店回数:</span>
+      <span><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#9a8470;vertical-align:middle"></i> 0</span>
+      <span><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#e8b84a;vertical-align:middle"></i> 1</span>
+      <span><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#c8921e;vertical-align:middle"></i> 2-3</span>
+      <span><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#d98032;vertical-align:middle"></i> 4-6</span>
+      <span><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#8c2818;vertical-align:middle"></i> 7+</span>
+      <span>🏠 自宅</span>
     </div>
   </div>
 </div>
@@ -1230,6 +1255,81 @@ g('favbar-list').addEventListener('click',function(e){
   if(idx>=0) favoriteBarIds.splice(idx,1); else favoriteBarIds.push(id);
   savePref('favoriteBarIds', favoriteBarIds); renderFavBarPick(g('favbar-search').value); renderFavBarChips();
 });
+
+// ── 店舗マップ（Leaflet） ────────────────────────────────────
+var mapObj=null, markersLayer=null, homeLatLng=null;
+function colorForCount(n){ if(n<=0) return '#9a8470'; if(n===1) return '#e8b84a'; if(n<=3) return '#c8921e'; if(n<=6) return '#d98032'; return '#8c2818'; }
+function ensureMap(){
+  if(mapObj) return;
+  mapObj=L.map('map',{zoomControl:true}).setView([36,138],5);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap',maxZoom:19}).addTo(mapObj);
+  markersLayer=L.layerGroup().addTo(mapObj);
+}
+function fmtDate8(s){ s=String(s||''); return s.length>=8?(s.slice(0,4)+'/'+s.slice(4,6)+'/'+s.slice(6,8)):''; }
+function storePopupHtml(b){
+  var mylogs=logs.filter(function(l){ return l.barId===b.id; }).sort(function(a,c){ return String(c.drunkAt||'').localeCompare(String(a.drunkAt||'')); });
+  var n=mylogs.length;
+  var h='<div style="min-width:180px;max-width:240px"><div style="font-weight:700;font-size:14px">'+esc(dispBarName(b))+'</div>';
+  var loc=[cityNameOfBar(b),b.address].filter(Boolean).join(' ');
+  if(loc) h+='<div style="font-size:11px;color:#9a8470;margin-top:2px">'+esc(loc)+'</div>';
+  h+='<div style="font-size:12px;margin:5px 0;color:#7a5610;font-weight:600">来店 '+n+'回</div>';
+  if(n){
+    h+='<div style="max-height:150px;overflow:auto">'+mylogs.slice(0,10).map(function(l){
+      return '<div style="font-size:11px;border-top:1px solid #eee;padding:3px 0">'+fmtDate8(l.drunkAtLocal||l.drunkAt)+' '+esc(bottleEsName(l.bottleId,l.bottleName))+' <span style="color:#9a8470">'+esc(styleIcon(l.style))+'</span></div>';
+    }).join('')+(n>10?'<div style="font-size:10px;color:#9a8470">…他 '+(n-10)+'件</div>':'')+'</div>';
+  } else { h+='<div style="font-size:11px;color:#9a8470">来店記録はありません</div>'; }
+  h+='</div>'; return h;
+}
+function buildMapMarkers(){
+  markersLayer.clearLayers();
+  bars.forEach(function(b){
+    if(!notRejected(b) || isOther(b.id)) return;
+    var lat=parseFloat(b.lat), lng=parseFloat(b.lng);
+    if(isNaN(lat)||isNaN(lng)) return;
+    var n=barCounts[b.id]||0;
+    var mk=L.circleMarker([lat,lng],{radius:n>0?8:6,color:'#fff',weight:1.5,fillColor:colorForCount(n),fillOpacity:.92});
+    mk.bindPopup(storePopupHtml(b),{maxWidth:270});
+    markersLayer.addLayer(mk);
+  });
+}
+async function geocodeHome(){
+  var q=((currentMember.prefecture||'')+(currentMember.address||'')).trim();
+  if(!q) return null;
+  try{ var res=await fetch('https://msearch.gsi.go.jp/address-search/AddressSearch?q='+encodeURIComponent(q));
+    var arr=await res.json(); if(arr&&arr.length){ var c=arr[0].geometry&&arr[0].geometry.coordinates; if(c&&c.length>=2) return {lat:c[1],lng:c[0]}; } }catch(e){}
+  try{ var r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q),{headers:{'Accept-Language':'ja,en'}});
+    var a=await r.json(); if(a&&a.length) return {lat:parseFloat(a[0].lat),lng:parseFloat(a[0].lon)}; }catch(e){}
+  return null;
+}
+async function addHomeMarker(){
+  var addr=(currentMember.address||'').trim();
+  if(!addr){ g('map-home-banner').style.display='block'; return; }
+  g('map-home-banner').style.display='none';
+  if(!homeLatLng) homeLatLng=await geocodeHome();
+  if(!homeLatLng) return;
+  L.marker([homeLatLng.lat,homeLatLng.lng],{icon:L.divIcon({className:'',html:'<div style="font-size:20px;line-height:1">🏠</div>',iconSize:[22,22],iconAnchor:[11,20]})})
+    .addTo(markersLayer).bindPopup('<div style="font-weight:700">🏠 自宅</div><div style="font-size:11px;color:#9a8470">'+esc((currentMember.prefecture||'')+addr)+'</div>');
+}
+function fitCountry(rank){
+  ensureMap();
+  var pts=[];
+  bars.forEach(function(b){ if(!notRejected(b)||isOther(b.id)) return; if(countryRank(b.countryId)!==rank) return; var lat=parseFloat(b.lat),lng=parseFloat(b.lng); if(!isNaN(lat)&&!isNaN(lng)) pts.push([lat,lng]); });
+  if(rank===0 && homeLatLng) pts.push([homeLatLng.lat,homeLatLng.lng]);
+  if(pts.length>1){ mapObj.fitBounds(pts,{padding:[30,30],maxZoom:14}); }
+  else if(pts.length===1){ mapObj.setView(pts[0],13); }
+  else { var c=[[36,138],[39,-98],[23,-102]][rank]||[20,0]; mapObj.setView(c, rank===0?5:4); toast('この国の登録店舗がありません'); }
+}
+function openMap(){
+  g('m-map').classList.add('open');
+  ensureMap();
+  buildMapMarkers();
+  setTimeout(function(){ mapObj.invalidateSize(); addHomeMarker().then(function(){ fitCountry(0); }); },200);
+}
+g('btn-map').addEventListener('click',openMap);
+g('map-close').addEventListener('click',function(){ g('m-map').classList.remove('open'); });
+g('map-jp').addEventListener('click',function(){ fitCountry(0); });
+g('map-us').addEventListener('click',function(){ fitCountry(1); });
+g('map-mx').addEventListener('click',function(){ fitCountry(2); });
 </script>
 </body>
 </html>
