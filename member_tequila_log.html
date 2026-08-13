@@ -67,7 +67,7 @@ input,select,textarea{font-family:var(--sans)}
 /* 明細行（1行コンパクト） */
 .ent{display:flex;align-items:center;gap:6px;padding:7px 4px;border-bottom:1px solid var(--border);font-size:12px}
 .ent .etime{font-family:var(--mono);font-size:11px;color:var(--ink3);flex:0 0 auto}
-.ent .ename{font-weight:600;color:var(--ink);flex:1 1 auto;min-width:40px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ent .ename{font-weight:600;color:var(--ink);flex:0 1 auto;min-width:40px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ent .eicon{flex:0 0 auto;width:19px;height:19px;line-height:19px;text-align:center;border-radius:4px;background:var(--cream2);color:var(--gold-d);font-size:11px;font-weight:700}
 .ent .eplace{flex:0 1 auto;max-width:82px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink3);font-size:11px}
 .ent .eact{flex:0 0 auto;display:flex;gap:3px;margin-left:auto}
@@ -397,6 +397,23 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
   </div>
 </div>
 
+<!-- その他（自由入力）モーダル -->
+<div class="mbg" id="m-other">
+  <div class="modal">
+    <div class="mhead"><div class="mtitle">その他（自由入力）</div><button class="mx" id="other-close">✕</button></div>
+    <div class="mbody">
+      <div class="fg"><label>場所名を入力</label>
+        <div style="display:flex;gap:6px">
+          <input id="other-input" type="text" style="flex:1">
+          <button class="hbtn" id="other-use" style="flex:0 0 auto;padding:0 16px">決定</button>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--ink3);margin:12px 0 4px">自由記入の履歴（タップで選択）</div>
+      <div id="other-list" class="picklist" style="max-height:46vh"></div>
+    </div>
+  </div>
+</div>
+
 <!-- 詳細モーダル -->
 <div class="mbg" id="m-detail">
   <div class="modal">
@@ -438,6 +455,7 @@ function bottleClass(id){ id=String(id||''); return id.length>=9?id.charAt(8):''
 
 // 個人設定（members ドキュメントに保存）
 let favoriteBarIds=[], favoriteBrandIds=[], residenceRegionId='';
+let otherPlaces=[];   // その他（自由入力）の履歴
 let regions=[], countries=[];
 function countryOfId(id){ return countries.find(function(c){return c.id===id;}); }
 function countryRank(countryId){
@@ -576,6 +594,7 @@ auth.onAuthStateChanged(async function(user){
 function loadPrefs(){
   favoriteBarIds=Array.isArray(currentMember.favoriteBarIds)?currentMember.favoriteBarIds.slice():[];
   favoriteBrandIds=Array.isArray(currentMember.favoriteBrandIds)?currentMember.favoriteBrandIds.slice():[];
+  otherPlaces=Array.isArray(currentMember.otherPlaces)?currentMember.otherPlaces.slice():[];
   // 居住県は会員マスタ(prefecture)から取得。地区マスタ(regions)と名称一致すれば街選択で最上位に。
   var pref=(currentMember.prefecture||'').trim();
   var rg=pref?regions.find(function(r){ return (r.nameJa||'')===pref || (r.nameEn||'')===pref; }):null;
@@ -730,7 +749,6 @@ function entRow(l){
     +'<span class="etime">'+tm+'</span>'
     +'<span class="ename">'+esc(nm)+'</span>'
     +'<span class="eicon" title="'+esc(STYLE_MAP[l.style]||l.style||'')+'">'+esc(styleIcon(l.style))+'</span>'
-    +'<span class="eplace">'+esc(barLabelOf(l))+'</span>'
     +'<span class="eact">'
       +'<button onclick="openDetail(\''+esc(l.id)+'\')">詳</button>'
       +'<button onclick="openEdit(\''+esc(l.id)+'\')">編</button>'
@@ -858,9 +876,9 @@ g('e-save').addEventListener('click',async function(){
   if(amount<=0||amount>999){ toast('量が不正です'); return; }
   var barId=pickedBarId||'B00000';
   var barText=isOther(barId)?(g('e-bar-text').value||'').trim():'';
-  if(isOther(barId)){ if(!barText){ toast('場所を入力してください'); return; } barId=OTHER_ID; }
-  // 承認待ちの場所は店名をスナップショット保存（非承認/削除時に「その他（店名）」へ復元するため）
-  if(!barText && barId!=='HOME' && barId!=='B00000'){ var _sb=barById(barId); if(_sb && _sb.status==='pending') barText=barDispName(_sb); }
+  if(isOther(barId)){ if(!barText){ toast('場所を入力してください'); return; } barId=OTHER_ID; addOtherPlace(barText); }
+  // 実店舗は店名をスナップショット保存（非承認/削除時に「その他（店名）」へ復元するため）
+  else if(barId!=='HOME' && barId!=='B00000'){ var _sb=barById(barId); if(_sb) barText=barDispName(_sb); }
   var tz=tzOfBar(barId);
   var dt=localStoreToJst(localStore, tz);   // 現地時刻→JST（保存はJST）
   if(dt>dtLocalToStore(nowDtLocal())){ toast('未来の日時は記録できません'); return; }
@@ -997,7 +1015,7 @@ function barsAllWithDojo(){
 }
 function openBarPicker(){ g('bar-search').value=''; barFavOnly=false; g('bar-fav').classList.remove('on'); renderBarList(''); g('m-bar').classList.add('open'); setTimeout(function(){ g('bar-search').focus(); },50); }
 g('bar-home').addEventListener('click',function(){ barPickerCity=''; setBar('HOME',''); g('m-bar').classList.remove('open'); });
-g('bar-other').addEventListener('click',function(){ barPickerCity=''; setBar(OTHER_ID,''); g('m-bar').classList.remove('open'); });
+g('bar-other').addEventListener('click',openOther);
 g('bar-fav').addEventListener('click',function(){ barFavOnly=!barFavOnly; g('bar-fav').classList.toggle('on',barFavOnly); renderBarList(g('bar-search').value); });
 g('bar-new').addEventListener('click',openNewBar);
 function clearBarCity(){ barPickerCity=''; renderBarList(g('bar-search').value); }
@@ -1006,7 +1024,7 @@ function renderBarList(q){
   var el=g('bar-list');
   var favSet={}; favoriteBarIds.forEach(function(id){favSet[id]=1;});
   // 1行表示: [★=お気に入り] 名前  街。回数は非表示。
-  var rows=[{id:'HOME',label:'自宅',city:'',fav:false},{id:OTHER_ID,label:'その他（自由入力）',city:'',fav:false}];
+  var rows=[];   // 自宅・その他は検索欄右のボタンにあるためリストには出さない
   // お気に入り店（街フィルタ時は該当街のみ）。非承認は非表示。
   favoriteBarIds.forEach(function(id){
     var b=barById(id); if(!b || isOther(b.id) || !notRejected(b)) return;
@@ -1229,6 +1247,33 @@ g('favbar-list').addEventListener('click',function(e){
   var id=row.getAttribute('data-id'), idx=favoriteBarIds.indexOf(id);
   if(idx>=0) favoriteBarIds.splice(idx,1); else favoriteBarIds.push(id);
   savePref('favoriteBarIds', favoriteBarIds); renderFavBarPick(g('favbar-search').value); renderFavBarChips();
+});
+
+// ── その他（自由入力）の履歴 ─────────────────────────────────
+function addOtherPlace(name){ name=(name||'').trim(); if(!name) return; var i=otherPlaces.indexOf(name); if(i>=0) otherPlaces.splice(i,1); otherPlaces.unshift(name); if(otherPlaces.length>50) otherPlaces=otherPlaces.slice(0,50); savePref('otherPlaces', otherPlaces); }
+function removeOtherPlace(name){ otherPlaces=otherPlaces.filter(function(x){return x!==name;}); savePref('otherPlaces', otherPlaces); }
+function openOther(){ g('other-input').value=''; renderOtherList(); g('m-other').classList.add('open'); setTimeout(function(){ g('other-input').focus(); },50); }
+function renderOtherList(){
+  var el=g('other-list');
+  if(!otherPlaces.length){ el.innerHTML='<div class="empty" style="padding:14px">履歴はありません</div>'; return; }
+  el.innerHTML=otherPlaces.map(function(nm){
+    return '<div class="pickrow" data-name="'+esc(nm)+'"><span class="pn">'+esc(nm)+'</span><button class="rmx" data-del="'+esc(nm)+'">✕</button></div>';
+  }).join('');
+}
+function chooseOther(name){
+  name=(name||'').trim(); if(!name) return;
+  addOtherPlace(name);
+  barPickerCity=''; setBar(OTHER_ID, name);
+  g('m-other').classList.remove('open'); g('m-bar').classList.remove('open');
+}
+g('other-use').addEventListener('click',function(){ var v=(g('other-input').value||'').trim(); if(!v){ toast('場所名を入力してください'); return; } chooseOther(v); });
+g('other-input').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); g('other-use').click(); } });
+g('other-close').addEventListener('click',function(){ g('m-other').classList.remove('open'); });
+g('other-list').addEventListener('click',function(e){
+  var del=e.target.closest('[data-del]');
+  if(del){ var nm=del.getAttribute('data-del'); if(confirm('「'+nm+'」を履歴から削除しますか？')){ removeOtherPlace(nm); renderOtherList(); } return; }
+  var row=e.target.closest('[data-name]');
+  if(row) chooseOther(row.getAttribute('data-name'));
 });
 </script>
 </body>
