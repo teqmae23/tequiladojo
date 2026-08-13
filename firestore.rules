@@ -195,7 +195,23 @@ service cloud.firestore {
 
     // ── テキーラBAR・地理マスタ（個人テキーラログの場所参照）──
     // 認証会員がログの場所選択で参照するため read は認証済みに開放、書込はオーナー。
-    match /bars/{id}      { allow read: if signedIn(); allow write: if isOwner(); }
+    // BAR: 認証会員は閲覧可。オーナーは全操作。
+    // 会員は「承認待ち(status=pending)」の新規BARのみ申請作成できる（本人UIDを固定）。
+    // 承認（status変更）・編集・削除はオーナーのみ。
+    match /bars/{id} {
+      allow read: if signedIn();
+      allow create: if isOwner()
+        || (realUser()
+            && request.resource.data.get('status', '') == 'pending'
+            && request.resource.data.get('createdByUid', '') == request.auth.uid
+            && request.resource.data.keys().hasOnly(
+                 ['barId', 'nameJa', 'nameEn', 'nameEs', 'nameKana',
+                  'countryId', 'regionId', 'cityId', 'postalCode', 'address',
+                  'phoneCountryCode', 'phone', 'reviewUrl', 'mapUrl',
+                  'lat', 'lng', 'elevation', 'status',
+                  'createdByUid', 'createdByName', 'createdAt', 'updatedAt']));
+      allow update, delete: if isOwner();
+    }
     match /countries/{id} { allow read: if signedIn(); allow write: if isOwner(); }
     match /regions/{id}   { allow read: if signedIn(); allow write: if isOwner(); }
     match /cities/{id}    { allow read: if signedIn(); allow write: if isOwner(); }
