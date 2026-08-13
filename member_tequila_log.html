@@ -119,15 +119,18 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
 .chip.fav.on{background:var(--gold-d);color:var(--cream)}
 /* ボトルツリー */
 .btree .bnode{border-bottom:1px solid var(--border)}
-.btree .bhead{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:10px 6px}
-.btree .bhead .caret{font-size:10px;color:var(--ink3);width:12px;text-align:center;transition:transform .15s}
+.btree .bhead{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:6px}
+.btree .bhead .caret{font-size:10px;color:var(--ink3);width:12px;text-align:center;transition:transform .15s;flex:0 0 auto}
 .btree .bnode[data-open="0"]>.bhead .caret{transform:rotate(-90deg)}
-.btree .bhead .bname{font-size:14px;font-weight:600;color:var(--ink);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.btree .bhead .bnom{font-size:11px;color:var(--ink3);font-family:var(--mono);flex:0 0 auto}
+.btree .bhead .bname{font-size:13px;font-weight:600;color:var(--ink);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.btree .bhead .bnom{font-size:11px;color:var(--ink3);font-family:var(--mono);font-weight:400}
+.btree .bhead .bcnt{font-size:10px;color:var(--ink3);flex:0 0 auto}
 .btree .bnode[data-open="0"]>.bbody{display:none}
-.btree .brow2{padding:9px 12px 9px 24px;border-top:1px solid var(--border);cursor:pointer;display:flex;align-items:center;gap:8px}
-.btree .brow2 .cls{flex:0 0 auto;width:19px;height:19px;line-height:19px;text-align:center;border-radius:4px;background:var(--cream2);color:var(--gold-d);font-size:11px;font-weight:700}
-.btree .brow2 .bn2{font-size:13px;color:var(--ink)}
+.btree .brow2{padding:5px 12px 5px 24px;border-top:1px solid var(--border);cursor:pointer;display:flex;align-items:center;gap:8px}
+.btree .brow2 .cls{flex:0 0 auto;width:18px;height:18px;line-height:18px;text-align:center;border-radius:4px;background:var(--cream2);color:var(--gold-d);font-size:11px;font-weight:700}
+.btree .brow2 .bn2{font-size:12px;color:var(--ink)}
+.btsep{flex:0 0 auto;width:1px;align-self:stretch;background:var(--border2);margin:0 2px}
+.chip.sc.on{background:var(--teal);border-color:var(--teal);color:#fff}
 /* 設定パネル / チップ */
 .setpanel{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);margin-bottom:16px;box-shadow:var(--shadow)}
 .sethead{display:flex;align-items:center;gap:6px;cursor:pointer;padding:11px 14px;font-size:13px;font-weight:600;color:var(--gold-d)}
@@ -294,7 +297,7 @@ table.dtl td{font-size:13px;color:var(--ink);padding:9px 0;border-bottom:1px sol
       <input id="bottle-search" placeholder="銘柄名・NOM番号(4桁)で検索..." style="width:100%;padding:11px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:15px;background:var(--cream);margin-bottom:8px">
       <div class="btnrow" id="class-btns"></div>
       <div class="btnrow" id="fav-brand-btns"></div>
-      <div id="bottle-list" class="btree"></div>
+      <div class="pickwrap"><div id="bottle-list" class="btree picklist"></div><div class="navbar" id="bottle-nav"></div></div>
     </div>
   </div>
 </div>
@@ -388,10 +391,19 @@ function bottleClass(id){ id=String(id||''); return id.length>=9?id.charAt(8):''
 
 // 個人設定（members ドキュメントに保存）
 let favoriteBarIds=[], favoriteBrandIds=[], residenceRegionId='';
-let regions=[];
+let regions=[], countries=[];
+function countryOfId(id){ return countries.find(function(c){return c.id===id;}); }
+function countryRank(countryId){
+  var c=countryOfId(countryId); var n=((c&&(c.nameEn||c.nameJa))||'').toLowerCase();
+  if(n.indexOf('japan')>=0||n.indexOf('日本')>=0) return 0;
+  if(n.indexOf('united states')>=0||n.indexOf('usa')>=0||n.indexOf('america')>=0||n.indexOf('アメリカ')>=0) return 1;
+  if(n.indexOf('mexico')>=0||n.indexOf('méxico')>=0||n.indexOf('メキシコ')>=0) return 2;
+  return 3;
+}
 let barCounts={};        // barId→記録回数
 // ボトル選択ツリーの状態
 let bottleClassFilter={}; // {classDigit:true}
+let bottleScope='all';    // 'all'=全件 / 'dojo'=道場(提供中) / 'jp'=国内(日本流通品)
 let bottleBrandFilter=''; // お気に入りブランドボタンで絞り込み中のbrandId
 let bottleOpen={};        // {brandId:true} 展開中
 let barPickerCity='';     // 街選択フィルタ(cityId)
@@ -530,11 +542,12 @@ function savePref(field, value){
 
 async function loadBars(){
   try{
-    const [bs,cs,rs]=await Promise.all([ db.collection('bars').get(), db.collection('cities').get(), db.collection('regions').get() ]);
+    const [bs,cs,rs,cos]=await Promise.all([ db.collection('bars').get(), db.collection('cities').get(), db.collection('regions').get(), db.collection('countries').get() ]);
     bars=bs.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
     cities=cs.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
     regions=rs.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
-  }catch(e){ console.warn('bars load', e); bars=[]; cities=[]; regions=[]; }
+    countries=cos.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+  }catch(e){ console.warn('bars load', e); bars=[]; cities=[]; regions=[]; countries=[]; }
 }
 
 function isPaid(){
@@ -558,7 +571,8 @@ async function loadBottles(){
       // リスト表示はブランド名なしの銘柄名（例: 「1800 Anejo」）
       var esn=b.bottleEs||b.bottleEn||bn;
       return { id:d.id, name:bn, brand:brn, full:(brn?brn+' ':'')+bn, es:esn,
-        brandId:bottleBrandId(d.id), nom:bottleNom(d.id), cls:bottleClass(d.id) };
+        brandId:bottleBrandId(d.id), nom:bottleNom(d.id), cls:bottleClass(d.id),
+        serving:(b.servingStatus!=null?Number(b.servingStatus):null), jp:!!b.jpMarket };
     }).sort(function(a,b){ return a.full.localeCompare(b.full); });
   }catch(e){ console.warn('bottles load', e); bottles=[]; }
 }
@@ -816,7 +830,9 @@ function delLog(id){
 // ── ボトル選択（ツリー: ブランド→ボトル(クラス順)・デフォルト折畳） ──
 function classActive(){ return Object.keys(bottleClassFilter).some(function(k){return bottleClassFilter[k];}); }
 function buildClassButtons(){
-  g('class-btns').innerHTML=CLASSES.map(function(c){ return '<button class="chip" data-cls="'+c[0]+'" title="'+esc(c[2])+'">'+c[1]+'</button>'; }).join('');
+  var cls=CLASSES.map(function(c){ return '<button class="chip" data-cls="'+c[0]+'" title="'+esc(c[2])+'">'+c[1]+'</button>'; }).join('');
+  var scopes=[['all','全件'],['dojo','道場'],['jp','国内']].map(function(s){ return '<button class="chip sc" data-scope="'+s[0]+'">'+s[1]+'</button>'; }).join('');
+  g('class-btns').innerHTML=cls+'<span class="btsep"></span>'+scopes;
 }
 function renderFavBrandButtons(){
   var el=g('fav-brand-btns');
@@ -828,13 +844,13 @@ function renderFavBrandButtons(){
   }).join('');
 }
 function syncPickerBtns(){
-  var bs=g('class-btns').children;
-  for(var i=0;i<bs.length;i++){ var d=bs[i].getAttribute('data-cls'); bs[i].classList.toggle('on', !!bottleClassFilter[d]); }
+  g('class-btns').querySelectorAll('[data-cls]').forEach(function(b){ b.classList.toggle('on', !!bottleClassFilter[b.getAttribute('data-cls')]); });
+  g('class-btns').querySelectorAll('[data-scope]').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-scope')===bottleScope); });
   var fb=g('fav-brand-btns').children;
   for(var j=0;j<fb.length;j++){ fb[j].classList.toggle('on', fb[j].getAttribute('data-brand')===bottleBrandFilter); }
 }
 function openBottlePicker(){
-  g('bottle-search').value=''; bottleBrandFilter=''; bottleClassFilter={}; bottleOpen={};
+  g('bottle-search').value=''; bottleBrandFilter=''; bottleClassFilter={}; bottleScope='all'; bottleOpen={};
   buildClassButtons(); renderFavBrandButtons(); syncPickerBtns();
   renderBottleTree(''); g('m-bottle').classList.add('open');
   setTimeout(function(){ g('bottle-search').focus(); },50);
@@ -845,24 +861,28 @@ function renderBottleTree(q){
   var list=bottles.filter(function(b){
     if(bottleBrandFilter && b.brandId!==bottleBrandFilter) return false;
     if(classActive() && !bottleClassFilter[b.cls]) return false;
+    if(bottleScope==='dojo' && b.serving!==0) return false;   // 道場=提供中
+    if(bottleScope==='jp' && !b.jp) return false;             // 国内=日本流通品
     if(q){ if((b.full+' '+b.es+' '+b.brand+' '+b.nom).toLowerCase().indexOf(q)<0) return false; }
     return true;
   });
-  if(!list.length){ el.innerHTML='<div class="empty">該当するボトルがありません</div>'; return; }
+  if(!list.length){ el.innerHTML='<div class="empty">該当するボトルがありません</div>'; g('bottle-nav').innerHTML=''; return; }
   var order=[], map={};
   list.forEach(function(b){
     if(!map[b.brandId]){ map[b.brandId]={brandId:b.brandId, nom:b.nom, name:(b.brand||('NOM '+b.nom)), items:[]}; order.push(b.brandId); }
     map[b.brandId].items.push(b);
   });
-  order.sort(function(a,b){ return map[a].name.localeCompare(map[b].name); });
-  var autoOpen=(!!q || classActive() || !!bottleBrandFilter);
-  var html='';
+  order.sort(function(a,b){ return map[a].name.localeCompare(map[b].name,'ja'); });
+  var autoOpen=(!!q || classActive() || !!bottleBrandFilter || bottleScope!=='all');
+  var html='', present={}, lastInit=null;
   order.forEach(function(bid){
     var grp=map[bid];
     grp.items.sort(function(a,b){ var c=String(a.cls).localeCompare(String(b.cls)); return c||a.es.localeCompare(b.es); });
     var open=autoOpen||!!bottleOpen[bid];
-    html+='<div class="bnode" data-open="'+(open?'1':'0')+'" data-brand="'+esc(bid)+'">'
-      +'<div class="bhead" onclick="toggleBrand(this)"><span class="caret">▾</span><span class="bname">'+esc(grp.name)+'</span><span class="bnom">NOM '+esc(grp.nom||'—')+'・'+grp.items.length+'</span></div>'
+    var init=brandInitial(grp.name);
+    var anchor=''; if(init!==lastInit){ anchor=' id="btnav-'+init+'"'; present[init]=1; lastInit=init; }
+    html+='<div class="bnode"'+anchor+' data-open="'+(open?'1':'0')+'" data-brand="'+esc(bid)+'">'
+      +'<div class="bhead" onclick="toggleBrand(this)"><span class="caret">▾</span><span class="bname">'+esc(grp.name)+' <span class="bnom">('+esc(grp.nom||'—')+')</span></span><span class="bcnt">'+grp.items.length+'</span></div>'
       +'<div class="bbody">';
     grp.items.forEach(function(b){
       html+='<div class="brow2" data-id="'+esc(b.id)+'"><span class="cls" title="'+esc(CLASS_NAME[b.cls]||'')+'">'+esc(CLASS_LETTER[b.cls]||'・')+'</span><span class="bn2">'+esc(b.es)+'</span></div>';
@@ -870,11 +890,18 @@ function renderBottleTree(q){
     html+='</div></div>';
   });
   el.innerHTML=html;
+  g('bottle-nav').innerHTML=BRAND_NAV.map(function(gp){ var on=!!present[gp]; return '<button class="navb'+(on?'':' off')+'"'+(on?' data-anchor="btnav-'+gp+'"':'')+'>'+esc(gp)+'</button>'; }).join('');
 }
 function toggleBrand(head){ var n=head.parentNode; var open=n.getAttribute('data-open')==='1'; n.setAttribute('data-open',open?'0':'1'); bottleOpen[n.getAttribute('data-brand')]=!open; }
 g('bottle-search').addEventListener('input',function(){ renderBottleTree(this.value); });
 g('bottle-close').addEventListener('click',function(){ g('m-bottle').classList.remove('open'); });
-g('class-btns').addEventListener('click',function(e){ var b=e.target.closest('[data-cls]'); if(!b) return; var d=b.getAttribute('data-cls'); bottleClassFilter[d]=!bottleClassFilter[d]; syncPickerBtns(); renderBottleTree(g('bottle-search').value); });
+g('bottle-nav').addEventListener('click',navScroll);
+g('class-btns').addEventListener('click',function(e){
+  var cb=e.target.closest('[data-cls]');
+  if(cb){ var d=cb.getAttribute('data-cls'); bottleClassFilter[d]=!bottleClassFilter[d]; syncPickerBtns(); renderBottleTree(g('bottle-search').value); return; }
+  var sb=e.target.closest('[data-scope]');
+  if(sb){ bottleScope=sb.getAttribute('data-scope'); syncPickerBtns(); renderBottleTree(g('bottle-search').value); return; }
+});
 g('fav-brand-btns').addEventListener('click',function(e){ var b=e.target.closest('[data-brand]'); if(!b) return; var bid=b.getAttribute('data-brand'); bottleBrandFilter=(bottleBrandFilter===bid)?'':bid; syncPickerBtns(); renderBottleTree(g('bottle-search').value); });
 g('bottle-list').addEventListener('click',function(e){
   var row=e.target.closest('.brow2'); if(!row) return;
@@ -936,14 +963,22 @@ function regionCountMap(){
 }
 function openAreaPicker(){
   var rc=regionCountMap();
-  var rlist=regions.slice().sort(function(a,b){
+  // 国順(日本→アメリカ→メキシコ→その他)にグルーピング。国内は居住県→記録回数→名前。
+  var byC={}; regions.forEach(function(r){ var k=countryRank(r.countryId); (byC[k]=byC[k]||[]).push(r); });
+  function sortIn(arr){ return arr.sort(function(a,b){
     if(a.id===residenceRegionId) return -1; if(b.id===residenceRegionId) return 1;
     var ca=rc[a.id]||0, cb=rc[b.id]||0; if(ca!==cb) return cb-ca;
-    return regionName(a).localeCompare(regionName(b));
+    return regionName(a).localeCompare(regionName(b),'ja');
+  }); }
+  var labels=['日本','アメリカ','メキシコ','その他'];
+  var html='<option value="">（地区を選択）</option>';
+  [0,1,2,3].forEach(function(k){
+    var arr=byC[k]; if(!arr||!arr.length) return;
+    html+='<optgroup label="'+labels[k]+'">'+sortIn(arr).map(function(r){
+      return '<option value="'+esc(r.id)+'"'+(r.id===residenceRegionId?' selected':'')+'>'+esc(regionName(r))+(r.id===residenceRegionId?'（居住）':'')+'</option>';
+    }).join('')+'</optgroup>';
   });
-  g('area-region').innerHTML='<option value="">（地区を選択）</option>'+rlist.map(function(r){
-    return '<option value="'+esc(r.id)+'"'+(r.id===residenceRegionId?' selected':'')+'>'+esc(regionName(r))+(r.id===residenceRegionId?'（居住）':'')+'</option>';
-  }).join('');
+  g('area-region').innerHTML=html;
   fillAreaCities(); g('m-area').classList.add('open');
 }
 function fillAreaCities(){
