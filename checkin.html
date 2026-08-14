@@ -442,7 +442,7 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       <div class="frow" style="margin-bottom:10px;margin-top:10px">
         <div class="fg" style="margin-bottom:0">
           <label class="fl">会計方法</label>
-          <select class="fs" id="co-payment">
+          <select class="fs" id="co-payment" onchange="toggleCardSection()">
             <option value="0">0: 現金</option>
             <option value="2">2: カード</option>
             <option value="1">1: PayPay</option>
@@ -461,6 +461,19 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
             <option value="3">レシートと領収書</option>
           </select>
         </div>
+      </div>
+
+      <!-- 店頭カード決済（WisePad 3・会計方法=カードのとき表示） -->
+      <div id="card-terminal-section" style="display:none;background:#eef3fb;border:1px solid #cddcf0;border-radius:var(--r);padding:10px 12px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+          <span style="font-size:11px;font-weight:700;color:#0C447C">💳 WisePad 3 で決済</span>
+          <span style="font-size:11px;color:var(--ink3)">金額</span>
+          <input type="number" id="ct-amount" min="0" value="0" style="width:110px;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;text-align:right">
+          <span style="font-size:12px;color:var(--ink3)">円</span>
+          <button type="button" class="btn bp sm" id="ct-start" onclick="startTerminalPayment()">端末に送信</button>
+          <button type="button" class="btn bs sm" id="ct-cancel" onclick="cancelTerminalPayment()" style="display:none">中止</button>
+        </div>
+        <div id="ct-status" style="font-size:12px;color:var(--ink2)">端末アプリ（WisePad 3接続）に決済リクエストを送ります。</div>
       </div>
 
       <!-- デポジット・ツケ（支払者ひとり。複数人会計でも支払者は1名） -->
@@ -2104,6 +2117,7 @@ function openBulkCheckout(directKeys){
   g('m-checkout-save').disabled=true;
   var alsoChk=g('co-also-checkout'); if(alsoChk) alsoChk.checked=false;
   openM('m-checkout');
+  resetCardTerminal(); toggleCardSection();
 
   db.collection('orders').get().then(function(snap){
     var allOrders=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
@@ -2592,6 +2606,94 @@ function doCheckoutSave(){
     var bb=g('btn-bulk-checkout'); if(bb) bb.disabled=true;
     var bb2=g('btn-bulk-checkouttime'); if(bb2) bb2.disabled=true;
   }).catch(function(e){ toast('お会計処理失敗: '+e.message,'err'); });
+}
+
+// ── 店頭カード決済（WisePad 3 / Firestoreハンドオフ） ──────────────────
+// 会計画面が terminalPayments に決済リクエスト(pending)を作成 → Terminal SDK搭載の
+// Androidアプリ(WisePad 3 接続)が処理し status を processing→succeeded/failed に更新。
+// アプリ側の契約:
+//   1) terminalPayments を status=='pending' で監視
+//   2) 受信したら status='processing' に更新し、terminalCreatePaymentIntent({amount,description})
+//      で PaymentIntent を作成 → WisePad 3 で collect/confirm
+//   3) 成功: {status:'succeeded', paymentIntentId} / 失敗: {status:'failed', errorMessage}
+//   4) status=='canceled' を受けたら処理を中断
+var _ctUnsub=null, _ctDocId=null, _cardResult=null;
+function toggleCardSection(){
+  var sec=g('card-terminal-section'); if(!sec) return;
+  if(gv('co-payment')==='2'){
+    sec.style.display='block';
+    if(!_cardResult){
+      var amt=parseInt(String(g('co-grand-total').textContent).replace(/[^0-9]/g,''))||0;
+      g('ct-amount').value=amt;
+    }
+  }else{
+    sec.style.display='none';
+  }
+}
+function resetCardTerminal(){
+  if(_ctUnsub){ try{_ctUnsub();}catch(e){} _ctUnsub=null; }
+  _ctDocId=null; _cardResult=null;
+  var s=g('ct-status'); if(s){ s.textContent='端末アプリ（WisePad 3接続）に決済リクエストを送ります。'; s.style.color='var(--ink2)'; }
+  var b=g('ct-start'); if(b){ b.disabled=false; b.textContent='端末に送信'; }
+  var c=g('ct-cancel'); if(c) c.style.display='none';
+}
+async function startTerminalPayment(){
+  var amount=parseInt(g('ct-amount').value)||0;
+  if(amount<=0){ toast('金額を入力してください','err'); return; }
+  if(amount>1000000){ toast('金額が上限を超えています','err'); return; }
+  if(_ctUnsub){ try{_ctUnsub();}catch(e){} _ctUnsub=null; }
+  _cardResult=null;
+  g('ct-start').disabled=true;
+  g('ct-cancel').style.display='inline-flex';
+  g('ct-status').textContent='端末に送信中...'; g('ct-status').style.color='var(--ink2)';
+  try{
+    var ref=db.collection('terminalPayments').doc();
+    _ctDocId=ref.id;
+    var user=auth.currentUser;
+    await ref.set({
+      amount:amount, currency:'jpy', status:'pending',
+      description:'テキーラ道場 お会計',
+      visitKeys:bulkCheckoutVisitKeys||[],
+      requestedByUid:user?user.uid:null,
+      paymentIntentId:null, errorMessage:null,
+      createdAt:firebase.firestore.FieldValue.serverTimestamp(),
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    g('ct-status').textContent='📲 端末アプリで処理中… カードをかざしてください';
+    _ctUnsub=ref.onSnapshot(function(snap){
+      if(!snap.exists) return;
+      var d=snap.data()||{};
+      if(d.status==='processing'){
+        g('ct-status').textContent='💳 カード読み取り中…'; g('ct-status').style.color='var(--ink2)';
+      }else if(d.status==='succeeded'){
+        _cardResult={paymentIntentId:d.paymentIntentId||null, amount:d.amount};
+        g('ct-status').innerHTML='✅ 決済成功 ¥'+Number(d.amount||0).toLocaleString()
+          +(d.paymentIntentId?'<br><span style="font-size:10px;color:var(--ink3)">'+escHtml(d.paymentIntentId)+'</span>':'');
+        g('ct-status').style.color='var(--teal)';
+        g('ct-cancel').style.display='none'; g('ct-start').disabled=false; g('ct-start').textContent='再送信';
+        if(_ctUnsub){ try{_ctUnsub();}catch(e){} _ctUnsub=null; }
+      }else if(d.status==='failed'){
+        g('ct-status').textContent='❌ 決済失敗: '+(d.errorMessage||'不明なエラー'); g('ct-status').style.color='var(--red)';
+        g('ct-cancel').style.display='none'; g('ct-start').disabled=false;
+        if(_ctUnsub){ try{_ctUnsub();}catch(e){} _ctUnsub=null; }
+      }else if(d.status==='canceled'){
+        g('ct-status').textContent='決済を中止しました。'; g('ct-status').style.color='var(--ink3)';
+        g('ct-cancel').style.display='none'; g('ct-start').disabled=false;
+        if(_ctUnsub){ try{_ctUnsub();}catch(e){} _ctUnsub=null; }
+      }
+    }, function(err){
+      g('ct-status').textContent='監視エラー: '+err.message; g('ct-status').style.color='var(--red)';
+      g('ct-start').disabled=false; g('ct-cancel').style.display='none';
+    });
+  }catch(e){
+    g('ct-status').textContent='送信失敗: '+e.message; g('ct-status').style.color='var(--red)';
+    g('ct-start').disabled=false; g('ct-cancel').style.display='none';
+  }
+}
+async function cancelTerminalPayment(){
+  if(!_ctDocId) return;
+  g('ct-status').textContent='中止を要求しました…';
+  try{ await db.collection('terminalPayments').doc(_ctDocId).set({status:'canceled',updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}); }catch(e){}
 }
 
 g('m-checkout-save').addEventListener('click', doCheckoutSave);
