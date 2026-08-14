@@ -95,6 +95,12 @@ td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
       <div class="toolbar">
         <span class="ti" id="tab-title">BARマスタ</span>
         <div class="sbox"><input id="search" placeholder="検索..."></div>
+        <label id="sort-wrap" style="display:none;align-items:center;gap:5px;font-size:11px;color:var(--ink3)">並び
+          <select id="bar-sort" class="fs" style="width:auto;padding:6px 8px;font-size:12px">
+            <option value="id">BARID順</option>
+            <option value="loc">国地域ID順</option>
+          </select>
+        </label>
         <button class="btn bp" id="btn-add" style="margin-left:auto">＋ 追加</button>
       </div>
       <div class="tw"><table><thead id="thead"></thead><tbody id="tbody"><tr><td class="ec">読み込み中...</td></tr></tbody></table></div>
@@ -226,6 +232,14 @@ var bars=[],countries=[],regions=[],cities=[],curTab="bars";
 // 表示名: BAR=JP>EN>ES / 地理=JP>EN
 function barName(b){return b.nameJa||b.nameEn||b.nameEs||b.id;}
 function geoName(x){return x?(x.nameJa||x.nameEn||x.id):"";}
+// アメリカ・メキシコの州の略称（nameEnで照合）
+var REGION_ABBR={
+  "Alabama":"AL","Alaska":"AK","Arizona":"AZ","Arkansas":"AR","California":"CA","Colorado":"CO","Connecticut":"CT","Delaware":"DE","Florida":"FL","Georgia":"GA","Hawaii":"HI","Idaho":"ID","Illinois":"IL","Indiana":"IN","Iowa":"IA","Kansas":"KS","Kentucky":"KY","Louisiana":"LA","Maine":"ME","Maryland":"MD","Massachusetts":"MA","Michigan":"MI","Minnesota":"MN","Mississippi":"MS","Missouri":"MO","Montana":"MT","Nebraska":"NE","Nevada":"NV","New Hampshire":"NH","New Jersey":"NJ","New Mexico":"NM","New York":"NY","North Carolina":"NC","North Dakota":"ND","Ohio":"OH","Oklahoma":"OK","Oregon":"OR","Pennsylvania":"PA","Rhode Island":"RI","South Carolina":"SC","South Dakota":"SD","Tennessee":"TN","Texas":"TX","Utah":"UT","Vermont":"VT","Virginia":"VA","Washington":"WA","West Virginia":"WV","Wisconsin":"WI","Wyoming":"WY",
+  "Aguascalientes":"AGU","Baja California":"BCN","Baja California Sur":"BCS","Campeche":"CAM","Chiapas":"CHP","Chihuahua":"CHH","Coahuila":"COA","Colima":"COL","Durango":"DUR","Guanajuato":"GUA","Guerrero":"GRO","Hidalgo":"HID","Jalisco":"JAL","Mexico City":"CMX","Mexico State":"MEX","Michoacan":"MIC","Morelos":"MOR","Nayarit":"NAY","Nuevo Leon":"NLE","Oaxaca":"OAX","Puebla":"PUE","Queretaro":"QUE","Quintana Roo":"ROO","San Luis Potosi":"SLP","Sinaloa":"SIN","Sonora":"SON","Tabasco":"TAB","Tamaulipas":"TAM","Tlaxcala":"TLA","Veracruz":"VER","Yucatan":"YUC","Zacatecas":"ZAC"
+};
+function regionAbbr(r){ return r?(REGION_ABBR[r.nameEn]||""):""; }
+// リスト表示用: 略称があれば略称、無ければ通常名
+function regionShort(r){ if(!r) return ""; return regionAbbr(r)||geoName(r); }
 function countryOf(id){return countries.find(function(c){return c.id===id;});}
 function regionOf(id){return regions.find(function(r){return r.id===id;});}
 function cityOf(id){return cities.find(function(c){return c.id===id;});}
@@ -279,10 +293,12 @@ document.querySelectorAll(".tab").forEach(function(t){t.addEventListener("click"
   t.classList.add("on");curTab=t.dataset.tab;g("search").value="";render();
 });});
 g("search").addEventListener("input",render);
+g("bar-sort").addEventListener("change",render);
 var TITLES={bars:"BARマスタ",cities:"街マスタ",regions:"地域マスタ",countries:"国マスタ"};
 
 function render(){
   g("tab-title").textContent=TITLES[curTab];
+  g("sort-wrap").style.display=(curTab==="bars")?"inline-flex":"none";
   var q=g("search").value.toLowerCase();
   if(curTab==="bars") renderBars(q);
   else if(curTab==="countries") renderCountries(q);
@@ -293,14 +309,19 @@ function render(){
 function renderBars(q){
   g("thead").innerHTML="<tr><th>ID</th><th>名前</th><th>国/地域/街</th><th>住所</th><th>評価</th><th>地図</th><th>操作</th></tr>";
   function stRank(b){ return b.status==='pending'?0:(b.status==='rejected'?1:2); }  // 承認待ち→非承認→その他
+  var sortKey=(g("bar-sort")&&g("bar-sort").value)||"id";
   var list=bars.filter(function(b){return !q||(b.id+" "+barName(b)+" "+(b.address||"")).toLowerCase().indexOf(q)>=0;})
     .sort(function(a,b){
       var pa=stRank(a), pb=stRank(b);
       if(pa!==pb) return pa-pb;
+      if(sortKey==="loc"){
+        var ka=(a.countryId||"~")+"/"+(a.regionId||"~"), kb=(b.countryId||"~")+"/"+(b.regionId||"~");
+        if(ka!==kb) return ka<kb?-1:1;
+      }
       return a.id.localeCompare(b.id);
     });
   g("tbody").innerHTML=list.length?list.map(function(b){
-    var loc=[geoName(countryOf(b.countryId)),geoName(regionOf(b.regionId)),geoName(cityOf(b.cityId))].filter(Boolean).join(" / ");
+    var loc=[geoName(countryOf(b.countryId)),regionShort(regionOf(b.regionId)),geoName(cityOf(b.cityId))].filter(Boolean).join(" / ");
     var pending=(b.status==='pending'), rejected=(b.status==='rejected');
     var badge=pending?"<span style='display:inline-block;background:#fae0c0;color:#8a5a00;font-size:10px;font-weight:600;border-radius:4px;padding:1px 6px;margin-right:5px'>承認待</span>"
       :(rejected?"<span style='display:inline-block;background:#f3d4cd;color:#8c2818;font-size:10px;font-weight:600;border-radius:4px;padding:1px 6px;margin-right:5px'>非承認</span>":"");
@@ -329,7 +350,8 @@ function renderRegions(q){
     .map(function(r){return Object.assign({_n:barCountFor("regionId",r.id)},r);})
     .sort(function(a,b){return b._n-a._n||a.id.localeCompare(b.id);});
   g("tbody").innerHTML=list.length?list.map(function(r){
-    return "<tr><td class='mono'>"+r.id+"</td><td>"+esc(r.nameJa||"—")+" <span class='dim'>"+esc(r.nameEn||"")+"</span></td><td class='dim'>"+esc(geoName(countryOf(r.countryId)))+"</td><td style='text-align:center'>"+r._n+"</td>"
+    var _ab=regionAbbr(r);
+    return "<tr><td class='mono'>"+r.id+"</td><td>"+esc(r.nameJa||"—")+(_ab?" ("+esc(_ab)+")":"")+" <span class='dim'>"+esc(r.nameEn||"")+"</span></td><td class='dim'>"+esc(geoName(countryOf(r.countryId)))+"</td><td style='text-align:center'>"+r._n+"</td>"
       +"<td><div class='acts'><button class='btn bs sm' data-edit-region='"+r.id+"'>編集</button><button class='btn bd sm' data-del='regions' data-id='"+r.id+"'>削除</button></div></td></tr>";
   }).join(""):"<tr><td colspan='5' class='ec'>データがありません</td></tr>";
 }
@@ -339,7 +361,7 @@ function renderCities(q){
     .map(function(c){return Object.assign({_n:barCountFor("cityId",c.id)},c);})
     .sort(function(a,b){return b._n-a._n||a.id.localeCompare(b.id);});
   g("tbody").innerHTML=list.length?list.map(function(c){
-    var loc=geoName(regionOf(c.regionId))+" / "+geoName(countryOf(c.countryId));
+    var loc=regionShort(regionOf(c.regionId))+" / "+geoName(countryOf(c.countryId));
     return "<tr><td class='mono'>"+c.id+"</td><td>"+esc(c.nameJa||"—")+" <span class='dim'>"+esc(c.nameEn||"")+"</span></td><td class='dim'>"+esc(loc)+"</td><td class='dim mono'>"+esc(c.tz||"—")+"</td><td style='text-align:center'>"+c._n+"</td>"
       +"<td><div class='acts'><button class='btn bs sm' data-edit-city='"+c.id+"'>編集</button><button class='btn bd sm' data-del='cities' data-id='"+c.id+"'>削除</button></div></td></tr>";
   }).join(""):"<tr><td colspan='6' class='ec'>データがありません</td></tr>";
