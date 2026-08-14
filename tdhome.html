@@ -55,12 +55,25 @@ input{font-family:var(--sans)}
 #app{display:none}
 .topbar{background:var(--ink);padding:8px 16px 10px;display:flex;flex-direction:column;align-items:stretch;gap:3px}
 .home-body{padding:32px 20px 60px;max-width:860px;margin:0 auto}
-.home-sub{font-size:12px;color:var(--ink3);text-align:center;margin-bottom:26px}
+.home-sub{font-size:12px;color:var(--ink3);text-align:center;margin-bottom:22px}
 
-/* ── 階層メニュー ── */
+/* ── 日常業務タイル ── */
+.tile-section-label{font-size:12px;font-weight:600;color:var(--ink3);letter-spacing:.12em;text-transform:uppercase;margin:6px 0 14px;padding-left:2px}
+.home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}
+.home-tile{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);padding:26px 14px;text-align:center;cursor:pointer;transition:box-shadow .15s,transform .1s,border-color .15s;display:flex;flex-direction:column;align-items:center;gap:9px;text-decoration:none;color:inherit}
+.home-tile:hover{box-shadow:0 4px 18px rgba(24,17,10,.12);transform:translateY(-2px);border-color:var(--border2)}
+.tile-icon{font-size:32px;line-height:1}
+.tile-label{font-size:14px;font-weight:600;color:var(--ink);line-height:1.4}
+.tile-desc{font-size:10px;color:var(--ink3)}
+.tile-admin{background:linear-gradient(135deg,#fdf3dc,#f4e8cf);border-color:var(--border2);grid-column:1/-1}
+.tile-admin .tile-label{color:var(--gold-d);font-size:16px}
+.tile-admin .tile-icon{font-size:30px}
+
+/* ── 管理業務ツリー ── */
+.back-btn{background:var(--cream2);border:1px solid var(--border2);color:var(--ink2);padding:8px 16px;border-radius:20px;font-size:13px;margin-bottom:16px;display:inline-flex;align-items:center;gap:6px}
+.back-btn:hover{background:var(--cream3)}
+.admin-title{font-family:var(--serif);font-size:24px;font-weight:600;color:var(--gold-d);letter-spacing:.08em;padding-bottom:8px;border-bottom:2px solid var(--border2);margin-bottom:16px}
 .nav-wrap{width:100%;max-width:820px;margin:0 auto}
-.nav-sec{margin-bottom:34px}
-.nav-sec-t{font-family:var(--serif);font-size:22px;font-weight:600;color:var(--gold-d);letter-spacing:.08em;padding-bottom:8px;border-bottom:2px solid var(--border2);margin-bottom:14px}
 .nav-group{border-left:2px solid var(--border);margin:4px 0 4px 2px}
 .nav-kids{padding-left:16px}
 .nav-sum{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:var(--r);font-weight:600;color:var(--ink2);font-size:14px}
@@ -80,7 +93,7 @@ details[open]>.nav-sum::before{transform:rotate(90deg)}
 .nav-sum .nav-ic{width:26px;height:26px;font-size:14px}
 .nav-sum .nav-lb{flex:0 0 auto}
 
-/* ── オーナー専用セクション ── */
+/* ── オーナー専用要素 ── */
 .owner-only{display:none}
 .role-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;letter-spacing:.06em;margin-left:8px}
 .badge-owner{background:#7a5610;color:#e8b84a}
@@ -127,8 +140,19 @@ details[open]>.nav-sum::before{transform:rotate(90deg)}
   </div>
 
   <div class="home-body">
-    <div class="home-sub" id="today-label"></div>
-    <div class="nav-wrap" id="nav-root"></div>
+    <!-- 日常業務（タイル） -->
+    <div id="view-daily">
+      <div class="home-sub" id="today-label"></div>
+      <div class="tile-section-label">日常業務</div>
+      <div class="home-grid" id="daily-grid"></div>
+    </div>
+
+    <!-- 管理業務（ツリー） -->
+    <div id="view-admin" style="display:none">
+      <button class="back-btn" onclick="showDaily()">← 日常業務へ戻る</button>
+      <div class="admin-title">管理業務</div>
+      <div class="nav-wrap" id="nav-root"></div>
+    </div>
   </div>
 
 <!-- スタッフ管理モーダル（ownerのみ） -->
@@ -165,78 +189,90 @@ var db        = firebase.firestore();
 function esc(s){ return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function g(id){ return document.getElementById(id); }
 
-// ── メニュー定義 ────────────────────────────────────────────────
+// ── 日常業務タイル ──────────────────────────────────────────────
+var DAILY = [
+  { label:'開店・閉店', href:'openclose.html',        icon:'🏮', desc:'セッション管理' },
+  { label:'来場者一覧', href:'checkin.html',          icon:'👥', desc:'来場者の登録・管理' },
+  { label:'注文一覧',   href:'home_order.html',       icon:'📋', desc:'注文の受付・登録' },
+  { label:'出退勤',     href:'attendance.html',       icon:'🕐', desc:'スタッフの出勤・退勤' },
+  { label:'来店QR',     href:'admin_checkin_qr.html', icon:'📷', desc:'店頭掲示の来店QR' },
+  { label:'TOPページ',  href:'index.html',            icon:'🌐', desc:'公開サイト' }
+];
+function renderDaily(){
+  var html = DAILY.map(function(t){
+    return '<a class="home-tile" href="'+t.href+'"><div class="tile-icon">'+t.icon+'</div>'
+      + '<div class="tile-label">'+esc(t.label)+'</div><div class="tile-desc">'+esc(t.desc)+'</div></a>';
+  }).join('');
+  // 管理業務タイル（オーナーのみ表示。押すと管理ツリーへ）
+  html += '<div class="home-tile tile-admin owner-only" onclick="showAdmin()">'
+    + '<div class="tile-icon">🗂️</div><div class="tile-label">管理業務</div>'
+    + '<div class="tile-desc">マスタ・実績・インポート・コンテンツ・アクセス管理</div></div>';
+  g('daily-grid').innerHTML = html;
+}
+
+// ── 管理業務ツリー ──────────────────────────────────────────────
 // leaf : {label, href|action, icon, note?}   group: {label, icon, href?, children:[…]}
 var NAV = [
-  { section:'日常業務', role:'staff', children:[
-    { label:'開店・閉店',   href:'openclose.html',        icon:'🏮', note:'セッション管理' },
-    { label:'来場者一覧',   href:'checkin.html',          icon:'👥', note:'来場者の登録・管理' },
-    { label:'注文一覧',     href:'home_order.html',       icon:'📋', note:'注文の受付・登録' },
-    { label:'出退勤',       href:'attendance.html',       icon:'🕐', note:'スタッフの出勤・退勤' },
-    { label:'来店QR',       href:'admin_checkin_qr.html', icon:'📷', note:'店頭掲示の来店QR' },
-    { label:'TOPページ',    href:'index.html',            icon:'🌐', note:'公開サイト（index.html）' }
+  { label:'マスタ管理', icon:'⚙️', children:[
+    { label:'蒸留所管理', href:'admin_distillery.html', icon:'🏭' },
+    { label:'顧客管理', icon:'👤', children:[
+      { label:'顧客',             href:'admin_customer.html', icon:'🧑' },
+      { label:'座席レイアウト',   href:'admin_customer.html', icon:'🪑', note:'顧客管理内「座席」タブ' },
+      { label:'グレード管理',     href:'admin_plans.html',    icon:'🎫', note:'旧・会員グレード' },
+      { label:'バッジ管理',       href:'admin_badges.html',   icon:'🎖️' },
+      { label:'デポジット・ツケ', href:'admin_deposit.html',  icon:'💰' },
+      { label:'キープボトル管理', href:'admin_keepbottle.html', icon:'🍾' }
+    ]},
+    { label:'テキーラ管理', icon:'🥃', href:'admin_tequila.html', children:[
+      { label:'ブラインド', href:'admin_data.html', icon:'🎭', note:'営業データ内「ブラインド」タブ' }
+    ]},
+    { label:'その他商品管理', href:'admin_other.html', icon:'🍷' }
   ]},
-  { section:'管理業務', role:'owner', children:[
-    { label:'マスタ管理', icon:'⚙️', children:[
-      { label:'蒸留所管理', href:'admin_distillery.html', icon:'🏭' },
-      { label:'顧客管理', icon:'👤', children:[
-        { label:'顧客',             href:'admin_customer.html', icon:'🧑' },
-        { label:'座席レイアウト',   href:'admin_customer.html', icon:'🪑', note:'顧客管理内「座席」タブ' },
-        { label:'グレード管理',     href:'admin_plans.html',    icon:'🎫', note:'旧・会員グレード' },
-        { label:'バッジ管理',       href:'admin_badges.html',   icon:'🎖️' },
-        { label:'デポジット・ツケ', href:'admin_deposit.html',  icon:'💰' },
-        { label:'キープボトル管理', href:'admin_keepbottle.html', icon:'🍾' }
-      ]},
-      { label:'テキーラ管理', icon:'🥃', href:'admin_tequila.html', children:[
-        { label:'ブラインド', href:'admin_data.html', icon:'🎭', note:'営業データ内「ブラインド」タブ' }
-      ]},
-      { label:'その他商品管理', href:'admin_other.html', icon:'🍷' }
-    ]},
-    { label:'営業実績管理', icon:'📊', children:[
-      { label:'営業データ', href:'admin_data.html', icon:'📊' }
-    ]},
-    { label:'カレンダー管理', icon:'🗓', children:[
-      { label:'営業カレンダー', href:'admin_data.html',    icon:'🗓', note:'営業データ内「カレンダー」タブ' },
-      { label:'予約管理',       href:'reservations.html',  icon:'📅' }
-    ]},
-    { label:'ユーティリティ', icon:'🛠', children:[
-      { label:'バックアップ',   href:'admin_data.html', icon:'💾', note:'営業データ内「バックアップ」タブ' },
-      { label:'ジャーナル',     href:'admin_data.html', icon:'📑', note:'営業データ内「ジャーナル」タブ' },
-      { label:'スタッフ管理',   action:'openStaffModal()', icon:'👥', note:'権限・アカウント管理' }
-    ]},
-    { label:'データインポート管理', icon:'📥', children:[
-      { label:'AMMインポート', href:'admin_import_amm.html', icon:'🌵' },
-      { label:'CRTインポート', href:'admin_import_crt.html', icon:'📋' },
-      { label:'CRT同期',       href:'admin_distillery.html', icon:'🔄', note:'蒸留所管理内「CRT同期」タブ' },
-      { label:'マスタ確認',    href:'admin_amm_view.html',   icon:'🔍', note:'AMM/CRTマスタ閲覧' },
-      { label:'相場インポート', icon:'💹', children:[
-        { label:'相場照合', href:'admin_tequila.html', icon:'🔗', note:'テキーラ管理内「相場照合」タブ' },
-        { label:'相場比較', href:'admin_tequila.html', icon:'⚖️', note:'テキーラ管理内「相場比較」タブ' },
-        { label:'海外相場', href:'admin_tequila.html', icon:'🌎', note:'テキーラ管理内「海外相場」タブ' },
-        { label:'海外比較', href:'admin_tequila.html', icon:'🌐', note:'テキーラ管理内「海外比較」タブ' }
-      ]}
-    ]},
-    { label:'コンテンツ管理', icon:'📚', children:[
-      { label:'個人ログ管理', icon:'📓', children:[
-        { label:'道場ログ突合',   href:'admin_log_reconcile.html',  icon:'🔗' },
-        { label:'ボトル登録依頼', href:'admin_bottle_requests.html', icon:'🆕' },
-        { label:'BAR・地理',      href:'admin_bars.html',            icon:'🍸' }
-      ]},
-      { label:'マップ管理', icon:'🗺', children:[
-        { label:'マップ図形', href:'admin_distillery.html', icon:'🗺', note:'蒸留所管理内「マップ図形」タブ' }
-      ]},
-      { label:'テキーラ書庫',     href:'admin_library.html',       icon:'📖' },
-      { label:'テキーラ動画',     href:'admin_tequila_movie.html', icon:'🎥' },
-      { label:'テキーラセミナー', href:'admin_seminars.html',      icon:'🎓', note:'旧・有料セミナー' },
-      { label:'CRT統計', icon:'📊', children:[
-        { label:'CRT輸出統計（国別）',              href:'admin_crt_stats.html',  icon:'📊' },
-        { label:'CRT清算・輸出解体・アガベ統計',    href:'admin_crt_stats2.html', icon:'📈' }
-      ]}
-    ]},
-    { label:'アクセス管理', icon:'📈', children:[
-      { label:'TOPアクセス解析',  href:'admin_top_access.html', icon:'🌐' },
-      { label:'会員アクセスログ', href:'admin_access_log.html', icon:'📈' }
+  { label:'営業実績管理', icon:'📊', children:[
+    { label:'営業データ', href:'admin_data.html', icon:'📊' }
+  ]},
+  { label:'カレンダー管理', icon:'🗓', children:[
+    { label:'営業カレンダー', href:'admin_data.html',    icon:'🗓', note:'営業データ内「カレンダー」タブ' },
+    { label:'予約管理',       href:'reservations.html',  icon:'📅' }
+  ]},
+  { label:'ユーティリティ', icon:'🛠', children:[
+    { label:'バックアップ',   href:'admin_data.html', icon:'💾', note:'営業データ内「バックアップ」タブ' },
+    { label:'ジャーナル',     href:'admin_data.html', icon:'📑', note:'営業データ内「ジャーナル」タブ' },
+    { label:'スタッフ管理',   action:'openStaffModal()', icon:'👥', note:'権限・アカウント管理' }
+  ]},
+  { label:'データインポート管理', icon:'📥', children:[
+    { label:'AMMインポート', href:'admin_import_amm.html', icon:'🌵' },
+    { label:'CRTインポート', href:'admin_import_crt.html', icon:'📋' },
+    { label:'CRT同期',       href:'admin_distillery.html', icon:'🔄', note:'蒸留所管理内「CRT同期」タブ' },
+    { label:'マスタ確認',    href:'admin_amm_view.html',   icon:'🔍', note:'AMM/CRTマスタ閲覧' },
+    { label:'相場インポート', icon:'💹', children:[
+      { label:'相場照合', href:'admin_tequila.html', icon:'🔗', note:'テキーラ管理内「相場照合」タブ' },
+      { label:'相場比較', href:'admin_tequila.html', icon:'⚖️', note:'テキーラ管理内「相場比較」タブ' },
+      { label:'海外相場', href:'admin_tequila.html', icon:'🌎', note:'テキーラ管理内「海外相場」タブ' },
+      { label:'海外比較', href:'admin_tequila.html', icon:'🌐', note:'テキーラ管理内「海外比較」タブ' }
     ]}
+  ]},
+  { label:'コンテンツ管理', icon:'📚', children:[
+    { label:'個人ログ管理', icon:'📓', children:[
+      { label:'道場ログ突合',   href:'admin_log_reconcile.html',  icon:'🔗' },
+      { label:'ボトル登録依頼', href:'admin_bottle_requests.html', icon:'🆕' },
+      { label:'BAR・地理',      href:'admin_bars.html',            icon:'🍸' }
+    ]},
+    { label:'マップ管理', icon:'🗺', children:[
+      { label:'マップ図形',   href:'admin_distillery.html', icon:'🗺', note:'蒸留所管理内「マップ図形」タブ' },
+      { label:'管理者マップ', href:'admin_map.html',        icon:'🗺️', note:'蒸留所マップ ビューア' }
+    ]},
+    { label:'テキーラ書庫',     href:'admin_library.html',       icon:'📖' },
+    { label:'テキーラ動画',     href:'admin_tequila_movie.html', icon:'🎥' },
+    { label:'テキーラセミナー', href:'admin_seminars.html',      icon:'🎓', note:'旧・有料セミナー' },
+    { label:'CRT統計', icon:'📊', children:[
+      { label:'CRT輸出統計（国別）',           href:'admin_crt_stats.html',  icon:'📊' },
+      { label:'CRT清算・輸出解体・アガベ統計', href:'admin_crt_stats2.html', icon:'📈' }
+    ]}
+  ]},
+  { label:'アクセス管理', icon:'📈', children:[
+    { label:'TOPアクセス解析',  href:'admin_top_access.html', icon:'🌐' },
+    { label:'会員アクセスログ', href:'admin_access_log.html', icon:'📈' }
   ]}
 ];
 
@@ -253,13 +289,12 @@ function navGroupHtml(n){
   return '<details class="nav-group" open>'+head+kids+'</details>';
 }
 function navNodeHtml(n){ return n.children ? navGroupHtml(n) : navLeafHtml(n); }
-function renderNav(){
-  g('nav-root').innerHTML = NAV.map(function(sec){
-    var body = sec.children.map(navNodeHtml).join('');
-    return '<section class="nav-sec'+(sec.role==='owner'?' owner-only':'')+'">'
-      + '<div class="nav-sec-t">'+esc(sec.section)+'</div>'+body+'</section>';
-  }).join('');
-}
+function renderNav(){ g('nav-root').innerHTML = NAV.map(navNodeHtml).join(''); }
+
+function showAdmin(){ g('view-daily').style.display='none'; g('view-admin').style.display='block'; window.scrollTo(0,0); }
+function showDaily(){ g('view-admin').style.display='none'; g('view-daily').style.display='block'; window.scrollTo(0,0); }
+
+renderDaily();
 renderNav();
 
 // 今日の日付
@@ -269,7 +304,7 @@ renderNav();
   if(el) el.textContent=d.getFullYear()+"年"+(d.getMonth()+1)+"月"+d.getDate()+"日（"+wdays[d.getDay()]+"）";
 })();
 
-// ── 認証（staff/owner ガード。ownerには owner-only を表示） ─────────
+// ── 認証（staff/owner ガード。ownerには管理業務タイルを表示） ─────────
 AuthRole.requireStaff(auth,
   function(user, role){
     g("login-screen").style.display="none";
@@ -282,7 +317,9 @@ AuthRole.requireStaff(auth,
       badge.className="role-badge "+(role==="owner"?"badge-owner":"badge-staff");
     }
     if(role==="owner"){
-      document.querySelectorAll(".owner-only").forEach(function(el){el.style.display="block";});
+      document.querySelectorAll(".owner-only").forEach(function(el){
+        el.style.display = el.classList.contains("home-tile") ? "flex" : "block";
+      });
     }
   },
   function(){
