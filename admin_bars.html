@@ -116,7 +116,7 @@ td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
       <div class="fg"><label>街</label><select class="fs" id="bar-city" onchange="onBarCityPick()"></select></div>
     </div>
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:11px">
-      <div class="fg" style="margin-bottom:0;flex:0 0 118px"><label>郵便番号 <button type="button" class="btn bs sm" style="padding:2px 7px;font-size:10px;text-transform:none" onclick="barZipSearch()">住所検索</button></label><input class="fi" id="bar-postal" maxlength="7" inputmode="numeric"></div>
+      <div class="fg" style="margin-bottom:0;flex:0 0 118px"><label>郵便番号 <button type="button" class="btn bs sm" style="padding:2px 7px;font-size:10px;text-transform:none" onclick="barZipSearch()">住所検索</button></label><input class="fi" id="bar-postal" maxlength="8" inputmode="numeric"></div>
       <div class="fg" style="margin-bottom:0;flex:0 0 160px"><label>国番号</label><select class="fs" id="bar-phoneCc"></select></div>
       <div class="fg" style="margin-bottom:0;flex:1 1 150px"><label>電話番号</label><input class="fi" id="bar-phone" maxlength="13" inputmode="numeric"></div>
     </div>
@@ -252,6 +252,13 @@ g("lbtn").addEventListener("click",function(){
 });
 g("lpass").addEventListener("keydown",function(e){if(e.key==="Enter")g("lbtn").click();});
 g("btn-logout").addEventListener("click",function(){auth.signOut();});
+// 郵便番号のペースト時に〒・ハイフン・空白・全角を除去して数字のみに
+g("bar-postal").addEventListener("paste",function(e){
+  e.preventDefault();
+  var t=((e.clipboardData||window.clipboardData).getData("text")||"")
+    .replace(/[０-９]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-0xFEE0);});
+  this.value=t.replace(/[^0-9]/g,"").slice(0,7);
+});
 
 function loadAll(){
   Promise.all([
@@ -537,9 +544,14 @@ function onCityMapUrl(force){var ll=parseLatLng(gv("ci-mapUrl"));if(ll){sv("ci-l
 // ── モーダル開閉 ─────────────────────────────────────
 function openM(id){g(id).classList.add("open");}
 function closeM(id){g(id).classList.remove("open");}
+// BAR追加・編集モーダルを閉じる時は破棄確認を挟む（保存後の自動クローズは対象外）
+function requestCloseM(id){
+  if(id==="m-bar"){ if(!confirm("入力内容は保存されません。閉じてもよろしいですか？")) return; }
+  closeM(id);
+}
 document.addEventListener("click",function(e){
-  var c=e.target.closest("[data-close]");if(c){closeM(c.dataset.close);return;}
-  if(e.target.classList.contains("mbg")&&e.target.id){closeM(e.target.id);return;}
+  var c=e.target.closest("[data-close]");if(c){requestCloseM(c.dataset.close);return;}
+  if(e.target.classList.contains("mbg")&&e.target.id){requestCloseM(e.target.id);return;}
   var b=e.target.closest("button");if(!b)return;
   if(b.dataset.approveBar){approveBar(b.dataset.approveBar);return;}
   if(b.dataset.editBar){openBar(b.dataset.editBar);return;}
@@ -655,7 +667,7 @@ g("btn-save-bar").addEventListener("click",function(){
   var data={barId:id,nameJa:nameJa||null,nameEn:nameEn||null,nameEs:nameEs||null,
     nameKana:gv("bar-kana")||null,
     countryId:gv("bar-country")||null,regionId:gv("bar-region")||null,cityId:gv("bar-city")||null,
-    postalCode:gv("bar-postal")||null,address:gv("bar-address")||null,
+    postalCode:gv("bar-postal").replace(/[^0-9]/g,"")||null,address:gv("bar-address")||null,
     phoneCountryCode:gv("bar-phoneCc")||null,phone:gv("bar-phone")||null,
     reviewUrl:gv("bar-review")||null,
     mapUrl:gv("bar-mapUrl")||null,
