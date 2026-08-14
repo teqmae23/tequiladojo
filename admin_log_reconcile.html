@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<title>テキーラ道場 — 道場ログ突合</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
+<script src="/auth-role.js?v=20260714"></script>
+<script>window.JOURNAL_PAGE='logReconcile';</script>
+<script src="/journal.js?v=20260706"></script>
+<script>
+var FIREBASE_CONFIG={apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",authDomain:"tequiladojo.firebaseapp.com",projectId:"tequiladojo",storageBucket:"tequiladojo.firebasestorage.app",messagingSenderId:"56663296233",appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"};
+</script>
+<style>
+:root{--ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;--gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;--teal:#1a6e58;--red:#8c2818;--red-l:#fae8e4;--cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;--border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);--shadow:0 1px 12px rgba(24,17,10,.07);--shadow-lg:0 6px 36px rgba(24,17,10,.13);--r:6px;--rl:12px;--sans:'Noto Sans JP',system-ui,sans-serif;--mono:'DM Mono',monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+button{cursor:pointer;font-family:var(--sans)}
+#login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center}
+.lcard{width:100%;max-width:360px;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:40px 30px;box-shadow:var(--shadow-lg)}
+.lbrand{font-size:22px;font-weight:600;color:var(--gold-d);text-align:center;margin-bottom:24px}
+.lcard label{display:block;font-size:11px;color:var(--ink3);margin:10px 0 4px}
+.lcard input{width:100%;padding:10px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.lbtn{width:100%;margin-top:18px;padding:12px;background:var(--gold-d);color:var(--cream);border:none;border-radius:var(--r);font-size:13px}
+.lerr{min-height:16px;font-size:12px;color:var(--red);margin-top:8px;text-align:center}
+.topbar{background:var(--ink);display:flex;align-items:center;padding:10px 18px;gap:10px;position:sticky;top:0;z-index:200}
+.topbar .t{color:var(--gold-l);font-size:14px;font-weight:600}
+.tlogout{margin-left:auto;padding:5px 12px;border:1px solid rgba(255,255,255,.14);border-radius:var(--r);background:none;color:rgba(255,255,255,.5);font-size:11px}
+.content{padding:22px;max-width:980px;margin:0 auto}
+.card{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shadow);padding:16px 18px;margin-bottom:14px}
+.sbox{display:flex;align-items:center;border:1px solid var(--border2);border-radius:var(--r);padding:8px 12px;background:var(--cream);max-width:420px}
+.sbox input{border:none;background:none;font-size:14px;width:100%;outline:none}
+#mem-list{margin-top:8px;max-width:420px;border:1px solid var(--border2);border-radius:var(--r);max-height:280px;overflow-y:auto;display:none}
+.mrow{padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px}
+.mrow:hover{background:var(--cream)}
+.mrow .mid{font-family:var(--mono);font-size:11px;color:var(--ink3)}
+.mhdr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.mhdr .nm{font-size:18px;font-weight:600}
+.mhdr .mid{font-family:var(--mono);font-size:12px;color:var(--ink3)}
+.badge{display:inline-block;font-size:11px;font-weight:600;border-radius:5px;padding:2px 9px}
+.b-paid{background:#d7ecdd;color:#1a6640}.b-free{background:#eee4d8;color:#8a6a3a}
+.b-imp{background:#d7ecdd;color:#1a6640}.b-miss{background:#f6dcc4;color:#8a4a00}.b-exc{background:#ece7de;color:#9a8470}
+.summary{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;margin:12px 0}
+.summary b{font-size:18px}
+.warn{background:var(--red-l);border:1px solid rgba(140,40,24,.2);color:var(--red);font-size:12px;border-radius:var(--r);padding:9px 12px;margin:10px 0;line-height:1.6}
+.note{background:var(--cream2);font-size:12px;color:var(--ink2);border-radius:var(--r);padding:9px 12px;margin:10px 0;line-height:1.6}
+.toolbar2{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.toolbar2 label{font-size:12px;color:var(--ink2);display:flex;align-items:center;gap:4px}
+.btn{padding:9px 16px;border-radius:var(--r);font-size:13px;font-weight:500;border:none}
+.bp{background:var(--gold-d);color:var(--cream)}.bs{background:var(--cream2);color:var(--ink2);border:1px solid var(--border2)}
+.btn:disabled{opacity:.5}
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{padding:8px 10px;text-align:left;font-size:10px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border2)}
+td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+.mono{font-family:var(--mono);font-size:11px}
+.dim{color:var(--ink3)}
+.ec{text-align:center;color:var(--ink3);padding:26px}
+tr.exc{background:#faf8f4}
+#toasts{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:3000;display:flex;flex-direction:column;gap:8px;align-items:center}
+.toast{background:var(--ink);color:#fff;font-size:13px;padding:9px 16px;border-radius:18px;box-shadow:var(--shadow-lg)}
+.toast.err{background:var(--red)}.toast.inf{background:var(--teal)}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="lcard">
+    <div class="lbrand">道場ログ突合</div>
+    <label>メールアドレス</label><input id="lemail" type="email">
+    <label>パスワード</label><input id="lpass" type="password">
+    <div class="lerr" id="lerr"></div>
+    <button class="lbtn" id="lbtn">ログイン</button>
+  </div>
+</div>
+
+<div id="app" style="display:none">
+  <div class="topbar"><span class="t">🔗 道場ログ突合</span><span id="temail" style="color:rgba(255,255,255,.4);font-size:11px"></span><button class="tlogout" id="btn-logout">ログアウト</button></div>
+  <div class="content">
+    <div class="card">
+      <div style="font-size:13px;color:var(--ink2);margin-bottom:10px;line-height:1.6">会員を選ぶと、その会員の道場注文と個人ログ（自動記録）を突合します。有料期間中に取り込まれなかった注文（一時解約中など）を確認・取込できます。</div>
+      <div class="sbox"><input id="mem-search" placeholder="会員ID・ニックネーム・氏名で検索..."></div>
+      <div id="mem-list"></div>
+    </div>
+
+    <div id="result" style="display:none"></div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+var fbFunctions=firebase.app().functions('asia-northeast1');
+function g(id){return document.getElementById(id);}
+function gv(id){var e=g(id);return e?String(e.value).trim():"";}
+function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function toast(m,t){var d=document.createElement("div");d.className="toast"+(t?" "+t:"");d.textContent=m;g("toasts").appendChild(d);setTimeout(function(){d.remove();},3200);}
+
+var members=[], plansMap={}, picked=null, orders=[], importedSet={};
+
+// ── 認証 ─────────────────────────────────────────────
+AuthRole.requireOwner(auth,function(user){
+  g("login-screen").style.display="none";g("app").style.display="block";g("temail").textContent=user.email;
+  loadBase();
+},function(){ g("login-screen").style.display="flex";g("app").style.display="none"; });
+g("lbtn").addEventListener("click",function(){
+  var e=gv("lemail"),p=g("lpass").value;g("lerr").textContent="";
+  if(!e||!p){g("lerr").textContent="入力してください";return;}
+  auth.signInWithEmailAndPassword(e,p).catch(function(err){g("lerr").textContent="ログイン失敗: "+err.message;});
+});
+g("lpass").addEventListener("keydown",function(e){if(e.key==="Enter")g("lbtn").click();});
+g("btn-logout").addEventListener("click",function(){auth.signOut();});
+
+async function loadBase(){
+  try{
+    var ps=await db.collection("plans").get();
+    ps.docs.forEach(function(d){ plansMap[d.id]=d.data(); });
+    var ms=await db.collection("members").get();
+    members=ms.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+  }catch(e){ toast("読込失敗: "+e.message,"err"); }
+}
+
+// 会員の現在の有料レベル（memberPaidLevel を簡易再現）
+function paidLevelOf(m){
+  if(!m) return 0;
+  if(m.plan){ var p=plansMap[String(m.plan)]; return p?(Number(p.level)||0):0; }
+  if(m.subscriptionStatus==="active" && m.grade!=null && m.grade!==""){ return Number(m.grade)||0; }
+  return 0;
+}
+function memName(m){ return String(m.nickname||m.name||m.id); }
+
+// ── 会員検索 ─────────────────────────────────────────
+g("mem-search").addEventListener("input",function(){
+  var q=this.value.trim().toLowerCase();
+  if(!q){ g("mem-list").style.display="none"; return; }
+  var list=members.filter(function(m){
+    return (String(m.id)+" "+(m.memberId||"")+" "+(m.nickname||"")+" "+(m.name||"")).toLowerCase().indexOf(q)>=0;
+  }).slice(0,40);
+  if(!list.length){ g("mem-list").innerHTML="<div class='ec'>該当なし</div>"; g("mem-list").style.display="block"; return; }
+  g("mem-list").innerHTML=list.map(function(m){
+    return "<div class='mrow' data-mid='"+esc(m.id)+"'><b>"+esc(memName(m))+"</b> <span class='mid'>"+esc(m.memberId||m.id)+"</span></div>";
+  }).join("");
+  g("mem-list").style.display="block";
+});
+g("mem-list").addEventListener("click",function(e){
+  var row=e.target.closest(".mrow"); if(!row) return;
+  g("mem-list").style.display="none";
+  loadMember(row.getAttribute("data-mid"));
+});
+
+// ── 突合 ─────────────────────────────────────────────
+// 注文→取込対象か（functions の orderToLogFields と同ロジック）
+function orderTarget(o){
+  if(!o || o.served===0 || o.isAdjustment) return null;
+  var pt=String(o.productType||"");
+  var bottleId=null, style=null, ml=0;
+  if(pt==="tequila"){ bottleId=o.productCode; style="ストレート"; ml=Number(o.qty)||0; }
+  else if(pt==="cocktail"){ bottleId=o.baseProductCode||null; style="カクテル"; ml=Number(o.baseSpiritMl)||0; }
+  else return null;
+  if(!bottleId) return null;
+  if(String(o.orderDate||"").length<6) return null;
+  return {bottleId:String(bottleId), style:style, amountMl:ml};
+}
+function excludeReason(o){
+  if(o.served===0) return "未提供";
+  if(o.isAdjustment) return "調整伝票";
+  var pt=String(o.productType||"");
+  if(pt!=="tequila"&&pt!=="cocktail") return "テキーラ/カクテル以外";
+  if(pt==="tequila"&&!o.productCode) return "銘柄コードなし";
+  if(pt==="cocktail"&&!o.baseProductCode) return "ベース銘柄なし";
+  if(String(o.orderDate||"").length<6) return "日付不正";
+  return "対象外";
+}
+function fmtOd(od){ od=String(od||""); return od.length>=6?("20"+od.slice(0,2)+"/"+od.slice(2,4)+"/"+od.slice(4,6)):"—"; }
+function fmtOt(ot){ ot=String(ot||""); return ot.length>=4?(ot.slice(0,2)+":"+ot.slice(2,4)):""; }
+
+async function loadMember(mid){
+  picked=members.find(function(m){return m.id===mid;});
+  if(!picked){ toast("会員が見つかりません","err"); return; }
+  g("mem-search").value=memName(picked);
+  g("result").style.display="block";
+  g("result").innerHTML="<div class='card'><div class='ec'>突合中...</div></div>";
+  try{
+    var os=await db.collection("orders").where("customerId","==",String(picked.id)).get();
+    orders=os.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    importedSet={};
+    if(picked.authUid){
+      var ls=await db.collection("tequilaLogs").where("authUid","==",picked.authUid).get();
+      ls.docs.forEach(function(d){ var x=d.data(); if(x.source==="auto"){ if(x.orderRef) importedSet[x.orderRef]=1; else if(String(d.id).indexOf("auto_")===0) importedSet[String(d.id).slice(5)]=1; } });
+    }
+    render();
+  }catch(e){ g("result").innerHTML="<div class='card'><div class='ec'>読込失敗: "+esc(e.message)+"</div></div>"; }
+}
+
+function render(){
+  var lvl=paidLevelOf(picked);
+  var rows=orders.map(function(o){
+    var t=orderTarget(o);
+    var st;
+    if(!t) st="exc";
+    else st=importedSet[o.id]?"imp":"miss";
+    return {o:o, t:t, st:st};
+  }).sort(function(a,b){
+    var ka=String(a.o.orderDate||"")+String(a.o.orderTime||""), kb=String(b.o.orderDate||"")+String(b.o.orderTime||"");
+    return kb<ka?-1:(kb>ka?1:0);   // 新しい順
+  });
+  var nImp=rows.filter(function(r){return r.st==="imp";}).length;
+  var nMiss=rows.filter(function(r){return r.st==="miss";}).length;
+  var nExc=rows.filter(function(r){return r.st==="exc";}).length;
+  var nTarget=nImp+nMiss;
+
+  var h="<div class='card'>";
+  h+="<div class='mhdr'><span class='nm'>"+esc(memName(picked))+"</span><span class='mid'>"+esc(picked.memberId||picked.id)+"</span>"
+    +(lvl>0?"<span class='badge b-paid'>有料 Lv."+lvl+"</span>":"<span class='badge b-free'>無料</span>")
+    +(picked.authUid?"":"<span class='badge b-free'>認証未連携</span>")+"</div>";
+
+  h+="<div class='summary'>"
+    +"<span>対象注文 <b>"+nTarget+"</b> 件</span>"
+    +"<span><span class='badge b-imp'>取込済</span> <b>"+nImp+"</b></span>"
+    +"<span><span class='badge b-miss'>未取込</span> <b>"+nMiss+"</b></span>"
+    +"<span class='dim'>対象外 "+nExc+" 件</span></div>";
+
+  if(!picked.authUid){
+    h+="<div class='warn'>この会員はアプリ認証と未連携（authUid なし）のため、自動記録・取込ができません。会員が会員IDでログインすると連携されます。</div>";
+  } else if(lvl<=0 && nMiss>0){
+    h+="<div class='warn'>現在この会員は無料状態です。取込（バックフィル）は<b>現在の有料状態</b>に基づくため、このままでは未取込分は取り込まれません。有料に復帰後に取り込んでください。</div>";
+  } else if(nMiss>0){
+    h+="<div class='note'>「未取込を取り込む」を押すと、未取込の対象注文が個人ログ（自動記録）に取り込まれます。※現在の有料状態に基づきます。</div>";
+  }
+
+  h+="<div class='toolbar2'>"
+    +"<button class='btn bp' id='btn-backfill'"+((lvl>0&&picked.authUid&&nMiss>0)?"":" disabled")+">未取込を取り込む"+(nMiss>0?"（"+nMiss+"件）":"")+"</button>"
+    +"<label><input type='checkbox' id='f-miss'> 未取込のみ</label>"
+    +"<label><input type='checkbox' id='f-exc' checked> 対象外も表示</label></div>";
+
+  h+="<div class='tw'><table><thead><tr><th>日時</th><th>商品</th><th>種別</th><th>量(ml)</th><th>状態</th><th>注文ID</th></tr></thead><tbody id='tbody'></tbody></table></div>";
+  h+="</div>";
+  g("result").innerHTML=h;
+
+  g("btn-backfill").addEventListener("click",runBackfill);
+  g("f-miss").addEventListener("change",function(){ renderRows(rows); });
+  g("f-exc").addEventListener("change",function(){ renderRows(rows); });
+  renderRows(rows);
+}
+
+function renderRows(rows){
+  var onlyMiss=g("f-miss").checked, showExc=g("f-exc").checked;
+  var list=rows.filter(function(r){
+    if(onlyMiss) return r.st==="miss";
+    if(!showExc && r.st==="exc") return false;
+    return true;
+  });
+  if(!list.length){ g("tbody").innerHTML="<tr><td colspan='6' class='ec'>該当する注文はありません</td></tr>"; return; }
+  g("tbody").innerHTML=list.map(function(r){
+    var o=r.o, badge, extra="";
+    if(r.st==="imp") badge="<span class='badge b-imp'>取込済</span>";
+    else if(r.st==="miss") badge="<span class='badge b-miss'>未取込</span>";
+    else { badge="<span class='badge b-exc'>対象外</span>"; extra="<span class='dim' style='margin-left:6px'>"+esc(excludeReason(o))+"</span>"; }
+    var ml=r.t?r.t.amountMl:"";
+    var style=r.t?r.t.style:"—";
+    return "<tr"+(r.st==="exc"?" class='exc'":"")+"><td class='mono'>"+esc(fmtOd(o.orderDate))+" "+esc(fmtOt(o.orderTime))+"</td>"
+      +"<td>"+esc(o.productName||o.productCode||o.baseProductCode||"—")+"</td>"
+      +"<td class='dim'>"+esc(style)+"</td>"
+      +"<td>"+esc(ml)+"</td>"
+      +"<td>"+badge+extra+"</td>"
+      +"<td class='mono dim'>"+esc(o.id)+"</td></tr>";
+  }).join("");
+}
+
+async function runBackfill(){
+  if(!picked) return;
+  if(!confirm("この会員の未取込注文を取り込みます。\n※現在の有料状態に基づいて取り込まれます。よろしいですか？")) return;
+  var btn=g("btn-backfill"); btn.disabled=true; var old=btn.textContent; btn.textContent="取込中...";
+  try{
+    var res=await fbFunctions.httpsCallable("backfillTequilaLogs")({memberId:picked.id});
+    var d=res.data||{};
+    toast("取込完了: 新規"+(d.created||0)+" / 更新"+(d.updated||0)+" / スキップ"+(d.skipped||0),"inf");
+    await loadMember(picked.id);
+  }catch(e){ toast("取込失敗: "+(e.message||e),"err"); btn.disabled=false; btn.textContent=old; }
+}
+</script>
+</body>
+</html>
