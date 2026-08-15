@@ -95,8 +95,15 @@ Stripeダッシュボード → 端末(Terminal) → ロケーション → 追�
   シリアル番号で選別するよう調整してください。
 
 ## うまくいかないとき
-- **ビルドエラー（API不一致）**: `// SDK-VERSION` の箇所を、使用中のSDK版のサンプルに合わせて修正。
-  特に `discoverReaders` / `connectBluetoothReader` / `confirmPaymentIntent`（旧 `processPayment`）。
+- **決済時に「No active reader」/「読み取り失敗・中断」**: 決済の途中で WisePad 3 の Bluetooth が
+  切れています。本アプリは `autoReconnectOnUnexpectedDisconnect = true`（SDK v4）で自動再接続しますが、
+  以下も確認してください。① 初回接続時のファームウェア更新を最後まで完了（数分・放置）。② 端末を満充電
+  （ケーブルを挿したまま運用可）。③ 決済中はスマホを端末の30cm以内に。④ 決済直前に端末の画面を点灯。
+- **「別の決済を処理中です」から戻らない**: アプリの **「リセット（決済が止まった時）」ボタン** を押すと、
+  処理中フラグを解除して待ち受けに戻せます（アプリ再起動は不要）。
+- **ビルドエラー（API不一致）**: SDK v4 では接続は `Terminal.connectReader(reader, config, callback)` に統一
+  （旧 `connectBluetoothReader` は廃止）。listener（`MobileReaderListener`）と自動再接続フラグは
+  `BluetoothConnectionConfiguration` に渡します。確定は `confirmPaymentIntent`（旧 `processPayment`）。
 - **接続できない**: Bluetooth/位置情報の権限を許可、端末を充電、他アプリとのペアリングを解除。
 - **`permission-denied`**: ログインアカウントが staff/owner ロールか確認（`assertStaff`）。
 - **`resource_missing`/決済不可**: Location ID が正しいモード（本番/テスト）のものか確認。
