@@ -9,6 +9,10 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.firestore.DocumentReference
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.stripe.stripeterminal.Terminal
 import com.stripe.stripeterminal.external.callable.Callback
 import com.stripe.stripeterminal.external.callable.Cancelable
@@ -41,6 +45,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var b: ActivityMainBinding
     private var discoverCancelable: Cancelable? = null
     private var connectedReader: Reader? = null
+
+    // 会計画面（checkin.html）からの決済リクエスト待ち受け用
+    private var queueListener: ListenerRegistration? = null
+    private var processing = false
 
     private val prefs by lazy { getSharedPreferences("tdterminal", MODE_PRIVATE) }
 
@@ -138,7 +146,8 @@ class MainActivity : AppCompatActivity() {
             object : ReaderCallback {
                 override fun onSuccess(r: Reader) {
                     connectedReader = r
-                    runOnUiThread { status("接続完了: ${r.serialNumber ?: ""}"); refreshUi() }
+                    runOnUiThread { status("接続完了: ${r.serialNumber ?: ""}（会計画面からの決済を待ち受け中）"); refreshUi() }
+                    startQueueListener()
                 }
                 override fun onFailure(e: TerminalException) {
                     runOnUiThread { status("接続失敗: ${e.errorMessage}") }
@@ -147,14 +156,21 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    // ── ④ 決済（金額入力 → PaymentIntent作成 → 読み取り → 確定） ──
+    // ── ④ 決済（手入力ボタン） ─────────────────────────────────────
     private fun charge() {
         if (Terminal.getInstance().connectedReader == null) { toast("先に端末へ接続してください"); return }
         val amount = b.amount.text.toString().trim().toLongOrNull()
         if (amount == null || amount <= 0) { toast("金額（円）を入力してください"); return }
+        if (processing) { toast("別の決済を処理中です"); return }
+        processing = true
+        startCharge(amount, null)
+    }
 
+    // 決済本体（手入力・会計画面リクエストの両方から呼ぶ）。
+    // doc が非nullなら、成否を terminalPayments の該当ドキュメントに書き戻す。
+    private fun startCharge(amount: Long, doc: DocumentReference?) {
         status("決済を準備中... ¥$amount")
-        // 1) サーバーで PaymentIntent を作成し client_secret を得る
+        // 1) サーバーで PaymentIntent を作成し client_secret / id を得る
         val payload = hashMapOf<String, Any>("amount" to amount, "description" to "テキーラ道場 お会計")
         FirebaseFunctions.getInstance("us-central1")
             .getHttpsCallable("terminalCreatePaymentIntent")
@@ -163,38 +179,104 @@ class MainActivity : AppCompatActivity() {
                 @Suppress("UNCHECKED_CAST")
                 val data = result.data as? Map<String, Any?>
                 val clientSecret = data?.get("clientSecret") as? String
-                if (clientSecret.isNullOrEmpty()) { status("PaymentIntent取得に失敗しました") }
-                else collectAndConfirm(clientSecret)
+                val piId = data?.get("id") as? String
+                if (clientSecret.isNullOrEmpty()) { failPayment(doc, "PaymentIntent取得に失敗しました") }
+                else collectAndConfirm(clientSecret, piId, amount, doc)
             }
-            .addOnFailureListener { status("PaymentIntent作成に失敗: ${it.message}") }
+            .addOnFailureListener { failPayment(doc, "PaymentIntent作成に失敗: ${it.message}") }
     }
 
-    private fun collectAndConfirm(clientSecret: String) {
-        status("カードを端末にタッチ/挿入してください")
+    private fun collectAndConfirm(clientSecret: String, piId: String?, amount: Long, doc: DocumentReference?) {
+        status("カードを端末にタッチ/挿入してください（¥$amount）")
         Terminal.getInstance().retrievePaymentIntent(clientSecret, object : PaymentIntentCallback {
             override fun onSuccess(paymentIntent: PaymentIntent) {
                 Terminal.getInstance().collectPaymentMethod(paymentIntent, object : PaymentIntentCallback {
                     override fun onSuccess(collected: PaymentIntent) {
-                        status("処理中...")
+                        runOnUiThread { status("処理中...") }
                         // SDK-VERSION: v4 は confirmPaymentIntent、v3 以前は processPayment
                         Terminal.getInstance().confirmPaymentIntent(collected, object : PaymentIntentCallback {
                             override fun onSuccess(confirmed: PaymentIntent) {
-                                runOnUiThread { status("✅ 決済完了（¥${b.amount.text}）"); b.amount.setText("") }
+                                succeedPayment(doc, piId ?: confirmed.id, amount)
                             }
                             override fun onFailure(e: TerminalException) {
-                                runOnUiThread { status("確定失敗: ${e.errorMessage}") }
+                                failPayment(doc, "確定失敗: ${e.errorMessage}")
                             }
                         })
                     }
                     override fun onFailure(e: TerminalException) {
-                        runOnUiThread { status("読み取り失敗/中断: ${e.errorMessage}") }
+                        failPayment(doc, "読み取り失敗/中断: ${e.errorMessage}")
                     }
                 })
             }
             override fun onFailure(e: TerminalException) {
-                runOnUiThread { status("PaymentIntent取得失敗: ${e.errorMessage}") }
+                failPayment(doc, "PaymentIntent取得失敗: ${e.errorMessage}")
             }
         })
+    }
+
+    private fun succeedPayment(doc: DocumentReference?, piId: String?, amount: Long) {
+        runOnUiThread { status("✅ 決済完了（¥$amount）"); b.amount.setText("") }
+        doc?.update(
+            mapOf(
+                "status" to "succeeded",
+                "paymentIntentId" to (piId ?: ""),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+        )
+        processing = false
+    }
+
+    private fun failPayment(doc: DocumentReference?, msg: String) {
+        runOnUiThread { status(msg) }
+        doc?.update(
+            mapOf(
+                "status" to "failed",
+                "errorMessage" to msg,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+        )
+        processing = false
+    }
+
+    // ── ⑤ 会計画面（checkin.html）からの決済リクエストを待ち受け ──────
+    // 会計画面が terminalPayments に status='pending' で作成 → ここで受けて
+    // processing に更新 → WisePad 3 で決済 → succeeded/failed を書き戻す。
+    private fun startQueueListener() {
+        if (queueListener != null) return
+        queueListener = FirebaseFirestore.getInstance()
+            .collection("terminalPayments")
+            .whereEqualTo("status", "pending")
+            .addSnapshotListener { snap, err ->
+                if (err != null || snap == null) return@addSnapshotListener
+                if (processing) return@addSnapshotListener
+                if (!Terminal.isInitialized() || Terminal.getInstance().connectedReader == null) return@addSnapshotListener
+                // createdAt 昇順で最初の pending を処理（1件ずつ）
+                val d = snap.documents
+                    .sortedBy { it.getTimestamp("createdAt")?.seconds ?: Long.MAX_VALUE }
+                    .firstOrNull() ?: return@addSnapshotListener
+                val amount = d.getLong("amount") ?: return@addSnapshotListener
+                if (amount <= 0) return@addSnapshotListener
+                processing = true
+                val ref = d.reference
+                ref.update(
+                    mapOf(
+                        "status" to "processing",
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).addOnSuccessListener {
+                    runOnUiThread { b.amount.setText(amount.toString()) }
+                    startCharge(amount, ref)
+                }.addOnFailureListener {
+                    processing = false
+                }
+            }
+    }
+
+    private fun stopQueueListener() { queueListener?.remove(); queueListener = null }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        stopQueueListener()
     }
 
     // ── 権限・UI ──────────────────────────────────────────────────
