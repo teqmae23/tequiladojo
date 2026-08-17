@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<title>テキーラ道場 — カード決済ログ</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="/auth-role.js?v=20260714"></script>
+<script>window.JOURNAL_PAGE='terminalPayments';</script>
+<script src="/journal.js?v=20260706"></script>
+<script>
+var FIREBASE_CONFIG={apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",authDomain:"tequiladojo.firebaseapp.com",projectId:"tequiladojo",storageBucket:"tequiladojo.firebasestorage.app",messagingSenderId:"56663296233",appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"};
+</script>
+<style>
+:root{--ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;--gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;--teal:#1a6e58;--red:#8c2818;--red-l:#fae8e4;--cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;--border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);--shadow:0 1px 12px rgba(24,17,10,.07);--shadow-lg:0 6px 36px rgba(24,17,10,.13);--r:6px;--rl:12px;--sans:'Noto Sans JP',system-ui,sans-serif;--mono:'DM Mono',monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+button{cursor:pointer;font-family:var(--sans)}
+#login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center}
+.lcard{width:100%;max-width:360px;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:40px 30px;box-shadow:var(--shadow-lg)}
+.lbrand{font-size:22px;font-weight:600;color:var(--gold-d);text-align:center;margin-bottom:24px}
+.lcard label{display:block;font-size:11px;color:var(--ink3);margin:10px 0 4px}
+.lcard input{width:100%;padding:10px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.lbtn{width:100%;margin-top:18px;padding:12px;background:var(--gold-d);color:var(--cream);border:none;border-radius:var(--r);font-size:13px}
+.lerr{min-height:16px;font-size:12px;color:var(--red);margin-top:8px;text-align:center}
+.topbar{background:var(--ink);display:flex;align-items:center;padding:10px 18px;gap:10px;position:sticky;top:0;z-index:200}
+.topbar .t{color:var(--gold-l);font-size:14px;font-weight:600}
+.tlogout{margin-left:auto;padding:5px 12px;border:1px solid rgba(255,255,255,.14);border-radius:var(--r);background:none;color:rgba(255,255,255,.5);font-size:11px}
+.content{padding:22px;max-width:1080px;margin:0 auto}
+.card{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shadow);padding:16px 18px;margin-bottom:14px}
+.toolbar2{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.toolbar2 label{font-size:12px;color:var(--ink2);display:flex;align-items:center;gap:4px}
+.toolbar2 input,.toolbar2 select{padding:7px 10px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream);font-family:var(--sans)}
+.btn{padding:9px 16px;border-radius:var(--r);font-size:13px;font-weight:500;border:none}
+.bp{background:var(--gold-d);color:var(--cream)}.bs{background:var(--cream2);color:var(--ink2);border:1px solid var(--border2)}
+.btn:disabled{opacity:.5}
+.summary{display:flex;gap:22px;flex-wrap:wrap;font-size:13px;margin-top:4px}
+.summary .it{display:flex;flex-direction:column;gap:1px}
+.summary .lb{font-size:10px;color:var(--ink3);letter-spacing:.05em;text-transform:uppercase}
+.summary b{font-size:19px}
+.badge{display:inline-block;font-size:11px;font-weight:600;border-radius:5px;padding:2px 9px;white-space:nowrap}
+.b-ok{background:#d7ecdd;color:#1a6640}.b-ng{background:var(--red-l);color:var(--red)}
+.b-cancel{background:#ece7de;color:#9a8470}.b-wait{background:#f6ecd0;color:#8a6a1a}
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{padding:8px 10px;text-align:left;font-size:10px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border2)}
+td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+.mono{font-family:var(--mono);font-size:11px}
+.amt{font-family:var(--mono);text-align:right;white-space:nowrap}
+.dim{color:var(--ink3)}
+.err-txt{color:var(--red);font-size:11px;max-width:280px;white-space:normal;word-break:break-word}
+.ec{text-align:center;color:var(--ink3);padding:26px}
+tr.r-ng{background:#fdf6f4}
+.copy{cursor:pointer;border:none;background:none;color:var(--gold-d);font-size:11px;padding:0 2px}
+#toasts{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:3000;display:flex;flex-direction:column;gap:8px;align-items:center}
+.toast{background:var(--ink);color:#fff;font-size:13px;padding:9px 16px;border-radius:18px;box-shadow:var(--shadow-lg)}
+.toast.err{background:var(--red)}.toast.inf{background:var(--teal)}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="lcard">
+    <div class="lbrand">カード決済ログ</div>
+    <label>メールアドレス</label><input id="lemail" type="email">
+    <label>パスワード</label><input id="lpass" type="password">
+    <div class="lerr" id="lerr"></div>
+    <button class="lbtn" id="lbtn">ログイン</button>
+  </div>
+</div>
+
+<div id="app" style="display:none">
+  <div class="topbar"><span class="t">💳 カード決済ログ</span><span id="temail" style="color:rgba(255,255,255,.4);font-size:11px"></span><button class="tlogout" id="btn-logout">ログアウト</button></div>
+  <div class="content">
+    <div class="card">
+      <div class="toolbar2">
+        <label>期間
+          <select id="f-range">
+            <option value="today">今日</option>
+            <option value="7">直近7日</option>
+            <option value="30" selected>直近30日</option>
+            <option value="all">全期間</option>
+          </select>
+        </label>
+        <label>状態
+          <select id="f-status">
+            <option value="all">すべて</option>
+            <option value="succeeded">成功</option>
+            <option value="failed">失敗</option>
+            <option value="canceled">中止</option>
+            <option value="pending">処理中/未処理</option>
+          </select>
+        </label>
+        <button class="btn bp" id="btn-reload">🔄 更新</button>
+      </div>
+      <div class="summary" id="summary" style="display:none"></div>
+    </div>
+
+    <div class="card">
+      <div class="tw"><table id="tbl">
+        <thead><tr>
+          <th>日時</th><th>状態</th><th style="text-align:right">金額</th>
+          <th>PaymentIntent</th><th>対象来場</th><th>エラー/備考</th>
+        </tr></thead>
+        <tbody id="rows"><tr><td colspan="6" class="ec">読込中…</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function gv(id){var e=g(id);return e?String(e.value).trim():"";}
+function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function toast(m,t){var d=document.createElement("div");d.className="toast"+(t?" "+t:"");d.textContent=m;g("toasts").appendChild(d);setTimeout(function(){d.remove();},3200);}
+
+var allRows=[];
+
+// ── 認証 ─────────────────────────────────────────────
+AuthRole.requireOwner(auth,function(user){
+  g("login-screen").style.display="none";g("app").style.display="block";g("temail").textContent=user.email;
+  load();
+},function(){ g("login-screen").style.display="flex";g("app").style.display="none"; });
+g("lbtn").addEventListener("click",function(){
+  var e=gv("lemail"),p=g("lpass").value;g("lerr").textContent="";
+  if(!e||!p){g("lerr").textContent="入力してください";return;}
+  auth.signInWithEmailAndPassword(e,p).catch(function(err){g("lerr").textContent="ログイン失敗: "+err.message;});
+});
+g("lpass").addEventListener("keydown",function(e){if(e.key==="Enter")g("lbtn").click();});
+g("btn-logout").addEventListener("click",function(){auth.signOut();});
+g("btn-reload").addEventListener("click",load);
+g("f-range").addEventListener("change",load);
+g("f-status").addEventListener("change",render);
+
+function pad2(n){return(n<10?"0":"")+n;}
+function fmtTs(ts){
+  if(!ts||!ts.toDate) return "—";
+  var d=ts.toDate();
+  return d.getFullYear()+"/"+pad2(d.getMonth()+1)+"/"+pad2(d.getDate())+" "+pad2(d.getHours())+":"+pad2(d.getMinutes())+":"+pad2(d.getSeconds());
+}
+function statusBadge(s){
+  if(s==="succeeded") return "<span class='badge b-ok'>成功</span>";
+  if(s==="failed")    return "<span class='badge b-ng'>失敗</span>";
+  if(s==="canceled")  return "<span class='badge b-cancel'>中止</span>";
+  if(s==="processing")return "<span class='badge b-wait'>処理中</span>";
+  return "<span class='badge b-wait'>未処理</span>"; // pending
+}
+
+async function load(){
+  g("rows").innerHTML="<tr><td colspan='6' class='ec'>読込中…</td></tr>";
+  g("summary").style.display="none";
+  try{
+    var q=db.collection("terminalPayments").orderBy("createdAt","desc");
+    var range=gv("f-range");
+    if(range!=="all"){
+      var days=(range==="today"?0:parseInt(range,10));
+      var since=new Date(); since.setHours(0,0,0,0); since.setDate(since.getDate()-days);
+      q=q.where("createdAt",">=",firebase.firestore.Timestamp.fromDate(since));
+    }
+    q=q.limit(500);
+    var snap=await q.get();
+    allRows=snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    render();
+  }catch(e){
+    g("rows").innerHTML="<tr><td colspan='6' class='ec'>読込失敗: "+esc(e.message)+"</td></tr>";
+  }
+}
+
+function render(){
+  var fs=gv("f-status");
+  var rows=allRows.filter(function(r){ return fs==="all" || String(r.status)===fs; });
+
+  // 集計（成功のみ金額合計）
+  var okCnt=0, okSum=0, ngCnt=0, otherCnt=0;
+  allRows.forEach(function(r){
+    if(r.status==="succeeded"){ okCnt++; okSum+=Number(r.amount)||0; }
+    else if(r.status==="failed") ngCnt++;
+    else otherCnt++;
+  });
+  g("summary").style.display="flex";
+  g("summary").innerHTML=
+    "<div class='it'><span class='lb'>成功</span><b style='color:var(--teal)'>"+okCnt+"件</b></div>"+
+    "<div class='it'><span class='lb'>成功金額計</span><b>¥"+okSum.toLocaleString()+"</b></div>"+
+    "<div class='it'><span class='lb'>失敗</span><b style='color:var(--red)'>"+ngCnt+"件</b></div>"+
+    "<div class='it'><span class='lb'>中止/処理中</span><b class='dim'>"+otherCnt+"件</b></div>";
+
+  if(!rows.length){ g("rows").innerHTML="<tr><td colspan='6' class='ec'>該当する決済ログがありません</td></tr>"; return; }
+
+  g("rows").innerHTML=rows.map(function(r){
+    var pi=r.paymentIntentId?("<span class='mono'>"+esc(r.paymentIntentId)+"</span> <button class='copy' data-copy='"+esc(r.paymentIntentId)+"'>📋</button>"):"<span class='dim'>—</span>";
+    var vks=(r.visitKeys&&r.visitKeys.length)?("<span class='mono'>"+r.visitKeys.map(esc).join(", ")+"</span>"):"<span class='dim'>—</span>";
+    var note=r.status==="failed"?("<span class='err-txt'>"+esc(r.errorMessage||"不明なエラー")+"</span>")
+            :(r.status==="canceled"?"<span class='dim'>会計画面で中止</span>":"<span class='dim'>"+esc(r.description||"")+"</span>");
+    return "<tr class='"+(r.status==="failed"?"r-ng":"")+"'>"+
+      "<td class='mono'>"+esc(fmtTs(r.createdAt))+"</td>"+
+      "<td>"+statusBadge(r.status)+"</td>"+
+      "<td class='amt'>¥"+(Number(r.amount)||0).toLocaleString()+"</td>"+
+      "<td>"+pi+"</td>"+
+      "<td>"+vks+"</td>"+
+      "<td>"+note+"</td>"+
+    "</tr>";
+  }).join("");
+}
+
+g("rows").addEventListener("click",function(e){
+  var btn=e.target.closest(".copy"); if(!btn) return;
+  var t=btn.getAttribute("data-copy")||"";
+  if(navigator.clipboard){ navigator.clipboard.writeText(t).then(function(){toast("コピーしました","inf");}); }
+});
+</script>
+</body>
+</html>
