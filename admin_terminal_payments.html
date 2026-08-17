@@ -59,6 +59,20 @@ tr.r-ng{background:#fdf6f4}
 #toasts{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:3000;display:flex;flex-direction:column;gap:8px;align-items:center}
 .toast{background:var(--ink);color:#fff;font-size:13px;padding:9px 16px;border-radius:18px;box-shadow:var(--shadow-lg)}
 .toast.err{background:var(--red)}.toast.inf{background:var(--teal)}
+.btn.sm{padding:5px 10px;font-size:11px}
+.b-card{background:#dde8f3;color:#0c447c}
+#link-modal{position:fixed;inset:0;background:rgba(24,17,10,.45);z-index:1000;display:none;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto}
+.lm-card{width:100%;max-width:520px;background:var(--white);border-radius:var(--rl);box-shadow:var(--shadow-lg);margin-top:30px}
+.lm-head{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border);font-weight:600;font-size:15px}
+.lm-head button{margin-left:auto;border:none;background:none;font-size:20px;color:var(--ink3);cursor:pointer}
+.lm-body{padding:16px 18px}
+.lm-pay{background:var(--cream2);border-radius:var(--r);padding:9px 12px;font-size:13px;margin-bottom:12px}
+.lm-row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.lm-row input[type=date]{padding:8px 10px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream);font-family:var(--sans)}
+.lm-visits{border:1px solid var(--border2);border-radius:var(--r);max-height:340px;overflow-y:auto}
+.vrow{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px}
+.vrow:last-child{border-bottom:none}
+.vrow:hover{background:var(--cream)}
 </style>
 </head>
 <body>
@@ -112,6 +126,21 @@ tr.r-ng{background:#fdf6f4}
   </div>
 </div>
 
+<div id="link-modal">
+  <div class="lm-card">
+    <div class="lm-head">決済を来場に紐づけ<button id="lm-close">×</button></div>
+    <div class="lm-body">
+      <div class="lm-pay" id="lm-pay"></div>
+      <div class="lm-row">
+        <label style="font-size:12px;color:var(--ink2)">日付</label>
+        <input type="date" id="lm-date">
+        <button class="btn bp sm" id="lm-search">この日の来場を表示</button>
+      </div>
+      <div class="lm-visits" id="lm-visits"></div>
+    </div>
+  </div>
+</div>
+
 <div id="toasts"></div>
 
 <script>
@@ -122,11 +151,12 @@ function gv(id){var e=g(id);return e?String(e.value).trim():"";}
 function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 function toast(m,t){var d=document.createElement("div");d.className="toast"+(t?" "+t:"");d.textContent=m;g("toasts").appendChild(d);setTimeout(function(){d.remove();},3200);}
 
-var allRows=[];
+var allRows=[], members=[];
 
 // ── 認証 ─────────────────────────────────────────────
 AuthRole.requireOwner(auth,function(user){
   g("login-screen").style.display="none";g("app").style.display="block";g("temail").textContent=user.email;
+  loadMembers();
   load();
 },function(){ g("login-screen").style.display="flex";g("app").style.display="none"; });
 g("lbtn").addEventListener("click",function(){
@@ -157,6 +187,22 @@ function statusBadge(s){
 function sourceBadge(src){
   if(src==="app") return "<span class='badge b-src-app'>手入力</span>";
   return "<span class='badge b-src-pos'>会計画面</span>";
+}
+// 会計方法コード → ラベル（checkin.html と対応）
+var PAY_LABEL={"0":"現金","1":"PayPay","2":"カード","3":"PayPal","5":"ツケ","6":"デポジット","9":"その他"};
+function payLabel(code){
+  if(code==null||code==="") return "<span class='dim'>未会計</span>";
+  var l=PAY_LABEL[String(code)]||("方法"+esc(code));
+  return code==="2"?("<span class='badge b-card'>"+l+"</span>"):("<span class='dim'>"+l+"</span>");
+}
+function fmtHM(t){ t=String(t||""); return t.length>=4?(t.slice(0,2)+":"+t.slice(2,4)):"—"; }
+async function loadMembers(){
+  try{ var ms=await db.collection("members").get(); members=ms.docs.map(function(d){return Object.assign({id:d.id},d.data());}); }catch(e){}
+}
+function memberName(mid){
+  if(!mid) return "非会員";
+  var m=members.find(function(x){ return x.id===mid||x.memberId===mid||x.realId===mid||x.displayId===mid; });
+  return m?(m.nickname||m.name||m.displayId||m.memberId||m.id):String(mid);
 }
 
 async function load(){
@@ -201,7 +247,12 @@ function render(){
 
   g("rows").innerHTML=rows.map(function(r){
     var pi=r.paymentIntentId?("<span class='mono'>"+esc(r.paymentIntentId)+"</span> <button class='copy' data-copy='"+esc(r.paymentIntentId)+"'>📋</button>"):"<span class='dim'>—</span>";
-    var vks=(r.visitKeys&&r.visitKeys.length)?("<span class='mono'>"+r.visitKeys.map(esc).join(", ")+"</span>"):"<span class='dim'>—</span>";
+    var hasVk=r.visitKeys&&r.visitKeys.length;
+    // 手入力(app)・成功・未紐づけ の決済は、後から来場に紐づけられる
+    var canLink=(r.source==="app")&&(r.status==="succeeded")&&!hasVk;
+    var vks=hasVk?("<span class='mono'>"+r.visitKeys.map(esc).join(", ")+"</span>")
+           :(canLink?("<button class='btn bs sm' data-link='"+esc(r.id)+"'>🔗紐づけ</button>")
+                    :"<span class='dim'>—</span>");
     var note=r.status==="failed"?("<span class='err-txt'>"+esc(r.errorMessage||"不明なエラー")+"</span>")
             :(r.status==="canceled"?"<span class='dim'>会計画面で中止</span>":"<span class='dim'>"+esc(r.description||"")+"</span>");
     return "<tr class='"+(r.status==="failed"?"r-ng":"")+"'>"+
@@ -217,10 +268,86 @@ function render(){
 }
 
 g("rows").addEventListener("click",function(e){
-  var btn=e.target.closest(".copy"); if(!btn) return;
-  var t=btn.getAttribute("data-copy")||"";
-  if(navigator.clipboard){ navigator.clipboard.writeText(t).then(function(){toast("コピーしました","inf");}); }
+  var cp=e.target.closest(".copy");
+  if(cp){
+    var t=cp.getAttribute("data-copy")||"";
+    if(navigator.clipboard){ navigator.clipboard.writeText(t).then(function(){toast("コピーしました","inf");}); }
+    return;
+  }
+  var lk=e.target.closest("[data-link]");
+  if(lk){ openLink(lk.getAttribute("data-link")); }
 });
+
+// ── 手入力決済を来場に紐づけ ─────────────────────────────
+var linkPayId=null;
+function openLink(payId){
+  var r=allRows.find(function(x){ return x.id===payId; }); if(!r) return;
+  linkPayId=payId;
+  g("lm-pay").innerHTML="決済: <b>¥"+(Number(r.amount)||0).toLocaleString()+"</b> ／ "+esc(fmtTs(r.createdAt));
+  var d=(r.createdAt&&r.createdAt.toDate)?r.createdAt.toDate():new Date();
+  g("lm-date").value=d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate());
+  g("lm-visits").innerHTML="";
+  g("link-modal").style.display="flex";
+  searchVisits();
+}
+function closeLink(){ g("link-modal").style.display="none"; linkPayId=null; }
+g("lm-close").addEventListener("click",closeLink);
+g("link-modal").addEventListener("click",function(e){ if(e.target===g("link-modal")) closeLink(); });
+g("lm-search").addEventListener("click",searchVisits);
+g("lm-date").addEventListener("change",searchVisits);
+
+async function searchVisits(){
+  var dv=g("lm-date").value; if(!dv){ toast("日付を選択してください","err"); return; }
+  var p=dv.split("-"); var yymmdd=p[0].slice(2)+p[1]+p[2];
+  g("lm-visits").innerHTML="<div class='ec'>検索中…</div>";
+  try{
+    var snap=await db.collection("visits").where("visitDate","==",yymmdd).get();
+    var vs=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    vs.sort(function(a,b){ return String(a.visitTime||a.id).localeCompare(String(b.visitTime||b.id)); });
+    if(!vs.length){ g("lm-visits").innerHTML="<div class='ec'>この日の来場はありません</div>"; return; }
+    g("lm-visits").innerHTML=vs.map(function(v){
+      var amt=(v.amount!=null)?("¥"+Number(v.amount).toLocaleString()):"<span class='dim'>未会計</span>";
+      var staff=v.isStaff?" <span class='badge b-src-app'>スタッフ</span>":"";
+      return "<div class='vrow' data-vid='"+esc(v.id)+"'>"+
+        "<span class='mono'>"+esc(fmtHM(v.visitTime))+"</span> <b>"+esc(memberName(v.memberId))+"</b>"+staff+
+        " <span class='dim mono'>"+esc(v.id)+"</span>"+
+        "<span style='float:right'>"+amt+" "+payLabel(v.payment)+"</span>"+
+      "</div>";
+    }).join("");
+  }catch(e){ g("lm-visits").innerHTML="<div class='ec'>読込失敗: "+esc(e.message)+"</div>"; }
+}
+
+g("lm-visits").addEventListener("click",function(e){
+  var row=e.target.closest(".vrow"); if(!row) return;
+  confirmLink(row.getAttribute("data-vid"));
+});
+
+async function confirmLink(vid){
+  var r=allRows.find(function(x){ return x.id===linkPayId; }); if(!r){ return; }
+  try{
+    var vsnap=await db.collection("visits").doc(vid).get();
+    if(!vsnap.exists){ toast("来場が見つかりません","err"); return; }
+    var v=vsnap.data();
+    var payAmt=Number(r.amount)||0;
+    var visitAmt=(v.amount!=null)?Number(v.amount):null;
+    if(visitAmt===null || visitAmt!==payAmt){
+      var msg="金額が違いますがよろしいですか？\n\n来場の金額: "+(visitAmt===null?"未会計":("¥"+visitAmt.toLocaleString()))
+             +"\n決済の金額: ¥"+payAmt.toLocaleString();
+      if(!window.confirm(msg)) return;
+    }
+    var batch=db.batch();
+    batch.update(db.collection("terminalPayments").doc(linkPayId),{
+      visitKeys:[vid],
+      linkedVisitAt:firebase.firestore.FieldValue.serverTimestamp(),
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    batch.update(db.collection("visits").doc(vid),{ payment:"2" });
+    await batch.commit();
+    toast(memberName(v.memberId)+" に紐づけました（会計方法=カード）","inf");
+    closeLink();
+    load();
+  }catch(e){ toast("紐づけ失敗: "+e.message,"err"); }
+}
 </script>
 </body>
 </html>
