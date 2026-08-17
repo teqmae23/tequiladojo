@@ -44,6 +44,7 @@ button{cursor:pointer;font-family:var(--sans)}
 .badge{display:inline-block;font-size:11px;font-weight:600;border-radius:5px;padding:2px 9px;white-space:nowrap}
 .b-ok{background:#d7ecdd;color:#1a6640}.b-ng{background:var(--red-l);color:var(--red)}
 .b-cancel{background:#ece7de;color:#9a8470}.b-wait{background:#f6ecd0;color:#8a6a1a}
+.b-src-pos{background:#dde8f3;color:#0c447c}.b-src-app{background:#efe3d4;color:#8a5a1a}
 .tw{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:12px}
 th{padding:8px 10px;text-align:left;font-size:10px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border2)}
@@ -102,10 +103,10 @@ tr.r-ng{background:#fdf6f4}
     <div class="card">
       <div class="tw"><table id="tbl">
         <thead><tr>
-          <th>日時</th><th>状態</th><th style="text-align:right">金額</th>
+          <th>日時</th><th>状態</th><th>経路</th><th style="text-align:right">金額</th>
           <th>PaymentIntent</th><th>対象来場</th><th>エラー/備考</th>
         </tr></thead>
-        <tbody id="rows"><tr><td colspan="6" class="ec">読込中…</td></tr></tbody>
+        <tbody id="rows"><tr><td colspan="7" class="ec">読込中…</td></tr></tbody>
       </table></div>
     </div>
   </div>
@@ -152,9 +153,14 @@ function statusBadge(s){
   if(s==="processing")return "<span class='badge b-wait'>処理中</span>";
   return "<span class='badge b-wait'>未処理</span>"; // pending
 }
+// 経路: app=アプリ手入力 / checkout=会計画面 / 旧データ(未設定)=会計画面扱い
+function sourceBadge(src){
+  if(src==="app") return "<span class='badge b-src-app'>手入力</span>";
+  return "<span class='badge b-src-pos'>会計画面</span>";
+}
 
 async function load(){
-  g("rows").innerHTML="<tr><td colspan='6' class='ec'>読込中…</td></tr>";
+  g("rows").innerHTML="<tr><td colspan='7' class='ec'>読込中…</td></tr>";
   g("summary").style.display="none";
   try{
     var q=db.collection("terminalPayments").orderBy("createdAt","desc");
@@ -169,7 +175,7 @@ async function load(){
     allRows=snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
     render();
   }catch(e){
-    g("rows").innerHTML="<tr><td colspan='6' class='ec'>読込失敗: "+esc(e.message)+"</td></tr>";
+    g("rows").innerHTML="<tr><td colspan='7' class='ec'>読込失敗: "+esc(e.message)+"</td></tr>";
   }
 }
 
@@ -191,7 +197,7 @@ function render(){
     "<div class='it'><span class='lb'>失敗</span><b style='color:var(--red)'>"+ngCnt+"件</b></div>"+
     "<div class='it'><span class='lb'>中止/処理中</span><b class='dim'>"+otherCnt+"件</b></div>";
 
-  if(!rows.length){ g("rows").innerHTML="<tr><td colspan='6' class='ec'>該当する決済ログがありません</td></tr>"; return; }
+  if(!rows.length){ g("rows").innerHTML="<tr><td colspan='7' class='ec'>該当する決済ログがありません</td></tr>"; return; }
 
   g("rows").innerHTML=rows.map(function(r){
     var pi=r.paymentIntentId?("<span class='mono'>"+esc(r.paymentIntentId)+"</span> <button class='copy' data-copy='"+esc(r.paymentIntentId)+"'>📋</button>"):"<span class='dim'>—</span>";
@@ -201,6 +207,7 @@ function render(){
     return "<tr class='"+(r.status==="failed"?"r-ng":"")+"'>"+
       "<td class='mono'>"+esc(fmtTs(r.createdAt))+"</td>"+
       "<td>"+statusBadge(r.status)+"</td>"+
+      "<td>"+sourceBadge(r.source)+"</td>"+
       "<td class='amt'>¥"+(Number(r.amount)||0).toLocaleString()+"</td>"+
       "<td>"+pi+"</td>"+
       "<td>"+vks+"</td>"+
