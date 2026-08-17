@@ -8,6 +8,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <script src="/auth-role.js?v=20260714"></script>
 <script>window.JOURNAL_PAGE='terminalPayments';</script>
 <script src="/journal.js?v=20260706"></script>
@@ -118,9 +119,9 @@ tr.r-ng{background:#fdf6f4}
       <div class="tw"><table id="tbl">
         <thead><tr>
           <th>日時</th><th>状態</th><th>経路</th><th style="text-align:right">金額</th>
-          <th>PaymentIntent</th><th>対象来場</th><th>エラー/備考</th>
+          <th>ブランド</th><th>PaymentIntent</th><th>対象来場</th><th>エラー/備考</th>
         </tr></thead>
-        <tbody id="rows"><tr><td colspan="7" class="ec">読込中…</td></tr></tbody>
+        <tbody id="rows"><tr><td colspan="8" class="ec">読込中…</td></tr></tbody>
       </table></div>
     </div>
   </div>
@@ -146,6 +147,7 @@ tr.r-ng{background:#fdf6f4}
 <script>
 if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
 var auth=firebase.auth(), db=firebase.firestore();
+var fbFunctions=firebase.app().functions('us-central1'); // 決済系関数は us-central1
 function g(id){return document.getElementById(id);}
 function gv(id){var e=g(id);return e?String(e.value).trim():"";}
 function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
@@ -205,8 +207,49 @@ function memberName(mid){
   return m?(m.nickname||m.name||m.displayId||m.memberId||m.id):String(mid);
 }
 
+// ── カードブランド／読み取り方法（Stripeから取得） ─────────────
+var BRAND_LABEL={visa:"Visa",mastercard:"Mastercard",amex:"Amex",american_express:"Amex",jcb:"JCB",discover:"Discover",diners:"Diners",diners_club:"Diners",unionpay:"UnionPay",interac:"Interac"};
+function brandLabel(b){ if(!b) return ""; return BRAND_LABEL[String(b).toLowerCase()]||String(b); }
+function readMethodLabel(rm){
+  if(!rm) return "";
+  rm=String(rm);
+  if(rm.indexOf("contactless")===0) return "タッチ";
+  if(rm==="contact_emv") return "挿入(IC)";
+  if(rm.indexOf("magnetic")===0) return "スワイプ";
+  return rm;
+}
+function brandCell(r){
+  if(r.status!=="succeeded"||!r.paymentIntentId) return "<span class='dim'>—</span>";
+  if(!r.cardInfoFetched) return "<span class='dim'>取得中…</span>";
+  var b=brandLabel(r.cardBrand), rm=readMethodLabel(r.cardReadMethod);
+  if(!b&&!rm) return "<span class='dim'>不明</span>";
+  var last4=r.cardLast4?(" <span class='dim mono'>****"+esc(r.cardLast4)+"</span>"):"";
+  return "<b>"+esc(b||"?")+"</b>"+(rm?" <span class='dim'>("+esc(rm)+")</span>":"")+last4;
+}
+// 成功・PaymentIntentあり・未取得 の行について、Stripeからブランドを取得して保存(キャッシュ)する。
+var _enriching=false;
+async function enrichBrands(rows){
+  if(_enriching) return; _enriching=true;
+  try{
+    for(var i=0;i<rows.length;i++){
+      var r=rows[i];
+      if(r.status!=="succeeded"||!r.paymentIntentId||r.cardInfoFetched) continue;
+      try{
+        var res=await fbFunctions.httpsCallable("terminalChargeInfo")({paymentIntentId:r.paymentIntentId});
+        var d=res.data||{};
+        r.cardBrand=d.brand||""; r.cardReadMethod=d.readMethod||""; r.cardLast4=d.last4||""; r.cardInfoFetched=true;
+        db.collection("terminalPayments").doc(r.id).update({
+          cardBrand:r.cardBrand, cardReadMethod:r.cardReadMethod, cardLast4:r.cardLast4, cardInfoFetched:true
+        }).catch(function(){});
+        var cell=document.querySelector("[data-brand='"+r.id+"']");
+        if(cell) cell.innerHTML=brandCell(r);
+      }catch(e){ /* 1件失敗しても続行 */ }
+    }
+  } finally { _enriching=false; }
+}
+
 async function load(){
-  g("rows").innerHTML="<tr><td colspan='7' class='ec'>読込中…</td></tr>";
+  g("rows").innerHTML="<tr><td colspan='8' class='ec'>読込中…</td></tr>";
   g("summary").style.display="none";
   try{
     var q=db.collection("terminalPayments").orderBy("createdAt","desc");
@@ -221,7 +264,7 @@ async function load(){
     allRows=snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
     render();
   }catch(e){
-    g("rows").innerHTML="<tr><td colspan='7' class='ec'>読込失敗: "+esc(e.message)+"</td></tr>";
+    g("rows").innerHTML="<tr><td colspan='8' class='ec'>読込失敗: "+esc(e.message)+"</td></tr>";
   }
 }
 
@@ -243,7 +286,7 @@ function render(){
     "<div class='it'><span class='lb'>失敗</span><b style='color:var(--red)'>"+ngCnt+"件</b></div>"+
     "<div class='it'><span class='lb'>中止/処理中</span><b class='dim'>"+otherCnt+"件</b></div>";
 
-  if(!rows.length){ g("rows").innerHTML="<tr><td colspan='7' class='ec'>該当する決済ログがありません</td></tr>"; return; }
+  if(!rows.length){ g("rows").innerHTML="<tr><td colspan='8' class='ec'>該当する決済ログがありません</td></tr>"; return; }
 
   g("rows").innerHTML=rows.map(function(r){
     var pi=r.paymentIntentId?("<span class='mono'>"+esc(r.paymentIntentId)+"</span> <button class='copy' data-copy='"+esc(r.paymentIntentId)+"'>📋</button>"):"<span class='dim'>—</span>";
@@ -260,11 +303,15 @@ function render(){
       "<td>"+statusBadge(r.status)+"</td>"+
       "<td>"+sourceBadge(r.source)+"</td>"+
       "<td class='amt'>¥"+(Number(r.amount)||0).toLocaleString()+"</td>"+
+      "<td data-brand='"+esc(r.id)+"'>"+brandCell(r)+"</td>"+
       "<td>"+pi+"</td>"+
       "<td>"+vks+"</td>"+
       "<td>"+note+"</td>"+
     "</tr>";
   }).join("");
+
+  // 未取得のカードブランドを Stripe から取得（保存キャッシュ）。表示中の行のみ。
+  enrichBrands(rows.slice());
 }
 
 g("rows").addEventListener("click",function(e){
