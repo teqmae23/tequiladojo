@@ -17,11 +17,13 @@ import com.stripe.stripeterminal.Terminal
 import com.stripe.stripeterminal.external.callable.Callback
 import com.stripe.stripeterminal.external.callable.Cancelable
 import com.stripe.stripeterminal.external.callable.DiscoveryListener
+import com.stripe.stripeterminal.external.callable.MobileReaderListener
 import com.stripe.stripeterminal.external.callable.PaymentIntentCallback
 import com.stripe.stripeterminal.external.callable.ReaderCallback
 import com.stripe.stripeterminal.external.callable.TerminalListener
 import com.stripe.stripeterminal.external.models.ConnectionConfiguration
 import com.stripe.stripeterminal.external.models.ConnectionStatus
+import com.stripe.stripeterminal.external.models.DisconnectReason
 import com.stripe.stripeterminal.external.models.DiscoveryConfiguration
 import com.stripe.stripeterminal.external.models.PaymentIntent
 import com.stripe.stripeterminal.external.models.PaymentStatus
@@ -68,6 +70,7 @@ class MainActivity : AppCompatActivity() {
         b.btnLogin.setOnClickListener { login() }
         b.btnConnect.setOnClickListener { ensurePermissionsThen { discoverAndConnect() } }
         b.btnCharge.setOnClickListener { charge() }
+        b.btnReset.setOnClickListener { resetProcessing() }
 
         refreshUi()
     }
@@ -134,18 +137,41 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    // WisePad 3 の予期せぬ切断からの自動再接続を受け取るリスナー。
+    // 会計途中に Bluetooth が切れる（＝決済時に "No active reader"）対策の要。
+    private val readerListener = object : MobileReaderListener {
+        override fun onReaderReconnectStarted(reader: Reader, cancelReconnect: Cancelable, reason: DisconnectReason) {
+            runOnUiThread { status("⚠ 端末が切断されました。自動再接続中…"); refreshUi() }
+        }
+        override fun onReaderReconnectSucceeded(reader: Reader) {
+            connectedReader = reader
+            // 途中で切れた決済は失敗扱いのまま。フラグを戻して次の決済を受けられるようにする。
+            processing = false
+            runOnUiThread { status("✅ 再接続しました（会計画面からの決済を待ち受け中）"); refreshUi() }
+        }
+        override fun onReaderReconnectFailed(reader: Reader) {
+            connectedReader = null
+            processing = false
+            runOnUiThread { status("❌ 再接続に失敗しました。もう一度「WisePad 3 に接続」を押してください"); refreshUi() }
+        }
+    }
+
     private fun connectTo(reader: Reader, locationId: String) {
         runOnUiThread { status("接続中: ${reader.serialNumber ?: ""}") }
-        // SDK-VERSION: BluetoothConnectionConfiguration の引数・connectBluetoothReader の
-        // シグネチャは版により異なります（listener を config に渡す版もあります）。
-        val connConfig = ConnectionConfiguration.BluetoothConnectionConfiguration(locationId)
-        Terminal.getInstance().connectBluetoothReader(
+        // SDK v4: connectReader に統一。listener（MobileReaderListener）と
+        // autoReconnectOnUnexpectedDisconnect は ConnectionConfiguration に渡す。
+        val connConfig = ConnectionConfiguration.BluetoothConnectionConfiguration(
+            locationId,
+            /* autoReconnectOnUnexpectedDisconnect = */ true,
+            /* bluetoothReaderListener = */ readerListener
+        )
+        Terminal.getInstance().connectReader(
             reader,
             connConfig,
-            /* listener = */ null,
             object : ReaderCallback {
                 override fun onSuccess(r: Reader) {
                     connectedReader = r
+                    processing = false
                     runOnUiThread { status("接続完了: ${r.serialNumber ?: ""}（会計画面からの決済を待ち受け中）"); refreshUi() }
                     startQueueListener()
                 }
@@ -169,6 +195,16 @@ class MainActivity : AppCompatActivity() {
     // 決済本体（手入力・会計画面リクエストの両方から呼ぶ）。
     // doc が非nullなら、成否を terminalPayments の該当ドキュメントに書き戻す。
     private fun startCharge(amount: Long, doc: DocumentReference?) {
+        // 事前チェック: 端末が実際に接続状態か（切断中なら空振り決済を避け、明確に失敗させる）。
+        val notConnected = !Terminal.isInitialized() ||
+            Terminal.getInstance().connectedReader == null ||
+            Terminal.getInstance().connectionStatus != ConnectionStatus.CONNECTED
+        if (notConnected) {
+            connectedReader = null
+            runOnUiThread { refreshUi() }
+            failPayment(doc, "端末が未接続です。「WisePad 3 に接続」で再接続してください")
+            return
+        }
         status("決済を準備中... ¥$amount")
         // 1) サーバーで PaymentIntent を作成し client_secret / id を得る
         val payload = hashMapOf<String, Any>("amount" to amount, "description" to "テキーラ道場 お会計")
@@ -273,6 +309,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopQueueListener() { queueListener?.remove(); queueListener = null }
+
+    // 決済が途中で止まって「別の決済を処理中です」から戻らない時の手動リセット。
+    // アプリ再起動なしで、処理中フラグを解除して次の決済を受けられるようにする。
+    private fun resetProcessing() {
+        processing = false
+        status("リセットしました（決済の待ち受けに戻りました）")
+        refreshUi()
+    }
 
     override fun onDestroy() {
         super.onDestroy()
