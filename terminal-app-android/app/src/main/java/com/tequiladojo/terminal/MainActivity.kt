@@ -189,7 +189,29 @@ class MainActivity : AppCompatActivity() {
         if (amount == null || amount <= 0) { toast("金額（円）を入力してください"); return }
         if (processing) { toast("別の決済を処理中です"); return }
         processing = true
-        startCharge(amount, null)
+        // 手入力決済も terminalPayments に記録する（source='app'）。会計画面経由(source='checkout')
+        // と区別できるようにし、成否は startCharge → succeed/failPayment がこの doc に書き戻す。
+        val ref = FirebaseFirestore.getInstance().collection("terminalPayments").document()
+        ref.set(
+            mapOf(
+                "amount" to amount,
+                "currency" to "jpy",
+                "status" to "processing",
+                "source" to "app",
+                "description" to "テキーラ道場 端末手入力",
+                "visitKeys" to emptyList<String>(),
+                "requestedByUid" to (FirebaseAuth.getInstance().currentUser?.uid),
+                "paymentIntentId" to null,
+                "errorMessage" to null,
+                "createdAt" to FieldValue.serverTimestamp(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+        ).addOnSuccessListener {
+            startCharge(amount, ref)
+        }.addOnFailureListener {
+            // 記録に失敗しても決済自体は続行（ログなしのフォールバック）。
+            startCharge(amount, null)
+        }
     }
 
     // 決済本体（手入力・会計画面リクエストの両方から呼ぶ）。
