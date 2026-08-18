@@ -87,7 +87,7 @@ NONDRINK_RE = re.compile(r"教科書|グラス|Tシャツ|ステッカー|ジガ
                          r"送料|配送|クール便|代引|ラッピング料|手数料|のし|熨斗", re.I)
 # ColorMe等のサイドバー/ランキング枠を除外するための ancestor id/class パターン
 SIDEBAR_RE = re.compile(r"sidebar|side_a|side_b|_side|side_|ranking|rank_|recommend|osusume|pickup|"
-                        r"history|checkitem|relation|relate|footer|header|breadcrumb|topicpath", re.I)
+                        r"history|checkitem|recent|saikin|viewed|relation|relate|footer|header|breadcrumb|topicpath", re.I)
 RANK_NAME_RE = re.compile(r"^\s*No\.?\s*\d")
 SET_RE = re.compile(r"セット|飲み比べ|ギフトBOX|詰め合わせ|アソート")
 # 品切れ文言（ColorMe/EC-CUBE等は在庫を明示要素で持たないため文言/ボタンで推定）。
@@ -258,6 +258,30 @@ def _in_sidebar(a):
         if idc and SIDEBAR_RE.search(idc): return True
     return False
 
+# 商品タイル内の「価格要素」を優先的に拾うためのセレクタ（shop-pro/ColorMe/EC-CUBE/BEM系）。
+# 定価・ポイント・送料無料条件などの余計な数値を巻き込まないよう、まず価格要素だけを見る。
+PRICE_SELECTORS = [
+    ".product-list__price", ".list-product-item__price", ".ec-price", ".ec-shelfGrid__item .price",
+    ".product_price", ".product-price", ".item_price", ".item-price", ".goods_price",
+    ".price", '[class*="price"]', '[class*="Price"]',
+]
+
+def _single_product_scope(a, detail_re, max_up=8):
+    """アンカー(商品リンク)を起点に、他商品を含まない範囲で最大の祖先要素を返す。
+    価格を近傍から拾う際、隣のタイルや『最近チェックした商品』等の別商品(=高額ボトル)の
+    価格を max() で誤って拾う事故を防ぐ。親へ辿り、2件目の商品リンクが現れたら直前で止める。"""
+    node = a; best = a
+    for _ in range(max_up):
+        p = node.parent
+        if p is None: break
+        pids = set()
+        for x in p.find_all("a", href=True):
+            m = detail_re.search(x.get("href") or "")
+            if m: pids.add(m.group(1))
+        if len(pids) > 1: break   # 別商品を含み始めた → これ以上広げない
+        best = p; node = p
+    return best
+
 def _parse_by_detail_links(html, base, detail_re, exclude_sidebar=False):
     """EC-CUBE / ColorMe 共通: 詳細リンクを起点に名前＋価格を近傍から拾う。
     exclude_sidebar=True でサイドバー/ランキング枠のリンクを除外（ColorMe用）。"""
@@ -290,19 +314,24 @@ def _parse_by_detail_links(html, base, detail_re, exclude_sidebar=False):
             stxt = spec.get_text(" ", strip=True)
             vol_hint = vol_from_name(stxt); abv_hint = _abv_loose(stxt)
         if exclude_sidebar and RANK_NAME_RE.match(name): continue  # 「No.3 …」等のランキング枠を除外
-        # 価格: 商品コンテナに無ければ、価格が現れるまで最小限だけ上位へ辿る（他商品を巻き込まない範囲）
-        price = None
-        node = cont
-        for _ in range(4):
-            ps = _extract_prices(node.get_text(" ", strip=True))
-            if ps: price = max(ps); break
-            if node.parent is None: break
-            node = node.parent
+        # 価格: 「この商品タイル」の範囲(=他商品を含まない最大の祖先)に限定して拾う。
+        #   ①専用の価格要素があればそこだけを見る（定価/ポイント/送料条件などの数値を除外）
+        #   ②無ければタイル全体テキストから抽出。いずれも税込を優先して max。
+        #   隣接タイルや『最近チェックした商品』等の別商品(高額ボトル)を巻き込まない。
+        scope = _single_product_scope(a, detail_re)
+        ps = []
+        for sel in PRICE_SELECTORS:
+            pe = scope.select_one(sel)
+            if pe:
+                got = _extract_prices(pe.get_text(" ", strip=True))
+                if got: ps = got; break
+        if not ps:
+            ps = _extract_prices(scope.get_text(" ", strip=True))
+        price = max(ps) if ps else None
         url = urllib.parse.urljoin(base + "/", a["href"])
         # 在庫（明示要素が無いColorMe/EC-CUBE向け・複数シグナルで推定。不明は在庫あり側に倒す）:
         #   ①品切れ文言(SOLD OUT/売切れ/品切れ/在庫なし/完売/入荷待ち/再入荷通知) または
         #   ②カート/購入ボタンが disabled → 品切れ。それ以外で価格あり → 在庫あり。
-        scope = node
         soldout = bool(SOLDOUT_RE.search(scope.get_text(" ", strip=True)))
         if not soldout:
             for b in scope.find_all(["button", "input", "a"]):
