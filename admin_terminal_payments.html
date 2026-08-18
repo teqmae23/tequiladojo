@@ -93,6 +93,12 @@ tr.r-ng{background:#fdf6f4}
   <div class="content">
     <div class="card">
       <div class="toolbar2">
+        <label>種別
+          <select id="f-kind">
+            <option value="store" selected>店頭決済（WisePad 3）</option>
+            <option value="sub">サブスク決済（会員課金）</option>
+          </select>
+        </label>
         <label>期間
           <select id="f-range">
             <option value="today">今日</option>
@@ -101,7 +107,7 @@ tr.r-ng{background:#fdf6f4}
             <option value="all">全期間</option>
           </select>
         </label>
-        <label>状態
+        <label id="lbl-status">状態
           <select id="f-status">
             <option value="all">すべて</option>
             <option value="succeeded">成功</option>
@@ -117,7 +123,7 @@ tr.r-ng{background:#fdf6f4}
 
     <div class="card">
       <div class="tw"><table id="tbl">
-        <thead><tr>
+        <thead><tr id="thead-row">
           <th>日時</th><th>状態</th><th>経路</th><th style="text-align:right">金額</th>
           <th>ブランド</th><th>PaymentIntent</th><th>対象来場</th><th>エラー/備考</th>
         </tr></thead>
@@ -153,12 +159,13 @@ function gv(id){var e=g(id);return e?String(e.value).trim():"";}
 function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 function toast(m,t){var d=document.createElement("div");d.className="toast"+(t?" "+t:"");d.textContent=m;g("toasts").appendChild(d);setTimeout(function(){d.remove();},3200);}
 
-var allRows=[], members=[];
+var allRows=[], members=[], plans=[];
 
 // ── 認証 ─────────────────────────────────────────────
 AuthRole.requireOwner(auth,function(user){
   g("login-screen").style.display="none";g("app").style.display="block";g("temail").textContent=user.email;
   loadMembers();
+  loadPlans();
   load();
 },function(){ g("login-screen").style.display="flex";g("app").style.display="none"; });
 g("lbtn").addEventListener("click",function(){
@@ -171,6 +178,11 @@ g("btn-logout").addEventListener("click",function(){auth.signOut();});
 g("btn-reload").addEventListener("click",load);
 g("f-range").addEventListener("change",load);
 g("f-status").addEventListener("change",render);
+g("f-kind").addEventListener("change",function(){
+  // サブスク時は「状態」フィルタを隠す（Stripeのpaid請求書のみ取得のため）
+  g("lbl-status").style.display=(gv("f-kind")==="sub")?"none":"";
+  load();
+});
 
 function pad2(n){return(n<10?"0":"")+n;}
 function fmtTs(ts){
@@ -205,6 +217,25 @@ function memberName(mid){
   if(!mid) return "非会員";
   var m=members.find(function(x){ return x.id===mid||x.memberId===mid||x.realId===mid||x.displayId===mid; });
   return m?(m.nickname||m.name||m.displayId||m.memberId||m.id):String(mid);
+}
+// ── サブスク決済用 ─────────────────────────────────────
+async function loadPlans(){
+  try{ var ps=await db.collection("plans").get(); plans=ps.docs.map(function(d){return Object.assign({id:d.id},d.data());}); }catch(e){}
+}
+function memberByCustomer(cid){
+  if(!cid) return null;
+  var m=members.find(function(x){ return x.stripeCustomerId===cid; });
+  return m?(m.nickname||m.name||m.displayId||m.memberId||m.id):null;
+}
+function planName(priceId){
+  if(!priceId) return "—";
+  var p=plans.find(function(x){ return x.stripePriceId===priceId; });
+  return p?(p.name||p.label||p.priceLabel||p.id):String(priceId);
+}
+function fmtUnix(sec){
+  if(!sec) return "—";
+  var d=new Date(Number(sec)*1000);
+  return d.getFullYear()+"/"+pad2(d.getMonth()+1)+"/"+pad2(d.getDate())+" "+pad2(d.getHours())+":"+pad2(d.getMinutes());
 }
 
 // ── カードブランド／読み取り方法（Stripeから取得） ─────────────
@@ -248,7 +279,9 @@ async function enrichBrands(rows){
   } finally { _enriching=false; }
 }
 
-async function load(){
+function load(){ if(gv("f-kind")==="sub") loadSub(); else loadStore(); }
+
+async function loadStore(){
   g("rows").innerHTML="<tr><td colspan='8' class='ec'>読込中…</td></tr>";
   g("summary").style.display="none";
   try{
@@ -268,7 +301,58 @@ async function load(){
   }
 }
 
+// サブスク決済は Stripe から都度取得（terminalPayments とは別系統）。
+async function loadSub(){
+  g("rows").innerHTML="<tr><td colspan='6' class='ec'>Stripeから取得中…</td></tr>";
+  g("summary").style.display="none";
+  try{
+    var payload={limit:100};
+    var range=gv("f-range");
+    if(range!=="all"){
+      var days=(range==="today"?0:parseInt(range,10));
+      var since=new Date(); since.setHours(0,0,0,0); since.setDate(since.getDate()-days);
+      payload.sinceSec=Math.floor(since.getTime()/1000);
+    }
+    var res=await fbFunctions.httpsCallable("subscriptionPayments")(payload);
+    allRows=(res.data&&res.data.rows)||[];
+    render();
+  }catch(e){
+    g("rows").innerHTML="<tr><td colspan='6' class='ec'>取得失敗: "+esc((e&&e.message)||e)+"</td></tr>";
+  }
+}
+
+var THEAD_STORE="<th>日時</th><th>状態</th><th>経路</th><th style='text-align:right'>金額</th><th>ブランド</th><th>PaymentIntent</th><th>対象来場</th><th>エラー/備考</th>";
+var THEAD_SUB="<th>日時</th><th>会員</th><th>プラン</th><th style='text-align:right'>金額</th><th>状態</th><th>請求書</th>";
 function render(){
+  if(gv("f-kind")==="sub"){ g("thead-row").innerHTML=THEAD_SUB; renderSub(); }
+  else { g("thead-row").innerHTML=THEAD_STORE; renderStore(); }
+}
+
+function renderSub(){
+  var rows=allRows.slice();
+  var sum=0; rows.forEach(function(r){ sum+=Number(r.amount)||0; });
+  g("summary").style.display="flex";
+  g("summary").innerHTML=
+    "<div class='it'><span class='lb'>件数</span><b>"+rows.length+"件</b></div>"+
+    "<div class='it'><span class='lb'>合計金額</span><b>¥"+sum.toLocaleString()+"</b></div>";
+  if(!rows.length){ g("rows").innerHTML="<tr><td colspan='6' class='ec'>該当するサブスク決済がありません</td></tr>"; return; }
+  g("rows").innerHTML=rows.map(function(r){
+    var nm=memberByCustomer(r.customerId)||r.customerName||r.customerEmail;
+    var whoCell=nm?("<b>"+esc(nm)+"</b>"):"<span class='dim'>不明</span>";
+    var email=(r.customerEmail&&r.customerEmail!==nm)?(" <span class='dim mono'>"+esc(r.customerEmail)+"</span>"):"";
+    var inv=r.hostedInvoiceUrl?("<a href='"+esc(r.hostedInvoiceUrl)+"' target='_blank' rel='noopener' style='color:var(--gold-d)'>開く ↗</a>"):"<span class='dim'>—</span>";
+    return "<tr>"+
+      "<td class='mono'>"+esc(fmtUnix(r.created))+"</td>"+
+      "<td>"+whoCell+email+"</td>"+
+      "<td>"+esc(planName(r.priceId))+"</td>"+
+      "<td class='amt'>¥"+(Number(r.amount)||0).toLocaleString()+"</td>"+
+      "<td><span class='badge b-ok'>支払済</span></td>"+
+      "<td>"+inv+"</td>"+
+    "</tr>";
+  }).join("");
+}
+
+function renderStore(){
   var fs=gv("f-status");
   var rows=allRows.filter(function(r){ return fs==="all" || String(r.status)===fs; });
 

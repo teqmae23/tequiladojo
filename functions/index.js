@@ -1447,6 +1447,40 @@ exports.terminalChargeInfo = functions
     return { brand: cp.brand || null, readMethod: cp.read_method || null, last4: cp.last4 || null };
   });
 
+// サブスクリプション決済（オンライン継続課金）の履歴を Stripe の請求書(invoice)から取得する。
+// 管理ページ「カード決済ログ」の種別=サブスクで表示する（terminalPayments とは別系統）。
+exports.subscriptionPayments = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onCall(async (data, context) => {
+    await assertStaff(context);
+    const stripe = require('stripe')(stripeSecretKey.value());
+    const limit = Math.min(Math.max(Number(data && data.limit) || 100, 1), 100);
+    const params = { limit, status: 'paid' };
+    if (data && data.sinceSec) params.created = { gte: Math.floor(Number(data.sinceSec)) };
+    const inv = await stripe.invoices.list(params);
+    const rows = (inv.data || []).map(function (v) {
+      const line = (v.lines && v.lines.data && v.lines.data[0]) || {};
+      const priceId = (line.price && line.price.id)
+        || (line.pricing && line.pricing.price_details && line.pricing.price_details.price)
+        || (line.plan && line.plan.id) || null;
+      return {
+        id: v.id,
+        number: v.number || null,
+        created: v.created || null,
+        amount: (v.amount_paid != null ? v.amount_paid : (v.total || 0)),
+        currency: v.currency || 'jpy',
+        customerId: (typeof v.customer === 'string' ? v.customer : (v.customer && v.customer.id)) || null,
+        customerEmail: v.customer_email || null,
+        customerName: v.customer_name || null,
+        priceId: priceId,
+        status: v.status || null,
+        subscription: (typeof v.subscription === 'string' ? v.subscription : (v.subscription && v.subscription.id)) || null,
+        hostedInvoiceUrl: v.hosted_invoice_url || null,
+      };
+    });
+    return { rows: rows, hasMore: !!inv.has_more };
+  });
+
 // ── 個人テキーラログ: 道場注文からの自動登録 ─────────────────────
 // 会員(有料)の道場注文(tequila/cocktail)を個人ログ(source=auto)へ同期する。
 // 冪等: ログID = 'auto_' + orderId。注文の追加/編集/削除に追従。
