@@ -340,6 +340,9 @@ def _parse_by_detail_links(html, base, detail_re, exclude_sidebar=False):
                     cls = " ".join(b.get("class") or [])
                     if b.has_attr("disabled") or re.search(r"disabled|sold ?out|nostock|out-?of-?stock", cls, re.I):
                         soldout = True; break
+        # 品切れは価格を持たせない（武蔵屋等は品切れ時に価格を表示しないため、
+        # タイル内やレイアウトに残る数値を相場として拾わないよう明示的に None にする）。
+        if soldout: price = None
         # 商品ページはあるが価格が取れない＝購入不可＝在庫切れ扱い（? ではなく品切れ=赤丸）
         avail = "品切れ" if (soldout or price is None) else "在庫あり"
         prev = items.get(pid)
