@@ -1097,6 +1097,9 @@ function buildBatchBlock(b,visitId){
   const blindSummary=blindResults4group.length?`${allCorrect}/${allTotal}正解`:'';
 
   // ブラインドリンク
+  const blindInputBtn=(isBlind&&b.batchId)
+    ?`<span class="og-badge" style="background:#e7f0ff;color:#0c447c;cursor:pointer;font-size:11px" onclick="event.stopPropagation();openBlindInput('${esc(b.batchId)}','${esc(visitId)}','${esc(b.repGid||b.groups[0])}')" title="ブラインドの結果を入力">🎭 結果入力</span>`
+    :'';
   const blindLink=isBlind
     ?`<span class="og-badge" style="background:#f3eaff;color:#6b3fa0;cursor:pointer;font-size:11px" onclick="event.stopPropagation();openBlindModal('${esc(b.repGid||b.groups[0])}','${esc(visitId)}')" title="ブラインド結果を見る">🎭 結果を表示</span>`
     :'';
@@ -1110,6 +1113,7 @@ function buildBatchBlock(b,visitId){
   return`<div class="order-group">
     <div class="og-header">
       <span class="og-time">${esc(time)}</span>
+      ${blindInputBtn}
       ${blindLink}
       ${togetherChip}
       <span class="og-total">${fmtAmt(total)}</span>
@@ -1242,6 +1246,103 @@ function openBlindModal(gid, visitId){
     <div class="bpop-table-wrap"><table class="bpop-table">${thead}<tbody>${tbody}</tbody></table></div>
     <div class="bpop-legend"><div class="bpop-legend-title">マーク対応表</div>${legendRows}</div>`;
   document.getElementById('blind-modal').classList.add('open');
+}
+
+// ═══ ブラインド結果 入力（会員が自分の分を一時データ blindGuesses に保存。店側が拾う） ═══
+function mpToast(msg){
+  var t=document.createElement('div');
+  t.textContent=msg;
+  t.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#18110a;color:#fff;padding:10px 18px;border-radius:18px;font-size:13px;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,.3)';
+  document.body.appendChild(t); setTimeout(function(){t.remove();},2600);
+}
+function biMarkChip(markId){
+  var m=blindMarkMap[markId];
+  if(m&&(m.emoji||m.symbol)) return '<span title="'+esc(m.label||'')+'">'+esc(m.emoji||m.symbol)+'</span>';
+  var cc=(markId||'').charAt(0), isW=cc==='W', isDbl=(markId||'').charAt(1)==='◎';
+  var col=isW?'#18110a':({R:'#c0392b',G:'#1a6e3a',Y:'#b8860b',B:'#185FA5'}[cc]||'#666');
+  var sym=isW?(isDbl?'○○':'○'):(isDbl?'●●':'●');
+  return '<span style="color:'+col+';font-weight:700">'+sym+'</span>';
+}
+var _biState=null, _biFlightUnsub=null;
+function ensureBlindInputModal(){
+  if(document.getElementById('blind-input-modal')) return;
+  var w=document.createElement('div');
+  w.id='blind-input-modal';
+  w.style.cssText='display:none;position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:300;align-items:center;justify-content:center;padding:16px';
+  w.innerHTML='<div style="width:100%;max-width:440px;background:#fff;border-radius:14px;max-height:88vh;overflow-y:auto">'
+    +'<div style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid #eee;font-weight:700">🎭 ブラインド結果入力<button onclick="closeBlindInput()" style="margin-left:auto;border:none;background:none;font-size:20px;cursor:pointer;color:#999">✕</button></div>'
+    +'<div id="bi-body" style="padding:14px 16px"></div></div>';
+  document.body.appendChild(w);
+  w.addEventListener('click',function(e){ if(e.target===w) closeBlindInput(); });
+}
+function closeBlindInput(){
+  var w=document.getElementById('blind-input-modal'); if(w) w.style.display='none';
+  if(_biFlightUnsub){ try{_biFlightUnsub();}catch(e){} _biFlightUnsub=null; }
+}
+async function openBlindInput(batchId, visitId, repGid){
+  ensureBlindInputModal();
+  var marks=[...new Set(allOrders.filter(function(o){return o.batchId===batchId && o.blindId===1 && (o.served!==0&&o.served!=='0');}).map(function(o){return o.blindMarkId;}).filter(Boolean))];
+  if(!marks.length){ mpToast('ブラインド対象が見つかりません'); return; }
+  var customerId=currentMember&&(currentMember.id||currentMember.memberId);
+  var authUid=(auth.currentUser&&auth.currentUser.uid)||null;
+  var docId=batchId+'__'+customerId;
+  var existing=null;
+  try{ var d=await db.collection('blindGuesses').doc(docId).get(); if(d.exists) existing=d.data(); }catch(e){}
+  _biState={ batchId:batchId, visitId:visitId, repGid:repGid, customerId:customerId, authUid:authUid, docId:docId,
+    marks:marks, guesses:{}, winner:(existing&&existing.winner)||null, confirmed:!!(existing&&existing.confirmed) };
+  if(existing&&Array.isArray(existing.answers)) existing.answers.forEach(function(a){ _biState.guesses[a.blindMarkId]=a.guessMarkId||null; });
+  renderBlindInput();
+  document.getElementById('blind-input-modal').style.display='flex';
+  watchBlindFlight(batchId);
+}
+function renderBlindInput(){
+  var s=_biState, ro=s.confirmed;
+  var nums=['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩'];
+  var opt=function(sel){ return '<option value="">—</option>'+s.marks.map(function(mk,i){ return '<option value="'+esc(mk)+'"'+(sel===mk?' selected':'')+'>'+nums[i]+' '+esc((blindMarkMap[mk]&&blindMarkMap[mk].label)||mk)+'</option>'; }).join(''); };
+  var rows=s.marks.map(function(mk,i){
+    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f2f2f2">'
+      +'<div style="width:56px">'+nums[i]+' '+biMarkChip(mk)+'</div>'
+      +'<div style="flex:1"><select data-mk="'+esc(mk)+'" class="bi-guess" '+(ro?'disabled':'')+' style="width:100%;padding:7px;border:1px solid #ccc;border-radius:6px;font-size:13px">'+opt(s.guesses[mk]||'')+'</select></div></div>';
+  }).join('');
+  var body=document.getElementById('bi-body');
+  body.innerHTML=
+    '<div style="font-size:12px;color:#666;margin-bottom:8px">各グラス（①〜）が、どのお酒だと思うか選んでください。</div>'
+    +rows
+    +'<div style="display:flex;align-items:center;gap:8px;padding:10px 0 4px"><div style="width:56px;font-size:12px;color:#666">好み</div><div style="flex:1"><select id="bi-winner" '+(ro?'disabled':'')+' style="width:100%;padding:7px;border:1px solid #ccc;border-radius:6px;font-size:13px">'+opt(s.winner||'')+'</select></div></div>'
+    +'<div id="bi-status" style="font-size:12px;margin:8px 0;min-height:16px">'+(s.confirmed?'<span style="color:#1a6640;font-weight:700">✅ 確定済み（変更するには店舗で解除してください）</span>':'')+'</div>'
+    +(s.confirmed
+        ? '<button onclick="closeBlindInput()" style="width:100%;padding:11px;border:none;background:#eee;border-radius:8px;font-size:14px;cursor:pointer">閉じる</button>'
+        : '<div style="display:flex;gap:8px"><button onclick="saveBlindInput(false)" style="flex:1;padding:11px;border:1px solid #ccc;background:#f5f5f5;border-radius:8px;font-size:14px;cursor:pointer">一時保存</button><button onclick="saveBlindInput(true)" style="flex:2;padding:11px;border:none;background:#0c447c;color:#fff;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">確定する</button></div>');
+  Array.prototype.forEach.call(body.querySelectorAll('.bi-guess'),function(sel){ sel.addEventListener('change',function(){ _biState.guesses[this.getAttribute('data-mk')]=this.value||null; }); });
+  var win=document.getElementById('bi-winner'); if(win) win.addEventListener('change',function(){ _biState.winner=this.value||null; });
+}
+async function saveBlindInput(doConfirm){
+  var s=_biState;
+  if(doConfirm){
+    var unfilled=s.marks.some(function(mk){ return !s.guesses[mk]; });
+    if(unfilled && !window.confirm('未選択の項目がありますが確定しますか？')) return;
+  }
+  var answers=s.marks.map(function(mk){ return {blindMarkId:mk, guessMarkId:s.guesses[mk]||null}; });
+  var data={ id:s.docId, batchId:s.batchId, groupId:s.repGid, visitKey:s.visitId,
+    customerId:s.customerId, authUid:s.authUid,
+    name:(currentMember&&(currentMember.nickname||currentMember.name))||s.customerId,
+    answers:answers, winner:s.winner||null, confirmed:!!doConfirm,
+    updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
+  if(doConfirm) data.confirmedAt=firebase.firestore.FieldValue.serverTimestamp();
+  try{
+    await db.collection('blindGuesses').doc(s.docId).set(data,{merge:true});
+    s.confirmed=!!doConfirm; renderBlindInput();
+    mpToast(doConfirm?'確定しました':'一時保存しました');
+  }catch(e){ mpToast('保存失敗: '+(e.message||e)); }
+}
+function watchBlindFlight(batchId){
+  if(_biFlightUnsub){ try{_biFlightUnsub();}catch(e){} _biFlightUnsub=null; }
+  _biFlightUnsub=db.collection('blindFlights').doc(batchId).onSnapshot(function(doc){
+    var st=document.getElementById('bi-status'); if(!st||!_biState) return;
+    if(doc.exists && doc.data().revealed){
+      st.innerHTML='<span style="color:#6b3fa0;font-weight:700">🎭 結果が公開されました</span> <button onclick="closeBlindInput();openBlindModal(\''+esc(_biState.repGid)+'\',\''+esc(_biState.visitId)+'\')" style="border:none;background:#f3eaff;color:#6b3fa0;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px">結果を見る</button>';
+    }
+  }, function(err){});
 }
 
 async function loadVisitStatus(memberId){
