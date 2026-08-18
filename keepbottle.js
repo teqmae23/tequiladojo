@@ -536,9 +536,312 @@ window.KB = (function () {
     } finally { btn.disabled = false; }
   }
 
+  function kbOrderName(k, extra) { return (k.bottleEs || k.bottleJa || 'キープ') + ' (KB)' + (extra ? ' ' + extra : ''); }
+
+  // ========================================================================
+  // Phase 3: KB注文（飲用・¥0）。cart へ差し込む item を作って onAdd で渡す。
+  // ========================================================================
+  var _drinkCtx = null, _drinkKeeps = [];
+  function ensureDrinkModal() {
+    if (document.getElementById('kb-drink-modal')) return;
+    var w = document.createElement('div');
+    w.id = 'kb-drink-modal';
+    w.style.cssText = 'position:fixed;inset:0;background:rgba(24,17,10,.5);z-index:9100;display:none;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto;font-family:inherit';
+    w.innerHTML =
+      '<div style="width:100%;max-width:440px;background:#fff;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.3);margin-top:24px">' +
+      '<div style="display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid #eee;font-weight:700;font-size:16px">🍾 キープを飲む（¥0）<button id="kb-dk-x" style="margin-left:auto;border:none;background:none;font-size:20px;cursor:pointer;color:#999">✕</button></div>' +
+      '<div style="padding:16px 18px">' +
+        '<div style="font-size:12px;color:#666;margin-bottom:4px">キープボトル（使用中）</div>' +
+        '<select id="kb-dk-keep" style="width:100%;padding:9px;border:1px solid #ccc;border-radius:6px;font-size:14px;margin-bottom:12px"></select>' +
+        '<div style="display:flex;gap:10px;align-items:flex-end">' +
+          '<div style="flex:1"><div style="font-size:12px;color:#666;margin-bottom:4px">数量（ml・10ml単位）</div><input id="kb-dk-qty" type="number" step="10" min="10" value="30" style="width:100%;padding:9px;border:1px solid #ccc;border-radius:6px;font-size:14px"></div>' +
+          '<label style="display:flex;align-items:center;gap:5px;font-size:13px;padding-bottom:10px"><input type="checkbox" id="kb-dk-soda"> ソーダ割り</label>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#999;margin-top:8px">価格は¥0（キープ消費）。奢りは通常どおり注文確定時に設定できます。</div>' +
+        '<div id="kb-dk-err" style="color:#c0392b;font-size:12px;min-height:14px;margin-top:8px"></div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;padding:12px 18px;border-top:1px solid #eee;justify-content:flex-end">' +
+        '<button id="kb-dk-cancel" style="padding:9px 16px;border:1px solid #ccc;background:#f5f5f5;border-radius:6px;cursor:pointer;font-size:13px">キャンセル</button>' +
+        '<button id="kb-dk-add" style="padding:9px 18px;border:none;background:#7a5610;color:#fff;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">カートに追加</button>' +
+      '</div></div>';
+    document.body.appendChild(w);
+    function cl() { w.style.display = 'none'; }
+    document.getElementById('kb-dk-x').addEventListener('click', cl);
+    document.getElementById('kb-dk-cancel').addEventListener('click', cl);
+    document.getElementById('kb-dk-add').addEventListener('click', addDrink);
+    w.addEventListener('click', function (e) { if (e.target === w) cl(); });
+  }
+  async function openDrink(ctx) {
+    ctx = ctx || {}; _drinkCtx = ctx;
+    var bizDate = ctx.bizDate || nowDate();
+    var keeps = [];
+    try {
+      var snap = await db().collection('keepBottles').where('status', '==', 'active').get();
+      snap.docs.forEach(function (d) { var k = Object.assign({ id: d.id }, d.data()); if (k.sessionActive && k.sessionDate === bizDate) keeps.push(k); });
+    } catch (e) { }
+    _drinkKeeps = keeps;
+    ensureDrinkModal();
+    var sel = document.getElementById('kb-dk-keep');
+    sel.innerHTML = keeps.length
+      ? keeps.map(function (k) { return '<option value="' + esc(k.id) + '">' + esc(k.bottleEs || k.bottleJa || k.id) + '（残' + (k.remaining != null ? k.remaining + 'ml' : '—') + '）</option>'; }).join('')
+      : '<option value="">今セッションで使用中のキープがありません</option>';
+    document.getElementById('kb-dk-qty').value = '30';
+    document.getElementById('kb-dk-soda').checked = false;
+    document.getElementById('kb-dk-err').textContent = '';
+    document.getElementById('kb-drink-modal').style.display = 'flex';
+  }
+  function addDrink() {
+    var errEl = document.getElementById('kb-dk-err'); errEl.textContent = '';
+    var kid = document.getElementById('kb-dk-keep').value;
+    var k = _drinkKeeps.find(function (x) { return x.id === kid; });
+    if (!k) { errEl.textContent = 'キープを選択してください'; return; }
+    var qty = Math.round((parseInt(document.getElementById('kb-dk-qty').value) || 0) / 10) * 10;
+    if (qty <= 0) { errEl.textContent = '数量(ml)を入力してください'; return; }
+    var soda = document.getElementById('kb-dk-soda').checked;
+    var item = {
+      productId: k.id, productName: kbOrderName(k, soda ? 'ソーダ' : ''), productType: 'keep',
+      qty: qty, unit: 'ml', unitPrice: 0, blindMarkId: null, keepBottleId: k.id
+    };
+    document.getElementById('kb-drink-modal').style.display = 'none';
+    if (typeof _drinkCtx.onAdd === 'function') _drinkCtx.onAdd(item);
+  }
+
+  // ========================================================================
+  // Phase 4/5: 会計時の重量振り分け（＋部分会計の再起点）
+  // ========================================================================
+  var _allocCtx = null, _allocQueue = [], _allocCur = null;
+
+  async function openAllocation(ctx) {
+    ctx = ctx || {}; var bizDate = ctx.bizDate || nowDate();
+    var coVks = ctx.checkoutVisitKeys || [];
+    var coMembers = {};
+    (ctx.allVisits || []).forEach(function (v) { if (coVks.indexOf(v.id) >= 0 && v.memberId) coMembers[v.memberId] = 1; });
+    var keeps = [];
+    try {
+      var snap = await db().collection('keepBottles').where('status', '==', 'active').get();
+      snap.docs.forEach(function (d) {
+        var k = Object.assign({ id: d.id }, d.data());
+        if (!(k.sessionActive && k.sessionDate === bizDate)) return;
+        if ((k.userMemberIds || []).some(function (o) { return coMembers[o]; })) keeps.push(k);
+      });
+    } catch (e) { }
+    if (!keeps.length) return false;
+    _allocCtx = ctx; _allocCtx.bizDate = bizDate; _allocQueue = keeps.slice();
+    ensureAllocModal();
+    nextAllocation();
+    return true;
+  }
+
+  function ensureAllocModal() {
+    if (document.getElementById('kb-alloc-modal')) return;
+    var w = document.createElement('div');
+    w.id = 'kb-alloc-modal';
+    w.style.cssText = 'position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:9200;display:none;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto;font-family:inherit';
+    w.innerHTML =
+      '<div style="width:100%;max-width:560px;background:#fff;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.3);margin-top:20px">' +
+      '<div style="padding:14px 18px;border-bottom:1px solid #eee;font-weight:700;font-size:16px" id="kb-al-title">🍾 キープ精算</div>' +
+      '<div style="padding:14px 18px;max-height:74vh;overflow-y:auto">' +
+        '<div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:8px">' +
+          '<div style="flex:1"><div style="font-size:12px;color:#666;margin-bottom:4px">使用後の重量（g）</div><input id="kb-al-weight" type="number" style="width:100%;padding:9px;border:1px solid #ccc;border-radius:6px;font-size:14px"></div>' +
+          '<button id="kb-al-even" style="padding:9px 12px;border:1px solid #7a5610;background:#efe3d4;color:#7a5610;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap">残を均等配分</button>' +
+        '</div>' +
+        '<div id="kb-al-summary" style="font-size:12px;color:#444;background:#faf6ee;border-radius:6px;padding:8px 10px;margin-bottom:10px;line-height:1.7"></div>' +
+        '<div id="kb-al-rows"></div>' +
+        '<div id="kb-al-err" style="color:#c0392b;font-size:12px;min-height:14px;margin-top:8px"></div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;padding:12px 18px;border-top:1px solid #eee;justify-content:flex-end">' +
+        '<button id="kb-al-skip" style="padding:9px 16px;border:1px solid #ccc;background:#f5f5f5;border-radius:6px;cursor:pointer;font-size:13px">このボトルは後で</button>' +
+        '<button id="kb-al-ok" style="padding:9px 18px;border:none;background:#7a5610;color:#fff;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">振り分け確定</button>' +
+      '</div></div>';
+    document.body.appendChild(w);
+    document.getElementById('kb-al-weight').addEventListener('input', allocRecompute);
+    document.getElementById('kb-al-even').addEventListener('click', allocEven);
+    document.getElementById('kb-al-skip').addEventListener('click', function () { nextAllocation(); });
+    document.getElementById('kb-al-ok').addEventListener('click', allocConfirm);
+  }
+
+  async function nextAllocation() {
+    if (!_allocQueue.length) {
+      document.getElementById('kb-alloc-modal').style.display = 'none';
+      if (_allocCtx && typeof _allocCtx.onDone === 'function') _allocCtx.onDone();
+      return;
+    }
+    var k = _allocQueue.shift();
+    var bizDate = _allocCtx.bizDate;
+    // 当セッションの当ボトルのKB注文（申告量）を visitKey ごとに集計
+    var declared = {};
+    try {
+      var snap = await db().collection('orders').where('keepBottleId', '==', k.id).get();
+      snap.docs.forEach(function (d) {
+        var o = d.data();
+        if (o.orderDate !== bizDate || o.served === 0) return;
+        if (o.productType !== 'keep') return;
+        if (o.kbSettle) return; // 精算注文は除外（申告のみ集計）
+        var vk = o.visitKey; if (!vk) return;
+        declared[vk] = (declared[vk] || 0) + (Number(o.qty) || 0);
+      });
+    } catch (e) { }
+    // 当セッションの来場者（スタッフ除く）
+    var visitors = (_allocCtx.allVisits || []).filter(function (v) {
+      var vd = v.visitDate || (v.id || '').slice(0, 6);
+      return vd === bizDate && !v.isStaff;
+    }).map(function (v) {
+      return { id: v.id, memberId: v.memberId || null, name: memberNameFromCtx(v.memberId) || ('ゲスト（' + v.id + '）'), declared: declared[v.id] || 0, added: 0 };
+    });
+    // 申告があるが visitors に無い（退場済み等）来場も拾う
+    Object.keys(declared).forEach(function (vk) {
+      if (!visitors.find(function (x) { return x.id === vk; })) {
+        var v = (_allocCtx.allVisits || []).find(function (x) { return x.id === vk; });
+        visitors.push({ id: vk, memberId: v ? v.memberId : null, name: (v && memberNameFromCtx(v.memberId)) || ('来場（' + vk + '）'), declared: declared[vk] || 0, added: 0 });
+      }
+    });
+    _allocCur = { keep: k, visitors: visitors };
+    document.getElementById('kb-al-title').textContent = '🍾 キープ精算 — ' + (k.bottleEs || k.bottleJa || k.id);
+    document.getElementById('kb-al-weight').value = '';
+    document.getElementById('kb-al-err').textContent = '';
+    renderAllocRows();
+    allocRecompute();
+    document.getElementById('kb-alloc-modal').style.display = 'flex';
+  }
+
+  function memberNameFromCtx(id) {
+    if (!id) return null;
+    var arr = (_allocCtx && _allocCtx.members) || [];
+    var m = arr.find ? arr.find(function (x) { return x.id === id || x.memberId === id; }) : null;
+    return m ? (m.nickname || m.name || m.displayId || m.memberId || m.id) : null;
+  }
+  function renderAllocRows() {
+    var rows = document.getElementById('kb-al-rows');
+    rows.innerHTML = _allocCur.visitors.map(function (v, i) {
+      return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f0f0f0;font-size:13px">' +
+        '<div style="flex:1"><b>' + esc(v.name) + '</b></div>' +
+        '<div style="width:74px;text-align:right;color:#888">申告 ' + v.declared + '</div>' +
+        '<div style="display:flex;align-items:center;gap:3px">＋<input type="number" class="kb-al-add" data-i="' + i + '" step="10" min="0" value="' + v.added + '" style="width:74px;padding:6px;border:1px solid #ccc;border-radius:5px;font-size:13px;text-align:right">ml</div>' +
+        '<div style="width:70px;text-align:right;font-weight:600" data-total="' + i + '">' + (v.declared + v.added) + '</div>' +
+        '</div>';
+    }).join('') || '<div style="color:#aaa;font-size:12px;padding:8px">対象の来場者がいません</div>';
+    Array.prototype.forEach.call(rows.querySelectorAll('.kb-al-add'), function (inp) {
+      inp.addEventListener('input', function () {
+        var i = parseInt(this.getAttribute('data-i'));
+        _allocCur.visitors[i].added = Math.max(0, parseInt(this.value) || 0);
+        allocRecompute();
+      });
+    });
+  }
+  function allocComputedRemaining() {
+    var k = _allocCur.keep;
+    var w = document.getElementById('kb-al-weight').value;
+    if (w === '') return null;
+    var wG = parseFloat(w) || 0;
+    return remainFromWeightKeep(k, wG);
+  }
+  function allocRecompute() {
+    var k = _allocCur.keep;
+    var startRem = k.sessionStartRemaining != null ? Number(k.sessionStartRemaining) : (k.remaining != null ? Number(k.remaining) : null);
+    var curRem = allocComputedRemaining();
+    var consumed = (startRem != null && curRem != null) ? Math.max(0, startRem - curRem) : null;
+    var sumDeclared = _allocCur.visitors.reduce(function (s, v) { return s + v.declared; }, 0);
+    var sumAdded = _allocCur.visitors.reduce(function (s, v) { return s + v.added; }, 0);
+    var remainder = (consumed != null) ? (consumed - sumDeclared) : null;
+    _allocCur.visitors.forEach(function (v, i) { var el = document.querySelector('[data-total="' + i + '"]'); if (el) el.textContent = v.declared + v.added; });
+    var s = document.getElementById('kb-al-summary');
+    s.innerHTML =
+      '開始残量：<b>' + (startRem != null ? startRem + 'ml' : '—') + '</b>　使用後残量：<b>' + (curRem != null ? curRem + 'ml' : '（重量入力待ち）') + '</b><br>' +
+      '消費合計：<b>' + (consumed != null ? consumed + 'ml' : '—') + '</b>　申告合計：<b>' + sumDeclared + 'ml</b>　未申告(残)：<b style="color:' + (remainder != null && remainder < 0 ? '#c0392b' : '#1a6e58') + '">' + (remainder != null ? remainder + 'ml' : '—') + '</b><br>' +
+      '追加合計：<b>' + sumAdded + 'ml</b>' + (remainder != null ? '　（残 ' + remainder + 'ml と一致させてください）' : '');
+    var err = document.getElementById('kb-al-err');
+    if (remainder != null && remainder < 0) err.textContent = '申告が消費量を超えています。使用後重量を確認してください。';
+    else err.textContent = '';
+  }
+  function allocEven() {
+    var k = _allocCur.keep;
+    var startRem = k.sessionStartRemaining != null ? Number(k.sessionStartRemaining) : (k.remaining != null ? Number(k.remaining) : null);
+    var curRem = allocComputedRemaining();
+    if (startRem == null || curRem == null) { document.getElementById('kb-al-err').textContent = '先に使用後の重量を入力してください'; return; }
+    var consumed = Math.max(0, startRem - curRem);
+    var sumDeclared = _allocCur.visitors.reduce(function (s, v) { return s + v.declared; }, 0);
+    var remainder = consumed - sumDeclared;
+    var n = _allocCur.visitors.length;
+    if (n === 0) return;
+    if (remainder < 0) { document.getElementById('kb-al-err').textContent = '申告が消費量を超えています。'; return; }
+    var each = Math.floor(remainder / n / 10) * 10;
+    var used = each * n;
+    _allocCur.visitors.forEach(function (v) { v.added = each; });
+    var leftover = remainder - used;
+    var idx = 0;
+    while (leftover > 0 && n > 0) { _allocCur.visitors[idx % n].added += Math.min(10, leftover); leftover -= Math.min(10, leftover); idx++; }
+    renderAllocRows(); allocRecompute();
+  }
+  async function allocConfirm() {
+    var err = document.getElementById('kb-al-err'); err.textContent = '';
+    var k = _allocCur.keep;
+    var startRem = k.sessionStartRemaining != null ? Number(k.sessionStartRemaining) : (k.remaining != null ? Number(k.remaining) : null);
+    var curRem = allocComputedRemaining();
+    if (curRem == null) { err.textContent = '使用後の重量を入力してください'; return; }
+    var endW = parseFloat(document.getElementById('kb-al-weight').value) || 0;
+    var consumed = (startRem != null) ? Math.max(0, startRem - curRem) : null;
+    var sumDeclared = _allocCur.visitors.reduce(function (s, v) { return s + v.declared; }, 0);
+    var sumAdded = _allocCur.visitors.reduce(function (s, v) { return s + v.added; }, 0);
+    if (consumed != null && (sumDeclared + sumAdded) !== consumed) {
+      err.textContent = '申告＋追加（' + (sumDeclared + sumAdded) + 'ml）が消費合計（' + consumed + 'ml）と一致していません。';
+      return;
+    }
+    var bizDate = _allocCtx.bizDate;
+    var orderTime = _allocCtx.orderTime || nowTime();
+    var staffUid = _allocCtx.staffUid || (firebase.auth().currentUser && firebase.auth().currentUser.uid) || null;
+    var btn = document.getElementById('kb-al-ok'); btn.disabled = true;
+    try {
+      // 追加分の ¥0 注文を各来場へ差し込む
+      var toAdd = _allocCur.visitors.filter(function (v) { return v.added > 0; });
+      if (toAdd.length) {
+        var bid = await nextBatchId(bizDate);
+        var entries = [];
+        for (var i = 0; i < toAdd.length; i++) {
+          var v = toAdd[i];
+          var ogid = await nextOrderGroupId(v.id);
+          entries.push({
+            orderTime: orderTime, customerId: v.memberId || null, visitKey: v.id,
+            orderGroupId: ogid, batchId: bid, itemSeq: 1,
+            productCode: k.id, productName: kbOrderName(k, '精算'), productType: 'keep',
+            qty: v.added, unit: 'ml', unitPrice: 0,
+            blindId: 0, blindMarkId: null, served: 1, keepBottleId: k.id, kbSettle: true
+          });
+        }
+        await injectOrders(bizDate, entries);
+      }
+      // キープ更新（Phase 5: オーナーが残っていれば再起点、全員退出なら終了）
+      var coVks = _allocCtx.checkoutVisitKeys || [];
+      var owners = k.userMemberIds || [];
+      var remainOwnersPresent = (_allocCtx.allVisits || []).some(function (vv) {
+        return vv.memberId && owners.indexOf(vv.memberId) >= 0 && !vv.checkoutTime && coVks.indexOf(vv.id) < 0
+          && ((vv.visitDate || (vv.id || '').slice(0, 6)) === bizDate);
+      });
+      var upd = { remaining: curRem, lastWeight: endW, updatedAt: FV().serverTimestamp() };
+      if (remainOwnersPresent) {
+        // 部分会計: 会計時点の重量を新しい使用開始基準にする
+        upd.sessionStartWeight = endW; upd.sessionStartRemaining = curRem;
+      } else {
+        // 全オーナー退出: 今セッションを終了
+        upd.sessionActive = false;
+      }
+      await db().collection('keepBottles').doc(k.id).update(upd);
+      if (window.writeJournal) { try { window.writeJournal('update', 'keepBottles', k.id, null, upd); } catch (e) { } }
+      db().collection('keepBottleLog').add({
+        keepBottleId: k.id, type: remainOwnersPresent ? 'settle-partial' : 'settle', date: bizDate, time: nowTime(),
+        memberId: null, weight: endW, remainingMl: curRem, amount: 0,
+        note: remainOwnersPresent ? '会計精算（部分・再起点）' : '会計精算（セッション終了）', staffUid: staffUid, createdAt: FV().serverTimestamp()
+      }).catch(function () { });
+      nextAllocation();
+    } catch (e) {
+      err.textContent = '精算に失敗しました: ' + (e && e.message ? e.message : e);
+    } finally { btn.disabled = false; }
+  }
+
   return {
     openPurchase: openPurchase,
     onCheckin: onCheckin,
+    openDrink: openDrink,
+    openAllocation: openAllocation,
     injectOrders: injectOrders,
     nextOrderGroupId: nextOrderGroupId,
     nextBatchId: nextBatchId,
