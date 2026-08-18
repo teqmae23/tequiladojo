@@ -307,13 +307,24 @@ class MainActivity : AppCompatActivity() {
             .addSnapshotListener { snap, err ->
                 if (err != null || snap == null) return@addSnapshotListener
                 if (processing) return@addSnapshotListener
-                if (!Terminal.isInitialized() || Terminal.getInstance().connectedReader == null) return@addSnapshotListener
                 // createdAt 昇順で最初の pending を処理（1件ずつ）
                 val d = snap.documents
                     .sortedBy { it.getTimestamp("createdAt")?.seconds ?: Long.MAX_VALUE }
                     .firstOrNull() ?: return@addSnapshotListener
                 val amount = d.getLong("amount") ?: return@addSnapshotListener
                 if (amount <= 0) return@addSnapshotListener
+                // 端末未接続なら黙って無視せず、会計画面に理由を返す（無反応で固まらせない）。
+                if (!Terminal.isInitialized() || Terminal.getInstance().connectedReader == null) {
+                    d.reference.update(
+                        mapOf(
+                            "status" to "failed",
+                            "errorMessage" to "端末が接続されていません。アプリで「WisePad 3 に接続」を押してから再送信してください。",
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                    runOnUiThread { status("⚠ 会計から決済要求がありましたが端末が未接続です。接続してください。") }
+                    return@addSnapshotListener
+                }
                 processing = true
                 val ref = d.reference
                 ref.update(
