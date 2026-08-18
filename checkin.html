@@ -2660,7 +2660,8 @@ function doCheckoutSave(){
 //      で PaymentIntent を作成 → WisePad 3 で collect/confirm
 //   3) 成功: {status:'succeeded', paymentIntentId} / 失敗: {status:'failed', errorMessage}
 //   4) status=='canceled' を受けたら処理を中断
-var _ctUnsub=null, _ctDocId=null, _cardResult=null;
+var _ctUnsub=null, _ctDocId=null, _cardResult=null, _ctTimeout=null;
+function _clearCtTimeout(){ if(_ctTimeout){ clearTimeout(_ctTimeout); _ctTimeout=null; } }
 function toggleCardSection(){
   var sec=g('card-terminal-section'); if(!sec) return;
   if(gv('co-payment')==='2'){
@@ -2675,6 +2676,7 @@ function toggleCardSection(){
 }
 function resetCardTerminal(){
   if(_ctUnsub){ try{_ctUnsub();}catch(e){} _ctUnsub=null; }
+  _clearCtTimeout();
   _ctDocId=null; _cardResult=null;
   var s=g('ct-status'); if(s){ s.textContent='端末アプリ（WisePad 3接続）に決済リクエストを送ります。'; s.style.color='var(--ink2)'; }
   var b=g('ct-start'); if(b){ b.disabled=false; b.textContent='端末に送信'; }
@@ -2704,12 +2706,27 @@ async function startTerminalPayment(){
       updatedAt:firebase.firestore.FieldValue.serverTimestamp()
     });
     g('ct-status').textContent='📲 端末アプリで処理中… カードをかざしてください';
+    // 一定時間 pending のまま（端末アプリが受信しない）＝端末アプリ未起動/未接続/スリープの可能性。
+    // 無反応のまま固まらず、原因が分かる案内を出して再送できるようにする。
+    _clearCtTimeout();
+    _ctTimeout=setTimeout(function(){
+      if(_cardResult) return;                 // 既に成功していれば何もしない
+      g('ct-status').innerHTML='⚠ 端末アプリが応答しません。<br>'
+        +'<span style="font-size:11px;color:var(--ink3)">'
+        +'端末アプリを起動し「WisePad 3 に接続」で接続済みか、端末の電源が入っているか確認して、'
+        +'「再送信」を押してください。</span>';
+      g('ct-status').style.color='var(--red)';
+      g('ct-start').disabled=false; g('ct-start').textContent='再送信';
+      // 監視・中止は継続（アプリが後から拾ったら成功に切り替わる）
+    }, 25000);
     _ctUnsub=ref.onSnapshot(function(snap){
       if(!snap.exists) return;
       var d=snap.data()||{};
       if(d.status==='processing'){
+        _clearCtTimeout();                    // 端末が受信＝カード入力待ちは長くなり得るのでタイムアウト解除
         g('ct-status').textContent='💳 カード読み取り中…'; g('ct-status').style.color='var(--ink2)';
       }else if(d.status==='succeeded'){
+        _clearCtTimeout();
         _cardResult={paymentIntentId:d.paymentIntentId||null, amount:d.amount};
         g('ct-status').innerHTML='✅ 決済成功 ¥'+Number(d.amount||0).toLocaleString()
           +(d.paymentIntentId?'<br><span style="font-size:10px;color:var(--ink3)">'+escHtml(d.paymentIntentId)+'</span>':'');
@@ -2717,19 +2734,23 @@ async function startTerminalPayment(){
         g('ct-cancel').style.display='none'; g('ct-start').disabled=false; g('ct-start').textContent='再送信';
         if(_ctUnsub){ try{_ctUnsub();}catch(e){} _ctUnsub=null; }
       }else if(d.status==='failed'){
+        _clearCtTimeout();
         g('ct-status').textContent='❌ 決済失敗: '+(d.errorMessage||'不明なエラー'); g('ct-status').style.color='var(--red)';
         g('ct-cancel').style.display='none'; g('ct-start').disabled=false;
         if(_ctUnsub){ try{_ctUnsub();}catch(e){} _ctUnsub=null; }
       }else if(d.status==='canceled'){
+        _clearCtTimeout();
         g('ct-status').textContent='決済を中止しました。'; g('ct-status').style.color='var(--ink3)';
         g('ct-cancel').style.display='none'; g('ct-start').disabled=false;
         if(_ctUnsub){ try{_ctUnsub();}catch(e){} _ctUnsub=null; }
       }
     }, function(err){
+      _clearCtTimeout();
       g('ct-status').textContent='監視エラー: '+err.message; g('ct-status').style.color='var(--red)';
       g('ct-start').disabled=false; g('ct-cancel').style.display='none';
     });
   }catch(e){
+    _clearCtTimeout();
     g('ct-status').textContent='送信失敗: '+e.message; g('ct-status').style.color='var(--red)';
     g('ct-start').disabled=false; g('ct-cancel').style.display='none';
   }
