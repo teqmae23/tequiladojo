@@ -534,6 +534,7 @@ var BlindResult = (function(){
     var rev = _g('result-action-revealed');
     if(inp) inp.style.display = 'flex';
     if(rev) rev.style.display = 'none';
+    if(typeof stopGuessWatch === 'function') stopGuessWatch();
     _state = null;
     if(!fromSave && _onClose) _onClose();
   }
@@ -607,10 +608,122 @@ var BlindResult = (function(){
     }
   }
 
+  // ═══ part2: 会員の一時回答(blindGuesses)取り込み・公開・確定解除（追加のみ・既存非改変） ═══
+  var _guessWatchUnsub = null;
+  function _batchId(){ return _state && _state.b ? (_state.b.batchId || _state.b.bid) : null; }
+
+  // blindGuesses（会員がマイページで入力した回答）を店側モーダルの state に取り込む
+  async function loadGuesses(){
+    if(!_state) return false;
+    var bid = _batchId(); if(!bid) return false;
+    var allVisits = _getVisits();
+    var members = _state.members, marks = _state.marks;
+    var hadData = false;
+    _state.confirmedByRow = _state.confirmedByRow || [];
+    try{
+      var snap = await _db.collection('blindGuesses').where('batchId','==',bid).get();
+      var byCustomer = {};
+      snap.docs.forEach(function(d){ var g=d.data(); if(g && g.customerId) byCustomer[g.customerId]=g; });
+      for(var mi=0; mi<members.length; mi++){
+        var g = members[mi];
+        var visit = allVisits.find(function(v){ return v.id===g.visitKey; });
+        var customerId = (visit && visit.memberId) || g.visitKey;
+        var gd = byCustomer[customerId];
+        _state.confirmedByRow[mi] = !!(gd && gd.confirmed);
+        if(gd && Array.isArray(gd.answers)){
+          gd.answers.forEach(function(ans){
+            var mki = marks.indexOf(ans.blindMarkId);
+            if(mki>=0 && ans.guessMarkId){ _state.answers[mi][mki] = ans.guessMarkId; hadData=true; }
+          });
+          if(gd.winner){ _state.winners[mi] = gd.winner; }
+        }
+      }
+    }catch(e){ if(window.console) console.warn('loadGuesses:', e); }
+    _renderTable();
+    _renderGuessStatus();
+    return hadData;
+  }
+
+  // 確定状況＋公開/解除の操作パネルを動的生成（既存UIは非改変）
+  function _renderGuessStatus(){
+    if(!_state) return;
+    var panel = _g('bg-status');
+    if(!panel){
+      var body = _g('result-body'); if(!body || !body.parentNode) return;
+      panel = document.createElement('div');
+      panel.id = 'bg-status';
+      panel.style.cssText = 'padding:8px 16px;border-top:1px dashed var(--border2);background:var(--cream);font-size:12px';
+      body.parentNode.insertBefore(panel, body.nextSibling);
+    }
+    var allVisits = _getVisits();
+    var chips = _state.members.map(function(g, mi){
+      var confirmed = (_state.confirmedByRow||[])[mi];
+      var visit = allVisits.find(function(v){ return v.id===g.visitKey; });
+      var customerId = (visit && visit.memberId) || g.visitKey;
+      var nm = _vLabel(g.visitKey);
+      return '<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 6px 2px 0;padding:2px 8px;border-radius:12px;background:'+(confirmed?'#d7ecdd':'#eee')+';color:'+(confirmed?'#1a6640':'#888')+'">'
+        + (confirmed?'✅':'…') + ' ' + _esc(nm)
+        + (confirmed?' <b data-unlock="'+_esc(customerId)+'" style="cursor:pointer;color:#a33">解除</b>':'')
+        + '</span>';
+    }).join('');
+    panel.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"><b>会員入力状況</b>'
+      + '<button class="btn bs sm" onclick="BlindResult.reveal()" style="margin-left:auto">🎭 結果を公開</button>'
+      + '<button class="btn bs sm" onclick="BlindResult.unlockAll()">全員の確定解除</button></div>'
+      + '<div>'+ (chips||'<span style="color:#aaa">参加者なし</span>') +'</div>';
+    Array.prototype.forEach.call(panel.querySelectorAll('[data-unlock]'), function(b){
+      b.addEventListener('click', function(){ unlock(this.getAttribute('data-unlock')); });
+    });
+  }
+
+  function watchGuesses(){
+    var bid = _batchId(); if(!bid || !_db) return;
+    stopGuessWatch();
+    _guessWatchUnsub = _db.collection('blindGuesses').where('batchId','==',bid).onSnapshot(function(){
+      if(_state) loadGuesses();
+    }, function(){});
+  }
+  function stopGuessWatch(){ if(_guessWatchUnsub){ try{_guessWatchUnsub();}catch(e){} _guessWatchUnsub=null; } }
+
+  // 結果を公開（blindFlights.revealed を全端末へブロードキャスト）＋ローカルでも結果表示
+  function reveal(){
+    var bid = _batchId();
+    if(bid && _db){
+      _db.collection('blindFlights').doc(bid).set({
+        batchId: bid, revealed: true, revealedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, {merge:true}).catch(function(e){ _showToast('公開に失敗: '+e.message, 'error'); });
+    }
+    show();
+  }
+
+  // 確定解除（個人）: 会員が再入力できるよう confirmed:false に戻す
+  function unlock(customerId){
+    var bid = _batchId(); if(!bid || !customerId) return;
+    _db.collection('blindGuesses').doc(bid+'__'+customerId).update({
+      confirmed:false, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(function(){ _showToast('確定を解除しました', 'success'); }).catch(function(e){ _showToast('解除失敗: '+e.message,'error'); });
+  }
+  async function unlockAll(){
+    var bid = _batchId(); if(!bid) return;
+    try{
+      var snap = await _db.collection('blindGuesses').where('batchId','==',bid).get();
+      var batch = _db.batch(); var n=0;
+      snap.docs.forEach(function(d){ if(d.data().confirmed){ batch.update(d.ref, {confirmed:false, updatedAt: firebase.firestore.FieldValue.serverTimestamp()}); n++; } });
+      if(n){ await batch.commit(); }
+      _showToast(n+'件の確定を解除しました', 'success');
+    }catch(e){ _showToast('解除失敗: '+e.message, 'error'); }
+  }
+
   return {
     init: init,
     open: open,
     loadExisting: loadExisting,
+    loadGuesses: loadGuesses,
+    watchGuesses: watchGuesses,
+    stopGuessWatch: stopGuessWatch,
+    reveal: reveal,
+    unlock: unlock,
+    unlockAll: unlockAll,
     show: show,
     backToInput: backToInput,
     confirmPartial: confirmPartial,
