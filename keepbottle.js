@@ -379,8 +379,166 @@ window.KB = (function () {
     }
   }
 
+  // ========================================================================
+  // Phase 2: 来店時プロンプト（オーナー来店 → このキープを使う？ → 使用前重量）
+  // ========================================================================
+  var _ci = null; // onCheckin の ctx
+
+  function ciMemberName(id) {
+    var arr = (_ci && _ci.members) || [];
+    var m = arr.find ? arr.find(function (x) { return x.id === id || x.memberId === id; }) : null;
+    return m ? (m.nickname || m.name || m.displayId || m.memberId || m.id) : id;
+  }
+  function presentMemberSet(ctx) {
+    var s = {};
+    (ctx.allVisits || []).forEach(function (v) { if (v.memberId && !v.checkoutTime) s[v.memberId] = 1; });
+    (ctx.checkedIn || []).forEach(function (e) { if (e.memberId) s[e.memberId] = 1; });
+    return s;
+  }
+  // 実測重量(g) → 残量(ml,10ml単位)。換算不可なら null。
+  function remainFromWeightKeep(k, wG) {
+    if (wG == null || k.abv == null || k.emptyWeight == null || !window.BottleWeight) return null;
+    try { return Math.max(0, Math.round(BottleWeight.remainingMl(wG, k.emptyWeight, k.abv) / 10) * 10); } catch (e) { return null; }
+  }
+  function weightFromRemainKeep(k, ml) {
+    if (ml == null || k.abv == null || k.emptyWeight == null || !window.BottleWeight) return null;
+    try { return Math.round(BottleWeight.weightFromMl(ml, k.emptyWeight, k.abv)); } catch (e) { return null; }
+  }
+
+  // 来店フック: 新規来店した会員が所有する未開封(今セッション)のキープを探して確認画面を出す
+  async function onCheckin(ctx) {
+    try {
+      ctx = ctx || {};
+      var checked = (ctx.checkedIn || []).map(function (e) { return e.memberId; }).filter(Boolean);
+      if (!checked.length || !window.KB) return;
+      var bizDate = ctx.bizDate || nowDate();
+      var snap = await db().collection('keepBottles').where('status', '==', 'active').get();
+      var cands = [];
+      snap.docs.forEach(function (d) {
+        var k = Object.assign({ id: d.id }, d.data());
+        var owners = k.userMemberIds || [];
+        if (!owners.some(function (o) { return checked.indexOf(o) >= 0; })) return;
+        if (k.sessionActive && k.sessionDate === bizDate) return; // 今セッションで開封済み
+        cands.push(k);
+      });
+      if (!cands.length) return;
+      _ci = ctx; _ci.bizDate = bizDate;
+      showCheckinPrompt(cands);
+    } catch (e) { /* 来店処理を妨げない */ }
+  }
+
+  function ensureCheckinModal() {
+    if (document.getElementById('kb-checkin-modal')) return;
+    var w = document.createElement('div');
+    w.id = 'kb-checkin-modal';
+    w.style.cssText = 'position:fixed;inset:0;background:rgba(24,17,10,.5);z-index:9100;display:none;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto;font-family:inherit';
+    w.innerHTML =
+      '<div style="width:100%;max-width:500px;background:#fff;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.3);margin-top:24px">' +
+      '<div style="padding:14px 18px;border-bottom:1px solid #eee;font-weight:700;font-size:16px">🍾 このキープボトルを使用しますか？</div>' +
+      '<div id="kb-ci-body" style="padding:14px 18px;max-height:70vh;overflow-y:auto"></div>' +
+      '<div id="kb-ci-err" style="color:#c0392b;font-size:12px;padding:0 18px;min-height:14px"></div>' +
+      '<div style="display:flex;gap:8px;padding:12px 18px;border-top:1px solid #eee;justify-content:flex-end">' +
+        '<button id="kb-ci-no" style="padding:9px 16px;border:1px solid #ccc;background:#f5f5f5;border-radius:6px;cursor:pointer;font-size:13px">いいえ（使わない）</button>' +
+        '<button id="kb-ci-yes" style="padding:9px 18px;border:none;background:#7a5610;color:#fff;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">はい（開封する）</button>' +
+      '</div></div>';
+    document.body.appendChild(w);
+    document.getElementById('kb-ci-no').addEventListener('click', function () { w.style.display = 'none'; });
+    document.getElementById('kb-ci-yes').addEventListener('click', confirmCheckinUse);
+  }
+
+  var _ciCands = [];
+  function showCheckinPrompt(cands) {
+    ensureCheckinModal();
+    _ciCands = cands;
+    var present = presentMemberSet(_ci);
+    var body = document.getElementById('kb-ci-body');
+    body.innerHTML = cands.map(function (k, i) {
+      var owners = (k.userMemberIds || []);
+      var presentOwners = owners.filter(function (o) { return present[o]; });
+      var ownerHtml = owners.map(function (o) {
+        var here = present[o];
+        return '<label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:12px;color:' + (here ? '#333' : '#bbb') + '">' +
+          '<input type="checkbox" class="kb-ci-owner" data-i="' + i + '" data-mid="' + esc(o) + '"' + (here ? ' checked' : ' disabled') + '> ' + esc(ciMemberName(o)) + (here ? '' : '（不在）') + '</label>';
+      }).join('');
+      var nm = k.bottleEs || k.bottleJa || k.bottleId || k.id;
+      return '<div style="border:1px solid #eee;border-radius:8px;padding:10px 12px;margin-bottom:10px">' +
+        '<label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px"><input type="checkbox" class="kb-ci-use" data-i="' + i + '"' + (presentOwners.length ? ' checked' : '') + '> ' + esc(nm) + '</label>' +
+        '<div style="font-size:11px;color:#888;margin:6px 0 4px">オーナー：' + (ownerHtml || '—') + '</div>' +
+        '<div style="font-size:11px;color:#888;margin-bottom:2px">記録残量：' + (k.remaining != null ? k.remaining + 'ml' : '—') + '</div>' +
+        '<div style="display:flex;align-items:center;gap:6px"><span style="font-size:12px;color:#666">使用前重量(g)</span>' +
+        '<input type="number" class="kb-ci-weight" data-i="' + i + '" placeholder="測定値(任意)" style="width:130px;padding:7px;border:1px solid #ccc;border-radius:6px;font-size:13px"></div>' +
+        '</div>';
+    }).join('');
+    document.getElementById('kb-ci-err').textContent = '';
+    document.getElementById('kb-checkin-modal').style.display = 'flex';
+  }
+
+  async function confirmCheckinUse() {
+    var errEl = document.getElementById('kb-ci-err'); errEl.textContent = '';
+    var uses = document.querySelectorAll('.kb-ci-use');
+    var chosen = [];
+    Array.prototype.forEach.call(uses, function (u) { if (u.checked) chosen.push(parseInt(u.getAttribute('data-i'))); });
+    if (!chosen.length) { document.getElementById('kb-checkin-modal').style.display = 'none'; return; }
+
+    var present = presentMemberSet(_ci);
+    var _db = db(), batch = _db.batch(), logs = [], journals = [];
+    var bizDate = _ci.bizDate || nowDate();
+    var staffUid = _ci.staffUid || (firebase.auth().currentUser && firebase.auth().currentUser.uid) || null;
+
+    for (var ci = 0; ci < chosen.length; ci++) {
+      var i = chosen[ci];
+      var k = _ciCands[i];
+      var wEl = document.querySelector('.kb-ci-weight[data-i="' + i + '"]');
+      var wG = wEl && wEl.value !== '' ? (parseFloat(wEl.value) || 0) : null;
+      var stored = k.remaining != null ? Number(k.remaining) : null;
+      var startWeight = wG, startRemaining = stored, newRemaining = stored, newLastWeight = k.lastWeight != null ? k.lastWeight : null;
+
+      if (wG != null) {
+        var measured = remainFromWeightKeep(k, wG);
+        if (measured != null && stored != null && Math.abs(measured - stored) > 10) {
+          var adoptMeasured = window.confirm(
+            (k.bottleEs || k.bottleJa || 'キープ') + '\n残量が記録と異なります。\n\n測定値: 残 ' + measured + 'ml\n記録　: 残 ' + stored + 'ml\n\n［OK］測定値を採用 ／ ［キャンセル］記録を採用');
+          if (adoptMeasured) { startRemaining = measured; newRemaining = measured; startWeight = wG; newLastWeight = wG; }
+          else { startRemaining = stored; newRemaining = stored; startWeight = weightFromRemainKeep(k, stored); }
+        } else {
+          startRemaining = (measured != null ? measured : stored);
+          newRemaining = startRemaining;
+          startWeight = wG; newLastWeight = wG;
+        }
+      } else {
+        startRemaining = stored;
+        startWeight = (k.lastWeight != null ? k.lastWeight : weightFromRemainKeep(k, stored));
+      }
+
+      var presentOwners = (k.userMemberIds || []).filter(function (o) { return present[o]; });
+      var upd = {
+        sessionActive: true, sessionDate: bizDate,
+        sessionStartWeight: startWeight, sessionStartRemaining: startRemaining,
+        sessionOwnerIds: presentOwners, sessionOpenedAt: FV().serverTimestamp(),
+        remaining: newRemaining, lastWeight: newLastWeight
+      };
+      batch.update(_db.collection('keepBottles').doc(k.id), upd);
+      journals.push({ id: k.id, before: { remaining: k.remaining, lastWeight: k.lastWeight, sessionActive: k.sessionActive || false }, after: upd });
+      batch.set(_db.collection('keepBottleLog').doc(), {
+        keepBottleId: k.id, type: 'open', date: bizDate, time: nowTime(),
+        memberId: presentOwners[0] || null, weight: startWeight, remainingMl: startRemaining, amount: 0,
+        note: '来店時に開封（今セッション使用開始）', staffUid: staffUid, createdAt: FV().serverTimestamp()
+      });
+    }
+    var btn = document.getElementById('kb-ci-yes'); btn.disabled = true;
+    try {
+      await batch.commit();
+      journals.forEach(function (j) { if (window.writeJournal) try { window.writeJournal('update', 'keepBottles', j.id, j.before, j.after); } catch (e) { } });
+      document.getElementById('kb-checkin-modal').style.display = 'none';
+      if (_ci && typeof _ci.onDone === 'function') _ci.onDone();
+    } catch (e) {
+      errEl.textContent = '保存失敗: ' + (e && e.message ? e.message : e);
+    } finally { btn.disabled = false; }
+  }
+
   return {
     openPurchase: openPurchase,
+    onCheckin: onCheckin,
     injectOrders: injectOrders,
     nextOrderGroupId: nextOrderGroupId,
     nextBatchId: nextBatchId,

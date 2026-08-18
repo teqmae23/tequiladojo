@@ -29,6 +29,8 @@ var FIREBASE_CONFIG = {
 <script src="/auth-role.js?v=20260714"></script>
 <script>window.JOURNAL_PAGE='checkin';</script>
 <script src="/journal.js?v=20260706"></script>
+<script src="/bottle-weight.js?v=20260724"></script>
+<script src="/keepbottle.js?v=20260818"></script>
 <script src="/member-plan.js?v=20260810"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
@@ -796,6 +798,21 @@ function renderPendingCheckins(){
 }
 
 // 承認: 来店を確定（来店時刻＝承認時刻）
+// ── キープボトル来店フック（keepbottle.js の独立処理。来店確定後に呼ぶだけ） ──
+function kbAfterCheckin(entries, bizDate){
+  if(!window.KB || !entries || !entries.length) return;
+  try{
+    KB.onCheckin({
+      checkedIn: entries,
+      allVisits: cache.visits,
+      members: cache.members,
+      bizDate: bizDate,
+      staffUid: (auth.currentUser&&auth.currentUser.uid)||null,
+      onDone: function(){ renderVisitorList(); }
+    });
+  }catch(e){}
+}
+
 async function approveCheckinRequest(reqId){
   var req=(cache.checkinRequests||[]).find(function(r){ return r.id===reqId; });
   if(!req){ toast('リクエストが見つかりません','err'); return; }
@@ -832,6 +849,7 @@ async function approveCheckinRequest(reqId){
     var mm=cache.members.find(function(m){return m.id===req.memberId;}); if(mm) mm.visitCount=(mm.visitCount||0)+1;
     toast(req.memberName+'の来店を承認しました（'+fmtHHMM(time)+'）');
     renderVisitorList();
+    kbAfterCheckin([{memberId:req.memberId, visitKey:visitKey}], today);
   }catch(e){ toast('承認失敗: '+e.message,'err'); }
 }
 
@@ -2020,6 +2038,10 @@ g('m-checkin-save').addEventListener('click', async function(){
     _checkinGroup={ id:null, total:1, current:1 };
     g('ci-progress').style.display='none';
     renderVisitorList();
+    kbAfterCheckin(registeredVisitKeys.map(function(vk,idx){
+      var mid=idx<cntMem?(resolvedMemberIds[idx]||null):(tempMemberIds[idx-cntMem]?tempMemberIds[idx-cntMem].tempId:null);
+      return {memberId:mid, visitKey:vk};
+    }).filter(function(e){return e.memberId;}), today);
   }catch(e){
     toast('登録失敗: '+e.message,'err');
   } finally {
