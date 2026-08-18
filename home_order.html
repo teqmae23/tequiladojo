@@ -11,6 +11,7 @@
 <script src="/bottle-weight.js?v=20260724"></script>
 <script>window.JOURNAL_PAGE='home_order';</script>
 <script src="/journal.js?v=20260706"></script>
+<script src="/keepbottle.js?v=20260818"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -443,6 +444,7 @@ body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-
           <div class="ptab" onclick="switchPTab('misc',this)">その他</div>
           <div class="ptab" onclick="switchPTab('set',this)">セット</div>
           <div class="ptab" onclick="switchPTab('cocktail',this)">カクテル</div>
+          <div class="ptab" onclick="openKbPurchase()" style="flex:0 0 auto;background:#efe3d4;color:#7a5610" title="キープボトルを購入登録">🍾キープ購入</div>
         </div>
         <div id="nom-shortcuts-area" class="nom-shortcuts"></div>
         <div id="tequila-extra-filters" style="display:flex;gap:4px;align-items:flex-start;margin-bottom:6px;flex-wrap:wrap;flex-direction:column;">
@@ -1642,6 +1644,24 @@ function addSetToCart(setId){
   const s=masterData.set.find(x=>x.id===setId);
   if(!s){showToast('セット商品が見つかりません','error');return;}
   _doAddSet(setId);
+}
+
+// ── キープボトル購入（keepbottle.js の独立処理を呼ぶ。通常注文フローは非改変） ──
+function openKbPurchase(){
+  if(!window.KB){ showToast('キープボトル機能を読み込めませんでした','error'); return; }
+  const visits=(allVisits||[]).filter(v=>!v.checkoutTime&&!v.isStaff).map(v=>{
+    const m=v.memberId&&allMembers[v.memberId];
+    return {id:v.id,memberId:v.memberId||null,name:(m?(m.nickname||m.name):('ゲスト（'+v.id+'）'))};
+  });
+  const members=Object.keys(allMembers).map(id=>Object.assign({id},allMembers[id]));
+  const useDate=(typeof currentBizDate==='function')?currentBizDate():undefined;
+  const orderTime=AuthRole.nowBusinessTime(currentSessionBT&&currentSessionBT.openTime);
+  KB.openPurchase({
+    useDate,orderTime,
+    staffUid:(firebase.auth().currentUser&&firebase.auth().currentUser.uid)||null,
+    visits,members,stockBottles:stockBottlesData,
+    onDone:function(){ loadTodayData().then(function(){ renderOrderList(); showToast('キープボトルを購入登録しました','info'); }); }
+  });
 }
 function _doAddSet(setId){
   const s=masterData.set.find(x=>x.id===setId);if(!s)return;
