@@ -639,9 +639,21 @@ var BlindResult = (function(){
         }
       }
     }catch(e){ if(window.console) console.warn('loadGuesses:', e); }
+    try{ var _fl = await _db.collection('blindFlights').doc(bid).get(); _state.inputOpen = !!(_fl.exists && _fl.data().inputOpen); }catch(e){}
     _renderTable();
     _renderGuessStatus();
     return hadData;
+  }
+
+  // ユーザー(会員)入力の許可/締切をブロードキャスト。許可するまで会員側に入力ボタンは出ない。
+  function setInputOpen(open){
+    var bid = _batchId(); if(!bid || !_db) return;
+    _db.collection('blindFlights').doc(bid).set({
+      batchId: bid, inputOpen: !!open, inputOpenAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, {merge:true}).then(function(){
+      if(_state){ _state.inputOpen = !!open; _renderGuessStatus(); }
+      _showToast(open ? 'ユーザー入力を許可しました' : 'ユーザー入力を締め切りました', 'success');
+    }).catch(function(e){ _showToast('更新失敗: '+e.message, 'error'); });
   }
 
   // 確定状況＋公開/解除の操作パネルを動的生成（既存UIは非改変）
@@ -666,10 +678,13 @@ var BlindResult = (function(){
         + (confirmed?' <b data-unlock="'+_esc(customerId)+'" style="cursor:pointer;color:#a33">解除</b>':'')
         + '</span>';
     }).join('');
+    var inputOpen = !!_state.inputOpen;
     panel.innerHTML =
       '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"><b>会員入力状況</b>'
-      + '<button class="btn bs sm" onclick="BlindResult.reveal()" style="margin-left:auto">🎭 結果を公開</button>'
+      + '<button class="btn '+(inputOpen?'bs':'bp')+' sm" onclick="BlindResult.setInputOpen('+(inputOpen?'false':'true')+')" style="margin-left:auto">'+(inputOpen?'🔴 入力を締切':'🟢 ユーザー入力を許可')+'</button>'
+      + '<button class="btn bs sm" onclick="BlindResult.reveal()">🎭 結果を公開</button>'
       + '<button class="btn bs sm" onclick="BlindResult.unlockAll()">全員の確定解除</button></div>'
+      + (inputOpen?'':'<div style="color:#a37b16;font-size:11px;margin-bottom:4px">※「ユーザー入力を許可」を押すまで、会員のマイページに結果入力ボタンは表示されません</div>')
       + '<div>'+ (chips||'<span style="color:#aaa">参加者なし</span>') +'</div>';
     Array.prototype.forEach.call(panel.querySelectorAll('[data-unlock]'), function(b){
       b.addEventListener('click', function(){ unlock(this.getAttribute('data-unlock')); });
@@ -721,6 +736,7 @@ var BlindResult = (function(){
     loadGuesses: loadGuesses,
     watchGuesses: watchGuesses,
     stopGuessWatch: stopGuessWatch,
+    setInputOpen: setInputOpen,
     reveal: reveal,
     unlock: unlock,
     unlockAll: unlockAll,

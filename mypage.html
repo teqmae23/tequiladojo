@@ -384,6 +384,8 @@ let allVisits=[];         // 当会員の全来場
 let allOrders=[];         // 当会員の全注文（全来場分）
 let allProducts=[];       // 定番品マスタ
 let allBlindResults=[];   // 当会員の全ブラインド結果
+let blindFlightMap={};    // batchId → blindFlights doc（inputOpen/revealed 等）
+let _bfWatchers={};       // batchId → onSnapshot unsub
 let allMembersMap={};     // memberId → {nickname, name} のキャッシュ
 let filteredVisits=[];    // フィルター後
 let blindMarkMap={};      // markId→{emoji,label}
@@ -786,6 +788,7 @@ async function loadMyData(memberId){
   }
 
   allBlindResults=(act.blindResults||[]).slice();
+  setupBlindFlightWatchers(); // 店側の「入力許可」フラグをリアルタイム監視（許可されるまで入力ボタン非表示）
 
   // 会員名・visitKey→memberIdのキャッシュ（サーバーが解決済み）
   Object.keys(act.memberNames||{}).forEach(mid=>{
@@ -1097,7 +1100,9 @@ function buildBatchBlock(b,visitId){
   const blindSummary=blindResults4group.length?`${allCorrect}/${allTotal}正解`:'';
 
   // ブラインドリンク
-  const blindInputBtn=(isBlind&&b.batchId)
+  // 店側が「ユーザー入力を許可」するまで（blindFlights.inputOpen）結果入力ボタンは出さない
+  const _inputAllowed=!!((blindFlightMap[b.batchId]||{}).inputOpen);
+  const blindInputBtn=(isBlind&&b.batchId&&_inputAllowed)
     ?`<span class="og-badge" style="background:#e7f0ff;color:#0c447c;cursor:pointer;font-size:11px" onclick="event.stopPropagation();openBlindInput('${esc(b.batchId)}','${esc(visitId)}','${esc(b.repGid||b.groups[0])}')" title="ブラインドの結果を入力">🎭 結果入力</span>`
     :'';
   const blindLink=isBlind
@@ -1246,6 +1251,18 @@ function openBlindModal(gid, visitId){
     <div class="bpop-table-wrap"><table class="bpop-table">${thead}<tbody>${tbody}</tbody></table></div>
     <div class="bpop-legend"><div class="bpop-legend-title">マーク対応表</div>${legendRows}</div>`;
   document.getElementById('blind-modal').classList.add('open');
+}
+
+// 店側の「入力許可(inputOpen)」をリアルタイム監視。許可された瞬間に入力ボタンを出す。
+function setupBlindFlightWatchers(){
+  var batchIds=[...new Set(allOrders.filter(function(o){return o.blindId===1 && o.batchId;}).map(function(o){return o.batchId;}))];
+  batchIds.forEach(function(bid){
+    if(_bfWatchers[bid]) return;
+    _bfWatchers[bid]=db.collection('blindFlights').doc(bid).onSnapshot(function(doc){
+      blindFlightMap[bid]=doc.exists?(doc.data()||{}):{};
+      if(typeof applyFilter==='function') applyFilter(); // 入力ボタンの表示状態を反映
+    }, function(){});
+  });
 }
 
 // ═══ ブラインド結果 入力（会員が自分の分を一時データ blindGuesses に保存。店側が拾う） ═══
