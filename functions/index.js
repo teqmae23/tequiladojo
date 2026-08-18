@@ -1453,6 +1453,7 @@ exports.subscriptionPayments = functions
   .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
   .https.onCall(async (data, context) => {
     await assertStaff(context);
+    try {
     const stripe = require('stripe')(stripeSecretKey.value());
     const limit = Math.min(Math.max(Number(data && data.limit) || 100, 1), 100);
     const params = { limit, status: 'paid' };
@@ -1479,6 +1480,10 @@ exports.subscriptionPayments = functions
       };
     });
     return { rows: rows, hasMore: !!inv.has_more };
+    } catch (e) {
+      // Stripe等の実際のエラーを internal で潰さず、メッセージを返す
+      throw new functions.https.HttpsError('internal', 'サブスク取得エラー: ' + ((e && e.message) ? e.message : String(e)));
+    }
   });
 
 // ── 個人テキーラログ: 道場注文からの自動登録 ─────────────────────
