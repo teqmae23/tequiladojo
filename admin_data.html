@@ -98,6 +98,9 @@ thead tr{border-bottom:1px solid var(--border2)}
 th{padding:10px 12px;text-align:left;font-size:10px;font-weight:500;color:var(--ink3);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
 td{padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
 tbody tr:last-child td{border-bottom:none}
+/* 営業データ: 週の区切り線・昼夜営業の日の背景 */
+tr.wk-sep td{padding:0;height:2px;background:var(--ink3);border:none}
+#tb-sessions tr.ses-dn>td{background:#e8f1fb}
 tbody tr:hover{background:rgba(200,146,30,.025)}
 .mono{font-family:var(--mono);font-size:11px}
 .dim{color:var(--ink3)}
@@ -826,7 +829,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       </div>
       <div class="fg"><label class="fl">メモ</label><input class="fi" id="sch-memo" placeholder="特記事項..."></div>
     </div>
-    <div class="mfoot"><button class="btn bg2" data-close="m-schedule">キャンセル</button><button class="btn bp" id="btn-save-schedule">保存</button></div>
+    <div class="mfoot"><button class="btn bd" id="btn-clear-schedule" style="margin-right:auto">🗑 予定をクリア</button><button class="btn bg2" data-close="m-schedule">キャンセル</button><button class="btn bp" id="btn-save-schedule">保存</button></div>
   </div>
 </div>
 
@@ -1283,7 +1286,7 @@ setTimeout(function(){var _t=new URLSearchParams(location.search).get("tab");if(
 // ── キャッシュ・ソート ─────────────────────────────────────────
 var cache = { sessions:[], visits:[], reservations:[], orders:[], members:[], layouts:[], news:[] };
 var editId = { session:null, visit:null, reservation:null, order:null };
-var sortState = {};
+var sortState = { sessions:{key:'id',dir:'desc'} }; // 営業データは既定でセッションID降順
 var _treeAfterSave = null;       // callback to run after modal save instead of default tab reload
 var _treeCurrentVisits = [];     // visits loaded for current tree day
 var _treeCurrentOrders = [];     // all orders loaded for current tree day
@@ -1449,15 +1452,19 @@ document.addEventListener("click",function(e){
 // ════════════════════════════════════════════════════════════════
 setCnt("sessions","—");
 
+var schedMap={}; // 日付(YYMMDD) → schedule（昼夜営業=businessType 1 の背景表示用）
 function loadSessions(){
-  db.collection("sessions").get()
-    .then(function(snap){
-      cache.sessions=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
-      setCnt("sessions", cache.sessions.length);
-      renderSessions();
-      updateSesLayoutFilter();
-    })
-    .catch(function(e){ toast("読込失敗(sessions): "+e.message,"err"); });
+  Promise.all([
+    db.collection("sessions").get(),
+    db.collection("schedules").get()
+  ]).then(function(res){
+    cache.sessions=res[0].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    schedMap={};
+    res[1].docs.forEach(function(d){ var k=String(d.id); if(k.length===8) schedMap[k.slice(2)]=d.data(); });
+    setCnt("sessions", cache.sessions.length);
+    renderSessions();
+    updateSesLayoutFilter();
+  }).catch(function(e){ toast("読込失敗(sessions): "+e.message,"err"); });
 }
 
 function updateSesLayoutFilter(){
@@ -1485,9 +1492,15 @@ function renderSessions(){
   list=applySortToList(list,"sessions");
   var tb=g("tb-sessions");
   if(!list.length){ tb.innerHTML='<tr><td colspan="8" class="ec">データがありません</td></tr>'; return; }
-  tb.innerHTML=list.map(function(r){
+  var prevWk=null, html="";
+  list.forEach(function(r){
+    var wk=sesWeekKey(r.date);
+    if(prevWk!==null && wk!==prevWk) html+='<tr class="wk-sep"><td colspan="8"></td></tr>';
+    prevWk=wk;
+    var sch=schedMap[r.date];
+    var isDN=sch&&Number(sch.businessType)===1; // 1=昼夜営業
     var lay2=cache.layouts.find(function(l){return l.id===r.layoutId;});
-    return '<tr>'
+    html+='<tr'+(isDN?' class="ses-dn"':'')+'>'
       +'<td class="mono" style="font-size:11px">'+r.id+'</td>'
       +'<td class="mono" style="cursor:pointer;color:var(--teal);text-decoration:underline" data-nav-tree="'+r.date+'" title="ツリー表示へ">'+fmtDate(r.date)+'</td>'
       +'<td class="mono dim">'+fmtTime(r.openTime)+'</td>'
@@ -1500,7 +1513,20 @@ function renderSessions(){
         +'<button class="btn bs sm" data-recalc-session="'+r.id+'" title="来場データから来場数・売上を再集計">🔄 再集計</button>'
         +'<button class="btn bd sm" data-del="sessions" data-del-id="'+r.id+'" data-del-label="営業データ">削除</button>'
       +'</div></td></tr>';
-  }).join("");
+  });
+  tb.innerHTML=html;
+}
+
+// セッション日付(YYMMDD)の ISO週キー（週の合間の区切り線用）
+function sesWeekKey(ymd){
+  ymd=String(ymd||""); if(ymd.length<6) return "";
+  var d=new Date(2000+parseInt(ymd.slice(0,2),10), parseInt(ymd.slice(2,4),10)-1, parseInt(ymd.slice(4,6),10));
+  if(isNaN(d.getTime())) return ymd;
+  var t=new Date(d); t.setHours(0,0,0,0);
+  t.setDate(t.getDate()+3-((t.getDay()+6)%7));       // 木曜基準
+  var week1=new Date(t.getFullYear(),0,4);
+  var wk=1+Math.round(((t-week1)/86400000-3+((week1.getDay()+6)%7))/7);
+  return t.getFullYear()+"-W"+wk;
 }
 
 async function recalcSession(sesId){
@@ -2457,6 +2483,15 @@ function saveSchRow(key,container,cb){
 g('btn-save-schedule').addEventListener('click',function(){
   var key=g('m-schedule').__calKey; if(!key) return;
   saveSchRow(key,null,function(){ calFetchHolidays(calRenderMonth); closeM('m-schedule'); toast('営業予定を保存しました'); });
+});
+g('btn-clear-schedule').addEventListener('click',function(){
+  var key=g('m-schedule').__calKey; if(!key) return;
+  if(!confirm('この日の営業予定をクリア（削除）しますか？')) return;
+  journaledDelete('schedules',key).then(function(){
+    if(typeof calSaveUpdateTime==='function') calSaveUpdateTime(key.slice(0,6));
+    if(typeof calCheckUnpublished==='function') calCheckUnpublished(calGetYm());
+    calFetchHolidays(calRenderMonth); closeM('m-schedule'); toast('営業予定をクリアしました');
+  }).catch(function(e){ toast('クリア失敗: '+e.message,'err'); });
 });
 (function(){
   var _cp=g('cal-prev'), _cn=g('cal-next');
