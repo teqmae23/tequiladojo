@@ -1428,6 +1428,25 @@ exports.terminalCreatePaymentIntent = functions
     return { id: pi.id, clientSecret: pi.client_secret };
   });
 
+// 決済のカード情報（ブランド・読み取り方法）を PaymentIntent から取得する。
+// 対面(card_present)決済の brand（visa/jcb等）と read_method（contactless=タッチ / contact=挿入）を返す。
+// 管理ページ「カード決済ログ」が paymentIntentId を渡して呼び、結果を各ログに保存(キャッシュ)する。
+exports.terminalChargeInfo = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onCall(async (data, context) => {
+    await assertStaff(context);
+    const stripe = require('stripe')(stripeSecretKey.value());
+    const id = data && data.paymentIntentId;
+    if (!id || typeof id !== 'string') {
+      throw new functions.https.HttpsError('invalid-argument', 'paymentIntentId が必要です');
+    }
+    const pi = await stripe.paymentIntents.retrieve(String(id), { expand: ['latest_charge'] });
+    const ch = pi && pi.latest_charge;
+    const cp = ch && ch.payment_method_details && ch.payment_method_details.card_present;
+    if (!cp) return { brand: null, readMethod: null, last4: null };
+    return { brand: cp.brand || null, readMethod: cp.read_method || null, last4: cp.last4 || null };
+  });
+
 // ── 個人テキーラログ: 道場注文からの自動登録 ─────────────────────
 // 会員(有料)の道場注文(tequila/cocktail)を個人ログ(source=auto)へ同期する。
 // 冪等: ログID = 'auto_' + orderId。注文の追加/編集/削除に追従。
