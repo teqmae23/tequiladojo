@@ -605,6 +605,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <input type="date" id="tree-date-input" class="fsel">
             <button class="btn bp" id="btn-tree-load" onclick="loadTree()">表示</button>
             <button class="btn bs" id="btn-tree-refresh" onclick="loadTree()" title="データを再読み込み">🔄 更新</button>
+            <button class="btn bs" onclick="treeKbPurchase()" title="この営業日にキープボトルを購入登録">🍾 キープ購入</button>
           </div>
         </div>
         <div style="border-top:1px solid var(--border);padding-top:10px">
@@ -1176,6 +1177,8 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 window.JOURNAL_PAGE = 'admin_data';
 </script>
 <script src="/journal.js?v=20260706"></script>
+<script src="/bottle-weight.js?v=20260724"></script>
+<script src="/keepbottle.js?v=20260818"></script>
 <script>
 // Firebase初期化
 if (!firebase.apps.length) { firebase.initializeApp(FIREBASE_CONFIG); }
@@ -3163,6 +3166,27 @@ if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
 
 function escHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function yymmddFromDateInput(v){ return v.slice(2,4)+v.slice(5,7)+v.slice(8,10); }
+
+// ── キープボトル購入（keepbottle.js の独立処理。ツリー表示中の営業日に差し込む） ──
+async function treeKbPurchase(){
+  if(!window.KB){ toast('キープボトル機能を読み込めませんでした','err'); return; }
+  var v=document.getElementById('tree-date-input').value;
+  if(!v){ toast('先に営業日を指定して「表示」してください','err'); return; }
+  if(!_treeCurrentVisits.length){ toast('先に「表示」で来場者を読み込んでください','err'); return; }
+  var yymmdd=yymmddFromDateInput(v);
+  var visits=_treeCurrentVisits.filter(function(x){return !x.isStaff;}).map(function(x){
+    var m=(cache.members||[]).find(function(mm){return mm.id===x.memberId;});
+    return {id:x.id,memberId:x.memberId||null,name:(m?(m.nickname||m.name):('ゲスト（'+x.id+'）'))};
+  });
+  var stock=[];
+  try{ var snap=await db.collection('bottleData').get(); snap.forEach(function(d){var b=d.data(); if(b.status==='stock') stock.push(Object.assign({id:d.id},b));}); }catch(e){ toast('在庫ボトルの取得に失敗: '+e.message,'err'); }
+  KB.openPurchase({
+    useDate:yymmdd, orderTime:null,
+    staffUid:(firebase.auth().currentUser&&firebase.auth().currentUser.uid)||null,
+    visits:visits, members:(cache.members||[]), stockBottles:stock,
+    onDone:function(){ loadTree(); toast('キープボトルを購入登録しました'); }
+  });
+}
 
 async function loadTree(){
   var v=document.getElementById('tree-date-input').value;
