@@ -474,6 +474,7 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
           <span style="font-size:12px;color:var(--ink3)">円</span>
           <button type="button" class="btn bp sm" id="ct-start" onclick="startTerminalPayment()">端末に送信</button>
           <button type="button" class="btn bs sm" id="ct-cancel" onclick="cancelTerminalPayment()" style="display:none">中止</button>
+          <button type="button" class="btn bs sm" id="ct-slip" onclick="printCardSlip()" style="display:none">🖨️ カード明細</button>
         </div>
         <div id="ct-status" style="font-size:12px;color:var(--ink2)">端末アプリ（WisePad 3接続）に決済リクエストを送ります。</div>
       </div>
@@ -2681,6 +2682,7 @@ function resetCardTerminal(){
   var s=g('ct-status'); if(s){ s.textContent='端末アプリ（WisePad 3接続）に決済リクエストを送ります。'; s.style.color='var(--ink2)'; }
   var b=g('ct-start'); if(b){ b.disabled=false; b.textContent='端末に送信'; }
   var c=g('ct-cancel'); if(c) c.style.display='none';
+  var sb=g('ct-slip'); if(sb) sb.style.display='none';
 }
 async function startTerminalPayment(){
   var amount=parseInt(g('ct-amount').value)||0;
@@ -2732,6 +2734,7 @@ async function startTerminalPayment(){
           +(d.paymentIntentId?'<br><span style="font-size:10px;color:var(--ink3)">'+escHtml(d.paymentIntentId)+'</span>':'');
         g('ct-status').style.color='var(--teal)';
         g('ct-cancel').style.display='none'; g('ct-start').disabled=false; g('ct-start').textContent='再送信';
+        var sb=g('ct-slip'); if(sb) sb.style.display='inline-flex';   // カード明細スリップ印刷ボタンを表示
         if(_ctUnsub){ try{_ctUnsub();}catch(e){} _ctUnsub=null; }
       }else if(d.status==='failed'){
         _clearCtTimeout();
@@ -3254,6 +3257,119 @@ async function sendToPrinter(char, data){
     var chunk=data.slice(i,i+chunkSize);
     await char.writeValue(chunk);
     await new Promise(function(r){ setTimeout(r,20); });
+  }
+}
+
+// ── クレジット売上票（カード明細スリップ・お客様控え）印刷 ──────────────
+// カード決済成功後に、既存のESC/POSプリンタで別紙のカード明細を印刷する。
+// ブランド・下4桁・読取方法は terminalChargeInfo(us-central1) から取得。
+var _slipFunctions=null;
+function slipFunctions(){
+  if(!_slipFunctions) _slipFunctions=firebase.app().functions('us-central1'); // 決済系関数は us-central1
+  return _slipFunctions;
+}
+function brandLabel(b){
+  var m={visa:'VISA',mastercard:'Mastercard',amex:'AMEX',american_express:'AMEX',jcb:'JCB',
+    discover:'Discover',diners:'Diners',diners_club:'Diners',unionpay:'UnionPay',interac:'Interac'};
+  if(!b) return 'カード';
+  return m[String(b).toLowerCase()]||String(b).toUpperCase();
+}
+function readMethodLabel(rm){
+  if(!rm) return '';
+  var s=String(rm).toLowerCase();
+  if(s.indexOf('contactless')>=0) return 'タッチ決済';
+  if(s.indexOf('contact')>=0) return 'IC';
+  if(s.indexOf('magnetic')>=0) return 'スワイプ';
+  return '';
+}
+// 既存の receiptDevice/receiptCharacteristic を使い回してプリンタ接続を確保する。
+async function ensureReceiptPrinter(){
+  if(receiptDevice && receiptDevice.gatt.connected && receiptCharacteristic) return receiptCharacteristic;
+  var knownDevices=[];
+  try{ knownDevices=await navigator.bluetooth.getDevices(); }catch(e){}
+  var printer=knownDevices.find(function(d){ return d.name&&d.name.indexOf('Printer')>=0||d.name&&d.name.indexOf('RPP')>=0||d.name&&d.name.indexOf('Tenz')>=0; });
+  if(printer){
+    try{ toast('プリンターに接続中...','inf'); receiptDevice=printer; await receiptDevice.gatt.connect(); }catch(e){ printer=null; }
+  }
+  if(!printer){
+    toast('プリンターを選択してください...','inf');
+    receiptDevice=await navigator.bluetooth.requestDevice({
+      filters:[{services:['000018f0-0000-1000-8000-00805f9b34fb']}],
+      optionalServices:['000018f0-0000-1000-8000-00805f9b34fb']
+    });
+    await receiptDevice.gatt.connect();
+  }
+  var service=await receiptDevice.gatt.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
+  receiptCharacteristic=await service.getCharacteristic('00002af1-0000-1000-8000-00805f9b34fb');
+  return receiptCharacteristic;
+}
+function buildCardSlipData(info){
+  var ESC=0x1B, GS=0x1D;
+  var SEP='================================';   // 32文字
+  var THIN='--------------------------------';
+  var YEN=new Uint8Array([0xA3,0xA4]);           // 全角￥
+  var parts=[];
+  parts.push([ESC,0x40]);          // 初期化
+  parts.push([0x1C,0x26]);         // 漢字モードON
+  parts.push([ESC,0x61,0x01]);     // 中央揃え
+  parts.push([ESC,0x21,0x30]); parts.push(sjisBytes('テキーラ道場\n')); parts.push([ESC,0x21,0x00]);
+  parts.push(sjisBytes('\n'));
+  parts.push([ESC,0x21,0x10]); parts.push(sjisBytes('クレジット売上票\n')); parts.push([ESC,0x21,0x00]);
+  parts.push(sjisBytes('お客様控え\n'));
+  parts.push(sjisBytes(SEP+'\n'));
+  parts.push(sjisBytes(info.dateStr+'\n'));
+  // 明細（左揃え）
+  parts.push([ESC,0x61,0x00]);
+  parts.push(sjisBytes(THIN+'\n'));
+  parts.push(sjisBytes('お支払い   クレジットカード\n'));
+  parts.push(sjisBytes('カード     '+info.brand+(info.last4?(' ****'+info.last4):'')+'\n'));
+  if(info.readMethod) parts.push(sjisBytes('お取扱い   '+info.readMethod+'\n'));
+  parts.push(sjisBytes('お支払区分 一括払い\n'));
+  parts.push(sjisBytes(THIN+'\n'));
+  // 金額（中央・大）
+  parts.push([ESC,0x61,0x01]);
+  parts.push(sjisBytes('ご請求金額\n'));
+  parts.push([ESC,0x21,0x30]);
+  parts.push(YEN);
+  parts.push(sjisBytes(Number(info.amount||0).toLocaleString()+'\n'));
+  parts.push([ESC,0x21,0x00]);
+  parts.push(sjisBytes(SEP+'\n'));
+  if(info.paymentIntentId){
+    parts.push(sjisBytes('取引番号\n'));
+    parts.push(sjisBytes(info.paymentIntentId+'\n'));
+  }
+  parts.push(sjisBytes(SEP+'\n'));
+  parts.push(sjisBytes('ご利用ありがとうございました\n\n\n'));
+  parts.push([GS,0x56,0x41,0x10]); // カット
+  var totalLen=0; parts.forEach(function(p){ totalLen+=p.length; });
+  var buf=new Uint8Array(totalLen); var pos=0;
+  parts.forEach(function(p){ buf.set(p instanceof Uint8Array?p:new Uint8Array(p),pos); pos+=p.length; });
+  return buf;
+}
+async function printCardSlip(){
+  if(!_cardResult||!_cardResult.paymentIntentId){ toast('カード決済の記録がありません','err'); return; }
+  var btn=g('ct-slip'); if(btn) btn.disabled=true;
+  try{
+    toast('カード情報を取得中...','inf');
+    var brand='カード', last4='', readMethod='';
+    try{
+      var res=await slipFunctions().httpsCallable('terminalChargeInfo')({paymentIntentId:_cardResult.paymentIntentId});
+      var d=(res&&res.data)||{};
+      brand=brandLabel(d.brand); last4=d.last4||''; readMethod=readMethodLabel(d.readMethod);
+    }catch(e){ /* 情報取得失敗でもブランド無しで印刷は続行する */ }
+    var now=new Date();
+    var dateStr=now.getFullYear()+'/'+String(now.getMonth()+1).padStart(2,'0')+'/'+String(now.getDate()).padStart(2,'0')+' '
+      +String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+    var info={brand:brand,last4:last4,readMethod:readMethod,amount:_cardResult.amount,paymentIntentId:_cardResult.paymentIntentId,dateStr:dateStr};
+    var char=await ensureReceiptPrinter();
+    await sendToPrinter(char, buildCardSlipData(info));
+    toast('カード明細を印刷しました');
+  }catch(e){
+    console.error('カード明細印刷エラー:', e);
+    toast('印刷失敗: '+e.message,'err');
+    receiptDevice=null; receiptCharacteristic=null;
+  }finally{
+    if(btn) btn.disabled=false;
   }
 }
 </script>
