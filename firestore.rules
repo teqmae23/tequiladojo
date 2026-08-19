@@ -26,6 +26,11 @@ service cloud.firestore {
       return signedIn()
         && (claimRole() in ['owner', 'staff'] || docRole() in ['owner', 'staff']);
     }
+    // ブラインド: 当該バッチの会員入力が「許可中」か（店の inputOpen フラグ）
+    function flightInputOpen(bid) {
+      return exists(/databases/$(database)/documents/blindFlights/$(bid))
+        && get(/databases/$(database)/documents/blindFlights/$(bid)).data.get('inputOpen', false) == true;
+    }
 
     // ── 会員情報（個人情報）: スタッフ全件 / 会員は自分のみ ─────
     // 作成・引継はCloud Functions（registerMember）がサーバー権限で行う
@@ -199,12 +204,14 @@ service cloud.firestore {
     match /marketIntlHistory/{id} { allow read, write: if isStaff(); }
     match /blindResults/{id}  { allow read, write: if isStaff(); }
     // ブラインド: 会員が自分の回答を入力する一時データ。店側が拾って blindResults に確定保存する。
-    // 会員は自分(authUid一致)の doc のみ作成/更新でき、確定(confirmed=true)後は更新不可（解除はスタッフ）。
+    // 会員は自分(authUid一致)の doc のみ作成/更新できる。可否は店の入力許可(inputOpen)で制御し、
+    // 締切(inputOpen=false)後は会員は変更不可（確定/解除・修正はすべて許可中のみ）。スタッフは常時可。
     match /blindGuesses/{id} {
       allow read: if signedIn();
-      allow create: if isStaff() || (realUser() && request.resource.data.authUid == request.auth.uid);
+      allow create: if isStaff()
+        || (realUser() && request.resource.data.authUid == request.auth.uid && flightInputOpen(request.resource.data.batchId));
       allow update: if isStaff()
-        || (realUser() && resource.data.authUid == request.auth.uid && resource.data.get('confirmed', false) != true);
+        || (realUser() && resource.data.authUid == request.auth.uid && flightInputOpen(resource.data.batchId));
       allow delete: if isStaff();
     }
     // ブラインド: 結果公開のフラグ（バッチ単位）。店側が公開、全端末が閲覧。

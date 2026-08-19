@@ -208,12 +208,32 @@ var BlindResult = (function(){
     });
   }
 
+  // 店側の編集を blindGuesses に反映（会員のリアルタイム表へ即共有するため・追加のみ）。
+  // 実バッチ(batchId)のみ対象。confirmed 等は触れず answers/winner を merge。
+  function _persistRowGuess(mi){
+    if(!_db || !_state || !_state.b || !_state.b.batchId) return;
+    var bid = _state.b.batchId;
+    var g = _state.members[mi]; if(!g) return;
+    var visit = _getVisits().find(function(v){ return v.id === g.visitKey; });
+    var customerId = (visit && visit.memberId) || g.visitKey;
+    if(!customerId) return;
+    var answers = _state.marks.map(function(mk, mki){ return {blindMarkId: mk, guessMarkId: _state.answers[mi][mki] || null}; });
+    var data = {
+      id: bid + '__' + customerId, batchId: bid, groupId: g.gid,
+      visitKey: g.visitKey, customerId: customerId, name: _vLabel(g.visitKey),
+      answers: answers, winner: _state.winners[mi] || null,
+      source: 'staff', updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    _db.collection('blindGuesses').doc(data.id).set(data, {merge:true}).catch(function(){});
+  }
+
   // ── Public: answer/winner setters (called from inline onclick) ──
   function _setAnswer(mi, mki, markId){
     _closePanel();
     if(!markId){
       _state.answers[mi][mki] = null;
       _renderTable();
+      _persistRowGuess(mi);
       return;
     }
     var existIdx = _state.answers[mi].findIndex(function(m, i){ return i !== mki && m === markId; });
@@ -222,12 +242,14 @@ var BlindResult = (function(){
     }
     _state.answers[mi][mki] = markId;
     _renderTable();
+    _persistRowGuess(mi);
   }
 
   function _setWinner(mi, markId){
     _closePanel();
     _state.winners[mi] = markId || null;
     _renderTable();
+    _persistRowGuess(mi);
   }
 
   // ── Private: title + switch helpers ──

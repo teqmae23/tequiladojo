@@ -384,8 +384,10 @@ let allVisits=[];         // 当会員の全来場
 let allOrders=[];         // 当会員の全注文（全来場分）
 let allProducts=[];       // 定番品マスタ
 let allBlindResults=[];   // 当会員の全ブラインド結果
+let allBatchOrders=[];    // 同席者（同一batchの他会員注文）: {visitKey, batchId}
 let blindFlightMap={};    // batchId → blindFlights doc（inputOpen/revealed 等）
 let _bfWatchers={};       // batchId → onSnapshot unsub
+let _biRevealShown={};    // batchId → 公開ポップアップ表示済みフラグ
 let allMembersMap={};     // memberId → {nickname, name} のキャッシュ
 let filteredVisits=[];    // フィルター後
 let blindMarkMap={};      // markId→{emoji,label}
@@ -788,6 +790,7 @@ async function loadMyData(memberId){
   }
 
   allBlindResults=(act.blindResults||[]).slice();
+  allBatchOrders=(act.batchOrders||[]).slice(); // 同席者（結果テーブルの参加者行）
   setupBlindFlightWatchers(); // 店側の「入力許可」フラグをリアルタイム監視（許可されるまで入力ボタン非表示）
 
   // 会員名・visitKey→memberIdのキャッシュ（サーバーが解決済み）
@@ -1106,7 +1109,7 @@ function buildBatchBlock(b,visitId){
     ?`<span class="og-badge" style="background:#e7f0ff;color:#0c447c;cursor:pointer;font-size:11px" onclick="event.stopPropagation();openBlindInput('${esc(b.batchId)}','${esc(visitId)}','${esc(b.repGid||b.groups[0])}')" title="ブラインドの結果を入力">🎭 結果入力</span>`
     :'';
   const blindLink=isBlind
-    ?`<span class="og-badge" style="background:#f3eaff;color:#6b3fa0;cursor:pointer;font-size:11px" onclick="event.stopPropagation();openBlindModal('${esc(b.repGid||b.groups[0])}','${esc(visitId)}')" title="ブラインド結果を見る">🎭 結果を表示</span>`
+    ?`<span class="og-badge" style="background:#f3eaff;color:#6b3fa0;cursor:pointer;font-size:11px" onclick="event.stopPropagation();openBlindView('${esc(b.batchId||'')}','${esc(b.repGid||b.groups[0])}','${esc(visitId)}')" title="ブラインド結果を見る">🎭 結果を表示</span>`
     :'';
 
   // 一緒に飲んだ人：「N人と一緒」クリックでポップアップ
@@ -1253,14 +1256,40 @@ function openBlindModal(gid, visitId){
   document.getElementById('blind-modal').classList.add('open');
 }
 
+// バッチの代表 visitKey / orderGroupId を自分の注文から求める（公開ポップアップ用）
+function _biBatchCtx(batchId){
+  var o=allOrders.find(function(x){ return x.batchId===batchId && x.blindId===1 && (x.visitKey||x.visitId); });
+  if(!o) return null;
+  return { visitId:(o.visitKey||o.visitId), repGid:o.orderGroupId||null };
+}
+// 「結果を表示」: 公開中で未保存ならリアルタイム表を、保存済みなら履歴ビューアを開く。
+function openBlindView(batchId, repGid, visitId){
+  var fl=blindFlightMap[batchId]||{};
+  var hasSaved=allBlindResults.some(function(r){ return r.batchId===batchId; });
+  if(fl.revealed && !hasSaved){ openBlindTable(batchId, visitId, repGid); }
+  else { openBlindModal(repGid, visitId); }
+}
 // 店側の「入力許可(inputOpen)」をリアルタイム監視。許可された瞬間に入力ボタンを出す。
+// さらに「結果公表(revealed)」された瞬間に結果テーブルをポップアップ表示する。
 function setupBlindFlightWatchers(){
   var batchIds=[...new Set(allOrders.filter(function(o){return o.blindId===1 && o.batchId;}).map(function(o){return o.batchId;}))];
   batchIds.forEach(function(bid){
     if(_bfWatchers[bid]) return;
     _bfWatchers[bid]=db.collection('blindFlights').doc(bid).onSnapshot(function(doc){
-      blindFlightMap[bid]=doc.exists?(doc.data()||{}):{};
+      var first=!(bid in blindFlightMap);
+      var data=doc.exists?(doc.data()||{}):{};
+      blindFlightMap[bid]=data;
       if(typeof applyFilter==='function') applyFilter(); // 入力ボタンの表示状態を反映
+      // 公開された瞬間（このセッション中の遷移）に結果ポップアップを自動表示
+      if(data.revealed){
+        if(first){ _biRevealShown[bid]=true; }          // ロード時点で既に公開済み → 自動表示しない（ボタンから閲覧可）
+        else if(!_biRevealShown[bid]){
+          _biRevealShown[bid]=true;
+          var alreadyOpen=(_biState&&_biState.batchId===bid);
+          var ctx=_biBatchCtx(bid);
+          if(!alreadyOpen && ctx) openBlindTable(bid, ctx.visitId, ctx.repGid);
+        }
+      }
     }, function(){});
   });
 }
@@ -1280,86 +1309,188 @@ function biMarkChip(markId){
   var sym=isW?(isDbl?'○○':'○'):(isDbl?'●●':'●');
   return '<span style="color:'+col+';font-weight:700">'+sym+'</span>';
 }
-var _biState=null, _biFlightUnsub=null;
+// ═══ ブラインド結果 リアルタイム共有テーブル（管理者画面と同じ体裁） ═══
+// 参加者全員の入力を1つの表でリアルタイム共有。自分の行のみ編集可、他行は参照。
+// 入力可否は店の「入力許可/締切」(blindFlights.inputOpen)で制御。公開(revealed)で正解表示。
+var _biState=null, _biFlightUnsub=null, _biGuessUnsub=null;
+var _biNums=['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩'];
+function _biInjectStyle(){
+  if(document.getElementById('bi-style')) return;
+  var st=document.createElement('style'); st.id='bi-style';
+  st.textContent=
+    '#blind-input-modal .bt{border-collapse:collapse;width:100%;font-size:12px}'
+   +'#blind-input-modal .bt th,#blind-input-modal .bt td{border:1px solid #e2ddd0;padding:4px 3px;text-align:center;white-space:nowrap}'
+   +'#blind-input-modal .bt th{background:#f5f0e6;font-size:11px;color:#8a7a60;font-weight:600}'
+   +'#blind-input-modal .bt td.nm{text-align:left;font-weight:600;color:#222;background:#faf7f1;padding-left:8px;max-width:110px;overflow:hidden;text-overflow:ellipsis}'
+   +'#blind-input-modal .bt td.me{background:#fff8e8}'
+   +'#blind-input-modal .bt td.correct{background:#d4edda}'
+   +'#blind-input-modal .bt td.wrong{background:#f8d7da}'
+   +'#blind-input-modal .bt select{width:100%;min-width:52px;padding:5px 2px;border:1px solid #ccc;border-radius:5px;font-size:13px;background:#fff}'
+   +'#blind-input-modal .bt tr.me-row td.nm{color:#0c447c}'
+   +'#blind-input-modal .bleg{margin-top:10px;font-size:12px;color:#555}'
+   +'#blind-input-modal .bleg-row{display:flex;align-items:center;gap:6px;padding:2px 0}';
+  document.head.appendChild(st);
+}
 function ensureBlindInputModal(){
+  _biInjectStyle();
   if(document.getElementById('blind-input-modal')) return;
   var w=document.createElement('div');
   w.id='blind-input-modal';
-  w.style.cssText='display:none;position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:300;align-items:center;justify-content:center;padding:16px';
-  w.innerHTML='<div style="width:100%;max-width:440px;background:#fff;border-radius:14px;max-height:88vh;overflow-y:auto">'
-    +'<div style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid #eee;font-weight:700">🎭 ブラインド結果入力<button onclick="closeBlindInput()" style="margin-left:auto;border:none;background:none;font-size:20px;cursor:pointer;color:#999">✕</button></div>'
-    +'<div id="bi-body" style="padding:14px 16px"></div></div>';
+  w.style.cssText='display:none;position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:300;align-items:center;justify-content:center;padding:12px';
+  w.innerHTML='<div style="width:100%;max-width:680px;background:#fff;border-radius:14px;max-height:90vh;overflow-y:auto;display:flex;flex-direction:column">'
+    +'<div style="display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid #eee;font-weight:700"><span id="bi-title">🎭 ブラインド結果入力</span><button onclick="closeBlindInput()" style="margin-left:auto;border:none;background:none;font-size:20px;cursor:pointer;color:#999">✕</button></div>'
+    +'<div id="bi-body" style="padding:12px 14px;overflow-x:auto"></div></div>';
   document.body.appendChild(w);
   w.addEventListener('click',function(e){ if(e.target===w) closeBlindInput(); });
 }
 function closeBlindInput(){
   var w=document.getElementById('blind-input-modal'); if(w) w.style.display='none';
+  if(_biGuessUnsub){ try{_biGuessUnsub();}catch(e){} _biGuessUnsub=null; }
   if(_biFlightUnsub){ try{_biFlightUnsub();}catch(e){} _biFlightUnsub=null; }
+  _biState=null;
 }
-async function openBlindInput(batchId, visitId, repGid){
+function _biName(customerId, visitKey){
+  var info=customerId&&allMembersMap[customerId];
+  if(info&&(info.nickname||info.name)) return info.nickname||info.name;
+  if(visitKey){ var mid=allMembersMap['visit_'+visitKey]; var i2=mid&&allMembersMap[mid]; if(i2&&(i2.nickname||i2.name)) return i2.nickname||i2.name; }
+  return null;
+}
+// バッチの参加者行（自分＋同席者）。blindGuesses到着時にさらに補完する。
+function _biBuildRows(batchId, myCustomerId, myVisitKey){
+  var rowMap={};
+  function add(cid, vk, name, isMe){
+    if(!cid) return;
+    if(!rowMap[cid]) rowMap[cid]={customerId:cid, visitKey:vk||null, name:name||_biName(cid,vk)||cid, isMe:!!isMe, answers:{}, winner:null, confirmed:false};
+    else { if(isMe) rowMap[cid].isMe=true; if(name&&(rowMap[cid].name===cid||!rowMap[cid].name)) rowMap[cid].name=name; }
+  }
+  add(myCustomerId, myVisitKey, (currentMember&&(currentMember.nickname||currentMember.name))||null, true);
+  (allBatchOrders||[]).filter(function(bo){return bo.batchId===batchId;}).forEach(function(bo){
+    var mid=allMembersMap['visit_'+bo.visitKey]||bo.visitKey;
+    add(mid, bo.visitKey, _biName(mid,bo.visitKey), false);
+  });
+  return rowMap;
+}
+async function openBlindInput(batchId, visitId, repGid){ return openBlindTable(batchId, visitId, repGid); }
+async function openBlindTable(batchId, visitId, repGid){
   ensureBlindInputModal();
   var marks=[...new Set(allOrders.filter(function(o){return o.batchId===batchId && o.blindId===1 && (o.served!==0&&o.served!=='0');}).map(function(o){return o.blindMarkId;}).filter(Boolean))];
   if(!marks.length){ mpToast('ブラインド対象が見つかりません'); return; }
-  var customerId=currentMember&&(currentMember.id||currentMember.memberId);
+  var myCustomerId=currentMember&&(currentMember.id||currentMember.memberId);
   var authUid=(auth.currentUser&&auth.currentUser.uid)||null;
-  var docId=batchId+'__'+customerId;
-  var existing=null;
-  try{ var d=await db.collection('blindGuesses').doc(docId).get(); if(d.exists) existing=d.data(); }catch(e){}
-  _biState={ batchId:batchId, visitId:visitId, repGid:repGid, customerId:customerId, authUid:authUid, docId:docId,
-    marks:marks, guesses:{}, winner:(existing&&existing.winner)||null, confirmed:!!(existing&&existing.confirmed) };
-  if(existing&&Array.isArray(existing.answers)) existing.answers.forEach(function(a){ _biState.guesses[a.blindMarkId]=a.guessMarkId||null; });
-  renderBlindInput();
+  var fl=blindFlightMap[batchId]||{};
+  _biState={ batchId:batchId, visitId:visitId, repGid:repGid, myCustomerId:myCustomerId, authUid:authUid,
+    marks:marks, rowMap:_biBuildRows(batchId, myCustomerId, visitId),
+    inputOpen:!!fl.inputOpen, revealed:!!fl.revealed };
+  renderBiTable();
   document.getElementById('blind-input-modal').style.display='flex';
+  subscribeBiGuesses();
   watchBlindFlight(batchId);
 }
-function renderBlindInput(){
-  var s=_biState, ro=s.confirmed;
-  var nums=['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩'];
-  var opt=function(sel){ return '<option value="">—</option>'+s.marks.map(function(mk,i){ return '<option value="'+esc(mk)+'"'+(sel===mk?' selected':'')+'>'+nums[i]+' '+esc((blindMarkMap[mk]&&blindMarkMap[mk].label)||mk)+'</option>'; }).join(''); };
-  var rows=s.marks.map(function(mk,i){
-    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f2f2f2">'
-      +'<div style="width:56px">'+nums[i]+' '+biMarkChip(mk)+'</div>'
-      +'<div style="flex:1"><select data-mk="'+esc(mk)+'" class="bi-guess" '+(ro?'disabled':'')+' style="width:100%;padding:7px;border:1px solid #ccc;border-radius:6px;font-size:13px">'+opt(s.guesses[mk]||'')+'</select></div></div>';
-  }).join('');
-  var body=document.getElementById('bi-body');
-  body.innerHTML=
-    '<div style="font-size:12px;color:#666;margin-bottom:8px">各グラス（①〜）が、どのお酒だと思うか選んでください。</div>'
-    +rows
-    +'<div style="display:flex;align-items:center;gap:8px;padding:10px 0 4px"><div style="width:56px;font-size:12px;color:#666">好み</div><div style="flex:1"><select id="bi-winner" '+(ro?'disabled':'')+' style="width:100%;padding:7px;border:1px solid #ccc;border-radius:6px;font-size:13px">'+opt(s.winner||'')+'</select></div></div>'
-    +'<div id="bi-status" style="font-size:12px;margin:8px 0;min-height:16px">'+(s.confirmed?'<span style="color:#1a6640;font-weight:700">✅ 確定済み（変更するには店舗で解除してください）</span>':'')+'</div>'
-    +(s.confirmed
-        ? '<button onclick="closeBlindInput()" style="width:100%;padding:11px;border:none;background:#eee;border-radius:8px;font-size:14px;cursor:pointer">閉じる</button>'
-        : '<div style="display:flex;gap:8px"><button onclick="saveBlindInput(false)" style="flex:1;padding:11px;border:1px solid #ccc;background:#f5f5f5;border-radius:8px;font-size:14px;cursor:pointer">一時保存</button><button onclick="saveBlindInput(true)" style="flex:2;padding:11px;border:none;background:#0c447c;color:#fff;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">確定する</button></div>');
-  Array.prototype.forEach.call(body.querySelectorAll('.bi-guess'),function(sel){ sel.addEventListener('change',function(){ _biState.guesses[this.getAttribute('data-mk')]=this.value||null; }); });
-  var win=document.getElementById('bi-winner'); if(win) win.addEventListener('change',function(){ _biState.winner=this.value||null; });
-}
-async function saveBlindInput(doConfirm){
-  var s=_biState;
-  if(doConfirm){
-    var unfilled=s.marks.some(function(mk){ return !s.guesses[mk]; });
-    if(unfilled && !window.confirm('未選択の項目がありますが確定しますか？')) return;
-  }
-  var answers=s.marks.map(function(mk){ return {blindMarkId:mk, guessMarkId:s.guesses[mk]||null}; });
-  var data={ id:s.docId, batchId:s.batchId, groupId:s.repGid, visitKey:s.visitId,
-    customerId:s.customerId, authUid:s.authUid,
-    name:(currentMember&&(currentMember.nickname||currentMember.name))||s.customerId,
-    answers:answers, winner:s.winner||null, confirmed:!!doConfirm,
-    updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
-  if(doConfirm) data.confirmedAt=firebase.firestore.FieldValue.serverTimestamp();
-  try{
-    await db.collection('blindGuesses').doc(s.docId).set(data,{merge:true});
-    s.confirmed=!!doConfirm; renderBlindInput();
-    mpToast(doConfirm?'確定しました':'一時保存しました');
-  }catch(e){ mpToast('保存失敗: '+(e.message||e)); }
+function subscribeBiGuesses(){
+  var s=_biState; if(!s) return;
+  if(_biGuessUnsub){ try{_biGuessUnsub();}catch(e){} }
+  _biGuessUnsub=db.collection('blindGuesses').where('batchId','==',s.batchId).onSnapshot(function(snap){
+    if(!_biState) return;
+    snap.forEach(function(d){
+      var g=d.data(); if(!g||!g.customerId) return;
+      var r=_biState.rowMap[g.customerId];
+      if(!r){ r=_biState.rowMap[g.customerId]={customerId:g.customerId, visitKey:g.visitKey||null, name:(g.name||g.customerId), isMe:(g.customerId===_biState.myCustomerId), answers:{}, winner:null, confirmed:false}; }
+      // 自分が編集中の未保存内容を、自分の書き込みechoで上書きしても内容は一致するので安全。
+      var na={}; if(Array.isArray(g.answers)) g.answers.forEach(function(a){ na[a.blindMarkId]=a.guessMarkId||null; });
+      r.answers=na; r.winner=g.winner||null; r.confirmed=!!g.confirmed;
+      if(g.name&&(r.name===g.customerId||!r.name)) r.name=g.name;
+    });
+    renderBiTable();
+  }, function(){});
 }
 function watchBlindFlight(batchId){
   if(_biFlightUnsub){ try{_biFlightUnsub();}catch(e){} _biFlightUnsub=null; }
   _biFlightUnsub=db.collection('blindFlights').doc(batchId).onSnapshot(function(doc){
-    var st=document.getElementById('bi-status'); if(!st||!_biState) return;
-    if(doc.exists && doc.data().revealed){
-      st.innerHTML='<span style="color:#6b3fa0;font-weight:700">🎭 結果が公開されました</span> <button onclick="closeBlindInput();openBlindModal(\''+esc(_biState.repGid)+'\',\''+esc(_biState.visitId)+'\')" style="border:none;background:#f3eaff;color:#6b3fa0;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px">結果を見る</button>';
-    }
-  }, function(err){});
+    if(!_biState||_biState.batchId!==batchId) return;
+    var d=doc.exists?(doc.data()||{}):{};
+    _biState.inputOpen=!!d.inputOpen; _biState.revealed=!!d.revealed;
+    renderBiTable();
+  }, function(){});
+}
+function _biRow(cid){ return _biState&&_biState.rowMap[cid]; }
+function _biMe(){ return _biState&&_biState.rowMap[_biState.myCustomerId]; }
+function _biOrder(){
+  var s=_biState, ids=Object.keys(s.rowMap);
+  ids.sort(function(a,b){ if(a===s.myCustomerId)return -1; if(b===s.myCustomerId)return 1; return String(_biRow(a).name||'').localeCompare(String(_biRow(b).name||'')); });
+  return ids;
+}
+function renderBiTable(){
+  var s=_biState; if(!s) return;
+  var marks=s.marks, revealed=s.revealed, me=_biMe();
+  var editable=!!(me && s.inputOpen && !me.confirmed);   // 自分の行が編集可能か
+  var optHtml=function(sel){ return '<option value="">—</option>'+marks.map(function(mk,i){ return '<option value="'+esc(mk)+'"'+(sel===mk?' selected':'')+'>'+_biNums[i]+' '+esc((blindMarkMap[mk]&&blindMarkMap[mk].label)||mk)+'</option>'; }).join(''); };
+  // ヘッダ
+  var thMarks=marks.map(function(mk,i){
+    return '<th>'+_biNums[i]+(revealed?('<br>'+biMarkChip(mk)):'')+'</th>';
+  }).join('');
+  var thead='<thead><tr><th style="text-align:left;padding-left:8px">名前</th>'+thMarks+'<th>好</th><th>正解</th></tr></thead>';
+  // 行
+  var tbody=_biOrder().map(function(cid){
+    var r=_biRow(cid), isMe=r.isMe;
+    var canEditRow=isMe&&editable;
+    var cells=marks.map(function(mk){
+      var g=r.answers[mk]||'';
+      var cls=''; var content;
+      if(canEditRow){
+        content='<select onchange="biSetAnswer(\''+esc(mk)+'\',this.value)">'+optHtml(g)+'</select>';
+      }else{
+        content=g?biMarkChip(g):'<span style="color:#bbb">—</span>';
+      }
+      if(revealed){ if(g){ cls=(g===mk)?' correct':' wrong'; } else { cls=' wrong'; } }
+      return '<td class="'+(isMe?'me':'')+cls+'">'+content+'</td>';
+    }).join('');
+    var w=r.winner||'';
+    var winCell=canEditRow ? '<select onchange="biSetWinner(this.value)">'+optHtml(w)+'</select>' : (w?biMarkChip(w):'<span style="color:#bbb">—</span>');
+    var score='—';
+    if(revealed){ var cc=marks.filter(function(mk){ return r.answers[mk]===mk; }).length; score='<b>'+cc+'/'+marks.length+'</b>'; }
+    var nm=esc(r.name||r.customerId)+(r.confirmed?' <span style="color:#1a6640;font-size:11px">✅</span>':'');
+    return '<tr class="'+(isMe?'me-row':'')+'"><td class="nm">'+nm+'</td>'+cells+'<td class="'+(isMe?'me':'')+'">'+winCell+'</td><td>'+score+'</td></tr>';
+  }).join('');
+  // 凡例
+  var legend=marks.map(function(mk,i){
+    return '<div class="bleg-row">'+_biNums[i]+' '+(revealed?biMarkChip(mk)+' ':'')+'<span>'+esc((blindMarkMap[mk]&&blindMarkMap[mk].label)||mk)+'</span></div>';
+  }).join('');
+  // 操作エリア（自分用）
+  var action='';
+  if(!s.inputOpen){
+    action='<div style="margin-top:12px;font-size:13px;color:#a37b16;text-align:center">入力は締め切られました</div>';
+  }else if(me&&me.confirmed){
+    action='<div style="margin-top:12px"><div style="font-size:12px;color:#1a6640;font-weight:700;margin-bottom:6px">✅ あなたの回答は確定済みです</div>'
+      +'<button onclick="biUnconfirm()" style="width:100%;padding:10px;border:1px solid #ccc;background:#f5f5f5;border-radius:8px;font-size:14px;cursor:pointer">確定を解除して修正</button></div>';
+  }else{
+    action='<div style="margin-top:12px"><div style="font-size:12px;color:#666;margin-bottom:6px">各グラス（①〜）がどのお酒か選んでください。選択は自動で共有・保存されます。</div>'
+      +'<button onclick="biConfirm()" style="width:100%;padding:11px;border:none;background:#0c447c;color:#fff;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">確定する</button></div>';
+  }
+  var title=document.getElementById('bi-title'); if(title) title.textContent=revealed?'🎭 ブラインド結果（公開中）':'🎭 ブラインド結果入力';
+  document.getElementById('bi-body').innerHTML=
+    '<div class="bt-wrap"><table class="bt">'+thead+'<tbody>'+tbody+'</tbody></table></div>'
+    +'<div class="bleg"><div style="font-size:11px;color:#8a7a60;font-weight:600;margin-bottom:4px">マーク対応</div>'+legend+'</div>'
+    +action;
+}
+function biSetAnswer(mk,val){ var me=_biMe(); if(!me) return; me.answers[mk]=val||null; renderBiTable(); biPersist(); }
+function biSetWinner(val){ var me=_biMe(); if(!me) return; me.winner=val||null; biPersist(); }
+function biConfirm(){
+  var s=_biState, me=_biMe(); if(!me) return;
+  var unfilled=s.marks.some(function(mk){ return !me.answers[mk]; });
+  if(unfilled && !window.confirm('未選択の項目がありますが確定しますか？')) return;
+  me.confirmed=true; renderBiTable(); biPersist(); mpToast('確定しました');
+}
+function biUnconfirm(){ var me=_biMe(); if(!me) return; me.confirmed=false; renderBiTable(); biPersist(); mpToast('確定を解除しました'); }
+function biPersist(){
+  var s=_biState, me=_biMe(); if(!s||!me) return;
+  var answers=s.marks.map(function(mk){ return {blindMarkId:mk, guessMarkId:me.answers[mk]||null}; });
+  var data={ id:s.batchId+'__'+s.myCustomerId, batchId:s.batchId, groupId:s.repGid, visitKey:s.visitId,
+    customerId:s.myCustomerId, authUid:s.authUid,
+    name:(currentMember&&(currentMember.nickname||currentMember.name))||s.myCustomerId,
+    answers:answers, winner:me.winner||null, confirmed:!!me.confirmed,
+    updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
+  if(me.confirmed) data.confirmedAt=firebase.firestore.FieldValue.serverTimestamp();
+  db.collection('blindGuesses').doc(data.id).set(data,{merge:true}).catch(function(e){ mpToast('保存失敗: '+(e.message||e)); });
 }
 
 async function loadVisitStatus(memberId){
