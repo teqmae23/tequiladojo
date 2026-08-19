@@ -515,6 +515,7 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
       </label>
       <button class="btn bs" style="min-width:110px;background:#efe3d4;color:#7a5610;border-color:#d9c3a0" id="btn-kb-settle" onclick="kbSettleAtCheckout()" title="キープボトルの使用重量を入力して来場者へ振り分け">🍾 キープ精算</button>
       <button class="btn bp" style="flex:2;min-width:120px" id="m-checkout-save">✅ お会計確定</button>
+      <button class="btn bs" style="min-width:96px" id="btn-receipt-preview" onclick="showReceiptPreview()">👁️ プレビュー</button>
       <button class="btn bs" style="min-width:100px" id="btn-receipt-all" onclick="printReceipt('all')">🖨️ 全員</button>
       <button class="btn bs" style="min-width:100px" id="btn-receipt-each" onclick="printReceipt('each')" style="display:none">🖨️ 個別</button>
       <span style="font-size:10px;color:var(--ink3);margin-left:4px">05:42</span>
@@ -522,6 +523,23 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
   </div>
 </div>
 
+
+<div class="mbg" id="preview-mbg">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-head">
+      <div class="modal-title">レシートプレビュー</div>
+      <button class="modal-x" onclick="closeReceiptPreview()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">※印刷レイアウトの簡易版です（QRは［QRコード］と表示）</div>
+      <pre id="preview-pre" style="font-family:var(--mono);font-size:12px;line-height:1.55;white-space:pre;overflow-x:auto;background:#fff;border:1px dashed var(--border2);border-radius:8px;padding:14px 12px;color:#111;margin:0"></pre>
+    </div>
+    <div class="modal-foot">
+      <button class="btn bs" style="flex:1" onclick="closeReceiptPreview()">閉じる</button>
+      <button class="btn bp" style="flex:1" onclick="closeReceiptPreview();printReceipt('all')">🖨️ 印刷</button>
+    </div>
+  </div>
+</div>
 
 <div id="toasts"></div>
 
@@ -2863,6 +2881,7 @@ async function printReceipt(mode){
         var mObj=vObj&&vObj.memberId&&cache.members.find(function(m){ return m.id===vObj.memberId; });
         if(mObj&&mObj.isGuest){
           window._pendingTransferCode=await getOrCreate72hCode(mObj.id,mObj.nickname||mObj.name||'');
+          window._pendingTransferName=mObj.nickname||mObj.name||'';
         }
         var data=buildReceiptData();
         await sendToPrinter(receiptCharacteristic, data);
@@ -2877,6 +2896,7 @@ async function printReceipt(mode){
         var smObj=svObj&&svObj.memberId&&cache.members.find(function(m){ return m.id===svObj.memberId; });
         if(smObj&&smObj.isGuest){
           window._pendingTransferCode=await getOrCreate72hCode(smObj.id,smObj.nickname||smObj.name||'');
+          window._pendingTransferName=smObj.nickname||smObj.name||'';
         }
       }
       var data = buildReceiptData();
@@ -3026,6 +3046,82 @@ function makeQR(url){
   return parts;
 }
 
+// ── レシート簡易プレビュー（印刷せず画面で確認） ─────────────────────
+// 実際のESC/POS出力ではなく、同じ集計データを32桁幅のテキストで再現した簡易版。
+function _dw(s){ var w=0; for(var i=0;i<s.length;i++){ var c=s.charCodeAt(i); w+=(c<=0xFF||c===0xFFE5)?1:2; } return w; }
+function _rep(ch,n){ return n>0?new Array(n+1).join(ch):''; }
+function _center(s,W){ W=W||32; var p=W-_dw(s); if(p<=0) return s; return _rep(' ',Math.floor(p/2))+s; }
+function _right(s,W){ W=W||32; var p=W-_dw(s); if(p<=0) return s; return _rep(' ',p)+s; }
+function buildReceiptPreviewLines(){
+  var W=32, SEP=_rep('=',W);
+  var lines=[];
+  lines.push(_center('テキーラ道場'));
+  lines.push('');
+  lines.push(_center('千葉市中央区長洲1-24-1-215'));
+  lines.push(SEP);
+  var now=new Date();
+  var dateStr=now.getFullYear()+'/'+String(now.getMonth()+1).padStart(2,'0')+'/'+String(now.getDate()).padStart(2,'0')+' '
+    +String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  lines.push(_center(dateStr));
+  lines.push(SEP);
+  // 注文明細（buildReceiptData と同じ集計ロジック）
+  var grandTotal=parseInt((document.getElementById('co-grand-total').textContent||'0').replace(/[^0-9]/g,''))||0;
+  var orderSummary={};
+  (bulkCheckoutVisitKeys||[]).forEach(function(visitKey){
+    var orders=cache.orders.filter(function(o){ return (o.visitKey||o.visitId)===visitKey; });
+    orders.forEach(function(o){
+      var unitPrice=parseFloat(o.unitPrice)||0;
+      var qtyMl=parseFloat(o.qty)||0;
+      var bd=window._bottleCache&&(window._bottleCache[o.productCode]||window._bottleCache[o.id]);
+      var engName=bd?(bd.bottleEs||bd.bottleEn||bd.bottleJa||o.productName):(o.productName||'Unknown');
+      engName=String(engName).replace(/[・]/g,'-');
+      var count=Math.round(qtyMl/10)||1;
+      var price=Math.round(unitPrice);
+      if(!orderSummary[engName]) orderSummary[engName]={count:0,price:price,engName:engName};
+      orderSummary[engName].count+=count;
+    });
+  });
+  var keys=Object.keys(orderSummary);
+  if(!keys.length){ lines.push(_center('（注文なし）')); }
+  keys.forEach(function(name){
+    var it=orderSummary[name];
+    var total=Math.round(it.price*it.count);
+    lines.push(String(it.engName).substring(0,W));
+    lines.push(_right('¥'+it.price+'(10ml)x'+it.count+'=¥'+total.toLocaleString(),W));
+  });
+  lines.push(SEP);
+  lines.push(_right('TOTAL: ¥'+grandTotal.toLocaleString(),W));
+  lines.push('');
+  lines.push(_center('ご来場ありがとうございました'));
+  lines.push(_center('https://www.tequiladojo.com'));
+  // 仮会員／ゲストの本登録QR（プレビューでは［QRコード］表示）
+  var tempMembers=window._lastTempMembers||[];
+  (bulkCheckoutVisitKeys||[]).forEach(function(vk){
+    var v=cache.visits.find(function(x){ return x.id===vk; });
+    if(!v) return;
+    var m=v.memberId&&cache.members.find(function(x){ return x.id===v.memberId; });
+    var isTemp=v.memberId&&String(v.memberId).startsWith('9');
+    var isGuest=m&&m.isGuest;
+    if(!isTemp && !isGuest) return;
+    lines.push('');
+    lines.push(_center(isGuest?'本登録のご案内':'-- 会員登録はこちら --'));
+    lines.push(_center('［QRコード］'));
+    var nn='';
+    if(isTemp){ var ti=tempMembers.find(function(t){ return t.tempId===v.memberId; }); nn=ti?ti.nickname:''; }
+    if(!nn && m) nn=m.nickname||m.name||'';
+    if(nn) lines.push(_center(nn+'様'));
+  });
+  return lines;
+}
+function showReceiptPreview(){
+  if(!bulkCheckoutVisitKeys || !bulkCheckoutVisitKeys.length){ toast('会計対象を選択してください','err'); return; }
+  try{
+    g('preview-pre').textContent=buildReceiptPreviewLines().join('\n');
+    g('preview-mbg').style.display='flex';
+  }catch(e){ toast('プレビュー失敗: '+e.message,'err'); }
+}
+function closeReceiptPreview(){ g('preview-mbg').style.display='none'; }
+
 function buildReceiptData(){
   var ESC=0x1B, GS=0x1D, FS=0x1C;
   var SEP='================================'; // 32文字
@@ -3049,6 +3145,13 @@ function buildReceiptData(){
     var tUrl='https://tequiladojo.com/member_register2.html?transfer='+tCode;
     makeQR(tUrl).forEach(function(p){ parts.push(p); });
     parts.push(sjisBytes('\n'));
+    // QRの下にニックネーム（◯◯様）を表示
+    var tName=window._pendingTransferName||''; window._pendingTransferName=null;
+    if(tName){
+      parts.push([ESC,0x21,0x10]);
+      parts.push(sjisBytes(tName+'様\n'));
+      parts.push([ESC,0x21,0x00]);
+    }
     parts.push([ESC,0x21,0x10]);
     parts.push(sjisBytes(tCode+'\n'));
     parts.push([ESC,0x21,0x00]);
@@ -3173,9 +3276,13 @@ function buildReceiptData(){
       var tempInfo=tempMembers.find(function(t){ return t.tempId===v.memberId; });
       if(!tempInfo) return;
       var regUrl='https://tequiladojo.com/profile_edit.html?reg='+tempInfo.regCode;
-      parts.push(sjisBytes(tempInfo.nickname+'\n'));
       var qrTemp=makeQR(regUrl);
       qrTemp.forEach(function(p){ parts.push(p); });
+      parts.push(sjisBytes('\n'));
+      // QRの下にニックネーム（◯◯様）を表示
+      parts.push([ESC,0x21,0x10]);
+      parts.push(sjisBytes((tempInfo.nickname||'')+'様\n'));
+      parts.push([ESC,0x21,0x00]);
       parts.push(sjisBytes('\n'));
     });
   }
