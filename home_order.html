@@ -559,6 +559,7 @@ body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-
         <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--border);">
           <input type="checkbox" id="blind-check-s2" onchange="toggleBlindModeS2()" style="width:16px;height:16px;accent-color:var(--purple);">
           <label for="blind-check-s2" style="font-size:13px;color:var(--ink2);cursor:pointer;">🎭 ブラインドテイスティング</label>
+          <button type="button" class="btn bs sm" id="blind-staff-btn" onclick="openBlindStaffModal()" style="display:none;margin-left:auto" title="出勤中スタッフをブラインドに参加させる（0円）">👥 スタッフ<span id="blind-staff-count"></span></button>
         </div>
         <div id="confirm-time-row" style="display:none;background:var(--cream2);border-radius:var(--r);padding:10px 12px;margin:6px 0;border:1px solid var(--border2)">
           <div style="font-size:10px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:5px">過去日付への注文 — 注文時間を指定</div>
@@ -615,6 +616,23 @@ body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-
       <div style="flex:1"></div>
       <button class="btn bs" onclick="closeGiftModal()">キャンセル</button>
       <button class="btn bp" onclick="applyGift()">決定</button>
+    </div>
+  </div>
+</div>
+
+<!-- ブラインド参加スタッフ選択モーダル -->
+<div id="blind-staff-overlay" style="display:none;position:fixed;inset:0;background:rgba(24,17,10,.65);z-index:600;align-items:center;justify-content:center;padding:16px">
+  <div style="background:var(--white);border-radius:var(--rl);width:100%;max-width:460px;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-lg)">
+    <div style="padding:14px 16px 10px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--white);z-index:1">
+      <div style="font-size:15px;font-weight:600;color:var(--purple)">👥 ブラインドに参加するスタッフ</div>
+      <div style="font-size:11px;color:var(--ink3);margin-top:3px">出勤中のスタッフを選択。選んだスタッフに0円のブラインド履歴を作成し、参加者に加えます。</div>
+    </div>
+    <div style="overflow-y:auto;flex:1" id="blind-staff-list"></div>
+    <div style="padding:12px 14px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center">
+      <button class="btn bs sm" onclick="clearBlindStaff()">選択クリア</button>
+      <div style="flex:1"></div>
+      <button class="btn bs" onclick="closeBlindStaffModal()">キャンセル</button>
+      <button class="btn bp" onclick="applyBlindStaff()">決定</button>
     </div>
   </div>
 </div>
@@ -689,7 +707,7 @@ let blindResultsSet=new Set();
 let masterData={tequila:[],other:[],misc:[],set:[],cocktail:[],subMaterials:[]};
 let keepBottlesData=[], stockBottlesData=[];
 let blindMarks=[];
-let flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false};
+let flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false,blindStaff:[]};
 let resultTarget=null;
 let currentPTab='tequila', currentNOM='', currentLotType='1', currentInitial='', currentClasses=new Set(), currentAbv='', currentAdditive='', pendingProduct=null, currentProductSort='', currentProductSortDir='asc';
 
@@ -765,7 +783,7 @@ async function init(){
   if(visitsParam){
     var visitKeys=visitsParam.split(',').filter(Boolean);
     if(visitKeys.length>0){
-      flow={visits:[],cart:[],isBlind:false};
+      flow={visits:[],cart:[],isBlind:false,blindStaff:[]};
       document.getElementById('blind-check').checked=false;
       // まずallVisitsにない場合はFirestoreから取得
       var missingVks=visitKeys.filter(function(vk){return !allVisits.find(function(x){return x.id===vk;});});
@@ -1356,7 +1374,7 @@ async function openResultModal(bid){
 
 // ━━━ 注文作成 ━━━
 function openOrderModal(){
-  flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false};
+  flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false,blindStaff:[]};
   document.getElementById('blind-check').checked=false;
   updateGiftBar();
   document.getElementById('order-modal').classList.add('open');
@@ -1910,7 +1928,8 @@ function toggleBlindModeS2(){
   cb1.checked=cb.checked;
   flow.isBlind=cb.checked;
   if(flow.isBlind)assignBlindMarks();
-  else flow.cart.forEach(o=>o.blindMarkId=null);
+  else { flow.cart.forEach(o=>o.blindMarkId=null); flow.blindStaff=[]; }
+  updateBlindStaffBtn();
   renderCart();
   // confirm-itemsを再描画
   document.getElementById('confirm-items').innerHTML=flow.cart.map(o=>{
@@ -2313,6 +2332,7 @@ async function goStep2(){
   // step2のblindチェックをstep1と同期
   const bcs2=document.getElementById('blind-check-s2');
   if(bcs2){bcs2.checked=document.getElementById('blind-check').checked;bcs2.disabled=flow.cart.length===0;}
+  updateBlindStaffBtn();
   const names=flow.visits.map(v=>{const m=v.memberId&&allMembers[v.memberId];return m?(m.nickname||m.name):`ゲスト（${v.id}）`;});
   document.getElementById('confirm-visitor').textContent=names.join('、');
   const total=flow.cart.reduce((s,o)=>s+cartAmt(o),0);
@@ -2445,12 +2465,16 @@ async function confirmOrder(){
   const giftCount=isGift?flow.giftTo.length:0;
   const giftPayerDrinks=false; // 廃止: 奢りオーダーは常に他人分のみ
 
+  // ブラインド参加スタッフ（0円履歴を作成）: ブラインドON時のみ、マーク付き商品を対象
+  const blindStaff=(isBlind&&flow.blindStaff)?flow.blindStaff.filter(s=>s.visitKey):[];
+  const blindItems=isBlind?flow.cart.filter(it=>it.blindMarkId):[];
+
   try{
     const fsBatch=db.batch();
 
     // orderGroupIdを全参加者分まとめて採番（書き込み前に確定）
     const orderGroupIdMap={};
-    const allParticipants=[...flow.visits.map(v=>v.id),...giftRecipients.map(r=>r.visitKey)];
+    const allParticipants=[...new Set([...flow.visits.map(v=>v.id),...giftRecipients.map(r=>r.visitKey),...blindStaff.map(s=>s.visitKey)])];
     for(const vk of allParticipants){
       // 常にFirestoreから確認（allGroupsはセッションフィルター外の来店を含まないため）
       // 取得失敗時はcatchに落として中断（空扱いだとorderGroupIdが重複する）
@@ -2463,7 +2487,7 @@ async function confirmOrder(){
     // 日付+連番形式のID採番: カウンタードキュメントのトランザクションで
     // 必要数をまとめて確保する（複数端末の同時注文でも重複しない）。
     // maxSeqとの大きい方を起点にすることでカウンター未導入期間のIDとも衝突しない。
-    const _needed=flow.visits.length*flow.cart.length*(1+giftRecipients.length);
+    const _needed=flow.visits.length*flow.cart.length*(1+giftRecipients.length) + blindStaff.length*blindItems.length;
     const _counterRef=db.collection('counters').doc('orderSeq');
     const _seqStart=await db.runTransaction(async tx=>{
       const cs=await tx.get(_counterRef);
@@ -2532,6 +2556,28 @@ async function confirmOrder(){
         }
       });
     }
+    // ブラインド参加スタッフ: 同一batch・同一マークで 0円のブラインド注文を作成
+    for(const st of blindStaff){
+      const sGroupId=orderGroupIdMap[st.visitKey];
+      const stVisit=allVisits.find(v=>v.id===st.visitKey);
+      blindItems.forEach((item,i)=>{
+        const p=[...masterData.tequila,...masterData.other,...masterData.misc].find(x=>x.id===item.productId);
+        const saveName=p&&p.type==='tequila'?AuthRole.bdName(p,'es'):p&&p.type==='other'?(p.bottleEn||p.bottleName||p.name||item.productName):item.productName;
+        const docId=nextOrderId();
+        const sData={
+          orderDate:useDate,
+          orderTime,customerId:(stVisit&&stVisit.memberId)||st.memberId||null,visitKey:st.visitKey,
+          orderGroupId:sGroupId,batchId,itemSeq:i+1,
+          productCode:item.productId,productName:saveName,productType:item.productType,
+          qty:item.qty,unit:item.unit,unitPrice:0,
+          blindId:1,blindMarkId:item.blindMarkId||null,served:isPopupMode?3:1,
+          isBlindStaff:true
+        };
+        fsBatch.set(db.collection('orders').doc(docId),sData);
+        journalEntries.push({docId,data:sData});
+      });
+    }
+
     // commit前に全docIdの重複チェック
     const newDocIds=journalEntries.filter(e=>!e.col||e.col==='orders').map(e=>e.docId);
     const conflicts=newDocIds.filter(id=>existingSeqIds.has(id));
@@ -2571,7 +2617,7 @@ function renderQuickVisitorList(){
 function openOrderWithSelected(){
   var cbs=document.querySelectorAll('.qv-cb:checked');
   if(cbs.length===0){openOrderModal();return;}
-  flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false};
+  flow={visits:[],cart:[],isBlind:false,giftTo:[],isGift:false,blindStaff:[]};
   document.getElementById('blind-check').checked=false;
   Array.prototype.forEach.call(cbs,function(cb){
     var v=allVisits.find(function(x){return x.id===cb.dataset.vid;});
@@ -2760,6 +2806,56 @@ function applyGift(){
   closeGiftModal();
   updateGiftBar();
   renderCart();
+}
+
+// ── ブラインド参加スタッフ（0円履歴を作成して参加） ──────────────
+function updateBlindStaffBtn(){
+  const btn=document.getElementById('blind-staff-btn');
+  if(!btn) return;
+  btn.style.display=flow.isBlind?'inline-flex':'none';
+  const c=document.getElementById('blind-staff-count');
+  const n=(flow.blindStaff||[]).length;
+  if(c) c.textContent=n?(' '+n):'';
+  btn.classList.toggle('bp', n>0);
+  btn.classList.toggle('bs', n===0);
+}
+function openBlindStaffModal(){
+  if(!flow.isBlind){ showToast('先にブラインドをオンにしてください','error'); return; }
+  const payerKeys=new Set(flow.visits.map(v=>v.id));
+  const staffVisitors=allVisits.filter(v=>v.isStaff&&!v.checkoutTime&&!payerKeys.has(v.id));
+  const listEl=document.getElementById('blind-staff-list');
+  if(!staffVisitors.length){
+    listEl.innerHTML='<div style="padding:24px;text-align:center;font-size:13px;color:var(--ink3)">出勤中のスタッフがいません</div>';
+  }else{
+    const sel=new Set((flow.blindStaff||[]).map(s=>s.visitKey));
+    listEl.innerHTML=staffVisitors.map(v=>{
+      const m=v.memberId&&allMembers[v.memberId];
+      const name=m?(m.nickname||m.name||v.memberId):(v.memberId||v.id);
+      const isSel=sel.has(v.id);
+      return`<div class="gift-recipient-item${isSel?' selected':''}" onclick="toggleGiftItem(this)" data-visit-key="${esc(v.id)}" data-member-id="${esc(v.memberId||'')}" data-name="${esc(name)}">
+        <input type="checkbox"${isSel?' checked':''}>
+        <span style="flex:1;font-size:13px;font-weight:500">${esc(name)}</span>
+        <span style="font-size:11px;color:var(--ink3)">スタッフ</span>
+      </div>`;
+    }).join('');
+  }
+  document.getElementById('blind-staff-overlay').style.display='flex';
+}
+function closeBlindStaffModal(){ document.getElementById('blind-staff-overlay').style.display='none'; }
+function clearBlindStaff(){
+  document.querySelectorAll('#blind-staff-overlay .gift-recipient-item').forEach(el=>{
+    el.classList.remove('selected'); const cb=el.querySelector('input[type="checkbox"]'); if(cb) cb.checked=false;
+  });
+}
+function applyBlindStaff(){
+  const selected=[];
+  document.querySelectorAll('#blind-staff-overlay .gift-recipient-item.selected').forEach(el=>{
+    selected.push({visitKey:el.dataset.visitKey||'',memberId:el.dataset.memberId||'',name:el.dataset.name||''});
+  });
+  flow.blindStaff=selected.filter(s=>s.visitKey);
+  closeBlindStaffModal();
+  updateBlindStaffBtn();
+  showToast(flow.blindStaff.length?(flow.blindStaff.length+'名のスタッフが参加します'):'スタッフ参加なし','success');
 }
 
 let toastTimer;
