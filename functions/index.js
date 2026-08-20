@@ -487,7 +487,8 @@ async function lookupCountry(ip) {
   } catch (e) { /* ignore */ }
   return { name: '', code: '' };
 }
-async function recordTopAccess(context) {
+async function recordTopAccess(context, page) {
+  page = (page === 'member') ? 'member' : 'top'; // 公開TOP(index) / 会員TOP(会員ページ)
   const req = context && context.rawRequest;
   if (!req) { console.warn('[topAccess] no rawRequest'); return; }
   const xff = (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-appengine-user-ip'] || req.headers['fastly-client-ip'])) || '';
@@ -502,28 +503,31 @@ async function recordTopAccess(context) {
   const dayCompact = '' + jd.getUTCFullYear() + p2(jd.getUTCMonth() + 1) + p2(jd.getUTCDate());
   const dayIso = jd.getUTCFullYear() + '-' + p2(jd.getUTCMonth() + 1) + '-' + p2(jd.getUTCDate());
   const FV = admin.firestore.FieldValue;
-  const ref = db.collection('topAccessLogs').doc(dayCompact + '_' + ipHash);
+  // 公開TOPは従来どおりのdocId（後方互換）。会員TOPはpageを挟んで別集計にする。
+  const idSuffix = (page === 'top') ? '' : (page + '_');
+  const ref = db.collection('topAccessLogs').doc(dayCompact + '_' + idSuffix + ipHash);
   const snap = await ref.get();
   if (snap.exists) {
     await ref.update({ hits: FV.increment(1), lastAt: FV.serverTimestamp() });
-    console.log('[topAccess] hit++ ' + dayCompact + '_' + ipHash.slice(0, 8));
+    console.log('[topAccess] hit++ ' + page + ' ' + dayCompact + '_' + ipHash.slice(0, 8));
     return;
   }
   const geo = await lookupCountry(ip);
   await ref.set({
-    day: dayIso, ipHash,
+    day: dayIso, ipHash, page,
     country: geo.name || '', countryCode: geo.code || '',
     hits: 1, firstAt: FV.serverTimestamp(), lastAt: FV.serverTimestamp(),
   });
-  console.log('[topAccess] new ' + dayCompact + '_' + ipHash.slice(0, 8) + ' country=' + (geo.name || '?'));
+  console.log('[topAccess] new ' + page + ' ' + dayCompact + '_' + ipHash.slice(0, 8) + ' country=' + (geo.name || '?'));
 }
 
 exports.getStoreStatus = functions.region('asia-northeast1')
   .https.onCall(async (data, context) => {
     // TOPページからの呼び出し時のみアクセス記録（本来のステータス応答には影響させない）
-    console.log('[topAccess] getStoreStatus called, logTop=' + !!(data && data.logTop));
+    const logPage = (data && data.page === 'member') ? 'member' : 'top';
+    console.log('[topAccess] getStoreStatus called, logTop=' + !!(data && data.logTop) + ' page=' + logPage);
     const logP = (data && data.logTop)
-      ? recordTopAccess(context).catch((e) => console.error('[topAccess] error:', (e && e.message) || e))
+      ? recordTopAccess(context, logPage).catch((e) => console.error('[topAccess] error:', (e && e.message) || e))
       : Promise.resolve();
     const statusP = (async () => {
       const doc = await db.collection('storeStatus').doc('current').get();
