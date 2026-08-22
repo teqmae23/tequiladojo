@@ -2735,7 +2735,15 @@ async function openGiftModal(){
 
 async function renderGiftModal(){
   const payerVisitKeys=new Set(flow.visits.map(v=>v.id));
-  const otherVisitors=allVisits.filter(v=>!v.checkoutTime&&!v.isStaff&&!payerVisitKeys.has(v.id));
+  // 同一人物の重複を排除して1件に。原因: 同じスタッフ/会員が複数の在店visit（重複来店・
+  // 退勤なしの残存visit等）を持つと二重表示される。memberId単位でユニーク化し、staffを優先。
+  const _seen=new Set();
+  const _uniq=allVisits
+    .filter(v=>!v.checkoutTime&&!payerVisitKeys.has(v.id))
+    .slice()
+    .sort((a,b)=>(b.isStaff?1:0)-(a.isStaff?1:0)) // 同一人物ならstaff側を残す
+    .filter(v=>{ const k=v.memberId?('m_'+v.memberId):('v_'+v.id); if(_seen.has(k))return false; _seen.add(k); return true; });
+  const otherVisitors=_uniq.filter(v=>!v.isStaff);
   const visitorSec=document.getElementById('gift-visitor-section');
   const visitorListEl=document.getElementById('gift-visitor-list');
   if(otherVisitors.length){
@@ -2754,8 +2762,8 @@ async function renderGiftModal(){
     visitorSec.style.display='none';
   }
 
-  // 出勤中スタッフ（isStaff visitがある人・payer除く）
-  const staffVisitors=allVisits.filter(v=>v.isStaff&&!v.checkoutTime&&!payerVisitKeys.has(v.id));
+  // 出勤中スタッフ（重複排除済みのユニーク一覧から）
+  const staffVisitors=_uniq.filter(v=>v.isStaff);
   const staffSec=document.getElementById('gift-staff-section');
   const staffListEl=document.getElementById('gift-staff-list');
   if(staffVisitors.length){
