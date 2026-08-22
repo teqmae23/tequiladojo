@@ -107,7 +107,39 @@ window.KB = (function () {
   // ========================================================================
   var _ctx = null;      // openPurchase の引数
   var _owners = [];     // [{id, name}]
-  var _mode = 'stock';  // 'stock' | 'direct'
+  var _mode = 'master'; // 'master'（NOMでボトルマスタ検索）| 'stock' | 'direct'
+  var _masterList = {}; // NOM検索結果 id→master doc
+  var _masterSel = null;// 選択したマスタボトル
+
+  function bMasterName(b) { return b.bottleEs || b.bottleJa || b.id; }
+  // NOMは bottleId 先頭4桁(=distilleryId)。ボトルマスタ(bottles)を docId 前方一致で検索。
+  async function kbNomSearch() {
+    var nom = (document.getElementById('kb-m-nom').value || '').trim();
+    var box = document.getElementById('kb-m-results');
+    _masterList = {};
+    if (nom.length < 3) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.style.display = 'block'; box.innerHTML = '<div style="padding:8px;font-size:12px;color:#999">検索中…</div>';
+    try {
+      var FP = firebase.firestore.FieldPath.documentId();
+      var snap = await db().collection('bottles').orderBy(FP).startAt(nom).endAt(nom + '').limit(60).get();
+      var list = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); })
+        .filter(function (b) { return String(b.id).slice(0, 4) === nom; });
+      if (!list.length) { box.innerHTML = '<div style="padding:8px;font-size:12px;color:#999">該当なし（NOM: ' + esc(nom) + '）</div>'; return; }
+      list.forEach(function (b) { _masterList[b.id] = b; });
+      box.innerHTML = list.map(function (b) {
+        return '<div data-mid="' + esc(b.id) + '" style="padding:7px 9px;border-bottom:1px solid #f0f0f0;cursor:pointer;font-size:13px">'
+          + esc(bMasterName(b)) + ' <span style="color:#999;font-size:11px">' + (b.abv != null ? b.abv + '% ' : '') + '/ ' + esc(b.id) + '</span></div>';
+      }).join('');
+    } catch (e) { box.innerHTML = '<div style="padding:8px;font-size:12px;color:#c0392b">検索失敗: ' + esc(e && e.message ? e.message : e) + '</div>'; }
+  }
+  // bottleDataId "T"+5桁 の次番を採番（既存T最大+1）
+  async function nextBottleDataId() {
+    var FP = firebase.firestore.FieldPath.documentId();
+    var snap = await db().collection('bottleData').orderBy(FP).startAt('T').endAt('T').get();
+    var max = 0;
+    snap.forEach(function (d) { if (d.id.charAt(0) === 'T') { var n = parseInt(d.id.slice(1)) || 0; if (n > max) max = n; } });
+    return 'T' + pad(max + 1, 5);
+  }
 
   function ensureModal() {
     if (document.getElementById('kb-purchase-modal')) return;
@@ -122,11 +154,25 @@ window.KB = (function () {
         '<select id="kb-payer" style="width:100%;padding:9px;border:1px solid #ccc;border-radius:6px;font-size:14px;margin-bottom:14px"></select>' +
 
         '<div style="font-size:12px;color:#666;margin-bottom:4px">ボトル</div>' +
-        '<div style="display:flex;gap:14px;margin-bottom:8px;font-size:13px">' +
-          '<label><input type="radio" name="kb-mode" value="stock" checked> 在庫から選ぶ</label>' +
+        '<div style="display:flex;gap:12px;margin-bottom:8px;font-size:13px;flex-wrap:wrap">' +
+          '<label><input type="radio" name="kb-mode" value="master" checked> NOM検索（マスタ）</label>' +
+          '<label><input type="radio" name="kb-mode" value="stock"> 在庫から</label>' +
           '<label><input type="radio" name="kb-mode" value="direct"> 直接登録</label>' +
         '</div>' +
-        '<div id="kb-stock-box">' +
+        '<div id="kb-master-box">' +
+          '<input id="kb-m-nom" inputmode="numeric" maxlength="4" placeholder="NOM4桁で検索（例: 1079）" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:13px;margin-bottom:6px">' +
+          '<div id="kb-m-results" style="border:1px solid #eee;border-radius:6px;max-height:180px;overflow-y:auto;margin-bottom:6px;display:none"></div>' +
+          '<div id="kb-m-selected" style="font-size:12px;color:#7a5610;margin-bottom:6px;min-height:16px">ボトル未選択</div>' +
+          '<div style="display:flex;gap:6px;margin-bottom:6px">' +
+            '<input id="kb-m-vol" type="number" placeholder="容量ml" value="750" style="flex:1;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:13px">' +
+            '<input id="kb-m-cost" type="number" placeholder="仕入れ価格" style="flex:1;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:13px">' +
+          '</div>' +
+          '<div style="display:flex;gap:6px">' +
+            '<input id="kb-m-full" type="number" placeholder="満載重量g(任意)" style="flex:1;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:13px">' +
+            '<input id="kb-m-empty" type="number" placeholder="空瓶重量g(任意)" style="flex:1;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:13px">' +
+          '</div>' +
+        '</div>' +
+        '<div id="kb-stock-box" style="display:none">' +
           '<select id="kb-bottle" style="width:100%;padding:9px;border:1px solid #ccc;border-radius:6px;font-size:14px"></select>' +
         '</div>' +
         '<div id="kb-direct-box" style="display:none">' +
@@ -170,9 +216,10 @@ window.KB = (function () {
     Array.prototype.forEach.call(wrap.querySelectorAll('input[name="kb-mode"]'), function (r) {
       r.addEventListener('change', function () {
         _mode = this.value;
+        document.getElementById('kb-master-box').style.display = _mode === 'master' ? '' : 'none';
         document.getElementById('kb-stock-box').style.display = _mode === 'stock' ? '' : 'none';
         document.getElementById('kb-direct-box').style.display = _mode === 'direct' ? '' : 'none';
-        recalcPriceDefault();
+        recalcPriceDefault(); recalcRemainHint();
       });
     });
     document.getElementById('kb-bottle').addEventListener('change', function () { recalcPriceDefault(); recalcRemainHint(); });
@@ -180,6 +227,22 @@ window.KB = (function () {
     document.getElementById('kb-d-abv').addEventListener('input', recalcRemainHint);
     document.getElementById('kb-d-empty').addEventListener('input', recalcRemainHint);
     document.getElementById('kb-d-cost').addEventListener('input', recalcPriceDefault);
+    // マスタ(NOM)検索モード
+    var mnom = document.getElementById('kb-m-nom');
+    if (mnom) mnom.addEventListener('input', kbNomSearch);
+    document.getElementById('kb-m-cost').addEventListener('input', recalcPriceDefault);
+    document.getElementById('kb-m-vol').addEventListener('input', recalcRemainHint);
+    document.getElementById('kb-m-full').addEventListener('input', recalcRemainHint);
+    document.getElementById('kb-m-empty').addEventListener('input', recalcRemainHint);
+    document.getElementById('kb-m-results').addEventListener('click', function (e) {
+      var row = e.target.closest ? e.target.closest('[data-mid]') : null; if (!row) return;
+      var b = _masterList[row.getAttribute('data-mid')]; if (!b) return;
+      _masterSel = b;
+      var sel = document.getElementById('kb-m-selected');
+      sel.innerHTML = '✅ ' + esc(bMasterName(b)) + ' <span style="color:#999">' + (b.abv != null ? b.abv + '% ' : '') + '/ NOM ' + esc(String(b.id).slice(0, 4)) + ' / ' + esc(b.id) + '</span>';
+      document.getElementById('kb-m-results').style.display = 'none';
+      recalcPriceDefault(); recalcRemainHint();
+    });
     var srch = document.getElementById('kb-owner-search');
     srch.addEventListener('input', renderOwnerResults);
   }
@@ -192,6 +255,24 @@ window.KB = (function () {
     if (_mode === 'stock') {
       var b = selectedStockBottle();
       return b ? { src: b, name: bName(b), abv: num(b.abv), volume: num(b.volume), cost: num(b.cost), sourceId: b.id, bottleId: b.bottleId || (b.id || '').slice(0, 12), classId: b.classId || null, emptyWeight: bEmptyWeight(b), bottleEs: b.bottleEs || null, bottleJa: b.bottleJa || null, location: b.location || null } : null;
+    }
+    if (_mode === 'master') {
+      var mb = _masterSel; if (!mb) return null;
+      var mvol = num(document.getElementById('kb-m-vol').value);
+      var mcost = num(document.getElementById('kb-m-cost').value);
+      var mabv = num(mb.abv);
+      var mfull = num(document.getElementById('kb-m-full').value);
+      var mempty = num(document.getElementById('kb-m-empty').value);
+      if (mempty == null && mfull != null && mvol != null && mabv != null && window.BottleWeight) {
+        try { mempty = Math.round(BottleWeight.emptyWeight(mfull, mvol, mabv)); } catch (e) { }
+      }
+      return {
+        src: mb, name: bMasterName(mb), abv: mabv, volume: mvol, cost: mcost,
+        sourceId: null, bottleId: mb.id, classId: mb.classId || String(mb.id || '').slice(7, 9) || null,
+        emptyWeight: mempty, bottleEs: mb.bottleEs || null, bottleJa: mb.bottleJa || null, location: null,
+        // マスタから新規に bottleData を作成するための情報
+        createBottleData: { nom: String(mb.id || '').slice(0, 4), fullWeight: mfull }
+      };
     }
     var nm = (document.getElementById('kb-d-name').value || '').trim();
     if (!nm) return null;
@@ -286,7 +367,8 @@ window.KB = (function () {
     _ctx = ctx || {};
     ensureModal();
     _owners = [];
-    _mode = 'stock';
+    _mode = 'master';
+    _masterSel = null; _masterList = {};
     // 支払者
     var payerSel = document.getElementById('kb-payer');
     var payVisits = (_ctx.visits || []);
@@ -299,10 +381,14 @@ window.KB = (function () {
     bsel.innerHTML = stock.length
       ? stock.map(function (b) { return '<option value="' + esc(b.id) + '">' + esc(bName(b)) + (b.abv != null ? ' ' + b.abv + '%' : '') + (b.cost != null ? ' / 仕入' + Number(b.cost).toLocaleString() : '') + '</option>'; }).join('')
       : '<option value="">（在庫ボトルなし）</option>';
-    Array.prototype.forEach.call(document.querySelectorAll('input[name="kb-mode"]'), function (r) { r.checked = (r.value === 'stock'); });
-    document.getElementById('kb-stock-box').style.display = '';
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="kb-mode"]'), function (r) { r.checked = (r.value === 'master'); });
+    document.getElementById('kb-master-box').style.display = '';
+    document.getElementById('kb-stock-box').style.display = 'none';
     document.getElementById('kb-direct-box').style.display = 'none';
-    ['kb-d-name', 'kb-d-abv', 'kb-d-vol', 'kb-d-cost', 'kb-d-full', 'kb-d-empty', 'kb-weight'].forEach(function (id) { var el = document.getElementById(id); if (el) el.value = ''; });
+    ['kb-d-name', 'kb-d-abv', 'kb-d-vol', 'kb-d-cost', 'kb-d-full', 'kb-d-empty', 'kb-weight', 'kb-m-nom', 'kb-m-cost', 'kb-m-full', 'kb-m-empty'].forEach(function (id) { var el = document.getElementById(id); if (el) el.value = ''; });
+    var mvolEl = document.getElementById('kb-m-vol'); if (mvolEl) mvolEl.value = '750';
+    var mres = document.getElementById('kb-m-results'); if (mres) { mres.style.display = 'none'; mres.innerHTML = ''; }
+    var msel = document.getElementById('kb-m-selected'); if (msel) msel.innerHTML = 'ボトル未選択';
     var priceEl = document.getElementById('kb-price'); priceEl.value = ''; priceEl.dataset.auto = '1';
     setErr('');
     document.getElementById('kb-owner-search').value = '';
@@ -320,7 +406,7 @@ window.KB = (function () {
     if (!payerId) { setErr('支払者を選択してください'); return; }
     var payer = (_ctx.visits || []).find(function (v) { return v.id === payerId; });
     var info = currentBottleInfo();
-    if (!info) { setErr(_mode === 'stock' ? 'ボトルを選択してください' : 'ボトル名を入力してください'); return; }
+    if (!info) { setErr(_mode === 'stock' ? 'ボトルを選択してください' : (_mode === 'master' ? 'NOM検索してボトルを選択してください' : 'ボトル名を入力してください')); return; }
     var price = num(document.getElementById('kb-price').value);
     if (price == null || price < 0) { setErr('販売価格を入力してください'); return; }
     if (!_owners.length) { setErr('オーナーを1人以上選択してください'); return; }
@@ -336,6 +422,24 @@ window.KB = (function () {
       var keepRef = _db.collection('keepBottles').doc();
       var ownerIds = _owners.map(function (o) { return o.id; });
 
+      // マスタ(NOM)選択モード: 選んだボトルマスタから bottleData を新規作成し、それを source にする
+      var newBdData = null;
+      if (info.createBottleData) {
+        var newBdId = await nextBottleDataId();
+        info.sourceId = newBdId;
+        newBdData = {
+          bottleId: info.bottleId || null, nom: info.createBottleData.nom || null,
+          bottleEs: info.bottleEs || null, bottleJa: info.bottleJa || null,
+          classId: info.classId || null, abv: info.abv != null ? info.abv : null,
+          volume: info.volume != null ? info.volume : null, remaining: info.volume != null ? info.volume : null,
+          cost: info.cost != null ? info.cost : null, price: null,
+          fullWeight: info.createBottleData.fullWeight != null ? info.createBottleData.fullWeight : null,
+          emptyWeight: info.emptyWeight != null ? info.emptyWeight : null,
+          lotType: 1, lotNo: 'KEEP', status: 'ended', visibility: '1',
+          note: 'キープ購入で作成', createdAt: FV().serverTimestamp()
+        };
+      }
+
       var keepData = {
         bottleId: info.bottleId || null,
         bottleEs: info.bottleEs || null, bottleJa: info.bottleJa || null,
@@ -350,11 +454,12 @@ window.KB = (function () {
       // keepBottles / bottleData(在庫→ended) / keepBottleLog をまとめて書き込み
       var batch = _db.batch();
       batch.set(keepRef, keepData);
-      if (info.sourceId) batch.update(_db.collection('bottleData').doc(info.sourceId), { status: 'ended', visibility: '1' });
+      if (newBdData) { batch.set(_db.collection('bottleData').doc(info.sourceId), newBdData); }
+      else if (info.sourceId) { batch.update(_db.collection('bottleData').doc(info.sourceId), { status: 'ended', visibility: '1' }); }
       batch.set(_db.collection('keepBottleLog').doc(), {
         keepBottleId: keepRef.id, type: 'purchase', date: nowDate(), time: nowTime(),
         memberId: ownerIds[0] || null, weight: weight, remainingMl: remaining, amount: price,
-        note: '購入登録（' + (info.sourceId ? '在庫' : '直接登録') + '）', staffUid: staffUid, createdAt: FV().serverTimestamp()
+        note: '購入登録（' + (newBdData ? 'マスタ作成' : (info.sourceId ? '在庫' : '直接登録')) + '）', staffUid: staffUid, createdAt: FV().serverTimestamp()
       });
       await batch.commit();
       if (window.writeJournal) { try { window.writeJournal('create', 'keepBottles', keepRef.id, null, keepData); } catch (e) { } }
