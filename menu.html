@@ -211,7 +211,8 @@ details[open]>.bt-sum::before{transform:rotate(90deg);}
         <div class="toolbar">
           <input type="text" class="tsearch" id="dq" placeholder="蒸留所名・NOMで検索…">
           <select id="d-sort">
-            <option value="nom" selected>NOM</option>
+            <option value="rank" selected>ランク</option>
+            <option value="nom">NOM</option>
             <option value="name">名前</option>
             <option value="score">スコア</option>
             <option value="ratings">評価数</option>
@@ -444,7 +445,7 @@ function nameOf(b){ return b.bottleEs||b.bottleEn||b.bottleJa||b.name||'(名称�
 // LOT番号（意味のある値のみ）
 function lotOf(b){ var l=b.lotNo!=null?String(b.lotNo):(b.lot!=null?String(b.lot):''); l=l.trim(); return (l&&l!=='N/A'&&l!=='-'&&l!=='0')?l:''; }
 // テキーラ表示名 = NameEs(+LOT)。日本語名は使わない。
-function esName(b){ var es=b.bottleEs||b.bottleEn||b.name||'(no name)'; var l=lotOf(b); return es+(l?(' '+l):''); }
+function esName(b){ var es=b.bottleEs||b.bottleEn||b.name||'(no name)'; var l=lotOf(b); return es+(l?(' ('+l+')'):''); }
 // 蒸留所名Es / ブランド名Es（Es優先）
 function distEsOf(nom){ var m=distMap[nom]; return m?(m.nomEs||m.nomJa||m.name||''):''; }
 function brandEsOf(bid){ var m=brandMap[bid]; return m?(m.brandEs||m.brandJa||''):''; }
@@ -525,9 +526,9 @@ function buildClassFilter(){
 var SORT_OPTS=[['nom','NOM'],['name','名前'],['class','クラス'],['price','価格'],['abv','度数'],['none','—']];
 function buildSortKeys(){
   var box=document.getElementById('sortkeys'); if(!box) return;
-  var defs=[['nom','asc'],['none','asc'],['none','asc']];
+  var defs=[['nom','asc'],['none','asc']];
   var html='<span class="sk-lbl">並び</span>';
-  for(var i=1;i<=3;i++){
+  for(var i=1;i<=2;i++){
     var d=defs[i-1];
     html+='<span class="sk-pair">'
       +'<select id="f-sort'+i+'" class="sk-key">'+SORT_OPTS.map(function(o){return '<option value="'+o[0]+'"'+(o[0]===d[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>'
@@ -535,7 +536,7 @@ function buildSortKeys(){
       +'</span>';
   }
   box.innerHTML=html;
-  ['f-sort1','f-dir1','f-sort2','f-dir2','f-sort3','f-dir3'].forEach(function(id){ document.getElementById(id).addEventListener('change',renderTeqList); });
+  ['f-sort1','f-dir1','f-sort2','f-dir2'].forEach(function(id){ document.getElementById(id).addEventListener('change',renderTeqList); });
 }
 ['q','f-class'].forEach(function(id){
   document.getElementById(id).addEventListener('input',renderTeqList);
@@ -554,7 +555,7 @@ function renderTeqList(){
   var fc=document.getElementById('f-class').value;
   // 複合ソートキー（上から優先。noneは無視）
   var keys=[];
-  for(var i=1;i<=3;i++){
+  for(var i=1;i<=2;i++){
     var sk=document.getElementById('f-sort'+i); if(!sk) continue;
     var k=sk.value; if(!k||k==='none') continue;
     keys.push({k:k, d:document.getElementById('f-dir'+i).value==='desc'?-1:1});
@@ -585,7 +586,7 @@ function renderTeqList(){
 function bottleRowHtml(b, showMeta){
   var p=price10(b), letter=clsLetterOf(b), nom=nomOf(b), abv=b.abv;
   var bg=CLS_COLOR[letter]||'#fff';
-  var meta=showMeta?[brandOf(b), nom?('NOM'+nom):''].filter(Boolean).join(' / '):'';
+  var meta=showMeta?[brandEsOf(brandIdOf(b)), distEsOf(nom), nom?('NOM'+nom):''].filter(Boolean).join(' / '):'';
   var addBtn=(_orderable&&p>0)?'<button class="order-add" onclick="event.stopPropagation();openQtyModal(\'tequila\',\''+esc(b.id)+'\')" style="flex-shrink:0;margin-left:6px;background:#7a5610;color:#fff;border:none;border-radius:7px;width:30px;height:30px;font-size:17px;line-height:1;cursor:pointer">＋</button>':'';
   return '<div class="brow" style="background:'+bg+'">'
     +'<div class="binfo">'
@@ -619,7 +620,8 @@ function renderDistList(){
   function nn(v){ return v==null?(dir===1?Infinity:-Infinity):v; }
   noms.sort(function(a,b){
     var c;
-    if(key==='name') c=distEsOf(a).localeCompare(distEsOf(b),'en');
+    if(key==='rank') c=nn(ptdRank(a))-nn(ptdRank(b));
+    else if(key==='name') c=distEsOf(a).localeCompare(distEsOf(b),'en');
     else if(key==='score') c=nn(ptdScore(a))-nn(ptdScore(b));
     else if(key==='ratings') c=nn(ptdRatings(a))-nn(ptdRatings(b));
     else c=a.localeCompare(b,undefined,{numeric:true}); // NOM
@@ -693,7 +695,7 @@ function renderBrandList(){
   bottles.forEach(function(b){ var id=brandIdOf(b); if(!id) return; (groups[id]=groups[id]||[]).push(b); });
   var ids=Object.keys(groups);
   var bq=(document.getElementById('bq').value||'').toLowerCase().trim();
-  ids.sort(function(a,b){ return (brandNameOf(a)||a).localeCompare(brandNameOf(b)||b,'ja'); });
+  ids.sort(function(a,b){ return (brandEsOf(a)||a).localeCompare(brandEsOf(b)||b,'en'); });
   if(bq){
     ids=ids.filter(function(id){
       var hay=((brandNameOf(id))+' '+(brandMap[id]?brandMap[id].brandEs||'':'')+' '+distNameOf(String(id).slice(0,4))+' '+String(id).slice(0,4)).toLowerCase();
@@ -705,7 +707,9 @@ function renderBrandList(){
   // ツリー構造: ブランド見出し（ブランド名Es・蒸留所名Es）に配下のテキーラをぶら下げる
   document.getElementById('brand-list').innerHTML=ids.map(function(id){
     var nm=brandEsOf(id)||'(名称未登録)';
-    var dnm=distEsOf(String(id).slice(0,4));
+    var nomv=String(id).slice(0,4);
+    var dnm=distEsOf(nomv);
+    var distLabel=(dnm?esc(dnm)+' ・ ':'')+'NOM '+esc(nomv);
     var items=groups[id].slice().sort(function(a,b){
       var ra=CLS_ORDER.indexOf(clsLetterOf(a)); if(ra<0)ra=99;
       var rb=CLS_ORDER.indexOf(clsLetterOf(b)); if(rb<0)rb=99;
@@ -714,7 +718,7 @@ function renderBrandList(){
     return '<details class="brand-tree">'
       +'<summary class="bt-sum">'
         +'<span class="bt-name">'+esc(nm)+'</span>'
-        +'<span class="bt-dist">'+esc(dnm||('NOM '+String(id).slice(0,4)))+'</span>'
+        +'<span class="bt-dist">'+distLabel+'</span>'
         +'<span class="bt-count">'+items.length+'種</span>'
       +'</summary>'
       +'<div class="bt-kids blist">'+items.map(function(b){ return bottleRowHtml(b,false); }).join('')+'</div>'
