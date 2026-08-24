@@ -210,6 +210,9 @@ exports.getMemberActivity = functions.region('asia-northeast1')
       const s = await db.collection('orders').where('batchId', 'in', batchIds.slice(i, i + 30)).get();
       s.forEach((d) => {
         const o = d.data();
+        // 奢りの支払注文(isGiftPayer)は「支払のみ・本人は飲んでいない」ため同席者に数えない。
+        // 本人も飲む場合は別途 isGiftSelf の0円注文があり、そちらが同席者として拾われる。
+        if (o.isGiftPayer) return;
         const vk = o.visitKey || o.visitId;
         if (vk && !myVkSet.has(vk)) batchOrders.push({ visitKey: vk, batchId: o.batchId });
       });

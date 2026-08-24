@@ -611,6 +611,10 @@ body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-
       </div>
       <div id="gift-empty-msg" style="display:none;padding:24px;text-align:center;font-size:13px;color:var(--ink3)">奢り相手となる来場者・スタッフがいません</div>
     </div>
+    <label style="display:flex;align-items:center;gap:8px;padding:10px 16px;border-top:1px solid var(--border);font-size:13px;color:var(--ink2);cursor:pointer">
+      <input type="checkbox" id="gift-include-self" style="width:16px;height:16px;accent-color:var(--gold-d)">
+      本人（支払者）も一緒に飲む（本人分の注文も作成し、人数に+1）
+    </label>
     <div style="padding:12px 14px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center">
       <button class="btn bs sm" onclick="clearGiftModal()">選択クリア</button>
       <div style="flex:1"></div>
@@ -1087,8 +1091,10 @@ function buildItemRowsHtml(orders,showActions){
     }else{
       if(o.served===0)return;
       const mk=o.blindId===1&&o.blindMarkId?`<span style="font-size:14px;margin-right:4px">${markDisplay(o.blindMarkId)}</span>`:'';
-      const giftBadge=o.isGiftPayer?`<span class="gift-badge">奢</span>`:o.isGiftRecipient?`<span class="gift-recv-badge">奢られ</span>`:'';
-      const editBtn=showActions?(o.isGiftPayer||o.isGiftRecipient?`<button class="srv-edit-btn" disabled style="opacity:.3" title="奢り注文は編集不可">編集</button>`:`<button class="srv-edit-btn" onclick="event.stopPropagation();editOrderItem('${esc(o.id)}')">編集</button>`):'';
+      const giftBadge=o.isGiftPayer?`<span class="gift-badge">奢</span>`
+        :o.isGiftRecipient?`<span class="gift-recv-badge">奢られ${o.giftFromName?'（'+esc(o.giftFromName)+'）':''}</span>`
+        :o.isGiftSelf?`<span class="gift-badge">本人分</span>`:'';
+      const editBtn=showActions?(o.isGiftPayer||o.isGiftRecipient||o.isGiftSelf?`<button class="srv-edit-btn" disabled style="opacity:.3" title="奢り注文は編集不可">編集</button>`:`<button class="srv-edit-btn" onclick="event.stopPropagation();editOrderItem('${esc(o.id)}')">編集</button>`):'';
       const cancelBtn=showActions?`<button class="srv-cancel-btn" onclick="event.stopPropagation();cancelOrderItem('${esc(o.id)}')">✕</button>`:'';
       html+=`<div class="item-row">${mk}<span class="item-name">${esc(o.productName)}${giftBadge}</span><span class="item-qty">${o.qty}${o.unit}</span><span class="item-price">¥${calcAmt(o).toLocaleString()}</span>${editBtn}${cancelBtn}</div>`;
     }
@@ -1440,7 +1446,7 @@ function goStep0(){showStep(0);renderVisitors();}
 async function goStep1(){
   if(!flow.visits.length)return;
   // 奢りリセット（payerが変わった場合に備えて）
-  flow.giftTo=[];flow.isGift=false;
+  flow.giftTo=[];flow.isGift=false;flow.giftIncludeSelf=false;
   updateGiftBar();
   // DOMを先に表示してからデータロード・リスト描画
   showStep(1);
@@ -1952,7 +1958,7 @@ function cartAmt(o){
 function renderCart(){
   const items=flow.cart;
   const perPersonTotal=items.reduce((s,o)=>s+cartAmt(o),0);
-  const giftPeople=flow.isGift&&flow.giftTo.length>0?flow.giftTo.length:0;
+  const giftPeople=flow.isGift&&flow.giftTo.length>0?(flow.giftTo.length+(flow.giftIncludeSelf?1:0)):0;
   document.getElementById('cart-count').textContent=items.length+'件';
   document.getElementById('cart-total').textContent=giftPeople>0
     ?`¥${perPersonTotal.toLocaleString()}×${giftPeople}人=¥${(perPersonTotal*giftPeople).toLocaleString()}`
@@ -2343,13 +2349,14 @@ async function goStep2(){
   }).join('');
   const giftInfoEl=document.getElementById('confirm-gift-info');
   const totalLabelEl=document.getElementById('confirm-total-label');
-  if(flow.isGift&&flow.giftTo.length>0){
-    const giftN=flow.giftTo.length;
+  if(flow.isGift&&flow.giftTo.length>0&&flow.visits.length===1){
+    const selfInc=!!flow.giftIncludeSelf;
+    const chargeN=flow.giftTo.length+(selfInc?1:0); // 本人に計上する人数（本人含む場合+1）
     const giftNames=flow.giftTo.map(r=>r.name).join('、');
     giftInfoEl.style.display='block';
-    giftInfoEl.textContent=`🎁 ${giftN}人への奢り: ${giftNames}`;
+    giftInfoEl.textContent=`🎁 ${flow.giftTo.length}人への奢り: ${giftNames}`+(selfInc?'（＋本人も一緒に飲む）':'');
     totalLabelEl.textContent='合計（1人分）';
-    document.getElementById('confirm-total').innerHTML=`¥${total.toLocaleString()}<span style="font-size:12px;color:var(--ink3)">×${giftN}人=¥${(total*giftN).toLocaleString()}</span>`;
+    document.getElementById('confirm-total').innerHTML=`¥${total.toLocaleString()}<span style="font-size:12px;color:var(--ink3)">×${chargeN}人${selfInc?'（相手'+flow.giftTo.length+'＋本人）':''}=¥${(total*chargeN).toLocaleString()}</span>`;
   }else{
     giftInfoEl.style.display='none';
     const suffix=flow.visits.length>1?` <span style="font-size:12px;color:var(--ink3)">（×${flow.visits.length}人分 = ¥${(total*flow.visits.length).toLocaleString()}）</span>`:'';
@@ -2460,10 +2467,13 @@ async function confirmOrder(){
   },0);
   const batchId=useDate+String(maxBatch+1).padStart(3,'0');
 
-  const isGift=flow.isGift&&flow.giftTo.length>0;
+  // ①奢りは単一会員のみ。②本人を含む場合は本人分の注文も作り人数に+1、③本人にN(+1)課金。
+  const isGift=flow.isGift&&flow.giftTo.length>0&&flow.visits.length===1;
   const giftRecipients=isGift?flow.giftTo.filter(r=>r.visitKey):[];
-  const giftCount=isGift?flow.giftTo.length:0;
-  const giftPayerDrinks=false; // 廃止: 奢りオーダーは常に他人分のみ
+  const giftIncludeSelf=isGift&&!!flow.giftIncludeSelf;
+  const giftCount=isGift?(giftRecipients.length+(giftIncludeSelf?1:0)):0; // 本人に計上する人数分
+  const giftPayer=isGift?flow.visits[0]:null;
+  const giftPayerName=giftPayer?(function(){ const m=giftPayer.memberId&&allMembers[giftPayer.memberId]; return m?(m.nickname||m.name):('ゲスト（'+giftPayer.id+'）'); })():'';
 
   // ブラインド参加スタッフ（0円履歴を作成）: ブラインドON時のみ、マーク付き商品を対象
   const blindStaff=(isBlind&&flow.blindStaff)?flow.blindStaff.filter(s=>s.visitKey):[];
@@ -2487,7 +2497,8 @@ async function confirmOrder(){
     // 日付+連番形式のID採番: カウンタードキュメントのトランザクションで
     // 必要数をまとめて確保する（複数端末の同時注文でも重複しない）。
     // maxSeqとの大きい方を起点にすることでカウンター未導入期間のIDとも衝突しない。
-    const _needed=flow.visits.length*flow.cart.length*(1+giftRecipients.length) + blindStaff.length*blindItems.length;
+    const _needed=flow.visits.length*flow.cart.length*(1+giftRecipients.length) + blindStaff.length*blindItems.length
+      + (giftIncludeSelf ? flow.visits.length*flow.cart.length : 0);
     const _counterRef=db.collection('counters').doc('orderSeq');
     const _seqStart=await db.runTransaction(async tx=>{
       const cs=await tx.get(_counterRef);
@@ -2518,7 +2529,7 @@ async function confirmOrder(){
           qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,
           blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:isPopupMode?3:1,
           ...(isCocktail?{baseProductCode:item._baseProductCode,baseProductType:item._baseProductType||null,baseSpiritMl:(item._baseSpiritMl||0)*(item.qty||1)}:{}),
-          ...(isGift?{isGiftPayer:true,giftCount,giftTo:flow.giftTo}:{}),
+          ...(isGift?{isGiftPayer:true,giftCount,giftTo:flow.giftTo,giftIncludeSelf}:{}),
           ...(item.setGroupId?{setGroupId:item.setGroupId,setName:item.setName,setId:item.setId}:{}),
           ...(item.keepBottleId?{keepBottleId:item.keepBottleId}:{})
         };
@@ -2549,10 +2560,26 @@ async function confirmOrder(){
             blindId:0,blindMarkId:null,served:isPopupMode?3:1,
             // 奢り受取人が実際に飲むため、ベースのお酒の消費は受取人側に計上する
             ...(isCocktail?{baseProductCode:item._baseProductCode,baseProductType:item._baseProductType||null,baseSpiritMl:(item._baseSpiritMl||0)*(item.qty||1)}:{}),
-            isGiftRecipient:true,giftFromVisitKey:visit.id
+            isGiftRecipient:true,giftFromVisitKey:visit.id,giftFromName:giftPayerName
           };
           fsBatch.set(db.collection('orders').doc(recDocId),recData);
           journalEntries.push({docId:recDocId,data:recData});
+        }
+        // ②③本人を含む場合: 本人の飲酒分を0円で計上（課金は上のisGiftPayer注文が人数分を負担）
+        if(giftIncludeSelf){
+          const selfDocId=nextOrderId();
+          const selfData={
+            orderDate:useDate,
+            orderTime,customerId:visit.memberId||null,visitKey:visit.id,
+            orderGroupId,batchId,itemSeq:i+1,
+            productCode:item.productId,productName:saveName,productType:item.productType,
+            qty:item.qty,unit:item.unit,unitPrice:0,
+            blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:isPopupMode?3:1,
+            ...(isCocktail?{baseProductCode:item._baseProductCode,baseProductType:item._baseProductType||null,baseSpiritMl:(item._baseSpiritMl||0)*(item.qty||1)}:{}),
+            isGiftSelf:true
+          };
+          fsBatch.set(db.collection('orders').doc(selfDocId),selfData);
+          journalEntries.push({docId:selfDocId,data:selfData});
         }
       });
     }
@@ -2714,9 +2741,14 @@ function updateGiftBar(){
   const bar=document.getElementById('gift-setting-bar');
   const txt=document.getElementById('gift-info-text');
   if(!bar||!txt)return;
+  // ①奢りは単一会員の注文時のみ。複数会員同時注文では奢りボタン自体を出さない。
+  if(flow.visits.length!==1){
+    bar.style.display='none'; flow.isGift=false; flow.giftTo=[]; flow.giftIncludeSelf=false; return;
+  }
+  bar.style.display='';
   if(flow.isGift&&flow.giftTo.length>0){
     const names=flow.giftTo.map(r=>r.name).join('、');
-    txt.textContent=`🎁 奢り: ${names}（${flow.giftTo.length}人分）`;
+    txt.textContent=`🎁 奢り: ${names}（${flow.giftTo.length}人分${flow.giftIncludeSelf?'＋本人':''}）`;
     txt.style.color='var(--gold-d)';
     bar.style.background='#fdf8ea';
     bar.style.borderColor='rgba(200,146,30,.4)';
@@ -2734,6 +2766,7 @@ async function openGiftModal(){
 }
 
 async function renderGiftModal(){
+  const selfEl=document.getElementById('gift-include-self'); if(selfEl) selfEl.checked=!!flow.giftIncludeSelf;
   const payerVisitKeys=new Set(flow.visits.map(v=>v.id));
   // 同一人物の重複を排除して1件に。原因: 同じスタッフ/会員が複数の在店visit（重複来店・
   // 退勤なしの残存visit等）を持つと二重表示される。memberId単位でユニーク化し、staffを優先。
@@ -2809,8 +2842,12 @@ function applyGift(){
   document.querySelectorAll('#gift-modal-overlay .gift-recipient-item.selected').forEach(el=>{
     selected.push({visitKey:el.dataset.visitKey||'',memberId:el.dataset.memberId||'',name:el.dataset.name||''});
   });
+  const selfEl=document.getElementById('gift-include-self');
+  flow.giftIncludeSelf=!!(selfEl&&selfEl.checked);
   flow.giftTo=selected;
+  // 相手0人でも「本人を含む」だけなら奢りではない扱い（通常注文）にする
   flow.isGift=selected.length>0;
+  if(!flow.isGift) flow.giftIncludeSelf=false;
   closeGiftModal();
   updateGiftBar();
   renderCart();
