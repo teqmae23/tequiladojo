@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>イベント — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:"G-KMS18946JQ"
+};
+</script>
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;
+  --red:#b03020;--teal:#1a6e58;
+  --border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);
+  --shadow-lg:0 6px 36px rgba(24,17,10,.13);
+  --r:8px;--rl:12px;
+  --serif:'Hiragino Mincho ProN','Yu Mincho',serif;
+  --sans:'Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif;
+  --mono:'SFMono-Regular',Consolas,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+a{color:var(--gold-d)}
+.hdr{background:var(--ink);padding:0 16px;height:52px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:40}
+.hdr-title{font-family:var(--serif);font-size:16px;color:var(--gold-l);letter-spacing:.06em}
+.hdr-nav{margin-left:auto;padding:6px 11px;border:1px solid rgba(255,255,255,.16);border-radius:6px;color:var(--gold-l);font-size:11px;text-decoration:none}
+.wrap{max-width:640px;margin:0 auto;padding:20px 16px 60px}
+.hero{background:linear-gradient(135deg,#fdf3dc,#f4e8cf);border:1px solid var(--border2);border-radius:var(--rl);padding:22px 20px;margin-bottom:16px;box-shadow:0 2px 12px rgba(24,17,10,.06)}
+.ev-title{font-family:var(--serif);font-size:26px;color:var(--gold-d);line-height:1.3}
+.ev-period{font-size:13px;color:var(--ink2);margin-top:8px;font-weight:600}
+.card{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);padding:16px 18px;margin-bottom:14px}
+.sec{font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--ink3);text-transform:uppercase;margin-bottom:8px}
+.kv{display:flex;gap:10px;padding:6px 0;font-size:14px;align-items:flex-start}
+.kv .k{min-width:78px;color:var(--ink3);font-size:12px;padding-top:2px}
+.kv .v{flex:1;color:var(--ink)}
+.sch{border-top:1px solid var(--border)}
+.sch-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:14px}
+.sch-row .d{font-weight:600;color:var(--ink2)}
+.sch-row .t{color:var(--ink);font-family:var(--mono)}
+.desc{font-size:14px;line-height:1.8;color:var(--ink);white-space:pre-wrap}
+.msg{padding:40px 20px;text-align:center;color:var(--ink3);font-size:14px}
+.msg a{font-weight:600}
+.pill{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:10px;background:var(--cream3);color:var(--ink3);margin-left:8px;vertical-align:middle}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="hdr-title">🎪 イベント</div>
+  <a class="hdr-nav" href="/mypage.html">マイページ</a>
+</div>
+<div class="wrap" id="wrap">
+  <div class="msg" id="msg">読み込み中…</div>
+</div>
+
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function qs(k){ var m=new RegExp('[?&]'+k+'=([^&]*)').exec(location.search); return m?decodeURIComponent(m[1]):''; }
+
+var eventId=qs('id');
+var _isStaff=false;
+
+auth.onAuthStateChanged(function(user){
+  if(!user){ g('wrap').innerHTML='<div class="msg">このページの閲覧には会員ログインが必要です。<br><br><a href="/member.html">▶ 会員ページでログイン</a></div>'; return; }
+  user.getIdTokenResult().then(function(r){ _isStaff=(r.claims&&(r.claims.role==='owner'||r.claims.role==='staff'))||false; }).catch(function(){}).finally(loadEvent);
+});
+
+function loadEvent(){
+  if(!eventId){ g('wrap').innerHTML='<div class="msg">イベントが指定されていません。</div>'; return; }
+  db.collection('events').doc(eventId).get().then(function(doc){
+    if(!doc.exists){ g('wrap').innerHTML='<div class="msg">イベントが見つかりません。</div>'; return; }
+    var ev=doc.data();
+    if(!ev.published && !_isStaff){ g('wrap').innerHTML='<div class="msg">このイベントは現在公開されていません。</div>'; return; }
+    render(ev);
+  }).catch(function(e){ g('wrap').innerHTML='<div class="msg">読み込みに失敗しました: '+esc(e.message)+'</div>'; });
+}
+
+function fmtDate(s){ if(!s)return ''; var p=s.split('-'); return p.length===3?(p[0]+'年'+parseInt(p[1],10)+'月'+parseInt(p[2],10)+'日'):s; }
+function wday(s){ try{ var d=new Date(s+'T00:00:00'); return '（'+['日','月','火','水','木','金','土'][d.getDay()]+'）'; }catch(e){ return ''; } }
+
+function render(ev){
+  var period=fmtDate(ev.startDate)+(ev.endDate&&ev.endDate!==ev.startDate?(' 〜 '+fmtDate(ev.endDate)):'');
+  var html='<div class="hero"><div class="ev-title">'+esc(ev.name||'（無題イベント）')+(ev.published?'':'<span class="pill">非公開（プレビュー）</span>')+'</div>'
+    +'<div class="ev-period">📅 '+esc(period)+'</div></div>';
+
+  // 開催概要
+  html+='<div class="card"><div class="sec">開催概要</div>';
+  html+='<div class="kv"><div class="k">期間</div><div class="v">'+esc(period)+'</div></div>';
+  if(ev.location) html+='<div class="kv"><div class="k">場所</div><div class="v">'+esc(ev.location)+'</div></div>';
+  html+='</div>';
+
+  // 各日の開催時間
+  var sched=(ev.schedule||[]).filter(function(s){ return s&&s.date; });
+  if(sched.length){
+    html+='<div class="card"><div class="sec">各日の開催時間</div><div class="sch">';
+    html+=sched.map(function(s){
+      var t=(s.open||s.close)?((s.open||'—')+' 〜 '+(s.close||'—')):'時間未定';
+      return '<div class="sch-row"><span class="d">'+esc(fmtDate(s.date))+' '+wday(s.date)+'</span><span class="t">'+esc(t)+'</span></div>';
+    }).join('');
+    html+='</div></div>';
+  }
+
+  // 詳細
+  if(ev.description){
+    html+='<div class="card"><div class="sec">詳細</div><div class="desc">'+esc(ev.description)+'</div></div>';
+  }
+
+  g('wrap').innerHTML=html;
+  document.title=(ev.name||'イベント')+' — テキーラ道場';
+}
+</script>
+</body>
+</html>
