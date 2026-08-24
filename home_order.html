@@ -1091,7 +1091,7 @@ function buildItemRowsHtml(orders,showActions){
     }else{
       if(o.served===0)return;
       const mk=o.blindId===1&&o.blindMarkId?`<span style="font-size:14px;margin-right:4px">${markDisplay(o.blindMarkId)}</span>`:'';
-      const giftBadge=o.isGiftPayer?`<span class="gift-badge">奢</span>`
+      const giftBadge=o.isGiftPayer?`<span class="gift-badge">奢×${o.giftCount||0}人</span>`
         :o.isGiftRecipient?`<span class="gift-recv-badge">奢られ${o.giftFromName?'（'+esc(o.giftFromName)+'）':''}</span>`
         :o.isGiftSelf?`<span class="gift-badge">本人分</span>`:'';
       const editBtn=showActions?(o.isGiftPayer||o.isGiftRecipient||o.isGiftSelf?`<button class="srv-edit-btn" disabled style="opacity:.3" title="奢り注文は編集不可">編集</button>`:`<button class="srv-edit-btn" onclick="event.stopPropagation();editOrderItem('${esc(o.id)}')">編集</button>`):'';
@@ -2471,7 +2471,7 @@ async function confirmOrder(){
   const isGift=flow.isGift&&flow.giftTo.length>0&&flow.visits.length===1;
   const giftRecipients=isGift?flow.giftTo.filter(r=>r.visitKey):[];
   const giftIncludeSelf=isGift&&!!flow.giftIncludeSelf;
-  const giftCount=isGift?(giftRecipients.length+(giftIncludeSelf?1:0)):0; // 本人に計上する人数分
+  const giftCount=isGift?giftRecipients.length:0; // isGiftPayer注文が負担する相手人数（×n）。本人分は別行(通常価格×1)で計上
   const giftPayer=isGift?flow.visits[0]:null;
   const giftPayerName=giftPayer?(function(){ const m=giftPayer.memberId&&allMembers[giftPayer.memberId]; return m?(m.nickname||m.name):('ゲスト（'+giftPayer.id+'）'); })():'';
 
@@ -2565,7 +2565,7 @@ async function confirmOrder(){
           fsBatch.set(db.collection('orders').doc(recDocId),recData);
           journalEntries.push({docId:recDocId,data:recData});
         }
-        // ②③本人を含む場合: 本人の飲酒分を0円で計上（課金は上のisGiftPayer注文が人数分を負担）
+        // ②③本人を含む場合: 本人の1杯分を通常価格(×1)で別行計上（飲酒ログにも本人分として計上）
         if(giftIncludeSelf){
           const selfDocId=nextOrderId();
           const selfData={
@@ -2573,7 +2573,7 @@ async function confirmOrder(){
             orderTime,customerId:visit.memberId||null,visitKey:visit.id,
             orderGroupId,batchId,itemSeq:i+1,
             productCode:item.productId,productName:saveName,productType:item.productType,
-            qty:item.qty,unit:item.unit,unitPrice:0,
+            qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,
             blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:isPopupMode?3:1,
             ...(isCocktail?{baseProductCode:item._baseProductCode,baseProductType:item._baseProductType||null,baseSpiritMl:(item._baseSpiritMl||0)*(item.qty||1)}:{}),
             isGiftSelf:true
