@@ -997,7 +997,8 @@ function buildVisitCard(v){
   const orders=allOrders.filter(o=>(o.visitKey===v.id||o.visitId===v.id));
   const servedOrders=orders.filter(o=>o.served!==0&&o.served!=='0'); // 金額・ml集計はキャンセル除く
   const totalAmt=servedOrders.reduce((s,o)=>s+calcOrderAmt(o),0);
-  const totalTq=servedOrders.filter(o=>o.productType==='tequila'||o.productType==='other').reduce((s,o)=>s+(o.qty||0),0);
+  // 奢りの支払注文(isGiftPayer)は本人の飲酒ではないので飲酒量に数えない（本人分は isGiftSelf の0円注文で計上）
+  const totalTq=servedOrders.filter(o=>(o.productType==='tequila'||o.productType==='other')&&!o.isGiftPayer).reduce((s,o)=>s+(o.qty||0),0);
   const hasBlind=orders.some(o=>o.blindId===1);
   const itemCount=servedOrders.length;
 
@@ -1118,11 +1119,22 @@ function buildBatchBlock(b,visitId){
     ?`<span class="og-together" onclick="showTogetherPopup(event,'${batchKey}')">${togetherNames2.length}人と一緒</span>`
     :'';
 
+  // 奢りチップ：本人が奢った側なら🎁＋相手名、奢られた側なら🎁＋奢ってくれた人名
+  const payerOrder=b.items.find(o=>o.isGiftPayer&&o.giftTo&&o.giftTo.length);
+  const recvOrder=b.items.find(o=>o.isGiftRecipient);
+  let giftChip='';
+  if(payerOrder){
+    giftChip=`<span class="og-badge" style="background:#fdf0d0;color:var(--gold-d);font-size:11px" title="奢った相手">🎁 奢った: ${esc(payerOrder.giftTo.map(r=>r.name).join('、'))}</span>`;
+  }else if(recvOrder){
+    giftChip=`<span class="og-badge" style="background:#e7f6f1;color:var(--teal);font-size:11px" title="奢ってくれた人">🎁 奢られ${recvOrder.giftFromName?'（'+esc(recvOrder.giftFromName)+'）':''}</span>`;
+  }
+
   return`<div class="order-group">
     <div class="og-header">
       <span class="og-time">${esc(time)}</span>
       ${blindInputBtn}
       ${blindLink}
+      ${giftChip}
       ${togetherChip}
       <span class="og-total">${fmtAmt(total)}</span>
     </div>
