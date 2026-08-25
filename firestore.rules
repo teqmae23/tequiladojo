@@ -31,6 +31,11 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/blindFlights/$(bid))
         && get(/databases/$(database)/documents/blindFlights/$(bid)).data.get('inputOpen', false) == true;
     }
+    // イベントアンケートの結果公開範囲（all/respondents/staff）
+    function surveyVisibility(eid, sid) {
+      return get(/databases/$(database)/documents/events/$(eid)/surveys/$(sid))
+        .data.get('resultVisibility', 'staff');
+    }
 
     // ── 会員情報（個人情報）: スタッフ全件 / 会員は自分のみ ─────
     // 作成・引継はCloud Functions（registerMember）がサーバー権限で行う
@@ -102,6 +107,30 @@ service cloud.firestore {
     match /events/{id} {
       allow read: if isStaff() || (signedIn() && resource.data.get('published', false) == true);
       allow write: if isStaff();
+
+      // イベント配下のアンケート定義: 認証会員は閲覧可（表示可否は status/公開範囲でアプリ側制御）、
+      // 編集はスタッフ。
+      match /surveys/{sid} {
+        allow read: if signedIn();
+        allow write: if isStaff();
+
+        // アンケート回答: 1会員1件（docID=authUid）。本人のみ作成・更新・削除。
+        // 読み取りは結果公開範囲(resultVisibility)に応じて制御する:
+        //   staff       → スタッフのみ（会員は自分の回答だけ読める）
+        //   respondents → 回答済みの会員は全回答を閲覧可
+        //   all         → 認証会員全員が全回答を閲覧可
+        match /responses/{uid} {
+          allow read: if isStaff()
+            || (signedIn() && request.auth.uid == uid)
+            || (signedIn() && surveyVisibility(id, sid) == 'all')
+            || (signedIn() && surveyVisibility(id, sid) == 'respondents'
+                && exists(/databases/$(database)/documents/events/$(id)/surveys/$(sid)/responses/$(request.auth.uid)));
+          allow create, update: if isStaff()
+            || (realUser() && request.auth.uid == uid
+                && request.resource.data.get('authUid', '') == request.auth.uid);
+          allow delete: if isStaff() || (realUser() && request.auth.uid == uid);
+        }
+      }
     }
 
     // ニュースの既読/未読（会員ごと）。本人のみ読み書き可（doc IDは authUid）。
