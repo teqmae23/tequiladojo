@@ -54,6 +54,35 @@ a{color:var(--gold-d)}
 .msg{padding:40px 20px;text-align:center;color:var(--ink3);font-size:14px}
 .msg a{font-weight:600}
 .pill{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:10px;background:var(--cream3);color:var(--ink3);margin-left:8px;vertical-align:middle}
+/* アンケート */
+.sv-card{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);padding:16px 18px;margin-bottom:14px}
+.sv-hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+.sv-ti{font-size:16px;font-weight:700;color:var(--gold-d)}
+.sv-tag{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px}
+.tag-open{background:#e7f6f1;color:var(--teal)}.tag-closed{background:#fbeee0;color:var(--gold-d)}.tag-done{background:#eef4ff;color:#345}
+.sv-de{font-size:13px;color:var(--ink2);line-height:1.7;margin-bottom:12px;white-space:pre-wrap}
+.q{margin-bottom:16px}
+.q-l{font-size:14px;font-weight:600;color:var(--ink);margin-bottom:7px}
+.q-l .rq{color:var(--red);font-size:12px;margin-left:3px}
+.opt{display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid var(--border2);border-radius:var(--r);margin-bottom:6px;font-size:14px;cursor:pointer;background:var(--cream)}
+.opt input{width:17px;height:17px;accent-color:var(--gold-d);flex-shrink:0}
+.opt.sel{border-color:var(--gold);background:#fffaf0}
+.q textarea{width:100%;padding:10px;border:1px solid var(--border2);border-radius:var(--r);font-size:14px;background:var(--cream);font-family:var(--sans);min-height:80px;resize:vertical;line-height:1.6}
+.stars{display:flex;gap:6px}
+.star{font-size:30px;cursor:pointer;color:var(--cream3);line-height:1}
+.star.on{color:var(--gold)}
+.sv-submit{width:100%;padding:13px;background:var(--gold-d);color:var(--cream);border:none;border-radius:var(--r);font-size:15px;font-weight:600;margin-top:4px}
+.sv-submit:disabled{opacity:.6}
+.sv-note{font-size:12px;color:var(--ink3);margin-top:8px;text-align:center}
+.sv-err{color:var(--red);font-size:13px;margin-top:8px;text-align:center;min-height:16px}
+.rbar-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;font-size:12px}
+.rbar-lb{min-width:90px;color:var(--ink2);text-align:right;flex-shrink:0}
+.rbar-tr{flex:1;background:var(--cream2);border-radius:6px;height:15px;overflow:hidden}
+.rbar-fl{height:100%;background:var(--gold);border-radius:6px}
+.rbar-ct{min-width:40px;color:var(--ink3);flex-shrink:0}
+.agg-txt{border:1px solid var(--border);border-radius:var(--r);padding:8px 10px;font-size:13px;margin-bottom:5px;background:var(--cream)}
+.agg-txt .who{font-size:10px;color:var(--ink3);margin-top:3px}
+.res-sec{margin-top:6px;border-top:1px dashed var(--border2);padding-top:12px}
 </style>
 </head>
 <body>
@@ -73,11 +102,20 @@ function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'
 function qs(k){ var m=new RegExp('[?&]'+k+'=([^&]*)').exec(location.search); return m?decodeURIComponent(m[1]):''; }
 
 var eventId=qs('id');
-var _isStaff=false;
+var _isStaff=false, _uid=null, _isReal=false, _memberId='', _memberName='';
 
 auth.onAuthStateChanged(function(user){
   if(!user){ g('wrap').innerHTML='<div class="msg">このページの閲覧には会員ログインが必要です。<br><br><a href="/member.html">▶ 会員ページでログイン</a></div>'; return; }
-  user.getIdTokenResult().then(function(r){ _isStaff=(r.claims&&(r.claims.role==='owner'||r.claims.role==='staff'))||false; }).catch(function(){}).finally(loadEvent);
+  _uid=user.uid;
+  _isReal=!!(user.providerData&&user.providerData.length) || (user.isAnonymous===false);
+  user.getIdTokenResult().then(function(r){
+    _isStaff=(r.claims&&(r.claims.role==='owner'||r.claims.role==='staff'))||false;
+  }).catch(function(){}).then(function(){
+    // 会員プロフィール（アンケート回答時の氏名保存用）
+    return db.collection('members').where('authUid','==',_uid).limit(1).get().then(function(snap){
+      if(!snap.empty){ var m=snap.docs[0].data(); _memberId=m.displayId||m.memberId||snap.docs[0].id; _memberName=m.nickname||m.name||_memberId; }
+    }).catch(function(){});
+  }).finally(loadEvent);
 });
 
 function loadEvent(){
@@ -120,9 +158,162 @@ function render(ev){
     html+='<div class="card"><div class="sec">詳細</div><div class="desc">'+esc(ev.description)+'</div></div>';
   }
 
+  html+='<div id="surveys"></div>';
   g('wrap').innerHTML=html;
   document.title=(ev.name||'イベント')+' — テキーラ道場';
+  loadSurveys(ev.published);
 }
+
+/* ════════ アンケート（会員側） ════════ */
+var QTYPE={single:'単一選択',multi:'複数選択',text:'自由記述',rating:'5段階評価'};
+var _surveys={}, _myResp={}, _ans={}, _resCache={};
+function svCol(){ return db.collection('events').doc(eventId).collection('surveys'); }
+function canSeeResults(s){
+  var v=s.resultVisibility||'staff';
+  return _isStaff || v==='all' || (v==='respondents' && !!_myResp[s.id]);
+}
+function loadSurveys(eventPublished){
+  var list=[];
+  svCol().orderBy('createdAt','asc').get().then(function(snap){
+    snap.docs.forEach(function(d){
+      var s=Object.assign({id:d.id},d.data());
+      // 会員には下書きを見せない。イベント非公開時はスタッフのみ。
+      if(!_isStaff && (s.status==='draft' || !eventPublished)) return;
+      _surveys[s.id]=s; list.push(s);
+    });
+    return Promise.all(list.map(function(s){
+      return svCol().doc(s.id).collection('responses').doc(_uid).get()
+        .then(function(doc){ if(doc.exists) _myResp[s.id]=doc.data(); }).catch(function(){});
+    }));
+  }).then(function(){
+    return Promise.all(list.map(function(s){
+      if(!canSeeResults(s)) return null;
+      return svCol().doc(s.id).collection('responses').get()
+        .then(function(rs){ _resCache[s.id]=rs.docs.map(function(d){return d.data();}); }).catch(function(){});
+    }));
+  }).then(function(){
+    if(!list.length){ return; }
+    var box=g('surveys');
+    box.innerHTML='<div class="sec" style="margin:20px 2px 8px">アンケート</div>'
+      +list.map(function(s){ return '<div class="sv-card" id="sv-'+esc(s.id)+'"></div>'; }).join('');
+    list.forEach(function(s){ _ans[s.id]=_myResp[s.id]&&_myResp[s.id].answers?JSON.parse(JSON.stringify(_myResp[s.id].answers)):{}; renderCard(s.id); });
+  }).catch(function(e){ /* アンケートは任意機能: 失敗しても本体表示は維持 */ });
+}
+
+function tagFor(s){
+  if(_myResp[s.id]) return '<span class="sv-tag tag-done">回答済み</span>';
+  if(s.status==='open') return '<span class="sv-tag tag-open">受付中</span>';
+  if(s.status==='closed') return '<span class="sv-tag tag-closed">受付終了</span>';
+  return '';
+}
+function renderCard(sid){
+  var s=_surveys[sid]; var el=g('sv-'+sid); if(!s||!el) return;
+  var open=(s.status==='open');
+  var html='<div class="sv-hd"><span class="sv-ti">'+esc(s.title||'アンケート')+'</span>'+tagFor(s)+'</div>';
+  if(s.description) html+='<div class="sv-de">'+esc(s.description)+'</div>';
+  if(open){
+    html+=(s.questions||[]).map(function(q){ return qForm(sid,q); }).join('');
+    html+='<div class="sv-err" id="sverr-'+esc(sid)+'"></div>';
+    html+='<button class="sv-submit" onclick="submitSurvey(\''+sid+'\')">'+(_myResp[sid]?'回答を更新する':'回答する')+'</button>';
+    if(_myResp[sid]) html+='<div class="sv-note">前回の回答を読み込んでいます。変更して更新できます。</div>';
+  } else {
+    // 締切・下書き（スタッフプレビュー）
+    html+='<div class="sv-note" style="text-align:left">'+(s.status==='closed'?'このアンケートは受付を終了しました。':'（下書き：会員には表示されません）')+'</div>';
+    if(_myResp[sid]) html+='<div class="res-sec">'+ownAnswers(s)+'</div>';
+  }
+  // 結果
+  if(canSeeResults(s) && _resCache[sid]){
+    html+='<div class="res-sec"><div class="sec" style="font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--ink3);margin-bottom:8px">集計結果（'+_resCache[sid].length+'件）</div>'+agg(s,_resCache[sid])+'</div>';
+  } else if(!open && (s.resultVisibility==='respondents') && !_myResp[sid]){
+    html+='<div class="sv-note">回答すると結果を閲覧できます。</div>';
+  }
+  el.innerHTML=html;
+}
+
+function qForm(sid,q){
+  var a=(_ans[sid]||{})[q.qid];
+  var h='<div class="q"><div class="q-l">'+esc(q.label)+(q.required?'<span class="rq">*</span>':'')+'</div>';
+  if(q.type==='single'){
+    h+=(q.options||[]).map(function(o){
+      var sel=(a===o);
+      return '<label class="opt'+(sel?' sel':'')+'"><input type="radio" name="'+esc(sid+'_'+q.qid)+'" value="'+esc(o)+'"'+(sel?' checked':'')+' onchange="pickSingle(\''+sid+'\',\''+q.qid+'\',this.value)"><span>'+esc(o)+'</span></label>';
+    }).join('');
+  } else if(q.type==='multi'){
+    var arr=Array.isArray(a)?a:[];
+    h+=(q.options||[]).map(function(o){
+      var sel=arr.indexOf(o)>=0;
+      return '<label class="opt'+(sel?' sel':'')+'"><input type="checkbox" value="'+esc(o)+'"'+(sel?' checked':'')+' onchange="pickMulti(\''+sid+'\',\''+q.qid+'\',this.value,this.checked)"><span>'+esc(o)+'</span></label>';
+    }).join('');
+  } else if(q.type==='rating'){
+    var v=+a||0;
+    h+='<div class="stars">'+[1,2,3,4,5].map(function(n){ return '<span class="star'+(n<=v?' on':'')+'" onclick="setStar(\''+sid+'\',\''+q.qid+'\','+n+')">★</span>'; }).join('')+'</div>';
+  } else {
+    h+='<textarea oninput="setText(\''+sid+'\',\''+q.qid+'\',this.value)" placeholder="ご記入ください">'+esc(a||'')+'</textarea>';
+  }
+  return h+'</div>';
+}
+function pickSingle(sid,qid,v){ _ans[sid]=_ans[sid]||{}; _ans[sid][qid]=v; renderCard(sid); }
+function pickMulti(sid,qid,v,on){ _ans[sid]=_ans[sid]||{}; var arr=Array.isArray(_ans[sid][qid])?_ans[sid][qid]:[]; var i=arr.indexOf(v); if(on&&i<0)arr.push(v); if(!on&&i>=0)arr.splice(i,1); _ans[sid][qid]=arr; renderCard(sid); }
+function setStar(sid,qid,n){ _ans[sid]=_ans[sid]||{}; _ans[sid][qid]=n; renderCard(sid); }
+function setText(sid,qid,v){ _ans[sid]=_ans[sid]||{}; _ans[sid][qid]=v; }
+
+function submitSurvey(sid){
+  var s=_surveys[sid]; if(!s) return;
+  var err=g('sverr-'+sid); if(err) err.textContent='';
+  var ans=_ans[sid]||{};
+  for(var i=0;i<(s.questions||[]).length;i++){
+    var q=s.questions[i]; if(!q.required) continue;
+    var v=ans[q.qid];
+    var empty=(v==null)||(v==='')||(Array.isArray(v)&&!v.length)||(q.type==='rating'&&!(+v));
+    if(empty){ if(err) err.textContent='「'+q.label+'」は必須です'; return; }
+  }
+  if(!_isReal){ if(err) err.textContent='回答には会員ログインが必要です'; return; }
+  var data={ authUid:_uid, memberId:_memberId||'', memberName:_memberName||'', answers:ans,
+    submittedAt:firebase.firestore.FieldValue.serverTimestamp() };
+  var btn=g('sv-'+sid).querySelector('.sv-submit'); if(btn) btn.disabled=true;
+  svCol().doc(sid).collection('responses').doc(_uid).set(data,{merge:true}).then(function(){
+    _myResp[sid]=Object.assign({},data);
+    // 結果を再取得（閲覧可能なら）
+    if(canSeeResults(s)){ return svCol().doc(sid).collection('responses').get().then(function(rs){ _resCache[sid]=rs.docs.map(function(d){return d.data();}); }); }
+  }).then(function(){ renderCard(sid); toast('回答を送信しました'); })
+    .catch(function(e){ if(btn)btn.disabled=false; if(err) err.textContent='送信失敗: '+e.message; });
+}
+
+function ownAnswers(s){
+  var r=_myResp[s.id]; if(!r) return '';
+  return '<div class="sec" style="font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--ink3);margin-bottom:8px">あなたの回答</div>'
+    +(s.questions||[]).map(function(q){
+      var v=r.answers?r.answers[q.qid]:''; if(Array.isArray(v))v=v.join('、'); if(q.type==='rating')v=(+v?('★'+v):'');
+      return '<div style="font-size:13px;margin-bottom:8px"><div style="color:var(--ink3);font-size:12px">'+esc(q.label)+'</div><div>'+esc((v==null||v==='')?'（未回答）':v)+'</div></div>';
+    }).join('');
+}
+function rbar(label,count,total){
+  var pct=total?Math.round(count/total*100):0;
+  return '<div class="rbar-row"><div class="rbar-lb">'+esc(label)+'</div><div class="rbar-tr"><div class="rbar-fl" style="width:'+pct+'%"></div></div><div class="rbar-ct">'+count+'／'+pct+'%</div></div>';
+}
+function agg(s,resp){
+  var total=resp.length; if(!total) return '<div class="sv-note" style="text-align:left">まだ回答がありません。</div>';
+  var whoOf=function(r){ return r.memberName||'（匿名）'; };
+  return (s.questions||[]).map(function(q){
+    var h='<div class="q"><div class="q-l" style="font-size:13px">'+esc(q.label)+'</div>';
+    if(q.type==='single'||q.type==='multi'){
+      var cnt={}; (q.options||[]).forEach(function(o){cnt[o]=0;}); var other=0;
+      resp.forEach(function(r){ var a=r.answers?r.answers[q.qid]:null; if(a==null)return; (Array.isArray(a)?a:[a]).forEach(function(v){ if(cnt[v]!=null)cnt[v]++; else if((''+v).trim())other++; }); });
+      (q.options||[]).forEach(function(o){ h+=rbar(o,cnt[o],total); });
+      if(other) h+=rbar('その他',other,total);
+    } else if(q.type==='rating'){
+      var sum=0,n=0,dist={1:0,2:0,3:0,4:0,5:0};
+      resp.forEach(function(r){ var v=r.answers?+r.answers[q.qid]:0; if(v>=1&&v<=5){dist[v]++;sum+=v;n++;} });
+      h+='<div style="font-size:13px;margin-bottom:6px">平均 <b>'+(n?(sum/n).toFixed(2):'—')+'</b>（'+n+'件）</div>';
+      for(var v=5;v>=1;v--) h+=rbar('★'+v,dist[v],n||1);
+    } else {
+      var texts=resp.map(function(r){ var t=r.answers?r.answers[q.qid]:''; return {t:(t==null?'':(''+t)).trim(),who:whoOf(r)}; }).filter(function(x){return x.t;});
+      h+= texts.length?texts.map(function(x){ return '<div class="agg-txt">'+esc(x.t)+'<div class="who">— '+esc(x.who)+'</div></div>'; }).join(''):'<div class="sv-note" style="text-align:left">回答なし</div>';
+    }
+    return h+'</div>';
+  }).join('');
+}
+function toast(m){ var d=document.createElement('div'); d.textContent=m; d.style.cssText='position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#18110a;color:#fff;font-size:13px;padding:10px 18px;border-radius:18px;z-index:9999'; document.body.appendChild(d); setTimeout(function(){d.remove();},2600); }
 </script>
 </body>
 </html>
