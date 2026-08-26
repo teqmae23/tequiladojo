@@ -120,7 +120,22 @@ function pad(n){return String(n).padStart(2,'0');}
 var PAGE_LABEL={member:'会員トップ',mypage:'マイページ',menu:'オンラインメニュー',map:'蒸留所マップ',movie:'テキーラ動画',seminars:'有料セミナー',ptd:'PTDデータ',subscription:'会員プラン',collection:'コレクション',library:'テキーラ書庫'};
 function pageLabel(k){return PAGE_LABEL[k]||k||'—';}
 
-var logs=[];
+var logs=[], midMap={};
+// 会員を読み込み、ドキュメントID/realId/displayId のいずれからでも表示ID(displayId)へ
+// 解決できるマップを作る（旧ログは内部IDで記録されているため）。
+function loadMembers(){
+  return db.collection('members').get().then(function(snap){
+    snap.forEach(function(d){
+      var m=d.data()||{};
+      var disp=m.displayId||d.id;
+      midMap[d.id]=disp;
+      if(m.realId) midMap[m.realId]=disp;
+      if(m.displayId) midMap[m.displayId]=disp;
+      if(m.memberId) midMap[String(m.memberId)]=disp;
+    });
+  }).catch(function(){});
+}
+function dispMid(id){ return (id&&midMap[id])||id||''; }
 
 AuthRole.requireStaff(auth, function(user, role){
   g('login-screen').style.display='none';
@@ -146,7 +161,7 @@ function init(){
   ['f-q','f-page','f-date'].forEach(function(id){ g(id).addEventListener('input',render); g(id).addEventListener('change',render); });
   g('btn-clear').addEventListener('click',function(){ g('f-q').value=''; g('f-page').value=''; g('f-date').value=''; render(); });
   g('btn-reload').addEventListener('click',load);
-  load();
+  loadMembers().then(load);
 }
 
 function load(){
@@ -176,7 +191,7 @@ function render(){
     if(fp && (l.page||'')!==fp) return false;
     if(fd && dayKey(l.at)!==fd) return false;
     if(q){
-      var hay=((l.name||'')+' '+(l.memberId||'')).toLowerCase();
+      var hay=((l.name||'')+' '+dispMid(l.memberId)).toLowerCase();
       if(hay.indexOf(q)<0) return false;
     }
     return true;
@@ -187,7 +202,7 @@ function render(){
   tb.innerHTML=list.map(function(l){
     return '<tr>'
       +'<td class="mono">'+esc(fmtAt(l.at))+'</td>'
-      +'<td>'+esc(l.name||'（名称未設定）')+' <span class="mid">'+esc(l.memberId||'')+'</span></td>'
+      +'<td>'+esc(l.name||'（名称未設定）')+' <span class="mid">'+esc(dispMid(l.memberId))+'</span></td>'
       +'<td><span class="pill">'+esc(pageLabel(l.page))+'</span></td>'
       +'</tr>';
   }).join('');
