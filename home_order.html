@@ -2772,7 +2772,10 @@ async function renderGiftModal(){
   // 退勤なしの残存visit等）を持つと二重表示される。memberId単位でユニーク化し、staffを優先。
   const _seen=new Set();
   const _uniq=allVisits
-    .filter(v=>!v.checkoutTime&&!payerVisitKeys.has(v.id))
+    // ★日跨ぎ/残存来場対策: 現セッションに属する来場のみを奢り候補にする。
+    //   ?visits= 経由で直接fetchした過去日の残存visitが候補に混入し、奢られ0円伝票が
+    //   「来場に紐づかない注文」になる不具合を防ぐ。
+    .filter(v=>!v.checkoutTime&&!payerVisitKeys.has(v.id)&&AuthRole.isVisitInSession(v,currentSessionBT))
     .slice()
     .sort((a,b)=>(b.isStaff?1:0)-(a.isStaff?1:0)) // 同一人物ならstaff側を残す
     .filter(v=>{ const k=v.memberId?('m_'+v.memberId):('v_'+v.id); if(_seen.has(k))return false; _seen.add(k); return true; });
@@ -2867,7 +2870,7 @@ function updateBlindStaffBtn(){
 function openBlindStaffModal(){
   if(!flow.isBlind){ showToast('先にブラインドをオンにしてください','error'); return; }
   const payerKeys=new Set(flow.visits.map(v=>v.id));
-  const staffVisitors=allVisits.filter(v=>v.isStaff&&!v.checkoutTime&&!payerKeys.has(v.id));
+  const staffVisitors=allVisits.filter(v=>v.isStaff&&!v.checkoutTime&&!payerKeys.has(v.id)&&AuthRole.isVisitInSession(v,currentSessionBT));
   const listEl=document.getElementById('blind-staff-list');
   if(!staffVisitors.length){
     listEl.innerHTML='<div style="padding:24px;text-align:center;font-size:13px;color:var(--ink3)">出勤中のスタッフがいません</div>';

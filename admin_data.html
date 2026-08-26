@@ -241,6 +241,8 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 .tree-summary{padding:10px 16px;font-size:12px;color:var(--ink3);background:var(--cream2);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
 .tree-amount-mismatch{color:var(--red);font-weight:700}
 .tree-together-chip{display:inline-flex;align-items:center;gap:2px;background:rgba(26,110,88,.1);border:1px solid rgba(26,110,88,.22);border-radius:12px;padding:1px 6px 1px 8px;font-size:10px;color:var(--teal)}
+.tree-gift-chip{display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:2px 8px;border-radius:12px;background:#fdf1d8;border:1px solid #e0b64a;color:#8a5e00;white-space:nowrap}
+.tree-gift-chip.recv{background:#fbe9e4;border-color:#e0a08a;color:#a8462a}
 .tree-add-row{padding:6px 14px 8px;border-top:1px dashed var(--border)}
 .tbl-wrap{overflow-x:auto}
 /* ─── 営業実績カレンダー ─── */
@@ -3269,6 +3271,48 @@ function getSessionVisits(ses, visits){
   });
 }
 
+// 日跨ぎ対応の注文ソートキー。表示(fmtHHMMsession)と同じ基準で 00〜11時台の深夜注文を
+// 24〜35時として扱い、生の HHMMSS 文字列比較では夜(23時)より前に来てしまう問題を防ぐ。
+function treeOrderSortKey(t, ses){
+  if(t==null) return 99999999;
+  var s=String(t); if(s.length<4) return 99999999;
+  var tInt=parseInt(s.slice(0,4))||0;
+  var sec=parseInt(s.slice(4,6))||0;
+  if(ses&&ses.openTime){
+    var openInt=parseInt(String(ses.openTime).slice(0,4))||0;
+    var closeInt=ses.closeTime?(parseInt(String(ses.closeTime).slice(0,4))||0):0;
+    var overnight=closeInt>=2400||(closeInt>0&&closeInt<openInt&&openInt>=1200&&closeInt<600);
+    if(overnight&&tInt<1200&&tInt<openInt) tInt+=2400;
+  }
+  return tInt*100+sec;
+}
+function sortOrdersByTime(list, ses){
+  return list.sort(function(a,b){ return treeOrderSortKey(a.orderTime,ses)-treeOrderSortKey(b.orderTime,ses); });
+}
+// 奢り（おごり）バッジ。奢り支払い元／受取のどちらかなら HTML を返す（通常注文は '')。
+function treeGiftBadge(ord){
+  if(ord&&ord.isGiftPayer){
+    var names=(Array.isArray(ord.giftTo)?ord.giftTo:[]).map(function(r){return r&&r.name?String(r.name):'';}).filter(Boolean);
+    var who=names.length?names.join('、'):((ord.giftCount||0)+'名');
+    var self=ord.giftIncludeSelf?'＋本人':'';
+    return '<span class="tree-gift-chip" title="奢り（おごり）">🎁 奢り→'+escHtml(who)+escHtml(self)+'</span>';
+  }
+  if(ord&&ord.isGiftRecipient){
+    return '<span class="tree-gift-chip recv" title="奢られ">🎁 '+escHtml(ord.giftFromName||'')+'より</span>';
+  }
+  return '';
+}
+// 「一緒に飲んだ」companion visitKey 群。奢り関係(payer/recipient)の注文は同席に数えない。
+function treeTogetherIds(ord, orders, selfVisId){
+  if(!ord||!ord.batchId) return [];
+  return orders.filter(function(o){
+    if(o.batchId!==ord.batchId||o.deleted) return false;
+    if((o.visitKey||o.visitId)===selfVisId) return false;
+    if(o.isGiftPayer||o.isGiftRecipient) return false;
+    return true;
+  }).reduce(function(acc,o){var bvk=o.visitKey||o.visitId;return acc.indexOf(bvk)<0?acc.concat([bvk]):acc;},[]);
+}
+
 function renderTree(yymmdd,sessions,visits,orders,cont){
   // hidden:true な来場は非表示フィルタ（異常データ除外）
   var hiddenVisits=visits.filter(function(v){return v.hidden===true;});
@@ -3428,7 +3472,7 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
         if(!visOrders.length){
           html+='<div style="padding:8px 16px 8px 60px;font-size:11px;color:var(--ink3)">注文なし</div>';
         } else {
-          visOrders.sort(function(a,b){return (a.orderTime||'').localeCompare(b.orderTime||'');});
+          sortOrdersByTime(visOrders, ses);
           visOrders.forEach(function(ord){
             shownOrderIds[ord.id]=true;
             var cancelled=ord.served===0;
@@ -3446,16 +3490,18 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
               +(cancelled?'background:#fee;color:var(--red)':'background:rgba(40,120,80,.1);color:#1a5e3a')
               +'">'+(cancelled?'キャンセル':treeServedLabel(ord.served))+'</span>';
 
-            // N人ボタン（一緒に飲んだ人数）
-            var compVisIds=ord.batchId?orders.filter(function(o){
-              return o.batchId===ord.batchId&&(o.visitKey||o.visitId)!==vis.id&&!o.deleted;
-            }).reduce(function(acc,o){
-              var bvk=o.visitKey||o.visitId; return acc.indexOf(bvk)<0?acc.concat([bvk]):acc;
-            },[]):[];
-            var togetherStyle=compVisIds.length>0
-              ?'font-size:10px;padding:2px 7px;background:#fff3e0;border:1px solid #fb923c;color:#c2410c'
-              :'font-size:10px;padding:2px 7px;background:var(--cream2);border:1px solid var(--border);color:var(--ink3);opacity:0.38';
-            var togetherBtn='<button class="btn sm" style="'+togetherStyle+'" data-tree-edit-together="'+escHtml(ord.id)+'" title="一緒に飲んだ人を管理">👥 '+compVisIds.length+'人</button>';
+            // 奢りなら奢りバッジ、通常は「一緒に飲んだ」N人ボタン（奢り関係は同席に数えない）
+            var giftBadge=treeGiftBadge(ord);
+            var togetherBtn;
+            if(giftBadge){
+              togetherBtn=giftBadge;
+            } else {
+              var compVisIds=treeTogetherIds(ord,orders,vis.id);
+              var togetherStyle=compVisIds.length>0
+                ?'font-size:10px;padding:2px 7px;background:#fff3e0;border:1px solid #fb923c;color:#c2410c'
+                :'font-size:10px;padding:2px 7px;background:var(--cream2);border:1px solid var(--border);color:var(--ink3);opacity:0.38';
+              togetherBtn='<button class="btn sm" style="'+togetherStyle+'" data-tree-edit-together="'+escHtml(ord.id)+'" title="一緒に飲んだ人を管理">👥 '+compVisIds.length+'人</button>';
+            }
 
             // ブラインドアイコン（クリックで結果編集）
             var blindBtn='';
@@ -3512,7 +3558,7 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
       if(!ovOrders.length){
         html+='<div style="padding:8px 16px 8px 60px;font-size:11px;color:var(--ink3)">注文なし</div>';
       } else {
-        ovOrders.sort(function(a,b){return (a.orderTime||'').localeCompare(b.orderTime||'');});
+        sortOrdersByTime(ovOrders, sessions[0]||null);
         ovOrders.forEach(function(ord){
           var ordDet=[];
           if(ord.orderTime) ordDet.push(fmtHHMM(ord.orderTime));
@@ -3546,7 +3592,7 @@ function renderTree(yymmdd,sessions,visits,orders,cont){
       +'<span class="tree-label" style="color:var(--red)"><strong>⚠ 来場に紐づいていない注文 '+orphanOrders.length+'件</strong>'
       +' <span style="font-size:11px;font-weight:normal">visitKeyが空または存在しない来場を参照しています。編集して修正してください。</span></span>'
       +'</div>';
-    orphanOrders.sort(function(a,b){return (a.orderTime||'').localeCompare(b.orderTime||'');});
+    sortOrdersByTime(orphanOrders, sessions[0]||null);
     orphanOrders.forEach(function(ord){
       var ordDet=[];
       if(ord.orderTime) ordDet.push(fmtHHMM(ord.orderTime));
@@ -5829,7 +5875,7 @@ function renderMemberTree(realId, visits, orders, cont){
     if(!visOrders.length){
       html+='<div style="padding:8px 16px 8px 60px;font-size:11px;color:var(--ink3)">注文なし</div>';
     } else {
-      visOrders.sort(function(a,b){return (a.orderTime||'').localeCompare(b.orderTime||'');});
+      sortOrdersByTime(visOrders, visSes);
       visOrders.forEach(function(ord){
         var cancelled=ord.served===0;
         var isBlind=ord.blindId===1||ord.blindId==='1';
@@ -5846,13 +5892,17 @@ function renderMemberTree(realId, visits, orders, cont){
           +(cancelled?'background:#fee;color:var(--red)':'background:rgba(40,120,80,.1);color:#1a5e3a')
           +'">'+(cancelled?'キャンセル':treeServedLabel(ord.served))+'</span>';
 
-        var compVisIds=ord.batchId?orders.filter(function(o){
-          return o.batchId===ord.batchId&&(o.visitKey||o.visitId)!==vis.id&&!o.deleted;
-        }).reduce(function(acc,o){var bvk=o.visitKey||o.visitId;return acc.indexOf(bvk)<0?acc.concat([bvk]):acc;},[]):[];
-        var togetherStyle=compVisIds.length>0
-          ?'font-size:10px;padding:2px 7px;background:#fff3e0;border:1px solid #fb923c;color:#c2410c'
-          :'font-size:10px;padding:2px 7px;background:var(--cream2);border:1px solid var(--border);color:var(--ink3);opacity:0.38';
-        var togetherBtn='<button class="btn sm" style="'+togetherStyle+'" data-tree-edit-together="'+escHtml(ord.id)+'" title="一緒に飲んだ人を管理">👥 '+compVisIds.length+'人</button>';
+        var giftBadge=treeGiftBadge(ord);
+        var togetherBtn;
+        if(giftBadge){
+          togetherBtn=giftBadge;
+        } else {
+          var compVisIds=treeTogetherIds(ord,orders,vis.id);
+          var togetherStyle=compVisIds.length>0
+            ?'font-size:10px;padding:2px 7px;background:#fff3e0;border:1px solid #fb923c;color:#c2410c'
+            :'font-size:10px;padding:2px 7px;background:var(--cream2);border:1px solid var(--border);color:var(--ink3);opacity:0.38';
+          togetherBtn='<button class="btn sm" style="'+togetherStyle+'" data-tree-edit-together="'+escHtml(ord.id)+'" title="一緒に飲んだ人を管理">👥 '+compVisIds.length+'人</button>';
+        }
 
         var blindBtn='';
         if(isBlind){
