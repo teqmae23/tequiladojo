@@ -691,12 +691,24 @@ async function autoCheckinStaff(today, openTime){
     var existSnap=await db.collection('visits')
       .where('visitDate','==',today).where('isStaff','==',true).get();
     var existIds=new Set();
-    existSnap.forEach(function(d){var v=d.data();if(v.memberId)existIds.add(v.memberId);});
+    // 使用済みの2桁コード（当日の全visit docId末尾2桁）を収集して重複を避ける
+    var usedCodes=new Set();
+    existSnap.forEach(function(d){var v=d.data();if(v.memberId)existIds.add(v.memberId); if(d.id.length===8)usedCodes.add(d.id.slice(6));});
+    // 来場者(ゲスト)IDとの衝突も避けるため当日の全visitを参照
+    var dayVisitsSnap=await db.collection('visits').where('visitDate','==',today).get();
+    dayVisitsSnap.forEach(function(d){ if(d.id.length===8)usedCodes.add(d.id.slice(6)); });
+    // スタッフ来店ID: 日付6桁+英字を含む2桁（例 0A,0B…）。数字2桁のゲストIDとは衝突しない。
+    function nextStaffCode(){
+      for(var a=0;a<10;a++){ for(var b=0;b<26;b++){ var c=String(a)+String.fromCharCode(65+b); if(!usedCodes.has(c)){ usedCodes.add(c); return c; } } }
+      return 'Z'+String.fromCharCode(65+Math.floor(Math.random()*26));
+    }
     var batch=db.batch();
     var cnt=0;
+    var newStaff=[];
     checkedInIds.forEach(function(mid,idx){
       if(existIds.has(mid))return;
-      var docId=today+'S'+mid;
+      var docId=today+nextStaffCode();
+      newStaff.push({docId:docId,mid:mid,idx:idx});
       batch.set(db.collection('visits').doc(docId),{
         visitDate:today,visitTime:openTime,
         seq:9990+idx,memberId:mid,isStaff:true,
@@ -706,9 +718,8 @@ async function autoCheckinStaff(today, openTime){
     });
     if(cnt>0){
       await batch.commit();
-      checkedInIds.forEach(function(mid,idx){
-        if(existIds.has(mid))return;
-        writeJournal('create','visits',today+'S'+mid,null,{visitDate:today,visitTime:openTime,memberId:mid,isStaff:true});
+      newStaff.forEach(function(s){
+        writeJournal('create','visits',s.docId,null,{visitDate:today,visitTime:openTime,memberId:s.mid,isStaff:true});
       });
       toast('スタッフ'+cnt+'名を自動チェックイン','inf');
       loadTodayVisits();

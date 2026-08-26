@@ -345,7 +345,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
     <!-- 来店データページ -->
     <div class="page" id="page-visits">
       <div class="phead">
-        <div><div class="ptitle">来店データ</div><div class="pdesc">visitKey = 日付6桁（YYMMDD）+ 通番2桁 = 8桁</div></div>
+        <div><div class="ptitle">来店データ</div><div class="pdesc">visitKey = 日付6桁（YYMMDD）+ 2桁 = 8桁（来場者は数字2桁、スタッフは英字入り2桁 例 0A）</div></div>
         <button class="btn bp" id="btn-open-visit">＋ 来店登録</button>
       </div>
       <div class="card">
@@ -492,6 +492,16 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             </div>
             <button class="btn bp" style="width:fit-content" onclick="runCocktailBaseBackfill()">🍸 カクテルのベースボトルIDを補完</button>
             <div id="cocktail-backfill-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+          </div>
+
+          <!-- スタッフ来店IDの8桁正規化 -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#5a4000;margin-bottom:10px">
+              <strong>スタッフ来店IDの8桁正規化</strong> — 旧形式のスタッフ来店ID（<code>日付+S+会員ID</code> 例 260826S260003）を、来場者と同じ8桁形式（<code>日付6桁+2桁</code>, スタッフは英字入り 例 <code>2608260A</code>）にリネームします。参照している注文・ブラインドデータの visitKey も更新します。<br>
+              <span style="font-size:11px">実行前にCSVバックアップ推奨。完了後はページを再読込してください。</span>
+            </div>
+            <button class="btn bd" style="width:fit-content" onclick="runStaffVisitIdMigration()">🔧 スタッフ来店IDを8桁に正規化</button>
+            <div id="staffid-migration-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
           </div>
 
           <!-- テストデータ一括クリーンアップ -->
@@ -4307,6 +4317,60 @@ async function runCocktailBaseBackfill(){
     prog.textContent='エラー: '+e.message;
     toast('補完失敗: '+e.message,'err');
   }
+}
+
+// ── スタッフ来店IDの8桁正規化（旧 YYMMDD+S+会員ID → YYMMDD+2桁英数） ──
+async function runStaffVisitIdMigration(){
+  if(!confirm('スタッフ来店IDを8桁形式（日付6桁＋2桁, 例 2608260A）に正規化します。\n該当する旧形式のスタッフ来店をリネームし、参照している注文・ブラインドデータの visitKey も更新します。\n\n実行前にCSVバックアップを推奨します。実行しますか？')) return;
+  var prog=document.getElementById('staffid-migration-progress');
+  try{
+    prog.textContent='スタッフ来店を読込中...';
+    var staffSnap=await db.collection('visits').where('isStaff','==',true).get();
+    // 旧形式＝docId長が8桁でないもの（現行の8桁形式はスキップ）
+    var targets=staffSnap.docs.filter(function(d){ return d.id.length!==8; });
+    if(!targets.length){ prog.textContent='対象なし（すべて8桁形式です）'; toast('対象なし'); return; }
+
+    prog.textContent='既存IDを収集中...';
+    var allVisSnap=await db.collection('visits').get();
+    var usedByDate={};
+    allVisSnap.forEach(function(d){ var dt=(d.data().visitDate||d.id.slice(0,6)); (usedByDate[dt]=usedByDate[dt]||new Set()).add(d.id); });
+    function freshStaffId(dt){
+      var used=usedByDate[dt]||(usedByDate[dt]=new Set());
+      for(var a=0;a<10;a++){ for(var b=0;b<26;b++){ var id=dt+String(a)+String.fromCharCode(65+b); if(!used.has(id)){ used.add(id); return id; } } }
+      return dt+'Z'+String.fromCharCode(65+Math.floor(Math.random()*26));
+    }
+
+    var renamed=0, ordUpd=0, blindUpd=0, errors=[];
+    for(var i=0;i<targets.length;i++){
+      var d=targets[i], oldId=d.id, data=d.data();
+      var dt=data.visitDate||oldId.slice(0,6);
+      var newId=freshStaffId(dt);
+      prog.textContent='('+(i+1)+'/'+targets.length+') '+oldId+' → '+newId+' ...';
+      try{
+        var oq=await db.collection('orders').where('visitKey','==',oldId).get();
+        var oq2=await db.collection('orders').where('visitId','==',oldId).get().catch(function(){return {docs:[]};});
+        var bq=await db.collection('blindResults').where('visitKey','==',oldId).get().catch(function(){return {docs:[]};});
+        var gq=await db.collection('blindGuesses').where('visitKey','==',oldId).get().catch(function(){return {docs:[]};});
+        // 1) 新visit作成 → 2) 参照更新 → 3) 旧visit削除（途中断でも再実行可能な順序）
+        await db.collection('visits').doc(newId).set(data);
+        var refs=[], seen={};
+        oq.docs.forEach(function(od){ seen[od.id]=true; refs.push({ref:od.ref,upd:{visitKey:newId}}); });
+        oq2.docs.forEach(function(od){ if(!seen[od.id]){ seen[od.id]=true; refs.push({ref:od.ref,upd:{visitKey:newId}}); } });
+        bq.docs.forEach(function(bd){ refs.push({ref:bd.ref,upd:{visitKey:newId}}); });
+        gq.docs.forEach(function(gd){ refs.push({ref:gd.ref,upd:{visitKey:newId}}); });
+        for(var k=0;k<refs.length;k+=400){ var b=db.batch(); refs.slice(k,k+400).forEach(function(r){ b.update(r.ref,r.upd); }); await b.commit(); }
+        await db.collection('visits').doc(oldId).delete();
+        ordUpd+=oq.docs.length+oq2.docs.filter(function(x){return !oq.docs.find(function(y){return y.id===x.id;});}).length;
+        blindUpd+=bq.docs.length+gq.docs.length;
+        writeJournal('rename','visits',oldId,{id:oldId},{id:newId,refsUpdated:refs.length});
+        renamed++;
+      }catch(e){ errors.push(oldId+': '+e.message); }
+    }
+    writeJournal('migration','visits','staff-visitid-8digit',null,{renamed:renamed,ordersUpdated:ordUpd,blindUpdated:blindUpd,errors:errors.length});
+    var msg='完了: '+renamed+'件リネーム（注文'+ordUpd+'件・ブラインド'+blindUpd+'件更新）'+(errors.length?(' / 失敗'+errors.length+'件'):'');
+    prog.textContent=msg+'。ページを再読込してください。'; toast(msg, errors.length?'err':undefined);
+    if(errors.length) console.error('staff-id migration errors:', errors);
+  }catch(e){ prog.textContent='エラー: '+e.message; toast('移行失敗: '+e.message,'err'); }
 }
 
 // バックアップページ表示時にボタン一覧を描画
