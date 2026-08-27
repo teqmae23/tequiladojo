@@ -241,7 +241,8 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 .tree-summary{padding:10px 16px;font-size:12px;color:var(--ink3);background:var(--cream2);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
 .tree-amount-mismatch{color:var(--red);font-weight:700}
 .tree-together-chip{display:inline-flex;align-items:center;gap:2px;background:rgba(26,110,88,.1);border:1px solid rgba(26,110,88,.22);border-radius:12px;padding:1px 6px 1px 8px;font-size:10px;color:var(--teal)}
-.tree-gift-chip{display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:2px 8px;border-radius:12px;background:#fdf1d8;border:1px solid #e0b64a;color:#8a5e00;white-space:nowrap}
+.tree-gift-chip{display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:2px 8px;border-radius:12px;background:#fdf1d8;border:1px solid #e0b64a;color:#8a5e00;white-space:nowrap;cursor:pointer;font-family:inherit;line-height:1.4}
+.tree-gift-chip:hover{background:#f8e6b8}
 .tree-gift-chip.recv{background:#fbe9e4;border-color:#e0a08a;color:#a8462a}
 .tree-add-row{padding:6px 14px 8px;border-top:1px dashed var(--border)}
 .tbl-wrap{overflow-x:auto}
@@ -1038,6 +1039,19 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         <div class="fg"><label class="fl">セットID <span class="db-field">setId</span></label><input class="fi mono" id="ord-set-id" placeholder=""></div>
         <div class="fg"><label class="fl">来店ID <span class="db-field">visitId</span></label><input class="fi mono" id="ord-visit-id" maxlength="13" placeholder=""></div>
       </div>
+      <hr style="border:none;border-top:1px dashed var(--border2);margin:12px 0">
+      <div style="font-size:11px;font-weight:700;color:var(--gold-d);margin-bottom:8px">🎁 奢り（おごり）</div>
+      <div class="frow">
+        <div class="fg"><label class="fl">奢り支払元 <span class="db-field">isGiftPayer</span></label><select class="fs" id="ord-gift-payer"><option value="">—</option><option value="1">はい</option></select></div>
+        <div class="fg"><label class="fl">奢り人数 <span class="db-field">giftCount</span></label><input class="fi" id="ord-gift-count" type="number" min="0" placeholder=""></div>
+        <div class="fg"><label class="fl">本人も飲む <span class="db-field">giftIncludeSelf</span></label><select class="fs" id="ord-gift-self"><option value="">—</option><option value="1">はい</option></select></div>
+      </div>
+      <div class="frow">
+        <div class="fg"><label class="fl">奢られ <span class="db-field">isGiftRecipient</span></label><select class="fs" id="ord-gift-recipient"><option value="">—</option><option value="1">はい</option></select></div>
+        <div class="fg"><label class="fl">奢り元 来店キー <span class="db-field">giftFromVisitKey</span></label><input class="fi mono" id="ord-gift-from-vk" placeholder=""></div>
+        <div class="fg"><label class="fl">奢り元 名前 <span class="db-field">giftFromName</span></label><input class="fi" id="ord-gift-from-name" placeholder=""></div>
+      </div>
+      <div class="fg"><label class="fl">奢り相手リスト（JSON） <span class="db-field">giftTo</span></label><input class="fi mono" id="ord-gift-to" placeholder='[{"visitKey":"...","name":"..."}]'></div>
     </div>
     <div class="mfoot"><button class="btn bg2" data-close="m-order">キャンセル</button><button class="btn bp" id="btn-save-order">保存</button></div>
   </div>
@@ -3091,6 +3105,14 @@ function openOrderModal(id){
     sv("ord-blind-mark",r?r.blindMarkId||"":"");
     sv("ord-set-id",r?r.setId||"":"");
     sv("ord-visit-id",r?r.visitId||r.visitKey||"":"");
+    // 奢り
+    sv("ord-gift-payer",r&&r.isGiftPayer?"1":"");
+    sv("ord-gift-count",r&&r.giftCount!=null?r.giftCount:"");
+    sv("ord-gift-self",r&&r.giftIncludeSelf?"1":"");
+    sv("ord-gift-recipient",r&&r.isGiftRecipient?"1":"");
+    sv("ord-gift-from-vk",r?r.giftFromVisitKey||"":"");
+    sv("ord-gift-from-name",r?r.giftFromName||"":"");
+    sv("ord-gift-to",r&&r.giftTo?JSON.stringify(r.giftTo):"");
     if(dEl){dEl.readOnly=true; dEl.style.background="var(--cream2)";}
     if(sEl){sEl.readOnly=true; sEl.style.background="var(--cream2)";}
   } else {
@@ -3103,6 +3125,8 @@ function openOrderModal(id){
     sv("ord-group-id",""); sv("ord-batch-id",""); sv("ord-item-seq",1);
     sv("ord-served","3"); sv("ord-blind","0"); sv("ord-blind-mark","");
     sv("ord-set-id",""); sv("ord-visit-id","");
+    sv("ord-gift-payer",""); sv("ord-gift-count",""); sv("ord-gift-self","");
+    sv("ord-gift-recipient",""); sv("ord-gift-from-vk",""); sv("ord-gift-from-name",""); sv("ord-gift-to","");
     if(dEl){dEl.readOnly=false; dEl.style.background="";}
     if(sEl){sEl.readOnly=false; sEl.style.background="";}
     autoSetOrderSeq(today);
@@ -3128,6 +3152,10 @@ if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
   var id=editId.order||date+seq;
   if(!editId.order&&(cache.orders.some(function(r){return r.id===id;})||_treeCurrentOrders.some(function(r){return r.id===id;}))){toast("注文ID「"+id+"」は既に存在します","err");return;}
   var ordDateVal=gv("ord-date");
+  // 奢り相手リスト(JSON)の解析（不正なら中断）
+  var _giftToRaw=(gv("ord-gift-to")||"").trim();
+  var _giftTo=null;
+  if(_giftToRaw){ try{ _giftTo=JSON.parse(_giftToRaw); }catch(e){ toast("奢り相手リスト(JSON)の形式が不正です","err"); return; } }
   var _saveData={
     orderDate:ordDateVal||null,
     orderTime:gv("ord-time")||null,
@@ -3148,6 +3176,14 @@ if(_bsoBtn) _bsoBtn.addEventListener("click",function(){
     blindId:parseInt(gv("ord-blind"))||0,
     blindMarkId:gv("ord-blind-mark")||null,
     setId:gv("ord-set-id")||null,
+    // 奢り（おごり）
+    isGiftPayer:gv("ord-gift-payer")==="1",
+    giftCount:gv("ord-gift-count")!==""?(parseInt(gv("ord-gift-count"))||0):null,
+    giftIncludeSelf:gv("ord-gift-self")==="1",
+    giftTo:_giftTo,
+    isGiftRecipient:gv("ord-gift-recipient")==="1",
+    giftFromVisitKey:gv("ord-gift-from-vk")||null,
+    giftFromName:gv("ord-gift-from-name")||null,
     deleted:0
   };
   var _ordBefore=null;
@@ -3306,10 +3342,10 @@ function treeGiftBadge(ord){
   if(ord&&ord.isGiftPayer){
     var names=(Array.isArray(ord.giftTo)?ord.giftTo:[]).map(function(r){return r&&r.name?String(r.name):'';}).filter(Boolean);
     var who=names.length?names.join('、'):((ord.giftCount||0)+'名');
-    return '<span class="tree-gift-chip" title="奢り（おごり）">🎁 '+escHtml(who)+'へ</span>';
+    return '<button type="button" class="tree-gift-chip" data-edit-order="'+escHtml(ord.id)+'" title="クリックで奢りを編集">🎁 '+escHtml(who)+'へ</button>';
   }
   if(ord&&ord.isGiftRecipient){
-    return '<span class="tree-gift-chip recv" title="奢られ">🎁 '+escHtml(ord.giftFromName||'')+'より</span>';
+    return '<button type="button" class="tree-gift-chip recv" data-edit-order="'+escHtml(ord.id)+'" title="クリックで奢りを編集">🎁 '+escHtml(ord.giftFromName||'')+'より</button>';
   }
   return '';
 }
