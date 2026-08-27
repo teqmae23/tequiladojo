@@ -504,6 +504,16 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div id="staffid-migration-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
           </div>
 
+          <!-- 深夜時刻(0〜11時台)を24時以降表記に正規化 -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#5a4000;margin-bottom:10px">
+              <strong>深夜時刻の24時以降正規化</strong> — セッション検出前の旧データで、深夜(0〜11時台)に <code>00xx</code> のまま保存された来場時刻・退場時刻・注文時刻を、営業時間表記（<code>24xx〜35xx</code>）に変換します。<br>
+              <span style="font-size:11px">対象は「その日のセッションが夜跨ぎ営業」かつ「開店時刻より前の時刻」のみ。通常の朝の来場は変換しません。実行前にCSVバックアップ推奨。</span>
+            </div>
+            <button class="btn bd" style="width:fit-content" onclick="runOvernightTimeMigration()">🕛 深夜時刻を24時以降表記に正規化</button>
+            <div id="overnight-migration-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+          </div>
+
           <!-- テストデータ一括クリーンアップ -->
           <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px" id="cleanup-tool-section">
             <div style="font-size:11px;color:var(--ink3);margin-bottom:6px;font-weight:500;letter-spacing:.06em;text-transform:uppercase">テストデータ一括クリーンアップ</div>
@@ -4461,6 +4471,69 @@ async function runStaffVisitIdMigration(){
     prog.textContent=msg+'。ページを再読込してください。'; toast(msg, errors.length?'err':undefined);
     if(errors.length) console.error('staff-id migration errors:', errors);
   }catch(e){ prog.textContent='エラー: '+e.message; toast('移行失敗: '+e.message,'err'); }
+}
+
+// ── 深夜時刻(0〜11時台)を24時以降表記に正規化（旧データの visitTime/checkoutTime/orderTime）──
+async function runOvernightTimeMigration(){
+  if(!confirm('旧データの深夜時刻(0〜11時台)を営業時間表記(24xx〜)に正規化します。\n対象は「その日が夜跨ぎ営業」かつ「開店時刻より前の時刻」のみ。\n\n実行前にCSVバックアップを推奨します。実行しますか？')) return;
+  var prog=document.getElementById('overnight-migration-progress');
+  try{
+    prog.textContent='セッションを読込中...';
+    var sesSnap=await db.collection('sessions').get();
+    // 日付 → {overnight, openInt}（夜跨ぎ営業のみ対象。同日複数は夜跨ぎを優先）
+    var byDate={};
+    sesSnap.forEach(function(d){
+      var s=d.data()||{}; var dt=s.date||(d.id?d.id.slice(0,6):''); if(!dt) return;
+      var openInt=parseInt(String(s.openTime||'').slice(0,4))||0;
+      var closeInt=s.closeTime?(parseInt(String(s.closeTime).slice(0,4))||0):0;
+      var overnight=closeInt>=2400||(closeInt>0&&closeInt<openInt&&openInt>=1200&&closeInt<600);
+      if(!byDate[dt] || (overnight&&!byDate[dt].overnight)) byDate[dt]={overnight:overnight, openInt:openInt};
+    });
+    // 変換関数: 夜跨ぎ営業日で、時刻が開店前(かつ<1200)なら +24時間表記へ
+    function conv(t, dt){
+      if(!t) return null;
+      var info=byDate[dt]; if(!info||!info.overnight) return null;
+      var s=String(t); if(s.length<4) return null;
+      var tInt=parseInt(s.slice(0,4))||0;
+      if(tInt>=1200 || tInt>=info.openInt) return null; // 既に24xx や 開店後の通常時刻は対象外
+      var hh=parseInt(s.slice(0,2))||0;
+      return String(hh+24)+s.slice(2); // 例 "000630" → "240630"
+    }
+
+    prog.textContent='来場データを解析中...';
+    var visSnap=await db.collection('visits').get();
+    var visUpd=[];
+    visSnap.forEach(function(d){
+      var v=d.data()||{}; var dt=v.visitDate||(d.id?d.id.slice(0,6):'');
+      var upd={};
+      var nvt=conv(v.visitTime, dt); if(nvt) upd.visitTime=nvt;
+      var nct=conv(v.checkoutTime, dt); if(nct) upd.checkoutTime=nct;
+      if(Object.keys(upd).length) visUpd.push({ref:d.ref, id:d.id, before:{visitTime:v.visitTime,checkoutTime:v.checkoutTime}, upd:upd});
+    });
+
+    prog.textContent='注文データを解析中...';
+    var ordSnap=await db.collection('orders').get();
+    var ordUpd=[];
+    ordSnap.forEach(function(d){
+      var o=d.data()||{}; var dt=o.orderDate||'';
+      var not=conv(o.orderTime, dt); if(not) ordUpd.push({ref:d.ref, id:d.id, before:{orderTime:o.orderTime}, upd:{orderTime:not}});
+    });
+
+    if(!visUpd.length && !ordUpd.length){ prog.textContent='対象なし（正規化が必要な深夜時刻はありません）'; toast('対象なし'); return; }
+
+    prog.textContent='書き込み中... 来場'+visUpd.length+'件 / 注文'+ordUpd.length+'件';
+    var all=visUpd.concat(ordUpd);
+    for(var i=0;i<all.length;i+=400){
+      var batch=db.batch();
+      all.slice(i,i+400).forEach(function(u){ batch.update(u.ref,u.upd); });
+      await batch.commit();
+    }
+    visUpd.forEach(function(u){ writeJournal('update','visits',u.id,u.before,u.upd); });
+    ordUpd.forEach(function(u){ writeJournal('update','orders',u.id,u.before,u.upd); });
+    writeJournal('migration','visits/orders','overnight-time-normalize',null,{visits:visUpd.length,orders:ordUpd.length});
+    var msg='完了: 来場'+visUpd.length+'件・注文'+ordUpd.length+'件を24時以降表記に正規化しました';
+    prog.textContent=msg+'。ページを再読込してください。'; toast(msg);
+  }catch(e){ prog.textContent='エラー: '+e.message; toast('正規化失敗: '+e.message,'err'); }
 }
 
 // バックアップページ表示時にボタン一覧を描画
