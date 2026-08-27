@@ -22,7 +22,7 @@ var FIREBASE_CONFIG = {
   measurementId:     "G-KMS18946JQ"
 };
 </script>
-<script src="/auth-role.js?v=20260827"></script>
+<script src="/auth-role.js?v=20260828"></script>
 <script>window.JOURNAL_PAGE='openclose';</script>
 <script src="/journal.js?v=20260706"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -224,7 +224,8 @@ function parseBizTime(str){
   if(!/^\d{3,4}$/.test(s))return null;
   s=s.padStart(4,"0");
   var hh=parseInt(s.slice(0,s.length-2),10),mm=parseInt(s.slice(-2),10);
-  if(isNaN(hh)||isNaN(mm)||mm>59||hh>71)return null;
+  // 閉め忘れ閉店時刻の上限は 36:00（翌日12時）。現実的にこれを超えることはない。
+  if(isNaN(hh)||isNaN(mm)||mm>59||hh>36||(hh===36&&mm>0))return null;
   return pad(hh)+pad(mm)+"00";
 }
 // 営業時間HHMMSS(24以降可)を、開店日基準の実カレンダー日時ラベルに変換
@@ -501,6 +502,30 @@ g("btn-close-store").addEventListener("click",function(){
   performClose(nowStr());
 });
 function performClose(closeTime){
+  // 閉店時刻が「そのセッションの最終注文時刻」より前だと、注文が閉店後扱いになり集計や
+  // 時間帯フィルタが崩れる。最終注文より後の時刻を設定するよう警告して中断する。
+  var _sesDate=currentSessionDate;
+  var _dayCross=!!(currentSessionDate && calYMD6()!==currentSessionDate);
+  if(!_sesDate){ _doPerformClose(closeTime); return; }
+  db.collection("orders").where("orderDate","==",_sesDate).get().then(function(snap){
+    var maxHHMM=-1, maxOT="";
+    snap.forEach(function(d){
+      var o=d.data();
+      if(o.served===0) return; // キャンセルは除外
+      var ot=String(o.orderTime||""); if(ot.length<4) return;
+      var hhmm=parseInt(ot.slice(0,4))||0;
+      if(hhmm>maxHHMM){ maxHHMM=hhmm; maxOT=ot; }
+    });
+    var closeHHMM=parseInt(String(closeTime).slice(0,4))||0;
+    if(maxHHMM>=0 && closeHHMM<maxHHMM){
+      toast("最終注文時間 "+fmtHHMM(maxOT)+" より後の時間を設定してください","err");
+      if(_dayCross) openCloseDateModal(); // 手動入力で時刻を入れ直せるよう再表示
+      return;
+    }
+    _doPerformClose(closeTime);
+  }).catch(function(){ _doPerformClose(closeTime); }); // 取得失敗時は従来どおり続行（警告のためだけに閉店を止めない）
+}
+function _doPerformClose(closeTime){
   var closingSessionId=currentSessionId;
   var closingDate=currentSessionDate;
   var closingOpenTime=currentOpenTime; // リセット前に集計用へ退避
