@@ -121,34 +121,23 @@ var AuthRole = (function() {
   // アクティブセッション取得
   async function getActiveSession(db){
     try{
-      // 開店中セッション = closeTime 未設定。日跨ぎ対応で直近3営業日(当日/前日/前々日)から探す。
+      // 開店中セッション = closeTime 未設定。閉め忘れ検出は無期限（日付窓なし）。
       // ※ 旧実装は where('status','==','open') だったが、セッションに status を保存していない
       //   （開店中は closeTime:null で表現）ため常に空(null)を返し、深夜注文の時刻ずれ
       //   （openTime未取得で+24が効かない）や来場の絞り込み不全の一因になっていた。
-      //   closeTimeベース＋単一フィールドクエリ(複合インデックス不要)に是正する。
-      var now=new Date();
-      var validDates=[];
-      for(var offset=0;offset<=2;offset++){
-        var dd=new Date(now.getTime()-offset*86400000);
-        validDates.push(String(dd.getFullYear()).slice(2)
-          +String(dd.getMonth()+1).padStart(2,'0')
-          +String(dd.getDate()).padStart(2,'0'));
-      }
-      var snap=await db.collection('sessions').where('date','in',validDates).get();
-      var open=[];
-      snap.forEach(function(d){
-        var s={id:d.id};
-        Object.assign(s,d.data());
-        if(!s.closeTime) open.push(s); // closeTime未設定(null/空)=開店中
+      //   開店中は新規開店できない仕様のため、開店中セッションは必ず最新セッション付近に居る。
+      //   最新の数件を新しい順で取得し、最初の未閉店セッションを返す（複合インデックス不要）。
+      var snap=await db.collection('sessions').orderBy('date','desc').limit(20).get();
+      if(snap.empty) return null;
+      var list=snap.docs.map(function(d){ var s={id:d.id}; Object.assign(s,d.data()); return s; });
+      list.sort(function(a,b){
+        var ka=String(a.date||'')+String(a.openTime||'');
+        var kb=String(b.date||'')+String(b.openTime||'');
+        return kb.localeCompare(ka);
       });
-      if(!open.length) return null;
-      // 新しい営業日→同日は遅い開店 の順で最新の開店中セッションを返す
-      open.sort(function(a,b){
-        var da=String(a.date||''), dbb=String(b.date||'');
-        if(da!==dbb) return dbb.localeCompare(da);
-        return String(b.openTime||'').localeCompare(String(a.openTime||''));
-      });
-      var ses=open[0];
+      var ses=null;
+      for(var i=0;i<list.length;i++){ if(!list[i].closeTime){ ses=list[i]; break; } } // closeTime未設定(null/空)=開店中
+      if(!ses) return null;
       if(!ses.openDate && ses.date) ses.openDate=ses.date; // openDate を date で正規化（呼出側の互換）
       return ses;
     }catch(e){}
