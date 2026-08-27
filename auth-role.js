@@ -208,12 +208,28 @@ var AuthRole = (function() {
     var visitDate=v.visitDate||(v.id?v.id.slice(0,6):'');
     if(!sessionDate||!visitDate) return true;
     if(visitDate!==sessionDate) return false;
-    // 同一営業日: openTime以降のvisitのみ
+    // 同一営業日: openTime以降のvisitのみ（日跨ぎ対応）
     var visitTime=v.visitTime||'';
     if(!visitTime||!session.openTime) return true;
-    var openTs=session.openTime.toDate?session.openTime.toDate():new Date(session.openTime);
-    var openHHMM=String(openTs.getHours()).padStart(2,'0')+String(openTs.getMinutes()).padStart(2,'0');
-    return visitTime.slice(0,4)>=openHHMM;
+    // openTimeは openclose が "HHMMSS" 文字列で保存する（例 "205930"）。
+    // Timestampの可能性もあるため両対応でHHMMを求める。
+    // ※ 旧実装は文字列に new Date() を掛けて Invalid Date → NaN となり、
+    //   openHHMM が "NaNNaN" になって当日の来場者を全員弾いていた（奢り相手リストが空になる不具合）。
+    var openHHMM;
+    if(session.openTime.toDate){
+      var openTs=session.openTime.toDate();
+      openHHMM=String(openTs.getHours()).padStart(2,'0')+String(openTs.getMinutes()).padStart(2,'0');
+    } else {
+      openHHMM=String(session.openTime).slice(0,4);
+    }
+    if(!/^\d{4}$/.test(openHHMM)) return true; // openTimeが不正なら除外しない（安全側）
+    var vt=visitTime.slice(0,4);
+    if(vt>=openHHMM) return true;
+    // 日跨ぎ: 開店が午後(12時以降)で来場が午前(0〜11時台)なら翌暦日＝同一営業日として含める
+    var openH=parseInt(openHHMM.slice(0,2),10)||0;
+    var vH=parseInt(vt.slice(0,2),10)||0;
+    if(openH>=12 && vH<12) return true;
+    return false;
   }
 
   return { requireStaff: requireStaff, requireOwner: requireOwner, requireMember: requireMember,
