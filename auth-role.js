@@ -235,9 +235,39 @@ var AuthRole = (function() {
     return false;
   }
 
+  // 営業日(YYMMDD)からセッションを取得（同日複数は開店が遅い＝最新を優先）。
+  async function getSessionByDate(db, yymmdd){
+    if(!yymmdd) return null;
+    try{
+      var snap=await db.collection('sessions').where('date','==',yymmdd).get();
+      if(snap.empty) return null;
+      var list=snap.docs.map(function(d){ var s={id:d.id}; Object.assign(s,d.data()); return s; });
+      list.sort(function(a,b){ return String(b.openTime||'').localeCompare(String(a.openTime||'')); });
+      var s=list[0];
+      if(!s.openDate && s.date) s.openDate=s.date;
+      return s;
+    }catch(e){ return null; }
+  }
+
+  // あるセッションに属する来場を全件返す（退場済み＝checkoutTime有りも含む）。
+  // 奢り相手/スタッフの選択を「営業中でなくても」そのセッション基準で出すための共通ロジック。
+  async function getSessionVisits(db, session){
+    try{
+      var snap=await db.collection('visits').get();
+      var out=[];
+      snap.forEach(function(d){
+        var v={id:d.id}; Object.assign(v, d.data());
+        if(v.hidden===true) return;
+        if(isVisitInSession(v, session)) out.push(v);
+      });
+      return out;
+    }catch(e){ return []; }
+  }
+
   return { requireStaff: requireStaff, requireOwner: requireOwner, requireMember: requireMember,
            getActiveSession: getActiveSession, businessDate: businessDate,
            nowBusinessTime: nowBusinessTime, formatBusinessTime: formatBusinessTime,
            isVisitInSession: isVisitInSession, bdName: bdName,
+           getSessionByDate: getSessionByDate, getSessionVisits: getSessionVisits,
            bumpMeta: bumpMeta, getMeta: getMeta };
 })();

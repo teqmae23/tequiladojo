@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Noto+Sans+JP:wght@400;500;700&family=DM+Mono&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="/auth-role.js?v=20260828"></script>
+<script src="/auth-role.js?v=20260829"></script>
 <script src="/bottle-weight.js?v=20260724"></script>
 <script>window.JOURNAL_PAGE='home_order';</script>
 <script src="/journal.js?v=20260706"></script>
@@ -707,6 +707,7 @@ const db = firebase.firestore();
 let todayStr='', allGroups=[], allBatchGroups=[], allVisits=[], allMembers={};
 let currentSessionBT=null; // 営業時刻用セッション情報
 let isPopupMode=false;
+let _sessionAddMode=false; // 過去/閉店セッションへの追加モード（対象セッションの来場者・スタッフをピッカーに出す）
 let blindResultsSet=new Set();
 let masterData={tequila:[],other:[],misc:[],set:[],cocktail:[],subMaterials:[]};
 let keepBottlesData=[], stockBottlesData=[];
@@ -796,7 +797,22 @@ async function init(){
             docs.forEach(function(d){if(d.exists)allVisits.push(Object.assign({id:d.id},d.data()));});
           }).catch(function(){})
         :Promise.resolve();
-      fetchMissing.then(function(){
+      fetchMissing.then(async function(){
+        // 対象visitの営業日からセッションを特定。現在のアクティブセッションと異なる（＝過去/閉店）なら
+        // 「セッション追加モード」にして、そのセッションの来場者・スタッフ(退場済み含む)をピッカーへ出す。
+        try{
+          var _tv0=allVisits.find(function(x){return x.id===visitKeys[0];});
+          var _vd=_tv0?(_tv0.visitDate||(_tv0.id||'').slice(0,6)):'';
+          if(_vd && AuthRole.getSessionByDate){
+            var _tsess=await AuthRole.getSessionByDate(db,_vd);
+            if(_tsess && (!currentSessionBT || currentSessionBT.id!==_tsess.id)){
+              _sessionAddMode=true;
+              currentSessionBT=_tsess; // 日付・価格・ピッカーの基準を対象セッションに合わせる
+              var _parts=await AuthRole.getSessionVisits(db,_tsess);
+              _parts.forEach(function(pv){ if(!allVisits.find(function(x){return x.id===pv.id;})) allVisits.push(pv); });
+            }
+          }
+        }catch(e){ /* 特定失敗時は通常モードで継続 */ }
         visitKeys.forEach(function(vk){
           var v=allVisits.find(function(x){return x.id===vk;});
           if(v&&!flow.visits.find(function(x){return x.id===vk;}))flow.visits.push(v);
@@ -2367,7 +2383,7 @@ async function goStep2(){
   // 過去visitの場合、注文時間入力行を表示してプリセット
   const timeRow=document.getElementById('confirm-time-row');
   if(timeRow){
-    const isHist=isPastDateVisit(flow.visits[0]);
+    const isHist=isPastDateVisit(flow.visits[0])||_sessionAddMode;
     timeRow.style.display=isHist?'block':'none';
     if(isHist&&flow.visits.length>0){
       const vis=flow.visits[0];
@@ -2425,7 +2441,7 @@ async function confirmOrder(){
   const _v0=flow.visits[0]||{};
   // ★現セッションのアクティブ来店は24時以降でも当日注文（履歴モードにしない）。
   //   これにより 0:06 の注文も nowBusinessTime で 24:06 として登録される。
-  const isHistorical=isPastDateVisit(_v0);
+  const isHistorical=isPastDateVisit(_v0)||_sessionAddMode;
   const visitBizDate=(_v0.visitDate||(_v0.id||'').slice(0,6)||bizDate);
   const useDate=isHistorical?visitBizDate:bizDate;
 
@@ -2775,7 +2791,7 @@ async function renderGiftModal(){
     // ★日跨ぎ/残存来場対策: 現セッションに属する来場のみを奢り候補にする。
     //   ?visits= 経由で直接fetchした過去日の残存visitが候補に混入し、奢られ0円伝票が
     //   「来場に紐づかない注文」になる不具合を防ぐ。
-    .filter(v=>!v.checkoutTime&&!payerVisitKeys.has(v.id)&&AuthRole.isVisitInSession(v,currentSessionBT))
+    .filter(v=>(_sessionAddMode||!v.checkoutTime)&&!payerVisitKeys.has(v.id)&&AuthRole.isVisitInSession(v,currentSessionBT))
     .slice()
     .sort((a,b)=>(b.isStaff?1:0)-(a.isStaff?1:0)) // 同一人物ならstaff側を残す
     .filter(v=>{ const k=v.memberId?('m_'+v.memberId):('v_'+v.id); if(_seen.has(k))return false; _seen.add(k); return true; });
@@ -2870,7 +2886,7 @@ function updateBlindStaffBtn(){
 function openBlindStaffModal(){
   if(!flow.isBlind){ showToast('先にブラインドをオンにしてください','error'); return; }
   const payerKeys=new Set(flow.visits.map(v=>v.id));
-  const staffVisitors=allVisits.filter(v=>v.isStaff&&!v.checkoutTime&&!payerKeys.has(v.id)&&AuthRole.isVisitInSession(v,currentSessionBT));
+  const staffVisitors=allVisits.filter(v=>v.isStaff&&(_sessionAddMode||!v.checkoutTime)&&!payerKeys.has(v.id)&&AuthRole.isVisitInSession(v,currentSessionBT));
   const listEl=document.getElementById('blind-staff-list');
   if(!staffVisitors.length){
     listEl.innerHTML='<div style="padding:24px;text-align:center;font-size:13px;color:var(--ink3)">出勤中のスタッフがいません</div>';
