@@ -1438,7 +1438,8 @@ async function calcNextGroupId(today){
 function onCountChange(){
   var cntMem=parseInt(gv('ci-count-member'))||0;
   var cntNew=parseInt(gv('ci-count-new'))||0;
-  var total=cntMem+cntNew;
+  var cntGuestL=parseInt(gv('ci-count-guest'))||0;
+  var total=cntMem+cntNew+cntGuestL;
   var lbl=g('ci-person-label');
   if(lbl) lbl.textContent=total>1?'（1人目）':'';
 
@@ -1559,7 +1560,8 @@ function onCountChange(){
 function updateCheckinSaveBtn(){
   var cntMem=parseInt(gv('ci-count-member'))||0;
   var cntNew=parseInt(gv('ci-count-new'))||0;
-  var total=cntMem+cntNew;
+  var cntGuestC=parseInt(gv('ci-count-guest'))||0;
+  var total=cntMem+cntNew+cntGuestC;
   var ok=total>0;
   // 会員IDが人数分入っているか
   for(var i=0;i<cntMem;i++){
@@ -1913,7 +1915,8 @@ g('m-checkin-save').addEventListener('click', async function(){
 
   var cntMem=parseInt(gv('ci-count-member'))||0;
   var cntNew=parseInt(gv('ci-count-new'))||0;
-  var total=cntMem+cntNew;
+  var cntGuest=parseInt(gv('ci-count-guest'))||0;
+  var total=cntMem+cntNew+cntGuest;
   if(total<1){ toast('1名以上入力してください','err'); return; }
 
   // 会員IDを人数分取得
@@ -1932,7 +1935,6 @@ g('m-checkin-save').addEventListener('click', async function(){
   }
 
   // ゲスト入力を処理（既存ゲスト→memberIds、新規→newNicks）
-  var cntGuest=parseInt(gv('ci-count-guest'))||0;
   for(var gi=0;gi<cntGuest;gi++){
     var gInputEl=document.getElementById('ci-guest-'+gi);
     var gVal=gInputEl?gInputEl.value.trim():'';
@@ -1941,6 +1943,9 @@ g('m-checkin-save').addEventListener('click', async function(){
     if(gMem){ memberIds.push(gMem.id); }
     else { newNicks.push(gVal); }
   }
+
+  // ゲスト振り分け後の実人数で再計算（グループID採番・進捗表示用）
+  total=memberIds.length+newNicks.length;
 
   var saveBtn=g('m-checkin-save');
   saveBtn.disabled=true; saveBtn.textContent='登録中...';
@@ -1959,8 +1964,8 @@ g('m-checkin-save').addEventListener('click', async function(){
     var registeredVisitKeys=[];
     var tempMemberIds=[];
 
-    // ── 会員の登録（複数人対応） ──
-    for(var mi=0;mi<cntMem;mi++){
+    // ── 会員の登録（本会員＋既存ゲスト会員。memberIds末尾にゲストが追加される） ──
+    for(var mi=0;mi<memberIds.length;mi++){
       // 入力値はdisplayId/realId/nicknameどれかの可能性があるため、getMemberInfoで解決してdoc ID（realId）に統一
       var _rawMid=memberIds[mi]||null;
       var _resolvedMem=_rawMid?getMemberInfo(_rawMid):null;
@@ -2044,7 +2049,7 @@ g('m-checkin-save').addEventListener('click', async function(){
       return mem?mem.id:raw;
     });
     registeredVisitKeys.forEach(function(vk, idx){
-      var mid=idx<cntMem?(resolvedMemberIds[idx]||null):(tempMemberIds[idx-cntMem]?tempMemberIds[idx-cntMem].tempId:null);
+      var mid=idx<memberIds.length?(resolvedMemberIds[idx]||null):(tempMemberIds[idx-memberIds.length]?tempMemberIds[idx-memberIds.length].tempId:null);
       var vdata={visitDate:today,visitTime:time,seq:parseInt(vk.slice(6,8))||0,memberId:mid,checkinGroupId:groupId,tequilaAmount:0,amount:0,payment:payment,receiptIssued:'0',checkoutTime:null};
       writeJournal('create','visits',vk,null,vdata);
       var newVEntry=Object.assign({id:vk},vdata);
@@ -2059,7 +2064,7 @@ g('m-checkin-save').addEventListener('click', async function(){
     g('ci-progress').style.display='none';
     renderVisitorList();
     kbAfterCheckin(registeredVisitKeys.map(function(vk,idx){
-      var mid=idx<cntMem?(resolvedMemberIds[idx]||null):(tempMemberIds[idx-cntMem]?tempMemberIds[idx-cntMem].tempId:null);
+      var mid=idx<memberIds.length?(resolvedMemberIds[idx]||null):(tempMemberIds[idx-memberIds.length]?tempMemberIds[idx-memberIds.length].tempId:null);
       return {memberId:mid, visitKey:vk};
     }).filter(function(e){return e.memberId;}), today);
   }catch(e){
