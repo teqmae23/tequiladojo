@@ -3365,7 +3365,7 @@ function treeGiftBadge(ord){
 function treeTogetherIds(ord, orders, selfVisId){
   if(!ord||!ord.batchId) return [];
   return orders.filter(function(o){
-    if(o.batchId!==ord.batchId||o.deleted) return false;
+    if(o.batchId!==ord.batchId||o.deleted||o.served===0) return false; // キャンセル済は同席に数えない
     if((o.visitKey||o.visitId)===selfVisId) return false;
     return true;
   }).reduce(function(acc,o){var bvk=o.visitKey||o.visitId;return acc.indexOf(bvk)<0?acc.concat([bvk]):acc;},[]);
@@ -4816,18 +4816,63 @@ async function treeCascadeDelVisit(visitId){
   });
 }
 
-function treeDelOrder(orderId){
-  confirmDel('注文「'+orderId+'」をキャンセル（非表示）にします。',function(){
-    var ref=db.collection('orders').doc(orderId);
-    ref.get().then(function(snap){
-      var before=snap.exists?snap.data():null;
-      return ref.update({served:0}).then(function(){
-        writeJournal('update','orders',orderId,before,Object.assign({},before,{served:0}));
-        toast('注文をキャンセルしました');
-        loadTree();
+async function treeDelOrder(orderId){
+  try{
+    var baseSnap=await db.collection('orders').doc(orderId).get();
+    if(!baseSnap.exists){ toast('注文が見つかりません','err'); return; }
+    var base=baseSnap.data();
+    var batchId=base.batchId||null;
+    var baseVk=base.visitKey||base.visitId||null;
+
+    // 同一batchの注文を取得（奢りの連動判定用）
+    var batchDocs=[];
+    if(batchId){
+      var bs=await db.collection('orders').where('batchId','==',batchId).get();
+      batchDocs=bs.docs;
+    }
+    function dataOf(id){ if(id===orderId) return base; var d=batchDocs.find(function(x){return x.id===id;}); return d?d.data():null; }
+
+    var toCancel=[orderId];   // served:0 にする注文ID
+    var payerUpdate=null;     // 受取1件削除時の支払者 giftCount/giftTo 更新
+    var extraMsg='';
+
+    if(base.isGiftPayer){
+      // 奢り支払者を削除 → 同一batchの受取(¥0)・本人注文もまとめてキャンセル
+      batchDocs.forEach(function(d){
+        if(d.id===orderId) return;
+        var o=d.data();
+        if(o.isGiftRecipient && (!o.giftFromVisitKey || o.giftFromVisitKey===baseVk)) toCancel.push(d.id);
+        else if(o.isGiftSelf && (o.visitKey||o.visitId)===baseVk) toCancel.push(d.id);
       });
-    }).catch(function(e){toast('キャンセル失敗: '+e.message,'err');});
-  });
+      var nr=toCancel.length-1;
+      if(nr>0) extraMsg='この奢りの受取・本人注文 '+nr+'件も同時にキャンセルします。';
+    } else if(base.isGiftRecipient){
+      // 奢り受取を1件削除 → この受取のみキャンセルし、支払者の人数(giftCount/giftTo)を1減らす
+      var payerDoc=batchDocs.find(function(d){return d.data().isGiftPayer;});
+      if(payerDoc){
+        var pd=payerDoc.data();
+        var gt=Array.isArray(pd.giftTo)?pd.giftTo.slice():[];
+        var idx=gt.findIndex(function(r){return r&&r.visitKey===baseVk;});
+        if(idx>=0) gt.splice(idx,1);
+        payerUpdate={id:payerDoc.id, before:pd, giftTo:gt, giftCount:gt.length};
+        extraMsg='奢り支払者の人数を '+(pd.giftCount!=null?pd.giftCount:'?')+' → '+gt.length+' に更新します。';
+      }
+    }
+
+    var msg='注文「'+orderId+'」をキャンセル（非表示）にします。'+(extraMsg?'\n'+extraMsg:'');
+    confirmDel(msg, async function(){
+      try{
+        var batch=db.batch();
+        toCancel.forEach(function(cid){ batch.update(db.collection('orders').doc(cid),{served:0}); });
+        if(payerUpdate){ batch.update(db.collection('orders').doc(payerUpdate.id),{giftCount:payerUpdate.giftCount, giftTo:payerUpdate.giftTo}); }
+        await batch.commit();
+        toCancel.forEach(function(cid){ var b=dataOf(cid); writeJournal('update','orders',cid,b,Object.assign({},b||{},{served:0})); });
+        if(payerUpdate) writeJournal('update','orders',payerUpdate.id,payerUpdate.before,Object.assign({},payerUpdate.before,{giftCount:payerUpdate.giftCount,giftTo:payerUpdate.giftTo}));
+        toast((toCancel.length>1||payerUpdate)?'関連注文もまとめて処理しました':'注文をキャンセルしました');
+        loadTree();
+      }catch(e){ toast('キャンセル失敗: '+e.message,'err'); }
+    });
+  }catch(e){ toast('取得失敗: '+e.message,'err'); }
 }
 
 // ─── ツリービュー：来場・注文追加、ブラインド編集、一緒に飲んだ人 ─────────────
