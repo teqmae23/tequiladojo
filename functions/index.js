@@ -1597,3 +1597,122 @@ exports.backfillTequilaLogs = functions.region('asia-northeast1')
       .catch(() => {});
     return { ok: true, orders: snap.size, created, updated, skipped };
   });
+
+// ── SwitchBot 温湿度センサー ───────────────────────────────────────
+// 店内の SwitchBot 温湿度計（ハブ連携）の値を定期取得して settings/envSensor に
+// キャッシュし、注文作成時（orders onCreate）にその値を注文へスタンプする。
+// 秘密情報は Secret Manager に設定:
+//   firebase functions:secrets:set SWITCHBOT_TOKEN
+//   firebase functions:secrets:set SWITCHBOT_SECRET
+// 複数台ある場合は settings/envSensorConfig.deviceId を手動設定（未設定なら自動検出）。
+const switchbotToken = defineSecret('SWITCHBOT_TOKEN');
+const switchbotSecret = defineSecret('SWITCHBOT_SECRET');
+
+// SwitchBot v1.1 API 署名ヘッダを生成
+function switchbotHeaders(token, secret) {
+  const crypto = require('crypto');
+  const t = Date.now().toString();
+  const nonce = crypto.randomUUID();
+  const sign = crypto.createHmac('sha256', secret)
+    .update(Buffer.from(token + t + nonce, 'utf-8'))
+    .digest('base64').toUpperCase();
+  return { 'Authorization': token, 'sign': sign, 't': t, 'nonce': nonce, 'Content-Type': 'application/json' };
+}
+
+async function switchbotGet(path, token, secret) {
+  const resp = await fetch('https://api.switch-bot.com' + path, { method: 'GET', headers: switchbotHeaders(token, secret) });
+  const json = await resp.json();
+  if (!json || json.statusCode !== 100) {
+    throw new Error('SwitchBot API error: ' + (json && (json.message || json.statusCode)) + ' (HTTP ' + resp.status + ')');
+  }
+  return json.body;
+}
+
+// 温湿度計デバイスIDを解決（settings/envSensorConfig.deviceId 優先。無ければ自動検出しキャッシュ）
+async function resolveSwitchbotDeviceId(token, secret) {
+  const cfg = await db.collection('settings').doc('envSensorConfig').get();
+  if (cfg.exists && cfg.data().deviceId) return cfg.data().deviceId;
+  const body = await switchbotGet('/v1.1/devices', token, secret);
+  const list = (body && body.deviceList) || [];
+  // 温湿度計: Meter / MeterPlus / Meter Pro / WoIOSensor(屋外) など。Hub 2 も温湿度を持つ。
+  const meter = list.find((d) => /meter|wosensor|woiosensor|hub 2/i.test(String(d.deviceType || '')));
+  if (!meter) throw new Error('温湿度計（Meter）デバイスが見つかりません。settings/envSensorConfig.deviceId を手動設定してください');
+  await db.collection('settings').doc('envSensorConfig').set({
+    deviceId: meter.deviceId, deviceType: meter.deviceType || null, deviceName: meter.deviceName || '',
+    autoDetectedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+  return meter.deviceId;
+}
+
+// 5分毎に温湿度を取得して settings/envSensor に保存
+exports.refreshEnvSensor = functions.region('asia-northeast1')
+  .runWith({ secrets: [switchbotToken, switchbotSecret] })
+  .pubsub.schedule('every 5 minutes').timeZone('Asia/Tokyo')
+  .onRun(async () => {
+    const token = switchbotToken.value();
+    const secret = switchbotSecret.value();
+    if (!token || !secret) { console.warn('refreshEnvSensor: SwitchBot secrets 未設定'); return null; }
+    try {
+      const deviceId = await resolveSwitchbotDeviceId(token, secret);
+      const status = await switchbotGet('/v1.1/devices/' + encodeURIComponent(deviceId) + '/status', token, secret);
+      const temperature = (typeof status.temperature === 'number') ? status.temperature : null;
+      const humidity = (typeof status.humidity === 'number') ? status.humidity : null;
+      await db.collection('settings').doc('envSensor').set({
+        temperature, humidity, deviceId, deviceType: status.deviceType || null,
+        ok: (temperature !== null || humidity !== null),
+        readAt: admin.firestore.FieldValue.serverTimestamp(), error: null
+      }, { merge: true });
+      return null;
+    } catch (e) {
+      console.error('refreshEnvSensor error:', e);
+      await db.collection('settings').doc('envSensor').set({
+        ok: false, error: String((e && e.message) || e),
+        readAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      return null;
+    }
+  });
+
+// JST の YYMMDD を返す
+function jstYmd6(date) {
+  const j = new Date(date.getTime() + 9 * 3600 * 1000);
+  const y = j.getUTCFullYear() % 100;
+  return String(y).padStart(2, '0') + String(j.getUTCMonth() + 1).padStart(2, '0') + String(j.getUTCDate()).padStart(2, '0');
+}
+
+// 注文作成時に、キャッシュ済みの温湿度を注文へスタンプ
+// ・既に temperature/humidity がある場合はスキップ（手動入力・再作成を尊重）
+// ・キャッシュが古すぎる（30分超）／取得失敗中はスタンプしない（誤記録防止）
+// ・orderDate が当日/前日(JST)でない場合はスタンプしない（過去日の手入力注文への誤記録防止）
+const ENV_MAX_AGE_MS = 30 * 60 * 1000;
+exports.stampOrderEnv = functions.region('asia-northeast1')
+  .firestore.document('orders/{orderId}')
+  .onCreate(async (snap) => {
+    const data = snap.data() || {};
+    if (data.temperature != null || data.humidity != null) return null;
+    if (data.orderDate) {
+      const now = new Date();
+      const today = jstYmd6(now);
+      const yest = jstYmd6(new Date(now.getTime() - 24 * 3600 * 1000));
+      if (data.orderDate !== today && data.orderDate !== yest) return null;
+    }
+    try {
+      const env = await db.collection('settings').doc('envSensor').get();
+      if (!env.exists) return null;
+      const e = env.data();
+      if (e.ok === false) return null;
+      const readAtMs = (e.readAt && e.readAt.toMillis) ? e.readAt.toMillis() : 0;
+      if (!readAtMs || (Date.now() - readAtMs) > ENV_MAX_AGE_MS) return null;
+      const upd = {};
+      if (typeof e.temperature === 'number') upd.temperature = e.temperature;
+      if (typeof e.humidity === 'number') upd.humidity = e.humidity;
+      if (!Object.keys(upd).length) return null;
+      upd.envAt = e.readAt;
+      upd.envSource = 'switchbot';
+      await snap.ref.set(upd, { merge: true });
+      return null;
+    } catch (err) {
+      console.error('stampOrderEnv error:', err);
+      return null;
+    }
+  });
