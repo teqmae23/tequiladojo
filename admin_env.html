@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>温湿度ログ — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="/auth-role.js?v=20260829"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#F1EFE8;--cream2:#E8E4D8;--cream3:#DDD8C8;
+  --teal:#1a6e58;--red:#b03020;--warn:#7a5200;--warn-l:rgba(200,146,30,.12);
+  --sans:'Noto Sans JP',sans-serif;--serif:'Cormorant Garamond',serif;--mono:'DM Mono',monospace;
+  --r:6px;--border2:#DDD8C8;--white:#fff;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--cream);color:var(--ink);font-family:var(--sans);min-height:100vh;}
+.hdr{background:var(--ink);padding:0 20px;display:flex;align-items:center;gap:12px;height:52px;}
+.hdr-logo{font-family:var(--serif);font-size:17px;color:var(--gold-l);letter-spacing:.04em;}
+.hdr-nav{margin-left:auto;display:flex;gap:14px;}
+.hdr-nav a{color:var(--gold-l);font-size:12px;text-decoration:none;opacity:.85;}
+.hdr-nav a:hover{opacity:1;}
+.page{max-width:1000px;margin:0 auto;padding:20px 16px 80px;}
+#login-screen{display:none;align-items:center;justify-content:center;min-height:70vh;color:var(--ink3);font-size:14px;}
+.tabs{display:flex;gap:6px;margin-bottom:16px;}
+.tab-btn{padding:8px 16px;border:1px solid var(--cream3);background:var(--cream2);color:var(--ink2);border-radius:var(--r);font-size:13px;font-family:var(--sans);cursor:pointer;}
+.tab-btn.active{background:var(--ink);color:var(--gold-l);border-color:var(--ink);}
+.panel{display:none;}
+.panel.active{display:block;}
+.ctrl{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px;}
+.ctrl label{font-size:12px;color:var(--ink2);}
+.ctrl input[type=date],.ctrl input[type=month]{padding:6px 9px;border:1px solid var(--cream3);border-radius:var(--r);background:#fff;color:var(--ink);font-family:var(--sans);font-size:13px;}
+.btn{padding:6px 12px;border:1px solid var(--cream3);background:var(--cream2);color:var(--ink2);border-radius:var(--r);font-size:12px;cursor:pointer;}
+.btn.bp{background:var(--gold);color:#fff;border-color:var(--gold-d);}
+.card{background:var(--white);border:1px solid var(--border2);border-radius:var(--r);padding:14px 16px;margin-bottom:16px;}
+.chart-wrap{position:relative;height:340px;}
+.stat-row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;}
+.stat{flex:1;min-width:120px;background:var(--white);border:1px solid var(--border2);border-radius:var(--r);padding:10px 12px;}
+.stat .k{font-size:11px;color:var(--ink3);}
+.stat .v{font-size:19px;font-weight:500;font-family:var(--mono);color:var(--ink);}
+.stat .v small{font-size:11px;color:var(--ink3);}
+table{width:100%;border-collapse:collapse;font-size:12px;background:var(--white);}
+th,td{border:1px solid var(--border2);padding:6px 8px;text-align:right;}
+th{background:var(--cream2);color:var(--ink2);font-weight:500;position:sticky;top:0;}
+td:first-child,th:first-child{text-align:center;}
+.tbl-wrap{max-height:420px;overflow:auto;border:1px solid var(--border2);border-radius:var(--r);}
+.msg{font-size:12px;color:var(--ink3);padding:8px 2px;}
+.temp-c{color:var(--red);}
+.hum-c{color:var(--teal);}
+.legend-note{font-size:11px;color:var(--ink3);margin:-6px 0 12px;}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <span class="hdr-logo">🥃 テキーラ道場</span>
+  <span style="font-size:11px;color:var(--ink3)">温湿度ログ</span>
+  <div class="hdr-nav">
+    <a href="tdhome.html">← 管理ハブ</a>
+    <a href="admin_data.html">営業データ</a>
+    <a href="#" id="btn-logout">ログアウト</a>
+  </div>
+</div>
+
+<div id="login-screen">権限を確認しています…</div>
+
+<div class="page" id="app" style="display:none">
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="daily" onclick="switchTab('daily')">日別（時間毎）</button>
+    <button class="tab-btn" data-tab="monthly" onclick="switchTab('monthly')">月次分析</button>
+  </div>
+  <div class="legend-note">実線＝店内（SwitchBot）／破線＝外気（千葉市中央区長洲1丁目・Open-Meteo）</div>
+
+  <!-- 日別 -->
+  <div class="panel active" id="panel-daily">
+    <div class="ctrl">
+      <label>日付</label>
+      <input type="date" id="d-date">
+      <button class="btn" onclick="shiftDay(-1)">◀ 前日</button>
+      <button class="btn" onclick="shiftDay(1)">翌日 ▶</button>
+      <button class="btn bp" onclick="loadDaily()">表示</button>
+    </div>
+    <div class="stat-row" id="d-stats"></div>
+    <div class="card"><div class="chart-wrap"><canvas id="d-chart"></canvas></div></div>
+    <div class="msg" id="d-msg"></div>
+  </div>
+
+  <!-- 月次 -->
+  <div class="panel" id="panel-monthly">
+    <div class="ctrl">
+      <label>月</label>
+      <input type="month" id="m-month">
+      <button class="btn" onclick="shiftMonth(-1)">◀ 前月</button>
+      <button class="btn" onclick="shiftMonth(1)">翌月 ▶</button>
+      <button class="btn bp" onclick="loadMonthly()">表示</button>
+    </div>
+    <div class="stat-row" id="m-stats"></div>
+    <div class="card"><div class="chart-wrap"><canvas id="m-chart"></canvas></div></div>
+    <div class="tbl-wrap">
+      <table id="m-table"><thead><tr><th>日</th><th>店内平均℃</th><th>店内℃幅</th><th>店内平均%</th><th>外気平均℃</th><th>外気平均%</th><th>件数</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="msg" id="m-msg"></div>
+  </div>
+
+</div>
+
+<script>
+if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+document.getElementById('btn-logout').addEventListener('click',function(e){ e.preventDefault(); auth.signOut(); });
+
+function pad2(n){ return String(n).padStart(2,'0'); }
+function jstNow(){ return new Date(Date.now()+9*3600*1000); }
+function round1(n){ return Math.round(n*10)/10; }
+function avg(a){ return a.length?a.reduce(function(s,x){return s+x;},0)/a.length:null; }
+function statTile(k,vals,unit,cls){
+  if(!vals||!vals.length) return '<div class="stat"><div class="k">'+k+'</div><div class="v">—</div></div>';
+  return '<div class="stat"><div class="k">'+k+'</div><div class="v '+(cls||'')+'">'+round1(avg(vals))+unit
+    +' <small>('+round1(Math.min.apply(null,vals))+'〜'+round1(Math.max.apply(null,vals))+')</small></div></div>';
+}
+var _dChart=null, _mChart=null;
+
+// ── 日別（時間毎） ──────────────────────────────────
+function shiftDay(delta){
+  var el=document.getElementById('d-date');
+  var base=el.value?new Date(el.value+'T00:00:00'):new Date();
+  base.setDate(base.getDate()+delta);
+  el.value=base.getFullYear()+'-'+pad2(base.getMonth()+1)+'-'+pad2(base.getDate());
+  loadDaily();
+}
+async function loadDaily(){
+  var ymd=(document.getElementById('d-date').value||'').replace(/-/g,'');
+  var msg=document.getElementById('d-msg'); msg.textContent='読み込み中…';
+  if(!ymd){ msg.textContent='日付を選択してください'; return; }
+  try{
+    var snap=await db.collection('envLog').where('date','==',ymd).get();
+    var byHour={};
+    snap.forEach(function(d){ var v=d.data(); byHour[v.hour]=v; });
+    var temps=[],hums=[],oTemps=[],oHums=[], tV=[],hV=[],otV=[],ohV=[];
+    for(var h=0;h<24;h++){
+      var v=byHour[h]||{};
+      var t=(typeof v.temperature==='number')?v.temperature:null;
+      var hu=(typeof v.humidity==='number')?v.humidity:null;
+      var ot=(typeof v.outdoorTemperature==='number')?v.outdoorTemperature:null;
+      var oh=(typeof v.outdoorHumidity==='number')?v.outdoorHumidity:null;
+      temps.push(t); hums.push(hu); oTemps.push(ot); oHums.push(oh);
+      if(t!=null)tV.push(t); if(hu!=null)hV.push(hu); if(ot!=null)otV.push(ot); if(oh!=null)ohV.push(oh);
+    }
+    document.getElementById('d-stats').innerHTML=
+      statTile('店内 平均温度',tV,'℃','temp-c')+statTile('店内 平均湿度',hV,'%','hum-c')
+      +statTile('外気 平均温度',otV,'℃','temp-c')+statTile('外気 平均湿度',ohV,'%','hum-c');
+    drawDaily(temps,hums,oTemps,oHums);
+    msg.textContent=snap.size?('記録 '+snap.size+' 時間分'):'この日の記録はありません';
+  }catch(e){ msg.textContent='読み込み失敗: '+e.message; }
+}
+function drawDaily(temps,hums,oTemps,oHums){
+  var ctx=document.getElementById('d-chart').getContext('2d');
+  if(_dChart) _dChart.destroy();
+  var labels=[]; for(var h=0;h<24;h++) labels.push(h+'時');
+  _dChart=new Chart(ctx,{ type:'line',
+    data:{ labels:labels, datasets:[
+      { label:'店内 温度(℃)', data:temps, borderColor:'#b03020', yAxisID:'y', tension:.3, spanGaps:true, pointRadius:2 },
+      { label:'店内 湿度(%)', data:hums, borderColor:'#1a6e58', yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:2 },
+      { label:'外気 温度(℃)', data:oTemps, borderColor:'#b03020', borderDash:[5,4], yAxisID:'y', tension:.3, spanGaps:true, pointRadius:0 },
+      { label:'外気 湿度(%)', data:oHums, borderColor:'#1a6e58', borderDash:[5,4], yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:0 }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+      scales:{ y:{position:'left',title:{display:true,text:'温度(℃)'}}, y1:{position:'right',title:{display:true,text:'湿度(%)'},grid:{drawOnChartArea:false}} } }
+  });
+}
+
+// ── 月次分析 ──────────────────────────────────
+function shiftMonth(delta){
+  var el=document.getElementById('m-month');
+  var parts=(el.value||'').split('-');
+  var base=parts.length===2?new Date(parseInt(parts[0]),parseInt(parts[1])-1,1):new Date();
+  base.setMonth(base.getMonth()+delta);
+  el.value=base.getFullYear()+'-'+pad2(base.getMonth()+1);
+  loadMonthly();
+}
+async function loadMonthly(){
+  var ym=(document.getElementById('m-month').value||'').replace(/-/g,'');
+  var msg=document.getElementById('m-msg'); msg.textContent='読み込み中…';
+  if(!ym){ msg.textContent='月を選択してください'; return; }
+  try{
+    var snap=await db.collection('envLog').where('ym','==',ym).get();
+    var byDay={};
+    var allT=[],allH=[],allOT=[],allOH=[];
+    snap.forEach(function(d){
+      var v=d.data(); var day=v.date;
+      if(!byDay[day]) byDay[day]={t:[],h:[],ot:[],oh:[]};
+      if(typeof v.temperature==='number'){ byDay[day].t.push(v.temperature); allT.push(v.temperature); }
+      if(typeof v.humidity==='number'){ byDay[day].h.push(v.humidity); allH.push(v.humidity); }
+      if(typeof v.outdoorTemperature==='number'){ byDay[day].ot.push(v.outdoorTemperature); allOT.push(v.outdoorTemperature); }
+      if(typeof v.outdoorHumidity==='number'){ byDay[day].oh.push(v.outdoorHumidity); allOH.push(v.outdoorHumidity); }
+    });
+    var days=Object.keys(byDay).sort();
+    document.getElementById('m-stats').innerHTML=
+      statTile('店内 月平均温度',allT,'℃','temp-c')+statTile('店内 月平均湿度',allH,'%','hum-c')
+      +statTile('外気 月平均温度',allOT,'℃','temp-c')+statTile('外気 月平均湿度',allOH,'%','hum-c')
+      +'<div class="stat"><div class="k">記録日数</div><div class="v">'+days.length+'<small> 日</small></div></div>';
+    drawMonthly(days,byDay);
+    renderMonthlyTable(days,byDay);
+    msg.textContent=snap.size?('記録 '+snap.size+' 件 / '+days.length+' 日'):'この月の記録はありません';
+  }catch(e){ msg.textContent='読み込み失敗: '+e.message; }
+}
+function drawMonthly(days,byDay){
+  var ctx=document.getElementById('m-chart').getContext('2d');
+  if(_mChart) _mChart.destroy();
+  var labels=days.map(function(d){ return parseInt(d.slice(6,8))+'日'; });
+  function dayAvg(k){ return days.map(function(d){ return byDay[d][k].length?round1(avg(byDay[d][k])):null; }); }
+  _mChart=new Chart(ctx,{ type:'line',
+    data:{ labels:labels, datasets:[
+      { label:'店内 温度(℃)', data:dayAvg('t'), borderColor:'#b03020', yAxisID:'y', tension:.3, spanGaps:true, pointRadius:2 },
+      { label:'店内 湿度(%)', data:dayAvg('h'), borderColor:'#1a6e58', yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:2 },
+      { label:'外気 温度(℃)', data:dayAvg('ot'), borderColor:'#b03020', borderDash:[5,4], yAxisID:'y', tension:.3, spanGaps:true, pointRadius:0 },
+      { label:'外気 湿度(%)', data:dayAvg('oh'), borderColor:'#1a6e58', borderDash:[5,4], yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:0 }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+      scales:{ y:{position:'left',title:{display:true,text:'温度(℃)'}}, y1:{position:'right',title:{display:true,text:'湿度(%)'},grid:{drawOnChartArea:false}} } }
+  });
+}
+function renderMonthlyTable(days,byDay){
+  var tb=document.querySelector('#m-table tbody');
+  tb.innerHTML=days.map(function(d){
+    var o=byDay[d]; var n=Math.max(o.t.length,o.h.length,o.ot.length,o.oh.length);
+    var tRange=o.t.length?(round1(Math.min.apply(null,o.t))+'〜'+round1(Math.max.apply(null,o.t))):'—';
+    return '<tr><td>'+parseInt(d.slice(6,8))+'</td>'
+      +'<td>'+(o.t.length?round1(avg(o.t)):'—')+'</td><td>'+tRange+'</td><td>'+(o.h.length?round1(avg(o.h)):'—')+'</td>'
+      +'<td>'+(o.ot.length?round1(avg(o.ot)):'—')+'</td><td>'+(o.oh.length?round1(avg(o.oh)):'—')+'</td>'
+      +'<td>'+n+'</td></tr>';
+  }).join('');
+}
+
+function switchTab(t){
+  document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b.dataset.tab===t); });
+  document.getElementById('panel-daily').classList.toggle('active', t==='daily');
+  document.getElementById('panel-monthly').classList.toggle('active', t==='monthly');
+  if(t==='monthly' && !_mChart) loadMonthly();
+}
+
+// ── 認証 ──────────────────────────────────
+AuthRole.requireStaff(auth,
+  function(user, role){
+    document.getElementById('login-screen').style.display='none';
+    document.getElementById('app').style.display='block';
+    var now=jstNow();
+    document.getElementById('d-date').value=now.getUTCFullYear()+'-'+pad2(now.getUTCMonth()+1)+'-'+pad2(now.getUTCDate());
+    document.getElementById('m-month').value=now.getUTCFullYear()+'-'+pad2(now.getUTCMonth()+1);
+    loadDaily();
+  },
+  function(){ location.replace('tdhome.html'); }
+);
+</script>
+</body>
+</html>
