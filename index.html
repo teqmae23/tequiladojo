@@ -752,6 +752,31 @@ function loadStoreStatus(){
 
   function render(html){ el.innerHTML=html; }
 
+  // 店内温湿度（settings/envSensor・公開読取）。30分以内のみ表示。
+  function fetchEnvStr(){
+    return db.collection('settings').doc('envSensor').get().then(function(doc){
+      if(!doc.exists) return '';
+      var e=doc.data()||{};
+      var parts=[];
+      if(e.temperature!=null) parts.push(e.temperature+'℃');
+      if(e.humidity!=null) parts.push(e.humidity+'%');
+      var fresh=true;
+      if(e.readAt&&e.readAt.toMillis){ fresh=(Date.now()-e.readAt.toMillis())<=30*60*1000; }
+      if(!parts.length||!fresh) return '';
+      return ' 🌡'+parts.join('/');
+    }).catch(function(){ return ''; });
+  }
+  // 営業中の描画（店内温湿度を非同期で追記）。最新の描画のみ反映（_ssSeqガード）。
+  var _ssSeq=0;
+  function renderOpen(detail){
+    var seq=++_ssSeq;
+    render(box('#2CA44E','営業中',detail));
+    fetchEnvStr().then(function(envStr){
+      if(seq!==_ssSeq || !envStr) return;
+      render(box('#2CA44E','営業中',detail+envStr));
+    });
+  }
+
   function showClosed(schMap){
     var nextStr='';
     for(var i=0;i<=14&&!nextStr;i++){
@@ -783,7 +808,7 @@ function loadStoreStatus(){
     var status=(d&&d.status)||'closed';
     if(status==='open'){
       var detail=(d.active!=null)?('来店：'+d.active+'/'+(d.seats!=null?d.seats:'?')+'人'):'';
-      render(box('#2CA44E','営業中',detail));
+      renderOpen(detail);
     } else if(status==='break'){
       render(box('#9B59B6','休憩中',d.breakResumeTime?fmtT(d.breakResumeTime)+'再開予定':''));
     } else {
