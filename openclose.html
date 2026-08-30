@@ -121,6 +121,7 @@ td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle
           <span id="store-open-time" style="display:none;font-size:12px;color:var(--ink3);font-family:var(--mono)"></span>
         </div>
         <div id="oc-session-detail" style="font-size:11px;color:var(--ink3);margin-top:6px"></div>
+        <div id="oc-env" style="font-size:12px;color:var(--ink2);font-weight:500;margin-top:6px"></div>
       </div>
     </div>
 
@@ -301,6 +302,23 @@ function writePublicStatus(status, extra){
 var STATUS_LABEL={closed:"閉店中",open:"開店中",break:"休憩中"};
 var STATUS_COLOR={closed:"color:#e44",open:"color:#2a9",break:"color:#c80"};
 
+// 現在の温湿度（settings/envSensor のキャッシュ）をライブ表示
+function subscribeEnvReadout(elId){
+  try{
+    db.collection('settings').doc('envSensor').onSnapshot(function(doc){
+      var el=document.getElementById(elId); if(!el) return;
+      var d=doc.exists?(doc.data()||{}):{};
+      var parts=[];
+      if(d.temperature!=null) parts.push(d.temperature+'℃');
+      if(d.humidity!=null) parts.push('湿度'+d.humidity+'%');
+      if(!parts.length){ el.textContent=''; return; }
+      var t='';
+      if(d.readAt&&d.readAt.toDate){ var dt=d.readAt.toDate(); t=' （'+('0'+dt.getHours()).slice(-2)+':'+('0'+dt.getMinutes()).slice(-2)+'更新）'; }
+      el.textContent='🌡 '+parts.join(' / ')+t;
+    }, function(){});
+  }catch(e){}
+}
+
 AuthRole.requireStaff(auth,
   function(user, role){
     g("login-screen").style.display="none";
@@ -310,6 +328,7 @@ AuthRole.requireStaff(auth,
     restoreStoreState();
     loadTodayVisits();
     loadAttendance();
+    subscribeEnvReadout('oc-env');
   },
   function(){
     g("login-screen").style.display="flex";
