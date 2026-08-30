@@ -1716,3 +1716,53 @@ exports.stampOrderEnv = functions.region('asia-northeast1')
       return null;
     }
   });
+
+// 外気（千葉市中央区長洲1丁目付近）の気温・湿度を Open-Meteo から取得（APIキー不要・無料・商用可）
+const CHIBA_LAT = 35.598, CHIBA_LON = 140.116;
+async function fetchOutdoorWeather() {
+  try {
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + CHIBA_LAT + '&longitude=' + CHIBA_LON +
+      '&current=temperature_2m,relative_humidity_2m&timezone=Asia%2FTokyo';
+    const resp = await fetch(url);
+    const json = await resp.json();
+    const c = json && json.current;
+    if (!c) return { t: null, h: null };
+    return {
+      t: (typeof c.temperature_2m === 'number') ? c.temperature_2m : null,
+      h: (typeof c.relative_humidity_2m === 'number') ? c.relative_humidity_2m : null
+    };
+  } catch (e) { console.warn('fetchOutdoorWeather error:', e); return { t: null, h: null }; }
+}
+
+// 毎時、店内(settings/envSensor)＋外気(Open-Meteo)の温湿度を envLog に記録（時間毎グラフ・月次分析用）
+// ・doc id = YYYYMMDDHH（JST）で1時間1件。冪等（merge）。
+// ・店内キャッシュが20分超で古い/取得失敗中は店内値は欠測扱い（null）。外気は毎回取得。
+// 負荷: 実行24回/日・書込24件/日・外部API24回/日と極小。
+exports.logEnvHourly = functions.region('asia-northeast1')
+  .pubsub.schedule('every 60 minutes').timeZone('Asia/Tokyo')
+  .onRun(async () => {
+    try {
+      const env = await db.collection('settings').doc('envSensor').get();
+      const e = env.exists ? env.data() : {};
+      const readAtMs = (e.readAt && e.readAt.toMillis) ? e.readAt.toMillis() : 0;
+      const indoorFresh = e.ok !== false && readAtMs && (Date.now() - readAtMs) <= 20 * 60 * 1000;
+      const out = await fetchOutdoorWeather();
+      const j = new Date(Date.now() + 9 * 3600 * 1000); // JST
+      const p2 = (n) => String(n).padStart(2, '0');
+      const Y = j.getUTCFullYear(), M = p2(j.getUTCMonth() + 1), D = p2(j.getUTCDate()), H = j.getUTCHours();
+      const ymd = '' + Y + M + D;
+      const id = ymd + p2(H);
+      await db.collection('envLog').doc(id).set({
+        ts: admin.firestore.FieldValue.serverTimestamp(),
+        temperature: (indoorFresh && typeof e.temperature === 'number') ? e.temperature : null,
+        humidity: (indoorFresh && typeof e.humidity === 'number') ? e.humidity : null,
+        outdoorTemperature: out.t,
+        outdoorHumidity: out.h,
+        date: ymd, ym: '' + Y + M, hour: H
+      }, { merge: true });
+      return null;
+    } catch (err) {
+      console.error('logEnvHourly error:', err);
+      return null;
+    }
+  });
