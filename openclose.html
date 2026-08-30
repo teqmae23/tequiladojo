@@ -302,12 +302,14 @@ function writePublicStatus(status, extra){
 var STATUS_LABEL={closed:"閉店中",open:"開店中",break:"休憩中"};
 var STATUS_COLOR={closed:"color:#e44",open:"color:#2a9",break:"color:#c80"};
 
-// 現在の温湿度（settings/envSensor のキャッシュ）をライブ表示
+// 現在の温湿度（settings/envSensor のキャッシュ）をライブ表示 ＋ 最新値を保持
+var _envLatest=null;
 function subscribeEnvReadout(elId){
   try{
     db.collection('settings').doc('envSensor').onSnapshot(function(doc){
-      var el=document.getElementById(elId); if(!el) return;
       var d=doc.exists?(doc.data()||{}):{};
+      _envLatest=d;
+      var el=document.getElementById(elId); if(!el) return;
       var parts=[];
       if(d.temperature!=null) parts.push(d.temperature+'℃');
       if(d.humidity!=null) parts.push('湿度'+d.humidity+'%');
@@ -317,6 +319,14 @@ function subscribeEnvReadout(elId){
       el.textContent='🌡 '+parts.join(' / ')+t;
     }, function(){});
   }catch(e){}
+}
+// 記録用の温湿度（キャッシュが30分以内のときのみ有効。古い/未取得は null）
+function _envForRecord(){
+  var d=_envLatest;
+  if(!d) return {t:null,h:null};
+  var fresh=true;
+  if(d.readAt&&d.readAt.toMillis){ fresh=(Date.now()-d.readAt.toMillis())<=30*60*1000; }
+  return { t:(fresh&&d.temperature!=null)?d.temperature:null, h:(fresh&&d.humidity!=null)?d.humidity:null };
 }
 
 AuthRole.requireStaff(auth,
@@ -448,6 +458,7 @@ g("btn-open-store").addEventListener("click",function(){
       var seq=maxSeq+1;
       var sessionId=today+String(seq);
       var openTime=nowStr();
+      var _envO=_envForRecord();
       return db.collection("sessions").doc(sessionId).set({
         date:today,
         openTime:openTime,closeTime:null,
@@ -456,6 +467,7 @@ g("btn-open-store").addEventListener("click",function(){
         breakStart2:null,breakEnd2:null,
         breakStart3:null,breakEnd3:null,
         guestCount:null,sales:null,memo:null,
+        openTemperature:_envO.t,openHumidity:_envO.h,
         testMode:testMode||null
       }).then(function(){
         writeJournal('create','sessions',sessionId,null,{date:today,openTime:openTime,layoutId:layoutId});
@@ -548,7 +560,8 @@ function _doPerformClose(closeTime){
   var closingSessionId=currentSessionId;
   var closingDate=currentSessionDate;
   var closingOpenTime=currentOpenTime; // リセット前に集計用へ退避
-  journaledUpdate("sessions",closingSessionId,{closeTime:closeTime})
+  var _envC=_envForRecord();
+  journaledUpdate("sessions",closingSessionId,{closeTime:closeTime,closeTemperature:_envC.t,closeHumidity:_envC.h})
     .then(function(){
       toast("閉店しました（"+closeTime+"）");
       autoCheckoutStaff(closeTime);
