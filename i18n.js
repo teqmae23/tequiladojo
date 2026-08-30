@@ -98,6 +98,8 @@
         img.src=src;
       })(imgs[m]);
     }
+    var elp=document.querySelectorAll('[data-i18n-ph]');
+    for(var q=0;q<elp.length;q++){ var kp=elp[q].getAttribute('data-i18n-ph'); if(d[kp]!=null) elp[q].setAttribute('placeholder', d[kp]); }
     var btns=document.querySelectorAll('[data-lang-btn]');
     for(var b=0;b<btns.length;b++){ btns[b].classList.toggle('active', btns[b].getAttribute('data-lang-btn')===current); }
     if(typeof window.onI18nApplied==='function'){ try{ window.onI18nApplied(current); }catch(e){} }
@@ -136,7 +138,16 @@
 
   function init(){ injectSwitcher(); apply(); }
 
-  window.I18N={ get lang(){return current;}, t:t, apply:apply, setLang:setLang, LANGS:LANGS };
+  // ページ固有の辞書を登録（各公開ページが自分の文言を追加できる。i18n.js本体を編集しない）
+  function extend(dict){
+    if(!dict) return;
+    LANGS.forEach(function(l){
+      if(dict[l]){ if(!DICT[l]) DICT[l]={}; for(var k in dict[l]){ if(Object.prototype.hasOwnProperty.call(dict[l],k)) DICT[l][k]=dict[l][k]; } }
+    });
+    if(document.readyState!=='loading') apply();
+  }
+
+  window.I18N={ get lang(){return current;}, t:t, apply:apply, setLang:setLang, extend:extend, LANGS:LANGS };
   window.t=t;
 
   if(document.readyState!=='loading') init();
