@@ -910,7 +910,7 @@ function deletePost(id){
 
 /* ════════ アンケート（会員側） ════════ */
 var QTYPE={single:'単一選択',multi:'複数選択',text:'自由記述',rating:'5段階評価'};
-var _surveys={}, _myResp={}, _ans={}, _resCache={};
+var _surveys={}, _myResp={}, _ans={}, _resCache={}, _svComment={};
 function svCol(){ return db.collection('events').doc(eventId).collection('surveys'); }
 function canSeeResults(s){
   var v=s.resultVisibility||'staff';
@@ -923,6 +923,8 @@ function loadSurveys(eventPublished){
       var s=Object.assign({id:d.id},d.data());
       // 会員には下書きを見せない。イベント非公開時はスタッフのみ。
       if(!_isStaff && (s.status==='draft' || !eventPublished)) return;
+      // 対象者を限定している場合、対象外の会員には表示しない（スタッフは常に閲覧可）。
+      if(!_isStaff && s.targetMode==='selected' && (s.targetIds||[]).indexOf(_uid)<0) return;
       _surveys[s.id]=s; list.push(s);
     });
     return Promise.all(list.map(function(s){
@@ -940,7 +942,7 @@ function loadSurveys(eventPublished){
     var box=g('surveys');
     box.innerHTML='<div class="sec" style="margin:20px 2px 8px">アンケート</div>'
       +list.map(function(s){ return '<div class="sv-card" id="sv-'+esc(s.id)+'"></div>'; }).join('');
-    list.forEach(function(s){ _ans[s.id]=_myResp[s.id]&&_myResp[s.id].answers?JSON.parse(JSON.stringify(_myResp[s.id].answers)):{}; renderCard(s.id); });
+    list.forEach(function(s){ _ans[s.id]=_myResp[s.id]&&_myResp[s.id].answers?JSON.parse(JSON.stringify(_myResp[s.id].answers)):{}; _svComment[s.id]=(_myResp[s.id]&&_myResp[s.id].comment)||''; renderCard(s.id); });
   }).catch(function(e){ /* アンケートは任意機能: 失敗しても本体表示は維持 */ });
 }
 
@@ -957,6 +959,10 @@ function renderCard(sid){
   if(s.description) html+='<div class="sv-de">'+esc(s.description)+'</div>';
   if(open){
     html+=(s.questions||[]).map(function(q){ return qForm(sid,q); }).join('');
+    if(s.commentEnabled){
+      html+='<div class="q"><div class="q-l">'+esc(s.commentLabel||'ご意見・ご感想')+'</div>'
+        +'<textarea oninput="setComment(\''+sid+'\',this.value)" placeholder="ご自由にご記入ください">'+esc(_svComment[sid]||'')+'</textarea></div>';
+    }
     html+='<div class="sv-err" id="sverr-'+esc(sid)+'"></div>';
     html+='<button class="sv-submit" onclick="submitSurvey(\''+sid+'\')">'+(_myResp[sid]?'回答を更新する':'回答する')+'</button>';
     if(_myResp[sid]) html+='<div class="sv-note">前回の回答を読み込んでいます。変更して更新できます。</div>';
@@ -1000,6 +1006,7 @@ function pickSingle(sid,qid,v){ _ans[sid]=_ans[sid]||{}; _ans[sid][qid]=v; rende
 function pickMulti(sid,qid,v,on){ _ans[sid]=_ans[sid]||{}; var arr=Array.isArray(_ans[sid][qid])?_ans[sid][qid]:[]; var i=arr.indexOf(v); if(on&&i<0)arr.push(v); if(!on&&i>=0)arr.splice(i,1); _ans[sid][qid]=arr; renderCard(sid); }
 function setStar(sid,qid,n){ _ans[sid]=_ans[sid]||{}; _ans[sid][qid]=n; renderCard(sid); }
 function setText(sid,qid,v){ _ans[sid]=_ans[sid]||{}; _ans[sid][qid]=v; }
+function setComment(sid,v){ _svComment[sid]=v; }
 
 function submitSurvey(sid){
   var s=_surveys[sid]; if(!s) return;
@@ -1013,6 +1020,7 @@ function submitSurvey(sid){
   }
   if(!_isReal){ if(err) err.textContent='回答には会員ログインが必要です'; return; }
   var data={ authUid:_uid, memberId:_memberId||'', memberName:_memberName||'', answers:ans,
+    comment:s.commentEnabled?((_svComment[sid]||'').trim()):'',
     submittedAt:firebase.firestore.FieldValue.serverTimestamp() };
   var btn=g('sv-'+sid).querySelector('.sv-submit'); if(btn) btn.disabled=true;
   svCol().doc(sid).collection('responses').doc(_uid).set(data,{merge:true}).then(function(){
@@ -1025,11 +1033,13 @@ function submitSurvey(sid){
 
 function ownAnswers(s){
   var r=_myResp[s.id]; if(!r) return '';
-  return '<div class="sec" style="font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--ink3);margin-bottom:8px">あなたの回答</div>'
+  var h='<div class="sec" style="font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--ink3);margin-bottom:8px">あなたの回答</div>'
     +(s.questions||[]).map(function(q){
       var v=r.answers?r.answers[q.qid]:''; if(Array.isArray(v))v=v.join('、'); if(q.type==='rating')v=(+v?('★'+v):'');
       return '<div style="font-size:13px;margin-bottom:8px"><div style="color:var(--ink3);font-size:12px">'+esc(q.label)+'</div><div>'+esc((v==null||v==='')?'（未回答）':v)+'</div></div>';
     }).join('');
+  if(s.commentEnabled && r.comment){ h+='<div style="font-size:13px;margin-bottom:8px"><div style="color:var(--ink3);font-size:12px">'+esc(s.commentLabel||'ご意見・ご感想')+'</div><div>'+esc(r.comment)+'</div></div>'; }
+  return h;
 }
 function rbar(label,count,total){
   var pct=total?Math.round(count/total*100):0;
@@ -1055,7 +1065,13 @@ function agg(s,resp){
       h+= texts.length?texts.map(function(x){ return '<div class="agg-txt">'+esc(x.t)+'<div class="who">— '+esc(x.who)+'</div></div>'; }).join(''):'<div class="sv-note" style="text-align:left">回答なし</div>';
     }
     return h+'</div>';
-  }).join('');
+  }).join('')
+  +(s.commentEnabled?(function(){
+    var cms=resp.map(function(r){ return {t:(r.comment==null?'':(''+r.comment)).trim(),who:whoOf(r)}; }).filter(function(x){return x.t;});
+    var ch='<div class="q"><div class="q-l" style="font-size:13px">'+esc(s.commentLabel||'ご意見・ご感想')+'</div>';
+    ch+= cms.length?cms.map(function(x){ return '<div class="agg-txt">'+esc(x.t)+'<div class="who">— '+esc(x.who)+'</div></div>'; }).join(''):'<div class="sv-note" style="text-align:left">コメントなし</div>';
+    return ch+'</div>';
+  })():'');
 }
 function toast(m){ var d=document.createElement('div'); d.textContent=m; d.style.cssText='position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#18110a;color:#fff;font-size:13px;padding:10px 18px;border-radius:18px;z-index:9999'; document.body.appendChild(d); setTimeout(function(){d.remove();},2600); }
 </script>

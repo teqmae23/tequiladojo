@@ -124,6 +124,12 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .presults{border:1px solid var(--border);border-radius:var(--r);max-height:180px;overflow-y:auto;margin-top:4px;display:none}
 .presults div{padding:7px 10px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px}
 .presults div:hover{background:var(--cream2)}
+.mp-pick-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px}
+.mp-pick-row:last-child{border-bottom:none}
+.mp-pick-row.on{background:#f6f1e6}
+.mp-pick-row input{width:16px;height:16px;accent-color:var(--gold-d);flex:0 0 auto}
+.mp-pick-nm{flex:1;min-width:0;color:var(--ink)}
+.mp-pick-id{font-family:var(--mono);font-size:11px;color:var(--ink3);flex:0 0 auto}
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;font-size:13px;padding:10px 18px;border-radius:18px;z-index:9999;box-shadow:var(--shadow-lg)}
 .toast.err{background:var(--red)}
 .err{min-height:16px;color:var(--red);font-size:12px;margin-top:6px}
@@ -210,7 +216,10 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       <div class="fg">
         <label class="fl">参加者（招待）</label>
         <div id="p-chips"></div>
-        <input class="fi" id="p-search" placeholder="会員ID・氏名で検索して追加...">
+        <div style="display:flex;gap:8px;align-items:stretch">
+          <input class="fi" id="p-search" placeholder="会員ID・氏名で検索して追加..." style="flex:1">
+          <button type="button" class="btn bs sm" style="flex:0 0 auto;white-space:nowrap" onclick="openMemberPicker()">📋 一覧から選択</button>
+        </div>
         <div class="presults" id="p-results"></div>
         <div style="font-size:11px;color:var(--ink3);margin-top:6px">※ 参加者は会員側のマイページから自己登録もできます。<span id="p-reg-count"></span></div>
       </div>
@@ -231,6 +240,23 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       <button class="btn bs" onclick="closeEvent()">キャンセル</button>
       <button class="btn bp" id="ev-save" onclick="saveEvent()">保存</button>
     </div>
+  </div>
+</div>
+
+<!-- 参加者 一覧選択モーダル -->
+<div class="mbg" id="mp-pick-modal">
+  <div class="modal">
+    <div class="mhd"><span>📋 参加者を一覧から選択</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeMemberPicker()">✕</button></div>
+    <div class="mbd">
+      <input class="fi" id="mp-pick-search" placeholder="会員ID・氏名で絞り込み..." style="margin-bottom:6px">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">
+        <button type="button" class="btn bs sm" onclick="mpPickAll(true)">表示中を全選択</button>
+        <button type="button" class="btn bs sm" onclick="mpPickAll(false)">表示中を全解除</button>
+        <span id="mp-pick-count" style="font-size:12px;color:var(--ink3);margin-left:auto"></span>
+      </div>
+      <div id="mp-pick-list" style="max-height:52vh;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r)"></div>
+    </div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeMemberPicker()">キャンセル</button><button class="btn bp" onclick="applyMemberPicker()">確定</button></div>
   </div>
 </div>
 
@@ -264,6 +290,19 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
           <option value="respondents">回答した会員のみ</option>
           <option value="all">全会員に公開</option>
         </select></div>
+      </div>
+      <div class="fg">
+        <label class="fl">対象者</label>
+        <label class="reqlbl"><input type="radio" name="sv-tmode" value="all" checked onchange="onSvTMode()"> 全参加者に表示</label>
+        <label class="reqlbl"><input type="radio" name="sv-tmode" value="selected" onchange="onSvTMode()"> 選択した参加者のみに表示</label>
+        <div id="sv-target-box" style="display:none;margin-top:6px">
+          <div style="font-size:11px;color:var(--ink3);margin-bottom:6px">チェックした参加者にのみアンケートが表示されます。（一覧は参加登録済みの会員です）</div>
+          <div id="sv-target-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r)"></div>
+        </div>
+      </div>
+      <div class="fg">
+        <label class="reqlbl"><input type="checkbox" id="sv-comment-en" onchange="onSvComment()"> 自由コメント記入欄を追加</label>
+        <input class="fi" id="sv-comment-label" placeholder="コメント欄の見出し（例: ご意見・ご感想）" style="display:none;margin-top:6px">
       </div>
       <div class="fg">
         <label class="fl">設問</label>
@@ -501,6 +540,54 @@ function renderPSearch(){
   Array.prototype.forEach.call(box.querySelectorAll('div[data-id]'),function(row){ row.addEventListener('click',function(){ var id=this.getAttribute('data-id'); if(_participants.indexOf(id)<0)_participants.push(id); g('p-search').value=''; box.style.display='none'; renderChips(); }); });
 }
 
+// ── 参加者 一覧選択（ピッカー） ──
+var _pickSel={};
+function openMemberPicker(){
+  _pickSel={}; _participants.forEach(function(id){ _pickSel[id]=true; });
+  g('mp-pick-search').value='';
+  g('mp-pick-modal').classList.add('open');
+  renderMemberPicker();
+}
+function closeMemberPicker(){ g('mp-pick-modal').classList.remove('open'); }
+g('mp-pick-modal').addEventListener('click',function(e){ if(e.target===g('mp-pick-modal')) closeMemberPicker(); });
+g('mp-pick-search').addEventListener('input',renderMemberPicker);
+function pickerFiltered(){
+  var q=(g('mp-pick-search').value||'').trim().toLowerCase();
+  var list=members.slice().sort(function(a,b){ return String(a.displayId||a.id).localeCompare(String(b.displayId||b.id)); });
+  if(!q) return list;
+  return list.filter(function(m){
+    return String(m.displayId||'').toLowerCase().indexOf(q)>=0 || String(m.nickname||'').toLowerCase().indexOf(q)>=0 || String(m.name||'').toLowerCase().indexOf(q)>=0 || String(m.memberId||'').toLowerCase().indexOf(q)>=0;
+  });
+}
+function renderMemberPicker(){
+  var list=pickerFiltered();
+  var box=g('mp-pick-list');
+  if(!members.length){ box.innerHTML='<div class="ec">会員を読み込み中…</div>'; }
+  else if(!list.length){ box.innerHTML='<div class="ec">該当する会員がいません。</div>'; }
+  else {
+    box.innerHTML=list.map(function(m){
+      var on=!!_pickSel[m.id];
+      return '<label class="mp-pick-row'+(on?' on':'')+'"><input type="checkbox" data-id="'+esc(m.id)+'"'+(on?' checked':'')+'>'
+        +'<span class="mp-pick-nm">'+esc(m.nickname||m.name||m.displayId||m.id)+'</span>'
+        +'<span class="mp-pick-id">'+esc(m.displayId||'')+'</span></label>';
+    }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('input[data-id]'),function(cb){
+      cb.addEventListener('change',function(){ var id=cb.getAttribute('data-id'); if(cb.checked)_pickSel[id]=true; else delete _pickSel[id]; cb.parentNode.classList.toggle('on',cb.checked); updatePickCount(); });
+    });
+  }
+  updatePickCount();
+}
+function updatePickCount(){ var n=Object.keys(_pickSel).length; g('mp-pick-count').textContent='選択中: '+n+'名'; }
+function mpPickAll(on){ pickerFiltered().forEach(function(m){ if(on)_pickSel[m.id]=true; else delete _pickSel[m.id]; }); renderMemberPicker(); }
+function applyMemberPicker(){
+  // 既存の並び順を保ちつつ、選択に合わせて更新
+  var kept=_participants.filter(function(id){ return _pickSel[id]; });
+  var keptSet={}; kept.forEach(function(id){ keptSet[id]=true; });
+  Object.keys(_pickSel).forEach(function(id){ if(!keptSet[id]) kept.push(id); });
+  _participants=kept;
+  closeMemberPicker(); renderChips();
+}
+
 // ── コンテンツ構成（コンテナ） ──
 var CONTAINER_TYPES=[
   {type:'overview',icon:'📋',name:'開催概要・参加者一覧'},
@@ -615,6 +702,7 @@ function delEvent(){
 
 /* ════════ アンケート ════════ */
 var _svEventId=null, _svList=[], _svEditId=null, _svQ=[], _qseq=1;
+var _svParticipants=[], _svTargetSel={};
 var QTYPE={single:'単一選択',multi:'複数選択',text:'自由記述',rating:'5段階評価'};
 var SVIS={staff:'スタッフのみ',respondents:'回答者のみ',all:'全会員公開'};
 var SST={draft:'下書き',open:'受付中',closed:'締切'};
@@ -628,7 +716,15 @@ function openSurveyMgr(eventId){
   g('sv-mgr-title').textContent='📋 アンケート — '+(ev?ev.name:'');
   g('sv-list').innerHTML='<div class="ec">読み込み中…</div>';
   g('sv-mgr-modal').classList.add('open');
+  loadSvParticipants(eventId);
   loadSurveys();
+}
+function loadSvParticipants(eventId){
+  _svParticipants=[];
+  db.collection('events').doc(eventId).collection('participants').get().then(function(snap){
+    _svParticipants=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); })
+      .sort(function(a,b){ return String(a.nickname||a.memberId||a.id).localeCompare(String(b.nickname||b.memberId||b.id)); });
+  }).catch(function(){});
 }
 function closeSurveyMgr(){ g('sv-mgr-modal').classList.remove('open'); }
 g('sv-mgr-modal').addEventListener('click',function(e){ if(e.target===g('sv-mgr-modal')) closeSurveyMgr(); });
@@ -655,7 +751,7 @@ function renderSurveyList(){
       +'<button class="btn bs sm" onclick="openSurveyEd(\''+esc(s.id)+'\')">編集</button>'
       +'<button class="btn bs sm" onclick="openSurveyRes(\''+esc(s.id)+'\')">回答 '+(s._count!=null?s._count:'')+'</button>'
       +'</div></div>'
-      +'<div class="sv-row-meta">設問 '+nq+'問　/　結果公開: '+esc(SVIS[s.resultVisibility]||s.resultVisibility||'staff')+'</div>'
+      +'<div class="sv-row-meta">設問 '+nq+'問　/　結果公開: '+esc(SVIS[s.resultVisibility]||s.resultVisibility||'staff')+'　/　対象: '+(s.targetMode==='selected'?('選択'+((s.targetIds||[]).length)+'名'):'全参加者')+(s.commentEnabled?'　/　コメント欄あり':'')+'</div>'
       +'</div>';
   }).join('');
 }
@@ -671,10 +767,38 @@ function openSurveyEd(sid){
   g('sv-desc').value=s?(s.description||''):'';
   g('sv-status').value=s?(s.status||'draft'):'draft';
   g('sv-vis').value=s?(s.resultVisibility||'staff'):'staff';
+  // 対象者
+  var tmode=(s&&s.targetMode==='selected')?'selected':'all';
+  _svTargetSel={}; if(s&&Array.isArray(s.targetIds)) s.targetIds.forEach(function(id){ _svTargetSel[id]=true; });
+  Array.prototype.forEach.call(document.getElementsByName('sv-tmode'),function(r){ r.checked=(r.value===tmode); });
+  onSvTMode();
+  // コメント欄
+  g('sv-comment-en').checked=!!(s&&s.commentEnabled);
+  g('sv-comment-label').value=(s&&s.commentLabel)||'';
+  onSvComment();
   _svQ=(s&&Array.isArray(s.questions))?s.questions.map(function(q){ return {qid:q.qid||('q'+(_qseq++)),type:q.type||'single',label:q.label||'',required:!!q.required,options:(q.options||[]).slice()}; }):[];
   renderSvQ();
   g('sv-ed-modal').classList.add('open');
 }
+function onSvTMode(){
+  var sel=(document.querySelector('input[name="sv-tmode"]:checked')||{}).value==='selected';
+  g('sv-target-box').style.display=sel?'block':'none';
+  if(sel) renderSvTargets();
+}
+function renderSvTargets(){
+  var box=g('sv-target-list');
+  if(!_svParticipants.length){ box.innerHTML='<div class="ec">参加登録済みの会員がいません。会員がイベントに参加登録すると、ここから対象を選べます。</div>'; return; }
+  box.innerHTML=_svParticipants.map(function(p){
+    var on=!!_svTargetSel[p.id];
+    return '<label class="mp-pick-row'+(on?' on':'')+'"><input type="checkbox" data-tid="'+esc(p.id)+'"'+(on?' checked':'')+'>'
+      +'<span class="mp-pick-nm">'+esc(p.nickname||p.name||p.memberId||'（会員）')+'</span>'
+      +'<span class="mp-pick-id">'+esc(p.memberId||'')+'</span></label>';
+  }).join('');
+  Array.prototype.forEach.call(box.querySelectorAll('input[data-tid]'),function(cb){
+    cb.addEventListener('change',function(){ var id=cb.getAttribute('data-tid'); if(cb.checked)_svTargetSel[id]=true; else delete _svTargetSel[id]; cb.parentNode.classList.toggle('on',cb.checked); });
+  });
+}
+function onSvComment(){ g('sv-comment-label').style.display=g('sv-comment-en').checked?'block':'none'; }
 function closeSurveyEd(){ g('sv-ed-modal').classList.remove('open'); }
 g('sv-ed-modal').addEventListener('click',function(e){ if(e.target===g('sv-ed-modal')) closeSurveyEd(); });
 
@@ -736,9 +860,14 @@ function saveSurvey(){
     qs.push(out);
   }
   if(!qs.length){ g('sv-ed-err').textContent='設問を1つ以上追加してください'; return; }
+  var tmode=(document.querySelector('input[name="sv-tmode"]:checked')||{}).value==='selected'?'selected':'all';
+  var targetIds=(tmode==='selected')?Object.keys(_svTargetSel).filter(function(id){return _svTargetSel[id];}):[];
+  var commentEnabled=!!g('sv-comment-en').checked;
   var data={
     title:title, description:(g('sv-desc').value||'').trim(),
     status:g('sv-status').value||'draft', resultVisibility:g('sv-vis').value||'staff',
+    targetMode:tmode, targetIds:targetIds,
+    commentEnabled:commentEnabled, commentLabel:commentEnabled?((g('sv-comment-label').value||'').trim()||'ご意見・ご感想'):'',
     questions:qs, updatedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
   var btn=g('sv-ed-save'); btn.disabled=true;
@@ -805,6 +934,12 @@ function renderAgg(s, resp){
     }
     html+='</div>';
   });
+  if(s.commentEnabled){
+    var cms=resp.map(function(r){ return {t:(r.comment==null?'':(''+r.comment)).trim(),who:whoOf(r)}; }).filter(function(x){return x.t;});
+    html+='<div class="agg-q"><div class="ql">'+esc(s.commentLabel||'ご意見・ご感想')+' <span style="font-weight:400;color:var(--ink3);font-size:11px">(コメント)</span></div>';
+    html+= cms.length?cms.map(function(x){ return '<div class="agg-txt">'+esc(x.t)+'<div class="who">— '+esc(x.who)+'</div></div>'; }).join(''):'<div style="font-size:12px;color:var(--ink3)">コメントなし</div>';
+    html+='</div>';
+  }
   g('sv-res-body').innerHTML=html;
 }
 
