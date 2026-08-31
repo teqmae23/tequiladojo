@@ -151,6 +151,13 @@ a{color:var(--gold-d)}
 .ck-plist{display:flex;flex-wrap:wrap;gap:6px}
 .ck-p{font-size:12px;padding:3px 9px;border-radius:12px;background:var(--cream2);color:var(--ink2)}
 .ck-p.ok{background:#e7f6f1;color:var(--teal)}
+.ck-attach{font-size:12px;margin:6px 0}
+.ck-attach a{color:var(--teal);font-weight:600}
+.ck-file{margin-top:8px}
+.ck-file input{font-size:12px;max-width:100%}
+.ck-hint{font-size:11px;color:var(--gold-d);margin-top:3px}
+.ck-sub{font-size:12px;margin-top:8px;color:var(--ink2)}
+.ck-sub a{color:var(--teal);font-weight:600}
 .doc-item{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;margin-bottom:8px;background:var(--white)}
 .doc-ic{font-size:20px;flex:0 0 auto}
 .doc-main{flex:1;min-width:0}
@@ -638,7 +645,12 @@ function renderChecklist(){
       +'<div class="ck-hd"><div class="ck-ttl'+(done?' done':'')+'">'+esc(t.title||'')+'</div><span class="ck-vis '+(pub?'pub':'priv')+'">'+(pub?'公開':'非公開')+'</span></div>';
     if(t.content) hh+='<div class="ck-content">'+esc(t.content)+'</div>';
     if(t.deadline) hh+='<div class="ck-dl'+(over?' over':'')+'">期限: '+esc(t.deadline)+(over?'（超過）':'')+'</div>';
-    if(_isReal) hh+='<button class="ck-btn '+(done?'did':'todo')+'" onclick="toggleTask(\''+esc(t.id)+'\')">'+(done?'✓ 完了済み（取り消す）':'完了にする')+'</button>';
+    if(t.attachmentUrl) hh+='<div class="ck-attach">📎 <a href="'+esc(t.attachmentUrl)+'" target="_blank" rel="noopener">'+esc(t.attachmentName||'参考ファイル')+'</a></div>';
+    if(_isReal){
+      if(t.requireFile && !done) hh+='<div class="ck-file"><input type="file" id="ckf-'+esc(t.id)+'"><div class="ck-hint">完了にはファイル提出が必要です'+(myc&&myc.fileUrl?'（提出済みのため省略可）':'')+'</div></div>';
+      if(myc&&myc.fileUrl) hh+='<div class="ck-sub">提出済: <a href="'+esc(myc.fileUrl)+'" target="_blank" rel="noopener">'+esc(myc.fileName||'提出ファイル')+'</a></div>';
+      hh+='<button class="ck-btn '+(done?'did':'todo')+'" id="ckb-'+esc(t.id)+'" onclick="taskAction(\''+esc(t.id)+'\')">'+(done?'✓ 完了済み（取り消す）':'完了にする')+'</button>';
+    }
     else hh+='<div style="font-size:11px;color:var(--ink3);margin-top:6px">会員ログインで完了操作ができます</div>';
     if(pub){
       var comps={}; (t._comps||[]).forEach(function(c){ comps[c.id]=c; });
@@ -651,16 +663,52 @@ function renderChecklist(){
   h+='</div>';
   el.innerHTML=h;
 }
-function toggleTask(taskId){
+function taskAction(taskId){
   if(!_isReal) return;
   var t=_tasks.find(function(x){return x.id===taskId;}); if(!t) return;
   var myc=(t._comps||[]).find(function(c){ return c.id===_uid; });
-  var newDone=!(myc&&myc.done);
-  db.collection('events').doc(eventId).collection('tasks').doc(taskId).collection('completions').doc(_uid)
-    .set({ authUid:_uid, memberId:_memberId||'', memberName:_memberName||'', done:newDone,
-      doneAt:newDone?firebase.firestore.FieldValue.serverTimestamp():null,
-      updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
-    .then(function(){ loadChecklist(); }).catch(function(e){ toast('更新失敗: '+e.message); });
+  var currentlyDone=!!(myc&&myc.done);
+  var btn=g('ckb-'+taskId);
+  if(currentlyDone){ // 取り消し
+    if(btn) btn.disabled=true;
+    setCompletion(taskId,{done:false}).catch(function(e){ toast('更新失敗: '+e.message); if(btn) btn.disabled=false; });
+    return;
+  }
+  // 完了にする
+  var fi=g('ckf-'+taskId);
+  var file=(fi&&fi.files&&fi.files[0])||null;
+  if(t.requireFile && !file && !(myc&&myc.fileUrl)){ toast('このタスクは完了にファイル提出が必要です'); return; }
+  if(btn) btn.disabled=true;
+  var up=file?uploadSubmission(t,file):Promise.resolve(null);
+  up.then(function(extra){ return setCompletion(taskId, Object.assign({done:true}, extra||{})); })
+    .catch(function(e){ toast('提出失敗: '+e.message); if(btn) btn.disabled=false; });
+}
+function uploadSubmission(t,file){
+  if(!storage) return Promise.reject(new Error('この環境ではアップロードできません'));
+  if(file.size>20*1024*1024) return Promise.reject(new Error('ファイルは20MB以内にしてください'));
+  var ext=(file.name.match(/\.([A-Za-z0-9]+)$/)||[,'bin'])[1].toLowerCase();
+  var path='event_docs/'+eventId+'/sub_'+t.id+'_'+_uid+'.'+ext;
+  var ref=storage.ref(path);
+  return ref.put(file,{contentType:file.type||'application/octet-stream'}).then(function(){ return ref.getDownloadURL(); })
+    .then(function(url){
+      var docId='sub_'+t.id+'_'+_uid;
+      return db.collection('events').doc(eventId).collection('documents').doc(docId).set({
+        title:(t.title||'提出書類')+'（'+(_memberName||'会員')+'）',
+        category:'submission', type:'file', taskId:t.id, taskTitle:t.title||'',
+        uploaderUid:_uid, uploaderName:_memberName||'', memberId:_memberId||'',
+        url:url, fileName:file.name, size:file.size, storagePath:path,
+        createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      }).then(function(){ return {fileUrl:url, fileName:file.name, submissionDocId:docId, submissionPath:path}; });
+    });
+}
+function setCompletion(taskId, extra){
+  var data=Object.assign({ authUid:_uid, memberId:_memberId||'', memberName:_memberName||'',
+    updatedAt:firebase.firestore.FieldValue.serverTimestamp() }, extra||{});
+  if(extra&&extra.done===true) data.doneAt=firebase.firestore.FieldValue.serverTimestamp();
+  if(extra&&extra.done===false) data.doneAt=null;
+  return db.collection('events').doc(eventId).collection('tasks').doc(taskId).collection('completions').doc(_uid)
+    .set(data,{merge:true})
+    .then(function(){ loadChecklist(); });
 }
 
 /* ════════ ドキュメント保管庫（⑤・会員側） ════════ */
