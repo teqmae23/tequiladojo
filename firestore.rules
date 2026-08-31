@@ -175,6 +175,18 @@ service cloud.firestore {
           || (realUser() && resource.data.get('uploaderUid', '') == request.auth.uid);
       }
 
+      // ツリー掲示板（⑥）: 参加会員（匿名不可）が投稿。公開済みは会員が閲覧可、
+      // 承認待ちは本人とスタッフのみ閲覧可。編集・削除・承認はスタッフのみ。
+      match /posts/{pid} {
+        allow read: if isStaff()
+          || (signedIn() && resource.data.get('status', 'published') == 'published')
+          || (realUser() && resource.data.get('authorUid', '') == request.auth.uid);
+        allow create: if realUser()
+          && request.resource.data.get('authorUid', '') == request.auth.uid
+          && request.resource.data.get('status', '') in ['published', 'pending'];
+        allow update, delete: if isStaff();
+      }
+
       // 参加者プロフィール（docID=authUid）: 認証会員は名簿として閲覧可。
       // 本人が自己登録・編集・取消（authUidを本人に固定）。スタッフは全操作可。
       match /participants/{uid} {
