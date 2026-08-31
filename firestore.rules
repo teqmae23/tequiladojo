@@ -161,6 +161,20 @@ service cloud.firestore {
         }
       }
 
+      // ドキュメント保管庫: 発行(issued)は会員全員が閲覧、提出(submission)は本人と
+      // スタッフのみ閲覧。発行の作成/編集/削除はスタッフ。提出は本人が作成、
+      // 本人orスタッフが更新/削除。
+      match /documents/{did} {
+        allow read: if isStaff()
+          || (signedIn() && resource.data.get('category', 'issued') == 'issued')
+          || (realUser() && resource.data.get('uploaderUid', '') == request.auth.uid);
+        allow create: if isStaff()
+          || (realUser() && request.resource.data.get('category', '') == 'submission'
+              && request.resource.data.get('uploaderUid', '') == request.auth.uid);
+        allow update, delete: if isStaff()
+          || (realUser() && resource.data.get('uploaderUid', '') == request.auth.uid);
+      }
+
       // 参加者プロフィール（docID=authUid）: 認証会員は名簿として閲覧可。
       // 本人が自己登録・編集・取消（authUidを本人に固定）。スタッフは全操作可。
       match /participants/{uid} {
