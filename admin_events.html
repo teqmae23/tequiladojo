@@ -378,6 +378,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
         <div class="fg"><label class="fl">公開範囲</label><select class="fi" id="tk-vis"><option value="public">公開（全員の状況を共有）</option><option value="private">非公開（本人のみ）</option></select></div>
       </div>
       <label class="reqlbl"><input type="checkbox" id="tk-reqfile"> 完了時にファイル提出を求める（提出物はドキュメント管理「提出書類」へ）</label>
+      <div class="fg" style="margin-top:10px"><label class="fl">提出見本ファイル（任意・会員が閲覧可）</label><input class="fi" id="tk-sample" type="file"><div id="tk-sample-cur" style="font-size:11px;color:var(--ink3);margin-top:3px"></div><div style="font-size:11px;color:var(--ink3);margin-top:2px">提出物の見本をアップロードすると、参加者がチェックリスト上で確認できます。</div></div>
       <div class="fg" style="margin-top:10px"><label class="fl">参考ファイル（任意・会員が閲覧可）</label><input class="fi" id="tk-file" type="file"><div id="tk-file-cur" style="font-size:11px;color:var(--ink3);margin-top:3px"></div></div>
       <div id="tk-prog" style="font-size:12px;color:var(--ink3)"></div>
       <div class="err" id="tk-err"></div>
@@ -1107,6 +1108,10 @@ function openTaskEd(id){
   var cur=g('tk-file-cur');
   if(t&&t.attachmentUrl){ cur.innerHTML='現在: <a href="'+t.attachmentUrl+'" target="_blank" rel="noopener">'+esc(t.attachmentName||'参考ファイル')+'</a>（新しいファイルを選ぶと差し替え）'; }
   else { cur.textContent=''; }
+  g('tk-sample').value='';
+  var scur=g('tk-sample-cur');
+  if(t&&t.sampleUrl){ scur.innerHTML='現在: <a href="'+t.sampleUrl+'" target="_blank" rel="noopener">'+esc(t.sampleName||'提出見本')+'</a>（新しいファイルを選ぶと差し替え）'; }
+  else { scur.textContent=''; }
   g('tk-ed-modal').classList.add('open');
 }
 function closeTaskEd(){ g('tk-ed-modal').classList.remove('open'); }
@@ -1123,17 +1128,21 @@ function saveTask(){
   var tid=_tkEditId||taskCol(_tkEventId).doc().id;
   if(!_tkEditId){ data.createdAt=firebase.firestore.FieldValue.serverTimestamp(); data.seq=_tkItems.length; }
   var file=(g('tk-file').files&&g('tk-file').files[0])||null;
-  var up=Promise.resolve();
-  if(file){
-    if(!storage){ g('tk-err').textContent='この環境ではファイルアップロードを利用できません'; btn.disabled=false; return; }
-    if(file.size>20*1024*1024){ g('tk-err').textContent='参考ファイルは20MB以内にしてください'; btn.disabled=false; return; }
-    g('tk-prog').textContent='アップロード中…';
-    var ext=(file.name.match(/\.([A-Za-z0-9]+)$/)||[,'bin'])[1].toLowerCase();
-    var path='event_docs/'+_tkEventId+'/task_'+tid+'.'+ext;
+  var sfile=(g('tk-sample').files&&g('tk-sample').files[0])||null;
+  if((file||sfile)&&!storage){ g('tk-err').textContent='この環境ではファイルアップロードを利用できません'; btn.disabled=false; return; }
+  if(file&&file.size>20*1024*1024){ g('tk-err').textContent='参考ファイルは20MB以内にしてください'; btn.disabled=false; return; }
+  if(sfile&&sfile.size>20*1024*1024){ g('tk-err').textContent='提出見本ファイルは20MB以内にしてください'; btn.disabled=false; return; }
+  function uploadTo(f, prefix, set){
+    var ext=(f.name.match(/\.([A-Za-z0-9]+)$/)||[,'bin'])[1].toLowerCase();
+    var path='event_docs/'+_tkEventId+'/'+prefix+tid+'.'+ext;
     var ref=storage.ref(path);
-    up=ref.put(file,{contentType:file.type||'application/octet-stream'}).then(function(){ return ref.getDownloadURL(); })
-      .then(function(url){ data.attachmentUrl=url; data.attachmentName=file.name; data.attachmentPath=path; });
+    return ref.put(f,{contentType:f.type||'application/octet-stream'}).then(function(){ return ref.getDownloadURL(); })
+      .then(function(url){ set(url, f.name, path); });
   }
+  if(file||sfile) g('tk-prog').textContent='アップロード中…';
+  var up=Promise.resolve();
+  if(file) up=up.then(function(){ return uploadTo(file,'task_',function(url,nm,path){ data.attachmentUrl=url; data.attachmentName=nm; data.attachmentPath=path; }); });
+  if(sfile) up=up.then(function(){ return uploadTo(sfile,'sample_',function(url,nm,path){ data.sampleUrl=url; data.sampleName=nm; data.samplePath=path; }); });
   up.then(function(){ return taskCol(_tkEventId).doc(tid).set(data,{merge:true}); })
    .then(function(){ toast(_tkEditId?'更新しました':'追加しました'); closeTaskEd(); loadTasks(); })
    .catch(function(e){ g('tk-err').textContent='保存失敗: '+e.message; })
@@ -1146,7 +1155,7 @@ function delTask(){
   var t=_tkItems.find(function(x){return x.id===_tkEditId;});
   ref.collection('completions').get().then(function(rs){ var b=db.batch(); rs.docs.forEach(function(d){ b.delete(d.ref); }); return b.commit(); })
     .then(function(){ return ref.delete(); })
-    .then(function(){ if(t&&t.attachmentPath&&storage){ storage.ref(t.attachmentPath).delete().catch(function(){}); } toast('削除しました'); closeTaskEd(); loadTasks(); })
+    .then(function(){ if(t&&storage){ if(t.attachmentPath) storage.ref(t.attachmentPath).delete().catch(function(){}); if(t.samplePath) storage.ref(t.samplePath).delete().catch(function(){}); } toast('削除しました'); closeTaskEd(); loadTasks(); })
     .catch(function(e){ g('tk-err').textContent='削除失敗: '+e.message; });
 }
 
