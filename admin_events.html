@@ -83,6 +83,16 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .sch-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px}
 .sch-row .d{min-width:110px;font-family:var(--mono);color:var(--ink2)}
 .sch-row input[type=time]{padding:6px 8px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--white)}
+.cn-row{display:flex;align-items:center;gap:8px;background:var(--white);border:1px solid var(--border2);border-radius:var(--r);padding:8px 10px;margin-bottom:6px}
+.cn-row.off{opacity:.55;background:var(--cream)}
+.cn-ic{font-size:16px;flex:0 0 auto}
+.cn-nm{font-size:13px;font-weight:600;color:var(--ink);flex:1;min-width:0}
+.cn-nm .soon{font-size:10px;font-weight:700;color:var(--gold-d);background:#fbeee0;border-radius:8px;padding:1px 6px;margin-left:6px}
+.cn-mv{display:flex;gap:3px}
+.cn-mv button{border:1px solid var(--border2);background:var(--cream);border-radius:5px;width:26px;height:26px;font-size:12px;color:var(--ink2)}
+.cn-en{width:16px;height:16px;accent-color:var(--gold-d);flex:0 0 auto}
+.cn-cfg{margin:2px 0 8px 34px;display:flex;flex-wrap:wrap;gap:12px}
+.cn-cfg label{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink2);cursor:pointer}
 .chip{display:inline-flex;align-items:center;gap:5px;background:var(--cream2);color:var(--ink2);border:1px solid var(--border2);border-radius:14px;padding:3px 10px;font-size:12px;margin:0 5px 5px 0}
 .chip b{cursor:pointer;color:var(--red)}
 .presults{border:1px solid var(--border);border-radius:var(--r);max-height:180px;overflow-y:auto;margin-top:4px;display:none}
@@ -172,10 +182,16 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       <div class="fg"><label class="fl">詳細</label><textarea class="fi" id="f-desc" placeholder="イベントの説明・内容など"></textarea></div>
       <div class="fg"><label class="fl">イベントTOPページ（任意のURL）</label><input class="fi" id="f-top" placeholder="空欄なら自動で /event.html?id=... を使用"></div>
       <div class="fg">
-        <label class="fl">参加者</label>
+        <label class="fl">参加者（招待）</label>
         <div id="p-chips"></div>
         <input class="fi" id="p-search" placeholder="会員ID・氏名で検索して追加...">
         <div class="presults" id="p-results"></div>
+        <div style="font-size:11px;color:var(--ink3);margin-top:6px">※ 参加者は会員側のマイページから自己登録もできます。<span id="p-reg-count"></span></div>
+      </div>
+      <div class="fg">
+        <label class="fl">コンテンツ構成</label>
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">イベントTOPに表示するコンテンツと並び順・有効/無効を設定します。</div>
+        <div id="containers"></div>
       </div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink2);cursor:pointer;margin-top:4px">
         <input type="checkbox" id="f-pub" style="width:16px;height:16px;accent-color:var(--gold-d)">
@@ -344,6 +360,57 @@ function renderPSearch(){
   Array.prototype.forEach.call(box.querySelectorAll('div[data-id]'),function(row){ row.addEventListener('click',function(){ var id=this.getAttribute('data-id'); if(_participants.indexOf(id)<0)_participants.push(id); g('p-search').value=''; box.style.display='none'; renderChips(); }); });
 }
 
+// ── コンテンツ構成（コンテナ） ──
+var CONTAINER_TYPES=[
+  {type:'overview',icon:'📋',name:'開催概要・参加者一覧'},
+  {type:'schedule',icon:'🗓',name:'スケジュール/タイムテーブル',soon:true},
+  {type:'checklist',icon:'✅',name:'チェックリスト(TODO)',soon:true},
+  {type:'survey',icon:'📝',name:'アンケート'},
+  {type:'documents',icon:'📁',name:'ドキュメント保管庫',soon:true},
+  {type:'board',icon:'💬',name:'ツリー掲示板',soon:true}
+];
+var _containers=[];
+function ovDefaultCfg(){ return {mypage:{survey:true, checklist:true, image:true}}; }
+function normalizeContainers(arr){
+  var byType={}; (arr||[]).forEach(function(c){ if(c&&c.type) byType[c.type]=c; });
+  var out=[];
+  (arr||[]).forEach(function(c){ if(c&&c.type&&CONTAINER_TYPES.some(function(t){return t.type===c.type;})&&out.indexOf(byType[c.type])<0) out.push(byType[c.type]); });
+  CONTAINER_TYPES.forEach(function(t){ if(!byType[t.type]){ out.push({type:t.type,enabled:(t.type==='overview'||t.type==='survey'),config:t.type==='overview'?ovDefaultCfg():{}}); } });
+  out.forEach(function(c){ c.config=c.config||{}; if(c.type==='overview') c.config.mypage=c.config.mypage||{survey:true,checklist:true,image:true}; });
+  return out;
+}
+function cMeta(type){ return CONTAINER_TYPES.find(function(t){return t.type===type;})||{icon:'•',name:type}; }
+function moveContainer(i,d){ var j=i+d; if(j<0||j>=_containers.length)return; var t=_containers[i]; _containers[i]=_containers[j]; _containers[j]=t; renderContainers(); }
+function renderContainers(){
+  g('containers').innerHTML=_containers.map(function(c,i){
+    var m=cMeta(c.type);
+    var row='<div class="cn-row'+(c.enabled?'':' off')+'">'
+      +'<input type="checkbox" class="cn-en" data-i="'+i+'"'+(c.enabled?' checked':'')+'>'
+      +'<span class="cn-ic">'+m.icon+'</span>'
+      +'<span class="cn-nm">'+esc(m.name)+(m.soon?'<span class="soon">準備中</span>':'')+'</span>'
+      +'<span class="cn-mv"><button data-mv="'+i+'" data-d="-1">↑</button><button data-mv="'+i+'" data-d="1">↓</button></span>'
+      +'</div>';
+    if(c.type==='overview'&&c.enabled){
+      var mp=c.config.mypage||{};
+      row+='<div class="cn-cfg">参加者マイページに表示:'
+        +'<label><input type="checkbox" data-mp="survey" data-i="'+i+'"'+(mp.survey!==false?' checked':'')+'>アンケート</label>'
+        +'<label><input type="checkbox" data-mp="checklist" data-i="'+i+'"'+(mp.checklist!==false?' checked':'')+'>チェックリスト</label>'
+        +'<label><input type="checkbox" data-mp="image" data-i="'+i+'"'+(mp.image!==false?' checked':'')+'>画像投稿</label>'
+        +'</div>';
+    }
+    return row;
+  }).join('');
+  Array.prototype.forEach.call(g('containers').querySelectorAll('.cn-en'),function(cb){ cb.addEventListener('change',function(){ _containers[+cb.getAttribute('data-i')].enabled=cb.checked; renderContainers(); }); });
+  Array.prototype.forEach.call(g('containers').querySelectorAll('button[data-mv]'),function(b){ b.addEventListener('click',function(){ moveContainer(+b.getAttribute('data-mv'), +b.getAttribute('data-d')); }); });
+  Array.prototype.forEach.call(g('containers').querySelectorAll('input[data-mp]'),function(cb){ cb.addEventListener('change',function(){ var c=_containers[+cb.getAttribute('data-i')]; c.config.mypage=c.config.mypage||{}; c.config.mypage[cb.getAttribute('data-mp')]=cb.checked; }); });
+}
+function loadRegCount(id){
+  g('p-reg-count').textContent='';
+  if(!id) return;
+  db.collection('events').doc(id).collection('participants').get()
+    .then(function(snap){ g('p-reg-count').textContent='（自己登録済み '+snap.size+'名）'; }).catch(function(){});
+}
+
 // ── モーダル ──
 function openEvent(id){
   _editId=id; g('ev-err').textContent='';
@@ -359,8 +426,9 @@ function openEvent(id){
   g('f-pub').checked=!!(ev&&ev.published);
   _participants=(ev&&Array.isArray(ev.participantIds))?ev.participantIds.slice():[];
   _schedMap={}; if(ev&&Array.isArray(ev.schedule)) ev.schedule.forEach(function(s){ if(s&&s.date)_schedMap[s.date]={open:s.open||'',close:s.close||''}; });
+  _containers=normalizeContainers(ev&&ev.containers);
   g('p-search').value=''; g('p-results').style.display='none';
-  renderSched(); renderChips();
+  renderSched(); renderChips(); renderContainers(); loadRegCount(id);
   g('ev-modal').classList.add('open');
 }
 function closeEvent(){ g('ev-modal').classList.remove('open'); }
@@ -379,6 +447,7 @@ function saveEvent(){
     schedule:schedule, location:(g('f-loc').value||'').trim(),
     description:(g('f-desc').value||'').trim(), topPageUrl:(g('f-top').value||'').trim(),
     published:!!g('f-pub').checked, participantIds:_participants.slice(),
+    containers:_containers,
     updatedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
   var btn=g('ev-save'); btn.disabled=true;
