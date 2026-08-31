@@ -720,12 +720,31 @@ function openSurveyMgr(eventId){
   loadSurveys();
 }
 function loadSvParticipants(eventId){
+  // 対象候補 = 管理者が招待した参加者(event.participantIds) ＋ 会員が自己登録した参加者(participantsサブコレクション)
   _svParticipants=[];
+  var seen={};
+  var ev=events.find(function(x){return x.id===eventId;});
+  var invited=(ev&&Array.isArray(ev.participantIds))?ev.participantIds:[];
+  invited.forEach(function(mid){
+    var m=members.find(function(x){return x.id===mid||String(x.memberId)===String(mid)||String(x.displayId)===String(mid);});
+    var uid=(m&&m.authUid)?m.authUid:'';
+    var tid=uid||String((m&&(m.displayId||m.memberId))||mid); // 未ログイン会員はID文字列でも突合できるように
+    if(seen[tid]) return; seen[tid]=true;
+    _svParticipants.push({ tid:tid, name:(m?(m.nickname||m.name||m.displayId||mid):mid), memberId:(m&&(m.displayId||m.memberId))||mid, registered:!!uid });
+  });
+  renderSvTargetsIfOpen();
+  // 自己登録参加者（docID=authUid）を追加
   db.collection('events').doc(eventId).collection('participants').get().then(function(snap){
-    _svParticipants=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); })
-      .sort(function(a,b){ return String(a.nickname||a.memberId||a.id).localeCompare(String(b.nickname||b.memberId||b.id)); });
+    snap.docs.forEach(function(d){
+      var uid=d.id; if(seen[uid]) return; seen[uid]=true;
+      var data=d.data()||{};
+      _svParticipants.push({ tid:uid, name:data.nickname||data.name||data.memberId||'（会員）', memberId:data.memberId||'', registered:true });
+    });
+    _svParticipants.sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
+    renderSvTargetsIfOpen();
   }).catch(function(){});
 }
+function renderSvTargetsIfOpen(){ if(g('sv-ed-modal').classList.contains('open') && g('sv-target-box').style.display!=='none') renderSvTargets(); }
 function closeSurveyMgr(){ g('sv-mgr-modal').classList.remove('open'); }
 g('sv-mgr-modal').addEventListener('click',function(e){ if(e.target===g('sv-mgr-modal')) closeSurveyMgr(); });
 
@@ -787,11 +806,11 @@ function onSvTMode(){
 }
 function renderSvTargets(){
   var box=g('sv-target-list');
-  if(!_svParticipants.length){ box.innerHTML='<div class="ec">参加登録済みの会員がいません。会員がイベントに参加登録すると、ここから対象を選べます。</div>'; return; }
+  if(!_svParticipants.length){ box.innerHTML='<div class="ec">対象にできる参加者がいません。参加者（招待）を登録するか、会員がイベントに参加登録すると、ここから対象を選べます。</div>'; return; }
   box.innerHTML=_svParticipants.map(function(p){
-    var on=!!_svTargetSel[p.id];
-    return '<label class="mp-pick-row'+(on?' on':'')+'"><input type="checkbox" data-tid="'+esc(p.id)+'"'+(on?' checked':'')+'>'
-      +'<span class="mp-pick-nm">'+esc(p.nickname||p.name||p.memberId||'（会員）')+'</span>'
+    var on=!!_svTargetSel[p.tid];
+    return '<label class="mp-pick-row'+(on?' on':'')+'"><input type="checkbox" data-tid="'+esc(p.tid)+'"'+(on?' checked':'')+'>'
+      +'<span class="mp-pick-nm">'+esc(p.name||p.memberId||'（会員）')+(p.registered?'':'<span style="font-size:10px;color:var(--ink3);margin-left:6px">未ログイン</span>')+'</span>'
       +'<span class="mp-pick-id">'+esc(p.memberId||'')+'</span></label>';
   }).join('');
   Array.prototype.forEach.call(box.querySelectorAll('input[data-tid]'),function(cb){
