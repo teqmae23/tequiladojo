@@ -130,6 +130,27 @@ a{color:var(--gold-d)}
 .ph-pin{display:inline-flex;align-items:center;gap:1px;background:var(--gold-d);color:#fff;border-radius:12px;padding:2px 7px;font-size:13px;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;cursor:pointer}
 .ph-pin b{font-size:11px;font-weight:700}
 #ph-suggest{font-size:11px;color:var(--teal);margin-bottom:8px;min-height:14px}
+.ck-task{border:1px solid var(--border);border-left-width:4px;border-radius:var(--r);padding:12px 14px;margin-bottom:10px;background:var(--white)}
+.ck-task.pub{border-left-color:var(--teal)}
+.ck-task.priv{border-left-color:var(--ink3)}
+.ck-task.done{background:#f2f8f5}
+.ck-hd{display:flex;align-items:flex-start;gap:10px}
+.ck-ttl{font-size:15px;font-weight:600;color:var(--ink);flex:1}
+.ck-ttl.done{text-decoration:line-through;color:var(--ink3)}
+.ck-vis{font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;flex:0 0 auto}
+.ck-vis.pub{background:#e7f6f1;color:var(--teal)}.ck-vis.priv{background:var(--cream3);color:var(--ink3)}
+.ck-content{font-size:13px;color:var(--ink2);line-height:1.7;margin:6px 0;white-space:pre-wrap}
+.ck-dl{font-size:12px;color:var(--gold-d);font-weight:600}
+.ck-dl.over{color:var(--red)}
+.ck-btn{margin-top:8px;padding:9px 16px;border:none;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer}
+.ck-btn.todo{background:var(--gold-d);color:var(--cream)}
+.ck-btn.did{background:var(--teal);color:#fff}
+.ck-btn:disabled{opacity:.6}
+.ck-status{margin-top:10px;border-top:1px dashed var(--border2);padding-top:8px}
+.ck-status .sh{font-size:11px;color:var(--ink3);font-weight:700;margin-bottom:5px}
+.ck-plist{display:flex;flex-wrap:wrap;gap:6px}
+.ck-p{font-size:12px;padding:3px 9px;border-radius:12px;background:var(--cream2);color:var(--ink2)}
+.ck-p.ok{background:#e7f6f1;color:var(--teal)}
 .mbg{position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:200;display:none;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto}
 .mbg.open{display:flex}
 .modal{background:var(--white);border-radius:var(--rl);width:100%;max-width:460px;margin-top:24px;box-shadow:var(--shadow-lg)}
@@ -252,18 +273,20 @@ function render(ev){
     +'<div class="ev-period">📅 '+esc(period)+'</div></div>';
   var containers=(Array.isArray(ev.containers)&&ev.containers.length)?ev.containers
     :[{type:'overview',enabled:true,config:{mypage:{survey:true,checklist:true,image:true}}},{type:'survey',enabled:true,config:{}}];
-  var hasSurvey=false, hasSchedule=false;
+  var hasSurvey=false, hasSchedule=false, hasChecklist=false;
   containers.forEach(function(c){
     if(!c||!c.enabled) return;
     if(c.type==='overview') html+=overviewHtml(ev, period);
     else if(c.type==='survey'){ html+='<div id="surveys"></div>'; hasSurvey=true; }
     else if(c.type==='schedule'){ html+='<div id="schedule-cont"><div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div></div>'; hasSchedule=true; }
+    else if(c.type==='checklist'){ html+='<div id="checklist-cont"><div class="card"><div class="sec">✅ チェックリスト</div><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div></div>'; hasChecklist=true; }
     else if(CN_NAMES[c.type]) html+='<div class="soon-card">'+CN_NAMES[c.type]+'<br><span style="font-size:11px">このコンテンツは準備中です。</span></div>';
   });
   g('wrap').innerHTML=html;
   document.title=(ev.name||'イベント')+' — テキーラ道場';
   loadParticipants();
   if(hasSchedule) loadSchedule();
+  if(hasChecklist) loadChecklist();
   if(hasSurvey) loadSurveys(ev.published);
 }
 function overviewHtml(ev, period){
@@ -286,7 +309,7 @@ function overviewHtml(ev, period){
 function ovCfg(){ var cs=(_ev&&Array.isArray(_ev.containers))?_ev.containers:[]; var o=cs.find(function(c){return c&&c.type==='overview';}); return (o&&o.config)||{mypage:{survey:true,checklist:true,image:true}}; }
 function initials(n){ n=(n||'').trim(); return n?n.slice(0,1):'👤'; }
 function ptAvatar(p){ return p.iconUrl?('<img class="pt-av" src="'+esc(p.iconUrl)+'" alt="">'):('<span class="pt-av">'+esc(initials(p.nickname))+'</span>'); }
-function _ptDone(snap){ _participants=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }); _myPt=_participants.find(function(p){ return p.id===_uid; })||null; renderRoster(); renderMypageBar(); }
+function _ptDone(snap){ _participants=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }); _myPt=_participants.find(function(p){ return p.id===_uid; })||null; renderRoster(); renderMypageBar(); if(g('checklist-cont')&&_tasks.length) renderChecklist(); }
 function loadParticipants(){
   var col=db.collection('events').doc(eventId).collection('participants');
   col.orderBy('registeredAt','asc').get().then(_ptDone).catch(function(){
@@ -578,6 +601,59 @@ function showLb(){
 function lbNav(d){ _lbIdx=(_lbIdx+d+_lbList.length)%_lbList.length; showLb(); }
 function closeLb(){ g('lightbox').classList.remove('open'); g('lb-img').src=''; }
 document.addEventListener('keydown',function(e){ if(!g('lightbox').classList.contains('open'))return; if(e.key==='Escape')closeLb(); else if(e.key==='ArrowLeft')lbNav(-1); else if(e.key==='ArrowRight')lbNav(1); });
+
+/* ════════ チェックリスト（③・会員側） ════════ */
+var _tasks=[];
+function _ckToday(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
+function loadChecklist(){
+  var ref=db.collection('events').doc(eventId).collection('tasks');
+  ref.get().then(function(snap){
+    var tasks=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    tasks.sort(function(a,b){ return (a.seq||0)-(b.seq||0); });
+    return Promise.all(tasks.map(function(t){
+      return ref.doc(t.id).collection('completions').get().then(function(cs){ t._comps=cs.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }); return t; }).catch(function(){ t._comps=[]; return t; });
+    }));
+  }).then(function(tasks){ _tasks=tasks; renderChecklist(); })
+    .catch(function(){ var el=g('checklist-cont'); if(el) el.innerHTML='<div class="card"><div class="sec">✅ チェックリスト</div><div style="font-size:12px;color:var(--ink3)">読み込みに失敗しました</div></div>'; });
+}
+function renderChecklist(){
+  var el=g('checklist-cont'); if(!el) return;
+  if(!_tasks.length){ el.innerHTML='<div class="card"><div class="sec">✅ チェックリスト</div><div style="font-size:12px;color:var(--ink3)">チェックリストはまだありません。</div></div>'; return; }
+  var today=_ckToday();
+  var h='<div class="card"><div class="sec">✅ チェックリスト</div>';
+  h+=_tasks.map(function(t){
+    var pub=(t.visibility!=='private');
+    var myc=(t._comps||[]).find(function(c){ return c.id===_uid; });
+    var done=!!(myc&&myc.done);
+    var over=(t.deadline&&t.deadline<today&&!done);
+    var hh='<div class="ck-task '+(pub?'pub':'priv')+(done?' done':'')+'">'
+      +'<div class="ck-hd"><div class="ck-ttl'+(done?' done':'')+'">'+esc(t.title||'')+'</div><span class="ck-vis '+(pub?'pub':'priv')+'">'+(pub?'公開':'非公開')+'</span></div>';
+    if(t.content) hh+='<div class="ck-content">'+esc(t.content)+'</div>';
+    if(t.deadline) hh+='<div class="ck-dl'+(over?' over':'')+'">期限: '+esc(t.deadline)+(over?'（超過）':'')+'</div>';
+    if(_isReal) hh+='<button class="ck-btn '+(done?'did':'todo')+'" onclick="toggleTask(\''+esc(t.id)+'\')">'+(done?'✓ 完了済み（取り消す）':'完了にする')+'</button>';
+    else hh+='<div style="font-size:11px;color:var(--ink3);margin-top:6px">会員ログインで完了操作ができます</div>';
+    if(pub){
+      var comps={}; (t._comps||[]).forEach(function(c){ comps[c.id]=c; });
+      var list=_participants||[]; var doneN=0;
+      var pl=list.map(function(p){ var c=comps[p.id]; var ok=!!(c&&c.done); if(ok)doneN++; return '<span class="ck-p'+(ok?' ok':'')+'">'+(ok?'✓ ':'□ ')+esc(p.nickname||'（会員）')+'</span>'; }).join('');
+      hh+='<div class="ck-status"><div class="sh">全員の状況（'+doneN+'/'+list.length+'）</div>'+(list.length?'<div class="ck-plist">'+pl+'</div>':'<div style="font-size:12px;color:var(--ink3)">参加登録者がいません</div>')+'</div>';
+    }
+    return hh+'</div>';
+  }).join('');
+  h+='</div>';
+  el.innerHTML=h;
+}
+function toggleTask(taskId){
+  if(!_isReal) return;
+  var t=_tasks.find(function(x){return x.id===taskId;}); if(!t) return;
+  var myc=(t._comps||[]).find(function(c){ return c.id===_uid; });
+  var newDone=!(myc&&myc.done);
+  db.collection('events').doc(eventId).collection('tasks').doc(taskId).collection('completions').doc(_uid)
+    .set({ authUid:_uid, memberId:_memberId||'', memberName:_memberName||'', done:newDone,
+      doneAt:newDone?firebase.firestore.FieldValue.serverTimestamp():null,
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
+    .then(function(){ loadChecklist(); }).catch(function(e){ toast('更新失敗: '+e.message); });
+}
 
 /* ════════ アンケート（会員側） ════════ */
 var QTYPE={single:'単一選択',multi:'複数選択',text:'自由記述',rating:'5段階評価'};
