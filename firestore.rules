@@ -147,6 +147,20 @@ service cloud.firestore {
           || (realUser() && resource.data.get('uploaderUid', '') == request.auth.uid);
       }
 
+      // チェックリスト項目: 認証会員は閲覧可、編集はスタッフ。
+      // 完了状況(docID=authUid): 本人が作成・更新・取消、スタッフは全操作可、会員間で閲覧可(公開項目の共有用)。
+      match /tasks/{tid} {
+        allow read: if signedIn();
+        allow write: if isStaff();
+        match /completions/{uid} {
+          allow read: if signedIn();
+          allow create, update: if isStaff()
+            || (realUser() && request.auth.uid == uid
+                && request.resource.data.get('authUid', '') == request.auth.uid);
+          allow delete: if isStaff() || (realUser() && request.auth.uid == uid);
+        }
+      }
+
       // 参加者プロフィール（docID=authUid）: 認証会員は名簿として閲覧可。
       // 本人が自己登録・編集・取消（authUidを本人に固定）。スタッフは全操作可。
       match /participants/{uid} {
