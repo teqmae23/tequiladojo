@@ -95,6 +95,17 @@ a{color:var(--gold-d)}
 .mpbtn{background:var(--gold-d);color:var(--cream);border:none;border-radius:20px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer}
 .mpbtn.off{background:var(--cream3);color:var(--ink3);cursor:default}
 .soon-card{background:var(--white);border:1px dashed var(--border2);border-radius:var(--rl);padding:20px;margin-bottom:14px;text-align:center;color:var(--ink3);font-size:13px}
+.sc-day{font-size:13px;font-weight:700;color:var(--gold-d);margin:14px 0 6px}
+.sc-item{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)}
+.sc-item:last-child{border-bottom:none}
+.sc-time{min-width:46px;font-family:var(--mono);font-size:13px;color:var(--ink2);flex:0 0 auto;padding-top:1px}
+.sc-ic{font-size:16px;flex:0 0 auto}
+.sc-body{flex:1;min-width:0}
+.sc-ttl{font-size:14px;font-weight:600;color:var(--ink)}
+.sc-note{font-size:12px;color:var(--ink3);line-height:1.6;margin-top:2px;white-space:pre-wrap}
+.sc-meta{display:flex;gap:12px;flex-wrap:wrap;margin-top:3px;font-size:12px}
+.sc-cost{color:var(--gold-d);font-weight:600}
+.sc-map{color:var(--teal);text-decoration:none;font-weight:600}
 .mbg{position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:200;display:none;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto}
 .mbg.open{display:flex}
 .modal{background:var(--white);border-radius:var(--rl);width:100%;max-width:460px;margin-top:24px;box-shadow:var(--shadow-lg)}
@@ -198,16 +209,18 @@ function render(ev){
     +'<div class="ev-period">📅 '+esc(period)+'</div></div>';
   var containers=(Array.isArray(ev.containers)&&ev.containers.length)?ev.containers
     :[{type:'overview',enabled:true,config:{mypage:{survey:true,checklist:true,image:true}}},{type:'survey',enabled:true,config:{}}];
-  var hasSurvey=false;
+  var hasSurvey=false, hasSchedule=false;
   containers.forEach(function(c){
     if(!c||!c.enabled) return;
     if(c.type==='overview') html+=overviewHtml(ev, period);
     else if(c.type==='survey'){ html+='<div id="surveys"></div>'; hasSurvey=true; }
+    else if(c.type==='schedule'){ html+='<div id="schedule-cont"><div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div></div>'; hasSchedule=true; }
     else if(CN_NAMES[c.type]) html+='<div class="soon-card">'+CN_NAMES[c.type]+'<br><span style="font-size:11px">このコンテンツは準備中です。</span></div>';
   });
   g('wrap').innerHTML=html;
   document.title=(ev.name||'イベント')+' — テキーラ道場';
   loadParticipants();
+  if(hasSchedule) loadSchedule();
   if(hasSurvey) loadSurveys(ev.published);
 }
 function overviewHtml(ev, period){
@@ -300,6 +313,41 @@ function deleteParticipant(){
     .catch(function(e){ g('mp-err').textContent='取消失敗: '+e.message; });
 }
 g('mp-modal').addEventListener('click',function(e){ if(e.target===g('mp-modal')) closeMp(); });
+
+/* ════════ スケジュール/タイムテーブル（会員側・②） ════════ */
+var SCAT_ICON={flight:'✈️',move:'🚗',hotel:'🏨',checkin:'🔑',meal:'🍴',distillery:'🏭',activity:'🎉',free:'🚶',other:'📍'};
+function loadSchedule(){
+  db.collection('events').doc(eventId).collection('scheduleItems').get().then(function(snap){
+    var items=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    items.sort(function(a,b){ var ka=(a.date||'')+' '+(a.time||'99:99')+' '+('00'+(a.seq||0)).slice(-3), kb=(b.date||'')+' '+(b.time||'99:99')+' '+('00'+(b.seq||0)).slice(-3); return ka<kb?-1:1; });
+    renderSchedule(items);
+  }).catch(function(){ var el=g('schedule-cont'); if(el) el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">読み込みに失敗しました</div></div>'; });
+}
+function gmapLink(it){ if(it.lat!=null&&it.lng!=null) return 'https://www.google.com/maps/search/?api=1&query='+it.lat+','+it.lng; return it.mapUrl||''; }
+function renderSchedule(items){
+  var el=g('schedule-cont'); if(!el) return;
+  if(!items.length){ el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">スケジュールは準備中です。</div></div>'; return; }
+  var byDay={}; items.forEach(function(it){ (byDay[it.date||'']=byDay[it.date||'']||[]).push(it); });
+  var days=Object.keys(byDay).sort();
+  var h='<div class="card"><div class="sec">🗓 スケジュール</div>';
+  days.forEach(function(d){
+    h+='<div class="sc-day">'+esc(fmtDate(d))+' '+wday(d)+'</div>';
+    h+=byDay[d].map(function(it){
+      var ic=it.overnight?'🏨':(SCAT_ICON[it.category]||'📍');
+      var meta=[];
+      if(it.cost) meta.push('<span class="sc-cost">'+esc(it.cost)+'</span>');
+      var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener">📍 地図</a>');
+      if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="https://www.google.com/maps/dir/?api=1&origin='+it.lat+','+it.lng+'&destination='+it.toLat+','+it.toLng+'" target="_blank" rel="noopener">🚗 ルート</a>');
+      return '<div class="sc-item"><span class="sc-time">'+esc(it.time||'—')+'</span><span class="sc-ic">'+ic+'</span>'
+        +'<div class="sc-body"><div class="sc-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'')+'</div>'
+        +(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')
+        +(meta.length?'<div class="sc-meta">'+meta.join('')+'</div>':'')
+        +'</div></div>';
+    }).join('');
+  });
+  h+='</div>';
+  el.innerHTML=h;
+}
 
 /* ════════ アンケート（会員側） ════════ */
 var QTYPE={single:'単一選択',multi:'複数選択',text:'自由記述',rating:'5段階評価'};
