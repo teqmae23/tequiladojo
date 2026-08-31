@@ -7,6 +7,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 var FIREBASE_CONFIG={
   apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -106,6 +108,10 @@ a{color:var(--gold-d)}
 .sc-meta{display:flex;gap:12px;flex-wrap:wrap;margin-top:3px;font-size:12px}
 .sc-cost{color:var(--gold-d);font-weight:600}
 .sc-map{color:var(--teal);text-decoration:none;font-weight:600}
+#sc-map-el{height:260px;border-radius:var(--r);border:1px solid var(--border2);margin-bottom:12px;z-index:0}
+.sc-item.has-geo{cursor:pointer}
+.sc-item.has-geo:hover{background:var(--cream)}
+.sc-pin{color:var(--teal);font-weight:600;font-size:12px}
 .mbg{position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:200;display:none;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto}
 .mbg.open{display:flex}
 .modal{background:var(--white);border-radius:var(--rl);width:100%;max-width:460px;margin-top:24px;box-shadow:var(--shadow-lg)}
@@ -324,21 +330,25 @@ function loadSchedule(){
   }).catch(function(){ var el=g('schedule-cont'); if(el) el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">読み込みに失敗しました</div></div>'; });
 }
 function gmapLink(it){ if(it.lat!=null&&it.lng!=null) return 'https://www.google.com/maps/search/?api=1&query='+it.lat+','+it.lng; return it.mapUrl||''; }
+var _scMarkers={}, _scMap=null;
 function renderSchedule(items){
   var el=g('schedule-cont'); if(!el) return;
   if(!items.length){ el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">スケジュールは準備中です。</div></div>'; return; }
+  var hasGeo=items.some(function(it){ return it.lat!=null&&it.lng!=null; });
   var byDay={}; items.forEach(function(it){ (byDay[it.date||'']=byDay[it.date||'']||[]).push(it); });
   var days=Object.keys(byDay).sort();
   var h='<div class="card"><div class="sec">🗓 スケジュール</div>';
+  if(hasGeo && window.L) h+='<div id="sc-map-el"></div>';
   days.forEach(function(d){
     h+='<div class="sc-day">'+esc(fmtDate(d))+' '+wday(d)+'</div>';
     h+=byDay[d].map(function(it){
       var ic=it.overnight?'🏨':(SCAT_ICON[it.category]||'📍');
+      var geo=(it.lat!=null&&it.lng!=null);
       var meta=[];
       if(it.cost) meta.push('<span class="sc-cost">'+esc(it.cost)+'</span>');
-      var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener">📍 地図</a>');
-      if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="https://www.google.com/maps/dir/?api=1&origin='+it.lat+','+it.lng+'&destination='+it.toLat+','+it.toLng+'" target="_blank" rel="noopener">🚗 ルート</a>');
-      return '<div class="sc-item"><span class="sc-time">'+esc(it.time||'—')+'</span><span class="sc-ic">'+ic+'</span>'
+      var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
+      if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="https://www.google.com/maps/dir/?api=1&origin='+it.lat+','+it.lng+'&destination='+it.toLat+','+it.toLng+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🚗 ルート</a>');
+      return '<div class="sc-item'+(geo?' has-geo':'')+'"'+(geo?' onclick="focusSched(\''+esc(it.id)+'\')"':'')+'><span class="sc-time">'+esc(it.time||'—')+'</span><span class="sc-ic">'+ic+'</span>'
         +'<div class="sc-body"><div class="sc-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'')+'</div>'
         +(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')
         +(meta.length?'<div class="sc-meta">'+meta.join('')+'</div>':'')
@@ -347,6 +357,34 @@ function renderSchedule(items){
   });
   h+='</div>';
   el.innerHTML=h;
+  if(hasGeo && window.L) initSchedMap(items);
+}
+function initSchedMap(items){
+  var mapEl=g('sc-map-el'); if(!mapEl||!window.L) return;
+  if(_scMap){ _scMap.remove(); _scMap=null; }
+  _scMarkers={};
+  var map=L.map(mapEl,{scrollWheelZoom:false}); _scMap=map;
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+  var bounds=[];
+  items.forEach(function(it){
+    if(it.lat==null||it.lng==null) return;
+    var ic=it.overnight?'🏨':(SCAT_ICON[it.category]||'📍');
+    var m=L.marker([it.lat,it.lng]).addTo(map).bindPopup('<b>'+esc((it.time?it.time+' ':'')+(it.title||''))+'</b>'+(it.date?'<br>'+esc(fmtDate(it.date)):'')+(it.cost?'<br>'+esc(it.cost):''));
+    _scMarkers[it.id]=m; bounds.push([it.lat,it.lng]);
+    if(it.isMove&&it.toLat!=null&&it.toLng!=null){
+      L.polyline([[it.lat,it.lng],[it.toLat,it.toLng]],{color:'#c8921e',weight:3,dashArray:'6,6'}).addTo(map);
+      L.circleMarker([it.toLat,it.toLng],{radius:5,color:'#7a5610',fillColor:'#c8921e',fillOpacity:1}).addTo(map).bindPopup('着: '+esc(it.title||''));
+      bounds.push([it.toLat,it.toLng]);
+    }
+  });
+  if(bounds.length) map.fitBounds(bounds,{padding:[26,26],maxZoom:13});
+  setTimeout(function(){ map.invalidateSize(); },120);
+}
+function focusSched(id){
+  var m=_scMarkers[id]; if(!m||!_scMap) return;
+  var el=g('sc-map-el'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'});
+  _scMap.setView(m.getLatLng(), Math.max(_scMap.getZoom(),12), {animate:true});
+  m.openPopup();
 }
 
 /* ════════ アンケート（会員側） ════════ */
