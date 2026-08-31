@@ -7,6 +7,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <script>
 var FIREBASE_CONFIG={
   apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -83,6 +84,12 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .sch-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px}
 .sch-row .d{min-width:110px;font-family:var(--mono);color:var(--ink2)}
 .sch-row input[type=time]{padding:6px 8px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--white)}
+.doc-item{display:flex;align-items:center;gap:9px;background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:8px 11px;margin-bottom:6px}
+.doc-main{flex:1;min-width:0}
+.doc-ttl{font-size:13px;font-weight:600;color:var(--ink);word-break:break-all}
+.doc-sub{font-size:11px;color:var(--ink3);margin-top:1px}
+.doc-item a{color:var(--teal);font-size:12px;text-decoration:none;font-weight:600;flex:0 0 auto}
+.doc-item .rm{border:none;background:none;color:var(--red);font-size:15px;cursor:pointer;flex:0 0 auto}
 .tk-item{display:flex;align-items:center;gap:9px;background:var(--white);border:1px solid var(--border);border-left-width:4px;border-radius:var(--r);padding:9px 11px;margin-bottom:6px;cursor:pointer}
 .tk-item.pub{border-left-color:var(--teal)}
 .tk-item.priv{border-left-color:var(--ink3)}
@@ -283,6 +290,30 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
   </div>
 </div>
 
+<!-- ドキュメント管理モーダル -->
+<div class="mbg" id="doc-mgr-modal">
+  <div class="modal" style="max-width:600px">
+    <div class="mhd"><span id="doc-mgr-title">ドキュメント</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeDocMgr()">✕</button></div>
+    <div class="mbd">
+      <div style="font-weight:700;font-size:13px;color:var(--gold-d);margin-bottom:8px">📤 発行ドキュメント（会員全員が閲覧可）</div>
+      <div class="fg"><label class="fl">タイトル <span style="color:var(--red)">*</span></label><input class="fi" id="doc-title" placeholder="例: 旅程表 v2 / 保険の案内"></div>
+      <div class="row2">
+        <div class="fg"><label class="fl">ファイル</label><input class="fi" id="doc-file" type="file"></div>
+        <div class="fg"><label class="fl">またはリンクURL</label><input class="fi" id="doc-link" placeholder="https://..."></div>
+      </div>
+      <div class="fg"><label class="fl">メモ（任意）</label><input class="fi" id="doc-note"></div>
+      <button class="btn bp sm" id="doc-up" onclick="addDoc()">＋ 追加</button>
+      <div class="err" id="doc-err"></div>
+      <div id="doc-prog" style="font-size:12px;color:var(--ink3);margin-top:6px"></div>
+      <hr class="fsep" style="margin:14px 0;border:none;border-top:1px solid var(--border)">
+      <div id="doc-list"><div class="ec">読み込み中…</div></div>
+      <div style="font-weight:700;font-size:13px;color:var(--ink2);margin:16px 0 8px">📥 提出書類（チェックリスト経由・管理者のみ）</div>
+      <div id="doc-sub-list"><div class="ec">なし</div></div>
+    </div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeDocMgr()">閉じる</button></div>
+  </div>
+</div>
+
 <!-- チェックリスト管理モーダル -->
 <div class="mbg" id="tk-mgr-modal">
   <div class="modal" style="max-width:600px">
@@ -372,6 +403,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 <script>
 firebase.initializeApp(FIREBASE_CONFIG);
 var auth=firebase.auth(), db=firebase.firestore();
+var storage=(firebase.storage?firebase.storage():null);
 function g(id){return document.getElementById(id);}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function toast(m,t){var d=document.createElement('div');d.className='toast'+(t?' '+t:'');d.textContent=m;document.body.appendChild(d);setTimeout(function(){d.remove();},2800);}
@@ -413,6 +445,7 @@ function render(){
       +'<div class="ev-actions"><button class="btn bs sm" onclick="openEvent(\''+esc(ev.id)+'\')">編集</button>'
       +'<button class="btn bs sm" onclick="openSchedMgr(\''+esc(ev.id)+'\')">🗓 スケジュール</button>'
       +'<button class="btn bs sm" onclick="openTaskMgr(\''+esc(ev.id)+'\')">✅ チェックリスト</button>'
+      +'<button class="btn bs sm" onclick="openDocMgr(\''+esc(ev.id)+'\')">📁 ドキュメント</button>'
       +'<button class="btn bs sm" onclick="openSurveyMgr(\''+esc(ev.id)+'\')">📋 アンケート</button>'
       +'<a class="btn bs sm" style="text-decoration:none" href="/event.html?id='+encodeURIComponent(ev.id)+'" target="_blank">TOPを見る</a></div></div>'
       +'<div class="ev-meta">📅 '+esc(fmtRange(ev.startDate,ev.endDate))+(ev.location?'　📍 '+esc(ev.location):'')+'　👥 参加者 '+np+'名</div>'
@@ -955,6 +988,79 @@ function delTask(){
     .then(function(){ return ref.delete(); })
     .then(function(){ toast('削除しました'); closeTaskEd(); loadTasks(); })
     .catch(function(e){ g('tk-err').textContent='削除失敗: '+e.message; });
+}
+
+/* ════════ ドキュメント保管庫（⑤） ════════ */
+var _docEventId=null, _docs=[];
+function docCol(eid){ return db.collection('events').doc(eid).collection('documents'); }
+function openDocMgr(eventId){
+  _docEventId=eventId;
+  var ev=events.find(function(x){return x.id===eventId;});
+  g('doc-mgr-title').textContent='📁 ドキュメント — '+(ev?ev.name:'');
+  g('doc-title').value=''; g('doc-file').value=''; g('doc-link').value=''; g('doc-note').value=''; g('doc-err').textContent=''; g('doc-prog').textContent='';
+  g('doc-list').innerHTML='<div class="ec">読み込み中…</div>'; g('doc-sub-list').innerHTML='';
+  g('doc-mgr-modal').classList.add('open');
+  loadDocs();
+}
+function closeDocMgr(){ g('doc-mgr-modal').classList.remove('open'); }
+g('doc-mgr-modal').addEventListener('click',function(e){ if(e.target===g('doc-mgr-modal')) closeDocMgr(); });
+function loadDocs(){
+  docCol(_docEventId).get().then(function(snap){
+    _docs=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    _docs.sort(function(a,b){ return (a.seq||0)-(b.seq||0); });
+    renderDocs();
+  }).catch(function(e){ g('doc-list').innerHTML='<div class="ec">読込失敗: '+esc(e.message)+'</div>'; });
+}
+function fmtSize(n){ if(!n) return ''; return n>1048576?((n/1048576).toFixed(1)+'MB'):(Math.round(n/1024)+'KB'); }
+function docRow(d, admin){
+  var meta=[]; if(d.type==='link') meta.push('リンク'); else if(d.fileName) meta.push(esc(d.fileName)); if(d.size) meta.push(fmtSize(d.size)); if(d.note) meta.push(esc(d.note));
+  if(d.category==='submission'&&d.uploaderName) meta.push('提出: '+esc(d.uploaderName));
+  return '<div class="doc-item"><div class="doc-main"><div class="doc-ttl">'+esc(d.title||d.fileName||'（無題）')+'</div>'+(meta.length?'<div class="doc-sub">'+meta.join('　')+'</div>':'')+'</div>'
+    +(d.url?'<a href="'+esc(d.url)+'" target="_blank" rel="noopener">開く</a>':'')
+    +(admin?'<button class="rm" title="削除" onclick="delDoc(\''+esc(d.id)+'\')">×</button>':'')+'</div>';
+}
+function renderDocs(){
+  var issued=_docs.filter(function(d){ return d.category!=='submission'; });
+  var subs=_docs.filter(function(d){ return d.category==='submission'; });
+  g('doc-list').innerHTML=issued.length?issued.map(function(d){ return docRow(d,true); }).join(''):'<div class="ec">発行ドキュメントはありません。</div>';
+  g('doc-sub-list').innerHTML=subs.length?subs.map(function(d){ return docRow(d,true); }).join(''):'<div class="ec">提出書類はありません。</div>';
+}
+function addDoc(){
+  var title=(g('doc-title').value||'').trim();
+  var link=(g('doc-link').value||'').trim();
+  var file=(g('doc-file').files&&g('doc-file').files[0])||null;
+  if(!title){ g('doc-err').textContent='タイトルを入力してください'; return; }
+  if(!file&&!link){ g('doc-err').textContent='ファイルまたはリンクURLを指定してください'; return; }
+  g('doc-err').textContent=''; var btn=g('doc-up'); btn.disabled=true;
+  var pid=docCol(_docEventId).doc().id;
+  var base={ title:title, note:(g('doc-note').value||'').trim(), category:'issued', seq:_docs.length,
+    createdAt:firebase.firestore.FieldValue.serverTimestamp() };
+  function save(extra){ return docCol(_docEventId).doc(pid).set(Object.assign(base,extra)); }
+  var p;
+  if(file){
+    if(!storage){ g('doc-err').textContent='この環境ではファイルアップロードを利用できません'; btn.disabled=false; return; }
+    if(file.size>20*1024*1024){ g('doc-err').textContent='ファイルは20MB以内にしてください'; btn.disabled=false; return; }
+    g('doc-prog').textContent='アップロード中…';
+    var ext=(file.name.match(/\.([A-Za-z0-9]+)$/)||[,'bin'])[1].toLowerCase();
+    var path='event_docs/'+_docEventId+'/'+pid+'.'+ext;
+    var ref=storage.ref(path);
+    p=ref.put(file,{contentType:file.type||'application/octet-stream'}).then(function(){ return ref.getDownloadURL(); })
+      .then(function(url){ return save({ type:'file', url:url, fileName:file.name, size:file.size, storagePath:path }); });
+  } else {
+    p=save({ type:'link', url:link });
+  }
+  p.then(function(){ toast('追加しました'); g('doc-title').value=''; g('doc-file').value=''; g('doc-link').value=''; g('doc-note').value=''; g('doc-prog').textContent=''; loadDocs(); })
+   .catch(function(e){ g('doc-err').textContent='追加失敗: '+e.message; })
+   .finally(function(){ btn.disabled=false; });
+}
+function delDoc(id){
+  if(!confirm('このドキュメントを削除しますか？')) return;
+  var d=_docs.find(function(x){return x.id===id;});
+  var after=function(){ toast('削除しました'); loadDocs(); };
+  docCol(_docEventId).doc(id).delete().then(function(){
+    if(d&&d.storagePath&&storage){ storage.ref(d.storagePath).delete().catch(function(){}); }
+    after();
+  }).catch(function(e){ toast('削除失敗: '+e.message,'err'); });
 }
 </script>
 </body>

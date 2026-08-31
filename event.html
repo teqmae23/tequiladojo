@@ -151,6 +151,12 @@ a{color:var(--gold-d)}
 .ck-plist{display:flex;flex-wrap:wrap;gap:6px}
 .ck-p{font-size:12px;padding:3px 9px;border-radius:12px;background:var(--cream2);color:var(--ink2)}
 .ck-p.ok{background:#e7f6f1;color:var(--teal)}
+.doc-item{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;margin-bottom:8px;background:var(--white)}
+.doc-ic{font-size:20px;flex:0 0 auto}
+.doc-main{flex:1;min-width:0}
+.doc-ttl{font-size:14px;font-weight:600;color:var(--ink);word-break:break-all}
+.doc-sub{font-size:11px;color:var(--ink3);margin-top:2px;word-break:break-all}
+.doc-open{color:var(--teal);text-decoration:none;font-weight:600;font-size:13px;flex:0 0 auto}
 .mbg{position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:200;display:none;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto}
 .mbg.open{display:flex}
 .modal{background:var(--white);border-radius:var(--rl);width:100%;max-width:460px;margin-top:24px;box-shadow:var(--shadow-lg)}
@@ -273,13 +279,14 @@ function render(ev){
     +'<div class="ev-period">📅 '+esc(period)+'</div></div>';
   var containers=(Array.isArray(ev.containers)&&ev.containers.length)?ev.containers
     :[{type:'overview',enabled:true,config:{mypage:{survey:true,checklist:true,image:true}}},{type:'survey',enabled:true,config:{}}];
-  var hasSurvey=false, hasSchedule=false, hasChecklist=false;
+  var hasSurvey=false, hasSchedule=false, hasChecklist=false, hasDocs=false;
   containers.forEach(function(c){
     if(!c||!c.enabled) return;
     if(c.type==='overview') html+=overviewHtml(ev, period);
     else if(c.type==='survey'){ html+='<div id="surveys"></div>'; hasSurvey=true; }
     else if(c.type==='schedule'){ html+='<div id="schedule-cont"><div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div></div>'; hasSchedule=true; }
     else if(c.type==='checklist'){ html+='<div id="checklist-cont"><div class="card"><div class="sec">✅ チェックリスト</div><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div></div>'; hasChecklist=true; }
+    else if(c.type==='documents'){ html+='<div id="documents-cont"><div class="card"><div class="sec">📁 ドキュメント</div><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div></div>'; hasDocs=true; }
     else if(CN_NAMES[c.type]) html+='<div class="soon-card">'+CN_NAMES[c.type]+'<br><span style="font-size:11px">このコンテンツは準備中です。</span></div>';
   });
   g('wrap').innerHTML=html;
@@ -287,6 +294,7 @@ function render(ev){
   loadParticipants();
   if(hasSchedule) loadSchedule();
   if(hasChecklist) loadChecklist();
+  if(hasDocs) loadDocuments();
   if(hasSurvey) loadSurveys(ev.published);
 }
 function overviewHtml(ev, period){
@@ -653,6 +661,27 @@ function toggleTask(taskId){
       doneAt:newDone?firebase.firestore.FieldValue.serverTimestamp():null,
       updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
     .then(function(){ loadChecklist(); }).catch(function(e){ toast('更新失敗: '+e.message); });
+}
+
+/* ════════ ドキュメント保管庫（⑤・会員側） ════════ */
+function loadDocuments(){
+  db.collection('events').doc(eventId).collection('documents').where('category','==','issued').get().then(function(snap){
+    var docs=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    docs.sort(function(a,b){ return (a.seq||0)-(b.seq||0); });
+    renderDocuments(docs);
+  }).catch(function(){ var el=g('documents-cont'); if(el) el.innerHTML='<div class="card"><div class="sec">📁 ドキュメント</div><div style="font-size:12px;color:var(--ink3)">読み込みに失敗しました</div></div>'; });
+}
+function docIcon(d){ var f=(d.fileName||'').toLowerCase(); if(d.type==='link')return '🔗'; if(/\.(jpg|jpeg|png|gif|webp)$/.test(f))return '🖼'; if(/\.pdf$/.test(f))return '📄'; if(/\.(xls|xlsx|csv)$/.test(f))return '📊'; if(/\.(docx?|txt)$/.test(f))return '📝'; return '📎'; }
+function renderDocuments(docs){
+  var el=g('documents-cont'); if(!el) return;
+  if(!docs.length){ el.innerHTML='<div class="card"><div class="sec">📁 ドキュメント</div><div style="font-size:12px;color:var(--ink3)">ドキュメントはまだありません。</div></div>'; return; }
+  var h='<div class="card"><div class="sec">📁 ドキュメント</div>';
+  h+=docs.map(function(d){
+    var meta=[]; if(d.fileName) meta.push(esc(d.fileName)); if(d.note) meta.push(esc(d.note));
+    return '<div class="doc-item"><span class="doc-ic">'+docIcon(d)+'</span><div class="doc-main"><div class="doc-ttl">'+esc(d.title||d.fileName||'')+'</div>'+(meta.length?'<div class="doc-sub">'+meta.join('　')+'</div>':'')+'</div>'+(d.url?'<a class="doc-open" href="'+esc(d.url)+'" target="_blank" rel="noopener">開く ↗</a>':'')+'</div>';
+  }).join('');
+  h+='</div>';
+  el.innerHTML=h;
 }
 
 /* ════════ アンケート（会員側） ════════ */
