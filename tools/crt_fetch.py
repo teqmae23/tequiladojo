@@ -24,7 +24,8 @@ Power BI 公開レポートAPIを直接呼ぶ
   python3 crt_fetch.py --dump
 """
 
-import requests, json, sys, argparse, csv
+import requests, json, sys, argparse, csv, os, re, base64
+from urllib.parse import unquote
 from datetime import datetime
 
 ENDPOINT = "https://wabi-paas-1-scus-api.analysis.windows.net/public/reports/querydata"
@@ -45,6 +46,86 @@ HEADERS = {
     "Referer": "https://app.powerbi.com/",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
+
+# ── Power BI リソースキーの動的解決 ─────────────────────────────
+# CRT が公開レポートを再発行すると X-PowerBI-ResourceKey が変わり 401 になる。
+# 実行時に CRT 統計ページから現在のキーを取得し、失敗時はハードコード値へフォールバック。
+# 環境変数 CRT_RESOURCE_KEY があれば最優先で使用（手動上書き用）。
+CRT_STATS_PAGES = [
+    "https://www.crt.org.mx/EstadisticasCRTweb/",
+    "https://www.crt.org.mx/estadisticascrtweb/",
+]
+_GUID_RE = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
+
+def _decode_pbi_token(tok):
+    """app.powerbi.com/view?r=<token> の token を base64url デコードして JSON を返す"""
+    tok = unquote(tok)
+    s = tok.replace('-', '+').replace('_', '/')
+    s += '=' * (-len(s) % 4)
+    try:
+        return json.loads(base64.b64decode(s).decode('utf-8', 'replace'))
+    except Exception:
+        return None
+
+def _scan_html_for_key(html, verbose=False):
+    """HTML から resourceKey / view?r トークンを探す。(key, meta) を返す。"""
+    # 1) view?r=<token> → JSON.k がリソースキー
+    for tok in re.findall(r'powerbi\.com/view\?r=([A-Za-z0-9%_\-\.]+)', html):
+        j = _decode_pbi_token(tok)
+        if j and j.get('k'):
+            if verbose: print(f"[resolve] view?r トークンからキー取得: {j['k']}")
+            return j['k'], j
+    # 2) resourceKey / ctid 直書き
+    m = re.search(r'(?:X-PowerBI-ResourceKey|resourceKey)"?\s*[:=]\s*"?(' + _GUID_RE.pattern + ')', html, re.I)
+    if m:
+        if verbose: print(f"[resolve] resourceKey 直接検出: {m.group(1)}")
+        return m.group(1), None
+    return None, None
+
+def resolve_resource_key(verbose=False):
+    """現在の Power BI リソースキーを解決して返す（見つからなければ既定値）。"""
+    env = os.environ.get("CRT_RESOURCE_KEY", "").strip()
+    if env:
+        if verbose: print(f"[resolve] 環境変数 CRT_RESOURCE_KEY を使用: {env}")
+        return env
+    ua = {"User-Agent": HEADERS["User-Agent"]}
+    sess = requests.Session()
+    seen = set()
+    queue = list(CRT_STATS_PAGES)
+    while queue:
+        url = queue.pop(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        try:
+            r = sess.get(url, headers=ua, timeout=30)
+            html = r.text
+        except Exception as e:
+            if verbose: print(f"[resolve] {url} 取得失敗: {e}")
+            continue
+        key, meta = _scan_html_for_key(html, verbose)
+        if key:
+            return key
+        # レポートを別ページ/iframe に埋め込んでいる場合は追う（同サイト+powerbiのみ）
+        iframes = re.findall(r'<iframe[^>]+src="([^"]+)"', html, re.I)
+        for u in iframes:
+            if u.startswith('//'): u = 'https:' + u
+            if 'powerbi.com' in u:
+                key, meta = _scan_html_for_key(u, verbose)  # iframe src 自体に view?r が入る場合
+                if key:
+                    return key
+        if verbose:
+            pu = re.findall(r'https?://[^"\'\)\s]*powerbi[^"\'\)\s]*', html)
+            print(f"[resolve] {url}: HTML {len(html)}B / powerbi参照 {len(pu)}件 / iframe {len(iframes)}件")
+            for u in pu[:10]: print("   pbi:", u)
+            for u in iframes[:10]: print("   iframe:", u)
+    if verbose: print(f"[resolve] 解決できず。既定キーにフォールバック: {RESOURCE_KEY}")
+    return RESOURCE_KEY
+
+def apply_resource_key(verbose=False):
+    key = resolve_resource_key(verbose)
+    HEADERS["X-PowerBI-ResourceKey"] = key
+    return key
 
 def build_query(columns, filters=None, measures=None, year_range=None):
     """Power BI DAX クエリを構築
@@ -579,7 +660,14 @@ if __name__ == "__main__":
     parser.add_argument("--month",        type=int, help="取得月（--yearと併用）")
     parser.add_argument("--compare-month", type=int, help="比較・更新する月（N ヶ月前）",
                         dest="compare_month")
+    parser.add_argument("--probe", action="store_true", help="リソースキー解決のみ実行（デバッグ）")
     args = parser.parse_args()
+
+    # 実行時に現在の Power BI リソースキーを解決（401対策）
+    key = apply_resource_key(verbose=True)
+    print(f"[resolve] 使用するリソースキー: {key}")
+    if args.probe:
+        sys.exit(0)
 
     if args.discover:
         discover_columns()
