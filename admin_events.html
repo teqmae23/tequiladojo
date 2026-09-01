@@ -8,6 +8,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
+<script src="/tz-lookup.js"></script>
 <script>
 var FIREBASE_CONFIG={
   apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -100,6 +101,8 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .tk-badge.pub{background:#e7f6f1;color:var(--teal)}
 .tk-badge.priv{background:var(--cream3);color:var(--ink3)}
 .se-day{font-size:12px;font-weight:700;color:var(--gold-d);margin:12px 0 6px;padding-bottom:3px;border-bottom:1px solid var(--border)}
+.se-idl{display:flex;align-items:center;gap:10px;margin:8px 0;color:#b0442e;font-size:11px;font-weight:700;letter-spacing:.06em}
+.se-idl::before,.se-idl::after{content:"";flex:1;border-top:1px dashed #d79a86}
 .se-day:first-child{margin-top:0}
 .se-item{display:flex;align-items:center;gap:9px;background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:8px 11px;margin-bottom:6px}
 .se-item.ov{background:#f6f1e6;border-style:dashed}
@@ -992,6 +995,15 @@ var SCAT=[
   {v:'activity',n:'🎉 アクティビティ'},{v:'free',n:'🚶 自由行動'},{v:'other',n:'📍 その他'}
 ];
 var SCAT_ICON={flight:'✈️',move:'🚗',hotel:'🏨',checkin:'🔑',meal:'🍴',distillery:'🏭',activity:'🎉',free:'🚶',other:'📍'};
+var SC_BG={flight:'#eaf1fb',move:'#f7efe0',hotel:'#f0ecf8',checkin:'#e8f5f0',meal:'#fbefe4',distillery:'#eef5e7',activity:'#fbe9ef',free:'#f0efea',other:'#f5f3ee'};
+function scBg(it){ return SC_BG[it&&it.category]||SC_BG.other; }
+// JST絶対時刻（会員側event.htmlと同じ考え方）で並べ替え・日付変更線判定
+function _tzOffMin(inst,tz){ var m={}; new Intl.DateTimeFormat('en-US',{timeZone:tz,hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(inst).forEach(function(p){m[p.type]=p.value;}); if(m.hour==='24')m.hour='00'; return Math.round((Date.UTC(+m.year,+m.month-1,+m.day,+m.hour,+m.minute,+m.second)-inst.getTime())/60000); }
+function _wallInstant(dateStr,timeStr,tz){ var dp=(dateStr||'').split('-'),tp=(timeStr||'00:00').split(':'); if(dp.length<3)return null; var g=Date.UTC(+dp[0],+dp[1]-1,+dp[2],(+tp[0]||0),(+tp[1]||0)); return new Date(g-_tzOffMin(new Date(g),tz)*60000); }
+function _safeTz(la,ln){ try{ return window.tzlookup?tzlookup(la,ln):null; }catch(e){ return null; } }
+function _schedInstant(it){ var tz=(it.lat!=null&&it.lng!=null)?_safeTz(it.lat,it.lng):null; return _wallInstant(it.date, it.time||'23:59', tz||'Asia/Tokyo'); }
+function _sortByJst(items){ return items.map(function(it,i){ var d=_schedInstant(it); return {it:it, ms:d?d.getTime():0, seq:it.seq||0, i:i}; }).sort(function(a,b){ return (a.ms-b.ms)||(a.seq-b.seq)||(a.i-b.i); }); }
+function _idlCross(it){ return !!(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null && Math.abs(it.toLng-it.lng)>180); }
 function schCol(eid){ return db.collection('events').doc(eid).collection('scheduleItems'); }
 function parseLatLng(url){
   if(!url) return null;
@@ -1039,21 +1051,26 @@ function loadSchedItems(){
     renderSchedList();
   }).catch(function(e){ g('sch-list').innerHTML='<div class="ec">読込失敗: '+esc(e.message)+'</div>'; });
 }
+function renderSchedItemRow(it){
+  var ic=it.overnight?'🏨':(SCAT_ICON[it.category]||'📍');
+  var sub=[]; if(it.note) sub.push(esc(it.note.slice(0,60))+(it.note.length>60?'…':'')); if(it.isMove) sub.push('🚗ルート'); if(it.lat!=null&&it.lng!=null) sub.push('📍地図');
+  return '<div class="se-item'+(it.overnight?' ov':'')+'" onclick="openSchedEd(\''+esc(it.id)+'\')" style="cursor:pointer;background:'+scBg(it)+'">'
+    +'<span class="se-t">'+esc(it.time||'—')+'</span><span class="se-ic">'+ic+'</span>'
+    +'<div class="se-main"><div class="se-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'（無題）')+'</div>'+(sub.length?'<div class="se-sub">'+sub.join('　')+'</div>':'')+'</div>'
+    +(it.cost?'<span class="se-cost">'+esc(it.cost)+'</span>':'')+'</div>';
+}
 function renderSchedList(){
   if(!_schItems.length){ g('sch-list').innerHTML='<div class="ec">スケジュール項目がありません。「＋ 項目追加」から登録してください。</div>'; g('sch-total').textContent=''; return; }
-  var total=0, byDay={};
-  _schItems.forEach(function(it){ total+=costNum(it.cost); (byDay[it.date||'']=byDay[it.date||'']||[]).push(it); });
-  var days=Object.keys(byDay).sort();
-  g('sch-list').innerHTML=days.map(function(d){
-    return '<div class="se-day">'+esc(d||'日付未設定')+'</div>'+byDay[d].map(function(it){
-      var ic=it.overnight?'🏨':(SCAT_ICON[it.category]||'📍');
-      var sub=[]; if(it.note) sub.push(esc(it.note.slice(0,60))+(it.note.length>60?'…':'')); if(it.isMove) sub.push('🚗ルート'); if(it.lat!=null&&it.lng!=null) sub.push('📍地図');
-      return '<div class="se-item'+(it.overnight?' ov':'')+'" onclick="openSchedEd(\''+esc(it.id)+'\')" style="cursor:pointer">'
-        +'<span class="se-t">'+esc(it.time||'—')+'</span><span class="se-ic">'+ic+'</span>'
-        +'<div class="se-main"><div class="se-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'（無題）')+'</div>'+(sub.length?'<div class="se-sub">'+sub.join('　')+'</div>':'')+'</div>'
-        +(it.cost?'<span class="se-cost">'+esc(it.cost)+'</span>':'')+'</div>';
-    }).join('');
-  }).join('');
+  var total=0; _schItems.forEach(function(it){ total+=costNum(it.cost); });
+  var enr=_sortByJst(_schItems); // 並び順はJST絶対時刻、見出しは現地日付
+  var html='', lastDay=null;
+  enr.forEach(function(e){
+    var it=e.it, d=it.date||'';
+    if(d!==lastDay){ html+='<div class="se-day">'+esc(d||'日付未設定')+'</div>'; lastDay=d; }
+    html+=renderSchedItemRow(it);
+    if(_idlCross(it)) html+='<div class="se-idl">🌐 日付変更線</div>';
+  });
+  g('sch-list').innerHTML=html;
   g('sch-total').textContent='計 '+_schItems.length+'項目 / 概算 ¥'+total.toLocaleString();
 }
 
