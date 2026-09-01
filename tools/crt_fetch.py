@@ -127,6 +127,40 @@ def apply_resource_key(verbose=False):
     HEADERS["X-PowerBI-ResourceKey"] = key
     return key
 
+def resolve_report_config(verbose=False):
+    """resourceKey を解決し、modelsAndExploration から modelId/datasetId/reportId を取得。
+    グローバル RESOURCE_KEY 相当(HEADERS) / DATASET_ID / REPORT_ID / MODEL_ID を更新する。
+    取得できない項目は既定値を維持。"""
+    global DATASET_ID, REPORT_ID, MODEL_ID
+    key = apply_resource_key(verbose)
+    host = ENDPOINT.split("/public/")[0]
+    url = f"{host}/public/reports/{key}/modelsAndExploration?preferReadOnlySession=true"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        if verbose: print(f"[config] modelsAndExploration 取得失敗（既定IDを使用）: {e}")
+        return key
+    models = data.get("models") or []
+    if models:
+        m0 = models[0]
+        if m0.get("id"): MODEL_ID = m0["id"]
+        if m0.get("dbName"): DATASET_ID = m0["dbName"]
+    # reportId は exploration 内の report.objectId、無ければ本文から GUID を探索
+    rep = None
+    expl = data.get("exploration") or {}
+    if isinstance(expl, dict):
+        rep = ((expl.get("report") or {}).get("objectId")
+               or expl.get("reportObjectId") or expl.get("objectId"))
+    if not rep:
+        m = re.search(r'"(?:reportObjectId|reportId)"\s*:\s*"(' + _GUID_RE.pattern + ')"', r.text)
+        if m: rep = m.group(1)
+    if rep: REPORT_ID = rep
+    if verbose:
+        print(f"[config] modelId={MODEL_ID} datasetId={DATASET_ID} reportId={REPORT_ID}")
+    return key
+
 def probe_all():
     """CRTページ→Power BI公開レポートの現行 key/dataset/report/model を総当り診断"""
     host = ENDPOINT.split("/public/")[0]
@@ -729,8 +763,8 @@ if __name__ == "__main__":
         probe_all()
         sys.exit(0)
 
-    # 実行時に現在の Power BI リソースキーを解決（401対策）
-    key = apply_resource_key(verbose=True)
+    # 実行時に現在の Power BI リソース構成（key/dataset/report/model）を解決（401対策）
+    key = resolve_report_config(verbose=True)
     print(f"[resolve] 使用するリソースキー: {key}")
 
     if args.discover:
