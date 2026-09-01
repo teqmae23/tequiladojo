@@ -10,6 +10,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/tz-lookup.js"></script>
 <script>
 var FIREBASE_CONFIG={
   apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -101,7 +102,10 @@ a{color:var(--gold-d)}
 .sc-day{font-size:13px;font-weight:700;color:var(--gold-d);margin:14px 0 6px}
 .sc-item{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)}
 .sc-item:last-child{border-bottom:none}
-.sc-time{min-width:46px;font-family:var(--mono);font-size:13px;color:var(--ink2);flex:0 0 auto;padding-top:1px}
+.sc-time{min-width:62px;font-family:var(--mono);font-size:13px;color:var(--ink2);flex:0 0 auto;padding-top:1px;line-height:1.35}
+.sc-tz{font-size:10px;color:var(--ink3)}
+.sc-time-jst{display:block;font-size:10px;color:var(--teal);font-weight:600;white-space:nowrap}
+.sc-daydiff{color:var(--red);margin-left:2px}
 .sc-ic{font-size:16px;flex:0 0 auto}
 .sc-body{flex:1;min-width:0}
 .sc-ttl{font-size:14px;font-weight:600;color:var(--ink)}
@@ -472,7 +476,54 @@ function loadSchedule(){
     renderSchedule(_schedItems);
   }).catch(function(){ var el=g('schedule-cont'); if(el) el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">読み込みに失敗しました</div></div>'; });
 }
-function gmapLink(it){ if(it.lat!=null&&it.lng!=null) return 'https://www.google.com/maps/search/?api=1&query='+it.lat+','+it.lng; return it.mapUrl||''; }
+// 座標＋ラベル付きの Google Maps リンク（ラベルがあれば正しい地点名を表示）
+function gmapLink(it){
+  if(it.lat!=null&&it.lng!=null){
+    var label=it.placeName||it.title||'';
+    if(label) return 'https://www.google.com/maps?q='+it.lat+','+it.lng+'('+encodeURIComponent(label)+')';
+    return 'https://www.google.com/maps/search/?api=1&query='+it.lat+','+it.lng;
+  }
+  return it.mapUrl||'';
+}
+// 2地点ルート: ラベル（地点名）があれば名称で、無ければ座標で
+function routeLink(it){
+  var o=(it.placeName&&it.placeName.trim())?encodeURIComponent(it.placeName.trim()):(it.lat+','+it.lng);
+  var d=(it.toName&&it.toName.trim())?encodeURIComponent(it.toName.trim()):(it.toLat+','+it.toLng);
+  return 'https://www.google.com/maps/dir/?api=1&origin='+o+'&destination='+d;
+}
+/* ── 座標→タイムゾーン表示（現地時刻＋JST換算） ── */
+function _tzOffMin(inst,tz){
+  var m={}; new Intl.DateTimeFormat('en-US',{timeZone:tz,hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(inst).forEach(function(p){m[p.type]=p.value;});
+  if(m.hour==='24')m.hour='00';
+  return Math.round((Date.UTC(+m.year,+m.month-1,+m.day,+m.hour,+m.minute,+m.second)-inst.getTime())/60000);
+}
+function _wallInstant(dateStr,timeStr,tz){
+  var dp=(dateStr||'').split('-'), tp=(timeStr||'00:00').split(':');
+  if(dp.length<3) return null;
+  var guess=Date.UTC(+dp[0],+dp[1]-1,+dp[2],(+tp[0]||0),(+tp[1]||0));
+  return new Date(guess-_tzOffMin(new Date(guess),tz)*60000);
+}
+function _tzAbbr(inst,tz){
+  if(tz==='Asia/Tokyo') return 'JST';
+  try{ var p=new Intl.DateTimeFormat('en-US',{timeZone:tz,hour:'2-digit',timeZoneName:'short'}).formatToParts(inst).find(function(x){return x.type==='timeZoneName';}); return p?p.value:tz; }catch(e){ return tz; }
+}
+function _fmtHM(inst,tz){ return new Intl.DateTimeFormat('en-GB',{timeZone:tz,hour12:false,hour:'2-digit',minute:'2-digit'}).format(inst); }
+function _dayKey(inst,tz){ return new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).format(inst); }
+function schedTimeHtml(it){
+  var t=it.time||'';
+  if(!t) return '<span class="sc-time">—</span>';
+  var tz=null;
+  if(window.tzlookup && it.lat!=null && it.lng!=null){ try{ tz=tzlookup(it.lat,it.lng); }catch(e){} }
+  var inst=tz?_wallInstant(it.date,t,tz):null;
+  if(!tz||!inst) return '<span class="sc-time">'+esc(t)+'</span>';
+  var abbr=_tzAbbr(inst,tz);
+  if(tz==='Asia/Tokyo') return '<span class="sc-time">'+esc(t)+' <span class="sc-tz">(JST)</span></span>';
+  var jst=_fmtHM(inst,'Asia/Tokyo');
+  var dd=Math.round((Date.parse(_dayKey(inst,'Asia/Tokyo'))-Date.parse(it.date))/86400000);
+  var ddTxt=dd?'<span class="sc-daydiff">'+(dd>0?'+'+dd:''+dd)+'日</span>':'';
+  return '<span class="sc-time">'+esc(t)+' <span class="sc-tz">('+esc(abbr)+')</span>'
+    +'<span class="sc-time-jst">'+esc(jst)+' (JST)'+ddTxt+'</span></span>';
+}
 var _scMarkers={}, _scMap=null;
 function renderSchedule(items){
   var el=g('schedule-cont'); if(!el) return;
@@ -490,10 +541,10 @@ function renderSchedule(items){
       var meta=[];
       if(it.cost) meta.push('<span class="sc-cost">'+esc(it.cost)+'</span>');
       var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
-      if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="https://www.google.com/maps/dir/?api=1&origin='+it.lat+','+it.lng+'&destination='+it.toLat+','+it.toLng+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🚗 ルート</a>');
+      if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="'+esc(routeLink(it))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🚗 ルート</a>');
       var photos=_photosByItem[it.id]||[];
       var gallery=photos.length?('<div class="sc-gallery">'+photos.map(function(p,idx){ return '<img class="sc-thumb" src="'+esc(p.thumbUrl||p.url)+'" alt="" loading="lazy" onclick="event.stopPropagation();openLb(\''+esc(it.id)+'\','+idx+')">'; }).join('')+'</div>'):'';
-      return '<div class="sc-item'+(geo?' has-geo':'')+'"'+(geo?' onclick="focusSched(\''+esc(it.id)+'\')"':'')+'><span class="sc-time">'+esc(it.time||'—')+'</span><span class="sc-ic">'+ic+'</span>'
+      return '<div class="sc-item'+(geo?' has-geo':'')+'"'+(geo?' onclick="focusSched(\''+esc(it.id)+'\')"':'')+'>'+schedTimeHtml(it)+'<span class="sc-ic">'+ic+'</span>'
         +'<div class="sc-body"><div class="sc-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'')+'</div>'
         +(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')
         +(meta.length?'<div class="sc-meta">'+meta.join('')+'</div>':'')
@@ -504,6 +555,24 @@ function renderSchedule(items){
   h+='</div>';
   el.innerHTML=h;
   if(hasGeo && window.L) initSchedMap(items);
+}
+// 2地点間の大圏（グレートサークル）経路。日付変更線をまたぐ経度は連続化。
+function _greatCircle(a,b,n){
+  var R=Math.PI/180, D=180/Math.PI;
+  var la1=a[0]*R,lo1=a[1]*R,la2=b[0]*R,lo2=b[1]*R;
+  var d=2*Math.asin(Math.sqrt(Math.pow(Math.sin((la2-la1)/2),2)+Math.cos(la1)*Math.cos(la2)*Math.pow(Math.sin((lo2-lo1)/2),2)));
+  if(!d) return [a,b];
+  var pts=[],prev=null;
+  for(var i=0;i<=n;i++){
+    var f=i/n, A=Math.sin((1-f)*d)/Math.sin(d), B=Math.sin(f*d)/Math.sin(d);
+    var x=A*Math.cos(la1)*Math.cos(lo1)+B*Math.cos(la2)*Math.cos(lo2);
+    var y=A*Math.cos(la1)*Math.sin(lo1)+B*Math.cos(la2)*Math.sin(lo2);
+    var z=A*Math.sin(la1)+B*Math.sin(la2);
+    var lat=Math.atan2(z,Math.sqrt(x*x+y*y))*D, lng=Math.atan2(y,x)*D;
+    if(prev!=null){ while(lng-prev>180)lng-=360; while(lng-prev<-180)lng+=360; }
+    prev=lng; pts.push([lat,lng]);
+  }
+  return pts;
 }
 function initSchedMap(items){
   var mapEl=g('sc-map-el'); if(!mapEl||!window.L) return;
@@ -517,9 +586,10 @@ function initSchedMap(items){
       var m=L.marker([it.lat,it.lng]).addTo(map).bindPopup('<b>'+esc((it.time?it.time+' ':'')+(it.title||''))+'</b>'+(it.date?'<br>'+esc(fmtDate(it.date)):'')+(it.cost?'<br>'+esc(it.cost):''));
       _scMarkers[it.id]=m; bounds.push([it.lat,it.lng]);
       if(it.isMove&&it.toLat!=null&&it.toLng!=null){
-        L.polyline([[it.lat,it.lng],[it.toLat,it.toLng]],{color:'#c8921e',weight:3,dashArray:'6,6'}).addTo(map);
-        L.circleMarker([it.toLat,it.toLng],{radius:5,color:'#7a5610',fillColor:'#c8921e',fillOpacity:1}).addTo(map).bindPopup('着: '+esc(it.title||''));
-        bounds.push([it.toLat,it.toLng]);
+        var arc=_greatCircle([it.lat,it.lng],[it.toLat,it.toLng],64);
+        L.polyline(arc,{color:'#c8921e',weight:3,dashArray:'6,6'}).addTo(map);
+        L.circleMarker([it.toLat,it.toLng],{radius:5,color:'#7a5610',fillColor:'#c8921e',fillOpacity:1}).addTo(map).bindPopup('着: '+esc(it.toName||it.title||''));
+        arc.forEach(function(p){ bounds.push(p); });
       }
     }
     // 写真ピン（項目に写真がある場合）: 写真自身の座標(EXIF)優先、無ければ項目座標

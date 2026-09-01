@@ -418,15 +418,17 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       </div>
       <div class="fg"><label class="fl">イベント（タイトル） <span style="color:var(--red)">*</span></label><input class="fi" id="se-title" placeholder="例: SF Tequila Shop訪問"></div>
       <div class="fg"><label class="fl">備考</label><textarea class="fi" id="se-note" style="min-height:56px"></textarea></div>
-      <div class="fg"><label class="fl">Google Map URL（場所）</label><input class="fi" id="se-map" placeholder="https://www.google.com/maps/... （@緯度,経度を含むURL）" oninput="onMapUrl('se-map','se-lat','se-lng')"></div>
+      <div class="fg"><label class="fl">Google Map URL（場所）</label><input class="fi" id="se-map" placeholder="https://www.google.com/maps/... （@緯度,経度を含むURL）" oninput="onMapUrl('se-map','se-lat','se-lng','se-place')"></div>
       <div class="row2">
         <div class="fg"><label class="fl">緯度</label><input class="fi" id="se-lat" placeholder="自動取得/手入力"></div>
         <div class="fg"><label class="fl">経度</label><input class="fi" id="se-lng" placeholder="自動取得/手入力"></div>
       </div>
+      <div class="fg"><label class="fl">地点名（地図・ルートの表示ラベル・任意）</label><input class="fi" id="se-place" placeholder="例: 成田国際空港（未入力ならGoogle側の名称になります）"></div>
       <label class="reqlbl" style="margin:2px 0 8px"><input type="checkbox" id="se-move" onchange="toggleMove()"> 移動（2地点間ルートを表示）</label>
       <div id="se-move-box" style="display:none">
-        <div class="fg"><label class="fl">移動先 Google Map URL</label><input class="fi" id="se-tomap" oninput="onMapUrl('se-tomap','se-tolat','se-tolng')"></div>
+        <div class="fg"><label class="fl">移動先 Google Map URL</label><input class="fi" id="se-tomap" oninput="onMapUrl('se-tomap','se-tolat','se-tolng','se-toplace')"></div>
         <div class="row2"><div class="fg"><label class="fl">到着 緯度</label><input class="fi" id="se-tolat"></div><div class="fg"><label class="fl">到着 経度</label><input class="fi" id="se-tolng"></div></div>
+        <div class="fg"><label class="fl">到着 地点名（表示ラベル・任意）</label><input class="fi" id="se-toplace" placeholder="例: サンフランシスコ国際空港"></div>
       </div>
       <label class="reqlbl"><input type="checkbox" id="se-overnight"> 宿泊（泊）</label>
       <div class="err" id="se-err"></div>
@@ -993,9 +995,20 @@ function parseLatLng(url){
     || url.match(/\/(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/);
   return m?{lat:parseFloat(m[1]),lng:parseFloat(m[2])}:null;
 }
-function onMapUrl(urlId,latId,lngId){
-  var c=parseLatLng(g(urlId).value);
+function placeNameFromUrl(url){
+  // https://www.google.com/maps/place/成田国際空港/@35.7,140.3,... から地点名を抽出
+  var m=(url||'').match(/\/maps\/place\/([^\/@]+)/);
+  if(!m) return '';
+  try{ return decodeURIComponent(m[1].replace(/\+/g,' ')).trim(); }catch(e){ return m[1].replace(/\+/g,' ').trim(); }
+}
+function onMapUrl(urlId,latId,lngId,nameId){
+  var url=g(urlId).value;
+  var c=parseLatLng(url);
   if(c){ g(latId).value=c.lat; g(lngId).value=c.lng; }
+  if(nameId&&g(nameId)&&!(g(nameId).value||'').trim()){
+    var nm=placeNameFromUrl(url);
+    if(nm) g(nameId).value=nm;
+  }
 }
 function costNum(s){ if(s==null) return 0; var m=String(s).replace(/[,，]/g,'').match(/(\d+)/); return m?parseInt(m[1]):0; }
 
@@ -1054,10 +1067,12 @@ function openSchedEd(id){
   g('se-map').value=it?(it.mapUrl||''):'';
   g('se-lat').value=(it&&it.lat!=null)?it.lat:'';
   g('se-lng').value=(it&&it.lng!=null)?it.lng:'';
+  g('se-place').value=it?(it.placeName||''):'';
   g('se-move').checked=!!(it&&it.isMove);
   g('se-tomap').value=it?(it.toMapUrl||''):'';
   g('se-tolat').value=(it&&it.toLat!=null)?it.toLat:'';
   g('se-tolng').value=(it&&it.toLng!=null)?it.toLng:'';
+  g('se-toplace').value=it?(it.toName||''):'';
   g('se-overnight').checked=!!(it&&it.overnight);
   toggleMove();
   g('sch-ed-modal').classList.add('open');
@@ -1073,7 +1088,9 @@ function saveSched(){
     date:date, time:g('se-time').value||'', category:g('se-cat').value||'other',
     cost:(g('se-cost').value||'').trim(), title:title, note:(g('se-note').value||'').trim(),
     mapUrl:(g('se-map').value||'').trim(), lat:numOrNull(g('se-lat').value), lng:numOrNull(g('se-lng').value),
+    placeName:(g('se-place').value||'').trim(),
     isMove:!!g('se-move').checked, toMapUrl:(g('se-tomap').value||'').trim(), toLat:numOrNull(g('se-tolat').value), toLng:numOrNull(g('se-tolng').value),
+    toName:(g('se-toplace').value||'').trim(),
     overnight:!!g('se-overnight').checked,
     updatedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
