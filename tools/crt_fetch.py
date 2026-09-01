@@ -127,6 +127,54 @@ def apply_resource_key(verbose=False):
     HEADERS["X-PowerBI-ResourceKey"] = key
     return key
 
+def probe_all():
+    """CRTページ→Power BI公開レポートの現行 key/dataset/report/model を総当り診断"""
+    host = ENDPOINT.split("/public/")[0]
+    ua = {"User-Agent": HEADERS["User-Agent"]}
+    sess = requests.Session()
+    tokens = []
+    for url in CRT_STATS_PAGES:
+        try:
+            html = sess.get(url, headers=ua, timeout=30).text
+        except Exception as e:
+            print(f"[probe] {url} 取得失敗: {e}"); continue
+        found = re.findall(r'powerbi\.com/view\?r=([A-Za-z0-9%_\-\.]+)', html)
+        print(f"[probe] {url}: HTML {len(html)}B / view?r トークン {len(found)}件")
+        # サブページ/iframe候補
+        for u in set(re.findall(r'(?:href|src)="([^"]+)"', html)):
+            if re.search(r'(export|estad|powerbi|report)', u, re.I):
+                print("   link:", u)
+        tokens += found
+    tokens = list(dict.fromkeys(tokens))
+    print(f"[probe] トークン合計 {len(tokens)}件")
+    for i, tok in enumerate(tokens):
+        j = _decode_pbi_token(tok)
+        print(f"\n[probe] === token#{i} decoded === {json.dumps(j, ensure_ascii=False) if j else '(decode不可)'}")
+        if not (j and j.get('k')):
+            continue
+        key = j['k']
+        h = dict(HEADERS); h["X-PowerBI-ResourceKey"] = key
+        # a) view ページから ID を抽出
+        try:
+            vp = sess.get("https://app.powerbi.com/view?r=" + tok, headers=ua, timeout=30).text
+            for label, pat in [("reportId", r'"reportId"\s*:\s*"([0-9a-fA-F-]{36})"'),
+                               ("datasetId", r'"datasetId"\s*:\s*"([0-9a-fA-F-]{36})"'),
+                               ("modelId", r'"modelId"\s*:\s*(\d+)'),
+                               ("cluster", r'"(?:resolvedClusterUri|clusterUri|cluster)"\s*:\s*"([^"]+)"')]:
+                vals = list(dict.fromkeys(re.findall(pat, vp)))
+                if vals: print(f"   view.{label}: {vals[:5]}")
+        except Exception as e:
+            print("   view取得失敗:", e)
+        # b) メタデータ endpoint
+        for path in [f"/public/reports/{key}/modelsAndExploration?preferReadOnlySession=true"]:
+            try:
+                r = sess.get(host + path, headers=h, timeout=30)
+                print(f"   GET {path} -> {r.status_code}")
+                if r.status_code == 200:
+                    print("   body[:1500]:", r.text[:1500])
+            except Exception as e:
+                print("   metadata取得失敗:", e)
+
 def build_query(columns, filters=None, measures=None, year_range=None):
     """Power BI DAX クエリを構築
 
@@ -677,11 +725,13 @@ if __name__ == "__main__":
     parser.add_argument("--probe", action="store_true", help="リソースキー解決のみ実行（デバッグ）")
     args = parser.parse_args()
 
+    if args.probe:
+        probe_all()
+        sys.exit(0)
+
     # 実行時に現在の Power BI リソースキーを解決（401対策）
     key = apply_resource_key(verbose=True)
     print(f"[resolve] 使用するリソースキー: {key}")
-    if args.probe:
-        sys.exit(0)
 
     if args.discover:
         discover_columns()
