@@ -24,7 +24,8 @@ Power BI 公開レポートAPIを直接呼ぶ
   python3 crt_fetch.py --dump
 """
 
-import requests, json, sys, argparse, csv
+import requests, json, sys, argparse, csv, os, re, base64
+from urllib.parse import unquote
 from datetime import datetime
 
 ENDPOINT = "https://wabi-paas-1-scus-api.analysis.windows.net/public/reports/querydata"
@@ -45,6 +46,168 @@ HEADERS = {
     "Referer": "https://app.powerbi.com/",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
+
+# ── Power BI リソースキーの動的解決 ─────────────────────────────
+# CRT が公開レポートを再発行すると X-PowerBI-ResourceKey が変わり 401 になる。
+# 実行時に CRT 統計ページから現在のキーを取得し、失敗時はハードコード値へフォールバック。
+# 環境変数 CRT_RESOURCE_KEY があれば最優先で使用（手動上書き用）。
+CRT_STATS_PAGES = [
+    "https://www.crt.org.mx/EstadisticasCRTweb/",
+    "https://www.crt.org.mx/estadisticascrtweb/",
+]
+_GUID_RE = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
+
+def _decode_pbi_token(tok):
+    """app.powerbi.com/view?r=<token> の token を base64url デコードして JSON を返す"""
+    tok = unquote(tok)
+    s = tok.replace('-', '+').replace('_', '/')
+    s += '=' * (-len(s) % 4)
+    try:
+        return json.loads(base64.b64decode(s).decode('utf-8', 'replace'))
+    except Exception:
+        return None
+
+def _scan_html_for_key(html, verbose=False):
+    """HTML から resourceKey / view?r トークンを探す。(key, meta) を返す。"""
+    # 1) view?r=<token> → JSON.k がリソースキー
+    for tok in re.findall(r'powerbi\.com/view\?r=([A-Za-z0-9%_\-\.]+)', html):
+        j = _decode_pbi_token(tok)
+        if j and j.get('k'):
+            if verbose: print(f"[resolve] view?r トークンからキー取得: {j['k']}")
+            return j['k'], j
+    # 2) resourceKey / ctid 直書き
+    m = re.search(r'(?:X-PowerBI-ResourceKey|resourceKey)"?\s*[:=]\s*"?(' + _GUID_RE.pattern + ')', html, re.I)
+    if m:
+        if verbose: print(f"[resolve] resourceKey 直接検出: {m.group(1)}")
+        return m.group(1), None
+    return None, None
+
+def resolve_resource_key(verbose=False):
+    """現在の Power BI リソースキーを解決して返す（見つからなければ既定値）。"""
+    env = os.environ.get("CRT_RESOURCE_KEY", "").strip()
+    if env:
+        if verbose: print(f"[resolve] 環境変数 CRT_RESOURCE_KEY を使用: {env}")
+        return env
+    ua = {"User-Agent": HEADERS["User-Agent"]}
+    sess = requests.Session()
+    seen = set()
+    queue = list(CRT_STATS_PAGES)
+    while queue:
+        url = queue.pop(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        try:
+            r = sess.get(url, headers=ua, timeout=30)
+            html = r.text
+        except Exception as e:
+            if verbose: print(f"[resolve] {url} 取得失敗: {e}")
+            continue
+        key, meta = _scan_html_for_key(html, verbose)
+        if key:
+            return key
+        # レポートを別ページ/iframe に埋め込んでいる場合は追う（同サイト+powerbiのみ）
+        iframes = re.findall(r'<iframe[^>]+src="([^"]+)"', html, re.I)
+        for u in iframes:
+            if u.startswith('//'): u = 'https:' + u
+            if 'powerbi.com' in u:
+                key, meta = _scan_html_for_key(u, verbose)  # iframe src 自体に view?r が入る場合
+                if key:
+                    return key
+        if verbose:
+            pu = re.findall(r'https?://[^"\'\)\s]*powerbi[^"\'\)\s]*', html)
+            print(f"[resolve] {url}: HTML {len(html)}B / powerbi参照 {len(pu)}件 / iframe {len(iframes)}件")
+            for u in pu[:10]: print("   pbi:", u)
+            for u in iframes[:10]: print("   iframe:", u)
+    if verbose: print(f"[resolve] 解決できず。既定キーにフォールバック: {RESOURCE_KEY}")
+    return RESOURCE_KEY
+
+def apply_resource_key(verbose=False):
+    key = resolve_resource_key(verbose)
+    HEADERS["X-PowerBI-ResourceKey"] = key
+    return key
+
+def resolve_report_config(verbose=False):
+    """resourceKey を解決し、modelsAndExploration から modelId/datasetId/reportId を取得。
+    グローバル RESOURCE_KEY 相当(HEADERS) / DATASET_ID / REPORT_ID / MODEL_ID を更新する。
+    取得できない項目は既定値を維持。"""
+    global DATASET_ID, REPORT_ID, MODEL_ID
+    key = apply_resource_key(verbose)
+    host = ENDPOINT.split("/public/")[0]
+    url = f"{host}/public/reports/{key}/modelsAndExploration?preferReadOnlySession=true"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        if verbose: print(f"[config] modelsAndExploration 取得失敗（既定IDを使用）: {e}")
+        return key
+    models = data.get("models") or []
+    if models:
+        m0 = models[0]
+        if m0.get("id"): MODEL_ID = m0["id"]
+        if m0.get("dbName"): DATASET_ID = m0["dbName"]
+    # reportId は exploration 内の report.objectId、無ければ本文から GUID を探索
+    rep = None
+    expl = data.get("exploration") or {}
+    if isinstance(expl, dict):
+        rep = ((expl.get("report") or {}).get("objectId")
+               or expl.get("reportObjectId") or expl.get("objectId"))
+    if not rep:
+        m = re.search(r'"(?:reportObjectId|reportId)"\s*:\s*"(' + _GUID_RE.pattern + ')"', r.text)
+        if m: rep = m.group(1)
+    if rep: REPORT_ID = rep
+    if verbose:
+        print(f"[config] modelId={MODEL_ID} datasetId={DATASET_ID} reportId={REPORT_ID}")
+    return key
+
+def probe_all():
+    """CRTページ→Power BI公開レポートの現行 key/dataset/report/model を総当り診断"""
+    host = ENDPOINT.split("/public/")[0]
+    ua = {"User-Agent": HEADERS["User-Agent"]}
+    sess = requests.Session()
+    tokens = []
+    for url in CRT_STATS_PAGES:
+        try:
+            html = sess.get(url, headers=ua, timeout=30).text
+        except Exception as e:
+            print(f"[probe] {url} 取得失敗: {e}"); continue
+        found = re.findall(r'powerbi\.com/view\?r=([A-Za-z0-9%_\-\.]+)', html)
+        print(f"[probe] {url}: HTML {len(html)}B / view?r トークン {len(found)}件")
+        # サブページ/iframe候補
+        for u in set(re.findall(r'(?:href|src)="([^"]+)"', html)):
+            if re.search(r'(export|estad|powerbi|report)', u, re.I):
+                print("   link:", u)
+        tokens += found
+    tokens = list(dict.fromkeys(tokens))
+    print(f"[probe] トークン合計 {len(tokens)}件")
+    for i, tok in enumerate(tokens):
+        j = _decode_pbi_token(tok)
+        print(f"\n[probe] === token#{i} decoded === {json.dumps(j, ensure_ascii=False) if j else '(decode不可)'}")
+        if not (j and j.get('k')):
+            continue
+        key = j['k']
+        h = dict(HEADERS); h["X-PowerBI-ResourceKey"] = key
+        # a) view ページから ID を抽出
+        try:
+            vp = sess.get("https://app.powerbi.com/view?r=" + tok, headers=ua, timeout=30).text
+            for label, pat in [("reportId", r'"reportId"\s*:\s*"([0-9a-fA-F-]{36})"'),
+                               ("datasetId", r'"datasetId"\s*:\s*"([0-9a-fA-F-]{36})"'),
+                               ("modelId", r'"modelId"\s*:\s*(\d+)'),
+                               ("cluster", r'"(?:resolvedClusterUri|clusterUri|cluster)"\s*:\s*"([^"]+)"')]:
+                vals = list(dict.fromkeys(re.findall(pat, vp)))
+                if vals: print(f"   view.{label}: {vals[:5]}")
+        except Exception as e:
+            print("   view取得失敗:", e)
+        # b) メタデータ endpoint
+        for path in [f"/public/reports/{key}/modelsAndExploration?preferReadOnlySession=true"]:
+            try:
+                r = sess.get(host + path, headers=h, timeout=30)
+                print(f"   GET {path} -> {r.status_code}")
+                if r.status_code == 200:
+                    print("   body[:1500]:", r.text[:1500])
+            except Exception as e:
+                print("   metadata取得失敗:", e)
 
 def build_query(columns, filters=None, measures=None, year_range=None):
     """Power BI DAX クエリを構築
@@ -149,15 +312,29 @@ def build_query(columns, filters=None, measures=None, year_range=None):
     }
     return payload
 
-def query_api(payload):
-    resp = requests.post(
-        ENDPOINT + "?synchronous=true",
-        headers=HEADERS,
-        json=payload,
-        timeout=30
-    )
-    resp.raise_for_status()
-    return resp.json()
+def query_api(payload, retries=4):
+    import time
+    delay = 3
+    for attempt in range(retries + 1):
+        resp = requests.post(
+            ENDPOINT + "?synchronous=true",
+            headers=HEADERS,
+            json=payload,
+            timeout=30
+        )
+        # 429/5xx はレート制限・一時障害としてバックオフ再試行
+        if resp.status_code in (429, 500, 502, 503, 504) and attempt < retries:
+            wait = delay
+            ra = resp.headers.get("Retry-After")
+            if ra:
+                try: wait = max(wait, int(float(ra)))
+                except ValueError: pass
+            print(f"  {resp.status_code} 応答。{wait}s 待機して再試行 ({attempt+1}/{retries})")
+            time.sleep(wait)
+            delay = min(delay * 2, 30)
+            continue
+        resp.raise_for_status()
+        return resp.json()
 
 def query_api_all_pages(payload):
     """全ページを取得してDM0行を結合して返す"""
@@ -579,7 +756,16 @@ if __name__ == "__main__":
     parser.add_argument("--month",        type=int, help="取得月（--yearと併用）")
     parser.add_argument("--compare-month", type=int, help="比較・更新する月（N ヶ月前）",
                         dest="compare_month")
+    parser.add_argument("--probe", action="store_true", help="リソースキー解決のみ実行（デバッグ）")
     args = parser.parse_args()
+
+    if args.probe:
+        probe_all()
+        sys.exit(0)
+
+    # 実行時に現在の Power BI リソース構成（key/dataset/report/model）を解決（401対策）
+    key = resolve_report_config(verbose=True)
+    print(f"[resolve] 使用するリソースキー: {key}")
 
     if args.discover:
         discover_columns()
