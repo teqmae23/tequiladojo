@@ -230,15 +230,29 @@ def build_query(columns, filters=None, measures=None, year_range=None):
     }
     return payload
 
-def query_api(payload):
-    resp = requests.post(
-        ENDPOINT + "?synchronous=true",
-        headers=HEADERS,
-        json=payload,
-        timeout=30
-    )
-    resp.raise_for_status()
-    return resp.json()
+def query_api(payload, retries=4):
+    import time
+    delay = 3
+    for attempt in range(retries + 1):
+        resp = requests.post(
+            ENDPOINT + "?synchronous=true",
+            headers=HEADERS,
+            json=payload,
+            timeout=30
+        )
+        # 429/5xx はレート制限・一時障害としてバックオフ再試行
+        if resp.status_code in (429, 500, 502, 503, 504) and attempt < retries:
+            wait = delay
+            ra = resp.headers.get("Retry-After")
+            if ra:
+                try: wait = max(wait, int(float(ra)))
+                except ValueError: pass
+            print(f"  {resp.status_code} 応答。{wait}s 待機して再試行 ({attempt+1}/{retries})")
+            time.sleep(wait)
+            delay = min(delay * 2, 30)
+            continue
+        resp.raise_for_status()
+        return resp.json()
 
 def query_api_all_pages(payload):
     """全ページを取得してDM0行を結合して返す"""

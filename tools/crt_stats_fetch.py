@@ -15,7 +15,8 @@ Power BI 公開レポートAPIを直接呼ぶ
   python3 tools/crt_stats_fetch.py --fabricas           # 蒸留所座標取得
 """
 
-import requests, json, sys, argparse, re, sqlite3, os
+import requests, json, sys, argparse, re, sqlite3, os, base64, time
+from urllib.parse import unquote
 from datetime import datetime, timezone
 
 ENDPOINT    = "https://wabi-paas-1-scus-api.analysis.windows.net/public/reports/querydata"
@@ -31,6 +32,62 @@ HEADERS = {
     "Referer": "https://app.powerbi.com/",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
+
+# ── Power BI リソースキーの動的解決（401対策・crt_fetch.py と同方式）──
+CRT_STATS_PAGES = [
+    "https://www.crt.org.mx/EstadisticasCRTweb/",
+    "https://www.crt.org.mx/estadisticascrtweb/",
+]
+_GUID_RE = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
+
+def _decode_pbi_token(tok):
+    tok = unquote(tok)
+    s = tok.replace('-', '+').replace('_', '/')
+    s += '=' * (-len(s) % 4)
+    try:
+        return json.loads(base64.b64decode(s).decode('utf-8', 'replace'))
+    except Exception:
+        return None
+
+def _scan_html_for_key(html, verbose=False):
+    for tok in re.findall(r'powerbi\.com/view\?r=([A-Za-z0-9%_\-\.]+)', html):
+        j = _decode_pbi_token(tok)
+        if j and j.get('k'):
+            if verbose: print(f"[resolve] view?r トークンからキー取得: {j['k']}")
+            return j['k']
+    m = re.search(r'(?:X-PowerBI-ResourceKey|resourceKey)"?\s*[:=]\s*"?(' + _GUID_RE.pattern + ')', html, re.I)
+    if m:
+        if verbose: print(f"[resolve] resourceKey 直接検出: {m.group(1)}")
+        return m.group(1)
+    return None
+
+def resolve_resource_key(verbose=False):
+    env = os.environ.get("CRT_RESOURCE_KEY", "").strip()
+    if env:
+        if verbose: print(f"[resolve] 環境変数 CRT_RESOURCE_KEY を使用: {env}")
+        return env
+    ua = {"User-Agent": HEADERS["User-Agent"]}
+    sess = requests.Session()
+    for url in CRT_STATS_PAGES:
+        try:
+            html = sess.get(url, headers=ua, timeout=30).text
+        except Exception as e:
+            if verbose: print(f"[resolve] {url} 取得失敗: {e}")
+            continue
+        key = _scan_html_for_key(html, verbose)
+        if key:
+            return key
+        if verbose:
+            pu = re.findall(r'https?://[^"\'\)\s]*powerbi[^"\'\)\s]*', html)
+            print(f"[resolve] {url}: HTML {len(html)}B / powerbi参照 {len(pu)}件")
+            for u in pu[:10]: print("   pbi:", u)
+    if verbose: print(f"[resolve] 解決できず。既定キーにフォールバック: {RESOURCE_KEY}")
+    return RESOURCE_KEY
+
+def apply_resource_key(verbose=False):
+    key = resolve_resource_key(verbose)
+    HEADERS["X-PowerBI-ResourceKey"] = key
+    return key
 
 DB_PATH = "data/crt_stats.db"
 
@@ -354,15 +411,27 @@ def build_query(entity, columns, filters=None, date_range=None):
     }
 
 
-def query_api(payload):
-    resp = requests.post(
-        ENDPOINT + "?synchronous=true",
-        headers=HEADERS,
-        json=payload,
-        timeout=30
-    )
-    resp.raise_for_status()
-    return resp.json()
+def query_api(payload, retries=4):
+    delay = 3
+    for attempt in range(retries + 1):
+        resp = requests.post(
+            ENDPOINT + "?synchronous=true",
+            headers=HEADERS,
+            json=payload,
+            timeout=30
+        )
+        if resp.status_code in (429, 500, 502, 503, 504) and attempt < retries:
+            wait = delay
+            ra = resp.headers.get("Retry-After")
+            if ra:
+                try: wait = max(wait, int(float(ra)))
+                except ValueError: pass
+            print(f"  {resp.status_code} 応答。{wait}s 待機して再試行 ({attempt+1}/{retries})")
+            time.sleep(wait)
+            delay = min(delay * 2, 30)
+            continue
+        resp.raise_for_status()
+        return resp.json()
 
 
 def parse_results(data):
@@ -683,6 +752,10 @@ def main():
     parser.add_argument("--month", type=int, help="取得月（--yearと組み合わせ）")
     parser.add_argument("--fabricas", action="store_true", help="蒸留所座標取得")
     args = parser.parse_args()
+
+    # 実行時に現在の Power BI リソースキーを解決（401対策）
+    key = apply_resource_key(verbose=True)
+    print(f"[resolve] 使用するリソースキー: {key}")
 
     if args.discover:
         discover_entities()
