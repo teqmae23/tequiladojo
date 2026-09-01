@@ -106,6 +106,8 @@ a{color:var(--gold-d)}
 .sc-tz{font-size:10px;color:var(--ink3)}
 .sc-time-jst{display:block;font-size:10px;color:var(--teal);font-weight:600;white-space:nowrap}
 .sc-daydiff{color:var(--red);margin-left:2px}
+.sc-idl{display:flex;align-items:center;gap:10px;margin:10px 2px;color:#b0442e;font-size:11px;font-weight:700;letter-spacing:.06em}
+.sc-idl::before,.sc-idl::after{content:"";flex:1;border-top:1px dashed #d79a86}
 .sc-ic{font-size:16px;flex:0 0 auto}
 .sc-body{flex:1;min-width:0}
 .sc-ttl{font-size:14px;font-weight:600;color:var(--ink)}
@@ -525,37 +527,53 @@ function schedTimeHtml(it){
     +'<span class="sc-time-jst">'+esc(jst)+' (JST)'+ddTxt+'</span></span>';
 }
 var _scMarkers={}, _scMap=null;
+function _safeTz(la,ln){ try{ return window.tzlookup?tzlookup(la,ln):null; }catch(e){ return null; } }
+function _schedInstant(it){
+  var tz=(it.lat!=null&&it.lng!=null)?_safeTz(it.lat,it.lng):null;
+  return _wallInstant(it.date, it.time||'23:59', tz||'Asia/Tokyo');
+}
+// JST絶対時刻で並べ替え（時差のある行程も実際の時系列で並ぶ）
+function _sortByJst(items){
+  return items.map(function(it,i){ var d=_schedInstant(it); return {it:it, ms:d?d.getTime():0, seq:it.seq||0, i:i}; })
+    .sort(function(a,b){ return (a.ms-b.ms)||(a.seq-b.seq)||(a.i-b.i); });
+}
+function _idlCross(it){ return !!(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null && Math.abs(it.toLng-it.lng)>180); }
+function renderSchedItem(it){
+  var ic=it.overnight?'🏨':(SCAT_ICON[it.category]||'📍');
+  var geo=(it.lat!=null&&it.lng!=null);
+  var meta=[];
+  if(it.cost) meta.push('<span class="sc-cost">'+esc(it.cost)+'</span>');
+  var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
+  if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="'+esc(routeLink(it))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🚗 ルート</a>');
+  var photos=_photosByItem[it.id]||[];
+  var gallery=photos.length?('<div class="sc-gallery">'+photos.map(function(p,idx){ return '<img class="sc-thumb" src="'+esc(p.thumbUrl||p.url)+'" alt="" loading="lazy" onclick="event.stopPropagation();openLb(\''+esc(it.id)+'\','+idx+')">'; }).join('')+'</div>'):'';
+  return '<div class="sc-item'+(geo?' has-geo':'')+'"'+(geo?' onclick="focusSched(\''+esc(it.id)+'\')"':'')+'>'+schedTimeHtml(it)+'<span class="sc-ic">'+ic+'</span>'
+    +'<div class="sc-body"><div class="sc-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'')+'</div>'
+    +(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')
+    +(meta.length?'<div class="sc-meta">'+meta.join('')+'</div>':'')
+    +gallery
+    +'</div></div>';
+}
 function renderSchedule(items){
   var el=g('schedule-cont'); if(!el) return;
   if(!items.length){ el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">スケジュールは準備中です。</div></div>'; return; }
   var hasGeo=items.some(function(it){ return it.lat!=null&&it.lng!=null; });
-  var byDay={}; items.forEach(function(it){ (byDay[it.date||'']=byDay[it.date||'']||[]).push(it); });
-  var days=Object.keys(byDay).sort();
+  var enr=_sortByJst(items);
   var h='<div class="card"><div class="sec-row"><div class="sec">🗓 スケジュール</div>'+(_isReal?'<button class="ph-btn" onclick="openPh()">📷 写真を追加</button>':'')+'</div>';
   if(hasGeo && window.L) h+='<div id="sc-map-el"></div>';
-  days.forEach(function(d){
-    h+='<div class="sc-day">'+esc(fmtDate(d))+' '+wday(d)+'</div>';
-    h+=byDay[d].map(function(it){
-      var ic=it.overnight?'🏨':(SCAT_ICON[it.category]||'📍');
-      var geo=(it.lat!=null&&it.lng!=null);
-      var meta=[];
-      if(it.cost) meta.push('<span class="sc-cost">'+esc(it.cost)+'</span>');
-      var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
-      if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="'+esc(routeLink(it))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🚗 ルート</a>');
-      var photos=_photosByItem[it.id]||[];
-      var gallery=photos.length?('<div class="sc-gallery">'+photos.map(function(p,idx){ return '<img class="sc-thumb" src="'+esc(p.thumbUrl||p.url)+'" alt="" loading="lazy" onclick="event.stopPropagation();openLb(\''+esc(it.id)+'\','+idx+')">'; }).join('')+'</div>'):'';
-      return '<div class="sc-item'+(geo?' has-geo':'')+'"'+(geo?' onclick="focusSched(\''+esc(it.id)+'\')"':'')+'>'+schedTimeHtml(it)+'<span class="sc-ic">'+ic+'</span>'
-        +'<div class="sc-body"><div class="sc-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'')+'</div>'
-        +(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')
-        +(meta.length?'<div class="sc-meta">'+meta.join('')+'</div>':'')
-        +gallery
-        +'</div></div>';
-    }).join('');
+  var lastDay=null;
+  enr.forEach(function(e){
+    var it=e.it;
+    var jstDate=e.ms?_dayKey(new Date(e.ms),'Asia/Tokyo'):(it.date||'');
+    if(jstDate!==lastDay){ h+='<div class="sc-day">'+esc(fmtDate(jstDate))+' '+wday(jstDate)+'</div>'; lastDay=jstDate; }
+    h+=renderSchedItem(it);
+    if(_idlCross(it)) h+='<div class="sc-idl">🌐 日付変更線</div>';
   });
   h+='</div>';
   el.innerHTML=h;
-  if(hasGeo && window.L) initSchedMap(items);
+  if(hasGeo && window.L) initSchedMap(enr.map(function(e){return e.it;}));
 }
+function _unwrapLng(lng, ref){ if(ref==null) return lng; while(lng-ref>180)lng-=360; while(lng-ref<-180)lng+=360; return lng; }
 // 2地点間の大圏（グレートサークル）経路。日付変更線をまたぐ経度は連続化。
 function _greatCircle(a,b,n){
   var R=Math.PI/180, D=180/Math.PI;
@@ -580,15 +598,18 @@ function initSchedMap(items){
   _scMarkers={};
   var map=L.map(mapEl,{scrollWheelZoom:false}); _scMap=map;
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
-  var bounds=[];
+  var bounds=[], refLng=null;
+  // 行程順(JST)に経度を連続化。日付変更線をまたぐと到着地は地図の右側に続けて表示される。
   items.forEach(function(it){
     if(it.lat!=null&&it.lng!=null){
-      var m=L.marker([it.lat,it.lng]).addTo(map).bindPopup('<b>'+esc((it.time?it.time+' ':'')+(it.title||''))+'</b>'+(it.date?'<br>'+esc(fmtDate(it.date)):'')+(it.cost?'<br>'+esc(it.cost):''));
-      _scMarkers[it.id]=m; bounds.push([it.lat,it.lng]);
+      var plng=_unwrapLng(it.lng, refLng); refLng=plng;
+      var m=L.marker([it.lat,plng]).addTo(map).bindPopup('<b>'+esc((it.time?it.time+' ':'')+(it.title||''))+'</b>'+(it.date?'<br>'+esc(fmtDate(it.date)):'')+(it.cost?'<br>'+esc(it.cost):''));
+      _scMarkers[it.id]=m; bounds.push([it.lat,plng]);
       if(it.isMove&&it.toLat!=null&&it.toLng!=null){
-        var arc=_greatCircle([it.lat,it.lng],[it.toLat,it.toLng],64);
+        var tplng=_unwrapLng(it.toLng, refLng); refLng=tplng;
+        var arc=_greatCircle([it.lat,plng],[it.toLat,tplng],64);
         L.polyline(arc,{color:'#c8921e',weight:3,dashArray:'6,6'}).addTo(map);
-        L.circleMarker([it.toLat,it.toLng],{radius:5,color:'#7a5610',fillColor:'#c8921e',fillOpacity:1}).addTo(map).bindPopup('着: '+esc(it.toName||it.title||''));
+        L.circleMarker([it.toLat,tplng],{radius:5,color:'#7a5610',fillColor:'#c8921e',fillOpacity:1}).addTo(map).bindPopup('着: '+esc(it.toName||it.title||''));
         arc.forEach(function(p){ bounds.push(p); });
       }
     }
@@ -596,7 +617,7 @@ function initSchedMap(items){
     var ph=_photosByItem[it.id]||[];
     if(ph.length){
       var withGeo=ph.filter(function(p){ return p.lat!=null&&p.lng!=null; });
-      var pc=withGeo.length?[withGeo[0].lat,withGeo[0].lng]:((it.lat!=null&&it.lng!=null)?[it.lat,it.lng]:null);
+      var pc=withGeo.length?[withGeo[0].lat,_unwrapLng(withGeo[0].lng, refLng)]:((it.lat!=null&&it.lng!=null)?[it.lat,refLng]:null);
       if(pc){
         var icon=L.divIcon({className:'ph-pin-wrap',html:'<span class="ph-pin">📷<b>'+ph.length+'</b></span>',iconSize:[34,26],iconAnchor:[17,26]});
         (function(iid){ L.marker(pc,{icon:icon,zIndexOffset:1000}).addTo(map).on('click',function(){ openLb(iid,0); }); })(it.id);
