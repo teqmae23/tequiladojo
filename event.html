@@ -370,7 +370,20 @@ function overviewHtml(ev, period){
 function ovCfg(){ var cs=(_ev&&Array.isArray(_ev.containers))?_ev.containers:[]; var o=cs.find(function(c){return c&&c.type==='overview';}); return (o&&o.config)||{mypage:{survey:true,checklist:true,image:true}}; }
 function initials(n){ n=(n||'').trim(); return n?n.slice(0,1):'👤'; }
 function ptAvatar(p){ return p.iconUrl?('<img class="pt-av" src="'+esc(p.iconUrl)+'" alt="">'):('<span class="pt-av">'+esc(initials(p.nickname))+'</span>'); }
-function _ptDone(snap){ _participants=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }); _myPt=_participants.find(function(p){ return p.id===_uid; })||null; renderRoster(); renderMypageBar(); if(g('checklist-cont')&&_tasks.length) renderChecklist(); }
+function _ptDone(snap){
+  var reg=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }); // 自己登録（編集可・bioあり）
+  _myPt=reg.find(function(p){ return p.id===_uid; })||null; // マイページ判定は自己登録分のみ
+  // 管理者が招待した参加者（event.participantsPublic）を、未登録分だけ追加
+  var have={}; reg.forEach(function(p){ have[p.id]=true; if(p.memberId)have['mid:'+p.memberId]=true; });
+  var invited=(_ev&&Array.isArray(_ev.participantsPublic))?_ev.participantsPublic:[];
+  var extra=invited.filter(function(p){
+    if(p.uid && have[p.uid]) return false;
+    if(p.memberId && have['mid:'+p.memberId]) return false;
+    return true;
+  }).map(function(p){ return { id:p.uid||('mid:'+(p.memberId||p.nickname||'')), nickname:p.nickname, iconUrl:p.iconUrl, memberId:p.memberId, invited:true }; });
+  _participants=reg.concat(extra);
+  renderRoster(); renderMypageBar(); if(g('checklist-cont')&&_tasks.length) renderChecklist();
+}
 function loadParticipants(){
   var col=db.collection('events').doc(eventId).collection('participants');
   col.orderBy('registeredAt','asc').get().then(_ptDone).catch(function(){
