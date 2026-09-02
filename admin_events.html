@@ -117,7 +117,10 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .cat-item{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:var(--r);padding:8px 11px;margin-bottom:6px}
 .cat-item .cat-ic{font-size:18px;flex:0 0 auto}
 .cat-item .cat-nm{flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--ink)}
-.icon-picker{display:flex;flex-wrap:wrap;gap:4px;max-height:120px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r);padding:6px}
+.icon-picker{max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r);padding:6px}
+.icon-picker .ic-sec{font-size:11px;font-weight:700;color:var(--ink3);margin:6px 2px 4px;position:sticky;top:-6px;background:var(--white);padding:2px 0}
+.icon-picker .ic-sec:first-child{margin-top:0}
+.icon-picker .ic-row{display:flex;flex-wrap:wrap;gap:4px}
 .ic-opt{width:34px;height:34px;font-size:18px;line-height:1;border:1px solid transparent;border-radius:8px;background:var(--white);cursor:pointer;padding:0}
 .ic-opt:hover{background:var(--cream2)}
 .ic-opt.sel{border-color:var(--gold-d);background:#f6f1e6}
@@ -506,7 +509,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
         <div id="cat-form-title" style="font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:6px">種別を追加</div>
         <div class="row2">
           <div class="fg"><label class="fl">名前</label><input class="fi" id="cat-f-name" placeholder="例: 買い物"></div>
-          <div class="fg"><label class="fl">アイコン（絵文字）</label><input class="fi" id="cat-f-icon" placeholder="🛍" maxlength="8" oninput="buildIconPicker()"></div>
+          <div class="fg"><label class="fl">アイコン（絵文字）</label><input class="fi" id="cat-f-icon" placeholder="🛍" maxlength="8" oninput="markSelIcon()"></div>
         </div>
         <div class="fg"><label class="fl">アイコンを選択</label><div id="cat-icon-picker" class="icon-picker"></div></div>
         <div class="fg"><label class="fl">背景色</label><input class="fi" id="cat-f-bg" type="color" value="#f0efea" style="height:38px;padding:2px;width:80px"></div>
@@ -1085,8 +1088,30 @@ function catBg(id){ var c=catById(id); return (c&&c.bg)?c.bg:'#f5f3ee'; }
 // ── 種別管理 ──
 var _catEditId=null;
 var CAT_ICONS=['✈️','🚗','🚌','🚕','🚆','🚄','🚇','🛳️','⛴️','🚢','🚴','🚶','🏨','🏩','⛺','🏕️','🔑','🍴','🍽️','🍜','🍣','🍺','🍷','🥃','🍸','☕','🏭','🏛️','🏯','⛩️','🎉','🎊','🎡','🎢','🛍️','🛒','🎁','📷','🗺️','📍','🏔️','🏖️','🏝️','🌋','🎿','🎤','🎫','⭐','🔥','💰','🧭','⏰','📅'];
-function buildIconPicker(){ var box=g('cat-icon-picker'); if(!box) return; var cur=(g('cat-f-icon').value||'').trim(); box.innerHTML=CAT_ICONS.map(function(e){ return '<button type="button" class="ic-opt'+(e===cur?' sel':'')+'" onclick="pickCatIcon(\''+e+'\')">'+e+'</button>'; }).join(''); }
-function pickCatIcon(e){ g('cat-f-icon').value=e; buildIconPicker(); }
+// 全絵文字を生成（描画できないコードポイントはcanvasで除外・キャッシュ）
+var _allEmojis=null;
+function _emojiAll(){
+  if(_allEmojis) return _allEmojis;
+  _allEmojis=[];
+  try{
+    var ranges=[[0x1F300,0x1F5FF],[0x1F600,0x1F64F],[0x1F680,0x1F6C5],[0x1F90C,0x1F9FF],[0x1FA70,0x1FAF8],[0x2600,0x26FF],[0x2700,0x27BF]];
+    var cv=document.createElement('canvas'); cv.width=cv.height=18; var cx=cv.getContext('2d'); cx.textBaseline='top'; cx.font='16px sans-serif';
+    function sig(ch){ cx.clearRect(0,0,18,18); cx.fillText(ch,1,1); var d=cx.getImageData(0,0,18,18).data, cnt=0, s=0; for(var i=0;i<d.length;i+=4){ if(d[i+3]>0){ cnt++; s=(s*31+d[i]+d[i+1]*7+d[i+2]*13)>>>0; } } return cnt+':'+s; }
+    var tofu=sig(String.fromCodePoint(0x10FFFF)), blank=sig(' '), seen={};
+    ranges.forEach(function(r){ for(var cp=r[0];cp<=r[1];cp++){ var ch=String.fromCodePoint(cp), gsig=sig(ch); if(gsig===tofu||gsig===blank||seen[gsig]) continue; seen[gsig]=1; _allEmojis.push(ch); } });
+  }catch(e){ _allEmojis=[]; }
+  return _allEmojis;
+}
+function _icBtns(arr, cur){ return arr.map(function(e){ return '<button type="button" class="ic-opt'+(e===cur?' sel':'')+'" onclick="pickCatIcon(\''+e+'\')">'+e+'</button>'; }).join(''); }
+function buildIconPicker(){
+  var box=g('cat-icon-picker'); if(!box) return;
+  var cur=(g('cat-f-icon').value||'').trim();
+  var all=_emojiAll();
+  box.innerHTML='<div class="ic-sec">旅行向け</div><div class="ic-row">'+_icBtns(CAT_ICONS,cur)+'</div>'
+    +(all.length?'<div class="ic-sec">すべて</div><div class="ic-row">'+_icBtns(all,cur)+'</div>':'');
+}
+function markSelIcon(){ var box=g('cat-icon-picker'); if(!box) return; var cur=(g('cat-f-icon').value||'').trim(); Array.prototype.forEach.call(box.querySelectorAll('.ic-opt'),function(b){ b.classList.toggle('sel', b.textContent===cur); }); }
+function pickCatIcon(e){ g('cat-f-icon').value=e; markSelIcon(); }
 function openCatMgr(){ g('cat-mgr-modal').classList.add('open'); catFormReset(); g('cat-list').innerHTML='<div class="ec">読み込み中…</div>'; ensureCatsSeeded().then(renderCatMgr); }
 function closeCatMgr(){ g('cat-mgr-modal').classList.remove('open'); }
 function ensureCatsSeeded(){
