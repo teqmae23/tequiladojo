@@ -187,6 +187,17 @@ a{color:var(--gold-d)}
 .ck-plist{display:flex;flex-wrap:wrap;gap:6px}
 .ck-p{font-size:12px;padding:3px 9px;border-radius:12px;background:var(--cream2);color:var(--ink2)}
 .ck-p.ok{background:#e7f6f1;color:var(--teal)}
+.ck-prog-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:9px;border:1px solid transparent;flex:0 0 auto}
+.ck-prog-sel{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ck-prog-chip{font-size:12px;font-weight:600;padding:6px 12px;border-radius:16px;border:1.5px solid var(--border2);background:var(--white);color:var(--ink2);cursor:pointer}
+.ck-prog-chip.on{border-color:transparent}
+.ck-prog-chip.ro{cursor:default}
+.ck-prog-chip:disabled{cursor:default}
+.ck-prog-note{font-size:11px;color:var(--ink3);margin-top:6px}
+.ck-item.ck-grayed{opacity:.6}
+.ck-item.ck-grayed .ck-hd2{background:var(--cream2)!important}
+.ck-item.ck-grayed .ck-hd-ttl{color:var(--ink3)}
+.ck-graynote{font-size:11px;color:var(--ink3);font-weight:600;margin-bottom:6px}
 .ck-attach{font-size:12px;margin:6px 0}
 .ck-attach a{color:var(--teal);font-weight:600}
 .ck-file{margin-top:8px}
@@ -968,36 +979,90 @@ function loadChecklist(){
 }
 var _ckExpanded={};
 var CK_STATE_ICON={done:'〇', todo:'⚠️', over:'🚨'};
+var PROG_COLORS={
+  red:{bg:'#fbdcd6',tx:'#a5341f',bd:'#e5b0a6'},
+  yellow:{bg:'#fbf1d6',tx:'#8a6a1e',bd:'#e6d29a'},
+  green:{bg:'#dff3e6',tx:'#1f7a44',bd:'#a9dcbb'},
+  blue:{bg:'#e3edfb',tx:'#22568f',bd:'#b3ccec'},
+  orange:{bg:'#fde8d2',tx:'#a5601f',bd:'#e7c496'},
+  purple:{bg:'#ece3fb',tx:'#5a3a9f',bd:'#cdb8ec'},
+  gray:{bg:'#eceae6',tx:'#66605a',bd:'#d3cec7'}
+};
+function progColor(c){ return PROG_COLORS[c]||PROG_COLORS.gray; }
+function _progStates(t){ return (t.progressEnabled && Array.isArray(t.progressStates) && t.progressStates.length) ? t.progressStates : null; }
+function _progLastId(t){ var st=_progStates(t); return st?st[st.length-1].id:null; }
+function _progState(t,id){ var st=_progStates(t); if(!st||!id) return null; for(var i=0;i<st.length;i++){ if(st[i].id===id) return st[i]; } return null; }
+function _myComp(t){ return (t._comps||[]).find(function(c){ return c.id===_uid; }); }
+function _idsHas(ids, uid, mid){ if(!ids||!ids.length) return false; if(uid && ids.indexOf(uid)>=0) return true; if(mid && ids.indexOf(String(mid))>=0) return true; return false; }
+function _selfInAud(t){ if(t.audience!=='selected') return true; return _idsHas(t.audienceIds, _uid, _memberId); }
+function _pInAud(t,p){ if(t.audience!=='selected') return true; var uid=(p.id&&String(p.id).indexOf('mid:')!==0)?p.id:''; return _idsHas(t.audienceIds, uid, p.memberId); }
+// 会員がこの項目を表示できるか（対象者=選択者のとき、表示範囲=全員なら対象外はグレー表示、選択者のみなら非表示）
+function _taskVisibleSelf(t){ if(_isStaff) return true; if(t.audience!=='selected') return true; if(_selfInAud(t)) return true; return t.showScope!=='selected'; }
+// 会員がこの項目を操作できるか（対象者本人か）
+function _taskActiveSelf(t){ return _selfInAud(t); }
 function _taskMyState(t){
-  var myc=(t._comps||[]).find(function(c){ return c.id===_uid; });
-  var done=!!(myc&&myc.done);
+  var myc=_myComp(t);
+  var done;
+  if(_progStates(t)){ done=!!(myc && myc.progress && myc.progress===_progLastId(t)); }
+  else { done=!!(myc&&myc.done); }
   if(done) return 'done';
   if(t.deadline && t.deadline<_ckToday()) return 'over';
   return 'todo';
 }
 function _taskCreatedMs(t){ if(t.createdAt&&t.createdAt.seconds) return t.createdAt.seconds; return (t.seq||0); }
+function _progChip(st, on, ro, taskId){
+  var c=progColor(st.color);
+  var style=on?('background:'+c.bg+';color:'+c.tx+';border-color:'+c.bd):'';
+  if(ro){ return '<span class="ck-prog-chip ro'+(on?' on':'')+'" style="'+style+'">'+(on?'● ':'')+esc(st.label||'')+'</span>'; }
+  return '<button type="button" class="ck-prog-chip'+(on?' on':'')+'" style="'+style+'" onclick="taskProg(\''+esc(taskId)+'\',\''+esc(st.id)+'\')">'+(on?'● ':'')+esc(st.label||'')+'</button>';
+}
 function taskDetailHtml(t){
   var today=_ckToday();
   var pub=(t.visibility!=='private');
-  var myc=(t._comps||[]).find(function(c){ return c.id===_uid; });
-  var done=!!(myc&&myc.done);
+  var myc=_myComp(t);
+  var st=_progStates(t);
+  var done=st?!!(myc&&myc.progress&&myc.progress===_progLastId(t)):!!(myc&&myc.done);
   var over=(t.deadline&&t.deadline<today&&!done);
+  var active=_taskActiveSelf(t);
   var hh='<div class="ck-visrow"><span class="ck-vis '+(pub?'pub':'priv')+'">'+(pub?'公開':'非公開')+'</span></div>';
+  if(!active) hh+='<div class="ck-graynote">👁 この項目の対象者ではありません（閲覧のみ）</div>';
   if(t.content) hh+='<div class="ck-content">'+esc(t.content)+'</div>';
   if(t.deadline) hh+='<div class="ck-dl'+(over?' over':'')+'">期限: '+esc(t.deadline)+(over?'（超過）':'')+'</div>';
   if(t.sampleUrl) hh+='<div class="ck-attach">📄 提出見本: <a href="'+esc(t.sampleUrl)+'" target="_blank" rel="noopener">'+esc(t.sampleName||'見本ファイル')+'</a></div>';
   if(t.attachmentUrl) hh+='<div class="ck-attach">📎 <a href="'+esc(t.attachmentUrl)+'" target="_blank" rel="noopener">'+esc(t.attachmentName||'参考ファイル')+'</a></div>';
-  if(_isReal){
-    if(t.requireFile && !done) hh+='<div class="ck-file"><input type="file" id="ckf-'+esc(t.id)+'"><div class="ck-hint">完了にはファイル提出が必要です'+(myc&&myc.fileUrl?'（提出済みのため省略可）':'')+'</div></div>';
-    if(myc&&myc.fileUrl) hh+='<div class="ck-sub">提出済: <a href="'+esc(myc.fileUrl)+'" target="_blank" rel="noopener">'+esc(myc.fileName||'提出ファイル')+'</a></div>';
-    hh+='<button class="ck-btn '+(done?'did':'todo')+'" id="ckb-'+esc(t.id)+'" onclick="taskAction(\''+esc(t.id)+'\')">'+(done?'✓ 完了済み（取り消す）':'完了にする')+'</button>';
+  if(_isReal && active){
+    if(st){
+      // 進捗管理: 段階を選択
+      var lastId=_progLastId(t);
+      if(t.requireFile && !done) hh+='<div class="ck-file"><input type="file" id="ckf-'+esc(t.id)+'"><div class="ck-hint">「'+esc((st[st.length-1]||{}).label||'完了')+'」にはファイル提出が必要です'+(myc&&myc.fileUrl?'（提出済みのため省略可）':'')+'</div></div>';
+      if(myc&&myc.fileUrl) hh+='<div class="ck-sub">提出済: <a href="'+esc(myc.fileUrl)+'" target="_blank" rel="noopener">'+esc(myc.fileName||'提出ファイル')+'</a></div>';
+      hh+='<div class="ck-prog-sel">'+st.map(function(s){ return _progChip(s, myc&&myc.progress===s.id, false, t.id); }).join('')+'</div>';
+      hh+='<div class="ck-prog-note">段階を選んで進捗を更新します。「'+esc((st[st.length-1]||{}).label||'完了')+'」で完了になります。同じ段階をもう一度押すと取り消せます。</div>';
+    } else {
+      if(t.requireFile && !done) hh+='<div class="ck-file"><input type="file" id="ckf-'+esc(t.id)+'"><div class="ck-hint">完了にはファイル提出が必要です'+(myc&&myc.fileUrl?'（提出済みのため省略可）':'')+'</div></div>';
+      if(myc&&myc.fileUrl) hh+='<div class="ck-sub">提出済: <a href="'+esc(myc.fileUrl)+'" target="_blank" rel="noopener">'+esc(myc.fileName||'提出ファイル')+'</a></div>';
+      hh+='<button class="ck-btn '+(done?'did':'todo')+'" id="ckb-'+esc(t.id)+'" onclick="taskAction(\''+esc(t.id)+'\')">'+(done?'✓ 完了済み（取り消す）':'完了にする')+'</button>';
+    }
+  } else if(_isReal && !active){
+    if(st) hh+='<div class="ck-prog-sel">'+st.map(function(s){ return _progChip(s, false, true, t.id); }).join('')+'</div>';
   }
-  else hh+='<div style="font-size:11px;color:var(--ink3);margin-top:6px">会員ログインで完了操作ができます</div>';
+  else if(!_isReal) hh+='<div style="font-size:11px;color:var(--ink3);margin-top:6px">会員ログインで操作ができます</div>';
   if(pub){
     var comps={}; (t._comps||[]).forEach(function(c){ comps[c.id]=c; });
-    var list=_participants||[]; var doneN=0;
-    var pl=list.map(function(p){ var c=comps[p.id]; var ok=!!(c&&c.done); if(ok)doneN++; return '<span class="ck-p'+(ok?' ok':'')+'">'+(ok?'✓ ':'□ ')+esc(p.nickname||'（会員）')+'</span>'; }).join('');
-    hh+='<div class="ck-status"><div class="sh">全員の状況（'+doneN+'/'+list.length+'）</div>'+(list.length?'<div class="ck-plist">'+pl+'</div>':'<div style="font-size:12px;color:var(--ink3)">参加登録者がいません</div>')+'</div>';
+    var list=(_participants||[]).filter(function(p){ return _pInAud(t,p); });
+    var doneN=0;
+    var pl=list.map(function(p){
+      var c=comps[p.id];
+      if(st){
+        var pr=c&&c.progress?_progState(t,c.progress):null;
+        var isDone=!!(pr && pr.id===_progLastId(t)); if(isDone)doneN++;
+        if(pr){ var col=progColor(pr.color); return '<span class="ck-p" style="background:'+col.bg+';color:'+col.tx+'">'+esc(p.nickname||'（会員）')+'：'+esc(pr.label)+'</span>'; }
+        return '<span class="ck-p">'+esc(p.nickname||'（会員）')+'：未設定</span>';
+      }
+      var ok=!!(c&&c.done); if(ok)doneN++;
+      return '<span class="ck-p'+(ok?' ok':'')+'">'+(ok?'✓ ':'□ ')+esc(p.nickname||'（会員）')+'</span>';
+    }).join('');
+    hh+='<div class="ck-status"><div class="sh">全員の状況（'+doneN+'/'+list.length+'）</div>'+(list.length?'<div class="ck-plist">'+pl+'</div>':'<div style="font-size:12px;color:var(--ink3)">対象の参加登録者がいません</div>')+'</div>';
   }
   return hh;
 }
@@ -1005,9 +1070,14 @@ function toggleTaskDetail(id){ var d=g('ckd-'+id), c=g('ckcar-'+id); if(!d) retu
 function renderChecklist(){
   var el=g('checklist-cont'); if(!el) return;
   if(!_tasks.length){ el.innerHTML='<div class="card"><div class="sec">✅ チェックリスト</div><div style="font-size:12px;color:var(--ink3)">チェックリストはまだありません。</div></div>'; return; }
-  // 並び順: 期限切れ→未チェック→チェック済、各グループ内は期限早い順→登録が早い順
+  // 表示できる項目のみ（対象者=選択者・表示範囲=選択者のみで対象外の場合は非表示）
+  var vis=_tasks.filter(_taskVisibleSelf);
+  if(!vis.length){ el.innerHTML='<div class="card"><div class="sec">✅ チェックリスト</div><div style="font-size:12px;color:var(--ink3)">表示できるチェック項目はありません。</div></div>'; return; }
+  // 並び順: 対象項目が先→期限切れ→未チェック→チェック済（各内で期限早い順→登録が早い順）、対象外（グレー）は末尾
   var ORDER={over:0, todo:1, done:2};
-  var arr=_tasks.slice().sort(function(a,b){
+  var arr=vis.slice().sort(function(a,b){
+    var aa=_taskActiveSelf(a)?0:1, ab=_taskActiveSelf(b)?0:1;
+    if(aa!==ab) return aa-ab;
     var sa=ORDER[_taskMyState(a)], sb=ORDER[_taskMyState(b)];
     if(sa!==sb) return sa-sb;
     var da=a.deadline||'9999-99-99', db=b.deadline||'9999-99-99';
@@ -1015,16 +1085,25 @@ function renderChecklist(){
     return _taskCreatedMs(a)-_taskCreatedMs(b);
   });
   var checked=0, unchecked=0, overdue=0;
-  arr.forEach(function(t){ var s=_taskMyState(t); if(s==='done')checked++; else { unchecked++; if(s==='over')overdue++; } });
+  arr.forEach(function(t){ if(!_taskActiveSelf(t)) return; var s=_taskMyState(t); if(s==='done')checked++; else { unchecked++; if(s==='over')overdue++; } });
   var ov = overdue>0?'over':(unchecked>0?'todo':'done');
   var h='<div class="card"><div class="sec-row"><div class="sec">✅ チェックリスト</div>'
     +'<div class="ck-summary '+ov+'">'+CK_STATE_ICON[ov]+' チェック済：'+checked+'件 ／ 未チェック：'+unchecked+'件</div></div>';
   if(overdue>0) h+='<div class="ck-warn">🚨 期限切れのチェック項目があります！</div>';
   h+=arr.map(function(t){
     var s=_taskMyState(t);
+    var active=_taskActiveSelf(t);
     var open=!!_ckExpanded[t.id];
-    return '<div class="ck-item '+s+'">'
-      +'<div class="ck-hd2" onclick="toggleTaskDetail(\''+esc(t.id)+'\')"><span class="ck-hd-ic">'+CK_STATE_ICON[s]+'</span><span class="ck-hd-ttl">'+esc(t.title||'')+'</span><span class="ck-hd-caret" id="ckcar-'+esc(t.id)+'">'+(open?'▾':'▸')+'</span></div>'
+    // 進捗バッジ（進捗管理項目のみ）
+    var badge='';
+    var st=_progStates(t);
+    if(st){
+      var myc=_myComp(t); var pr=(myc&&myc.progress)?_progState(t,myc.progress):null;
+      if(pr){ var c=progColor(pr.color); badge='<span class="ck-prog-badge" style="background:'+c.bg+';color:'+c.tx+';border-color:'+c.bd+'">'+esc(pr.label)+'</span>'; }
+      else { var gc=PROG_COLORS.gray; badge='<span class="ck-prog-badge" style="background:'+gc.bg+';color:'+gc.tx+'">未設定</span>'; }
+    }
+    return '<div class="ck-item '+s+(active?'':' ck-grayed')+'">'
+      +'<div class="ck-hd2" onclick="toggleTaskDetail(\''+esc(t.id)+'\')"><span class="ck-hd-ic">'+CK_STATE_ICON[s]+'</span><span class="ck-hd-ttl">'+esc(t.title||'')+'</span>'+badge+'<span class="ck-hd-caret" id="ckcar-'+esc(t.id)+'">'+(open?'▾':'▸')+'</span></div>'
       +'<div class="ck-detail" id="ckd-'+esc(t.id)+'" style="display:'+(open?'':'none')+'">'+taskDetailHtml(t)+'</div></div>';
   }).join('');
   h+='</div>';
@@ -1033,6 +1112,7 @@ function renderChecklist(){
 function taskAction(taskId){
   if(!_isReal) return;
   var t=_tasks.find(function(x){return x.id===taskId;}); if(!t) return;
+  if(!_taskActiveSelf(t)) return;
   var myc=(t._comps||[]).find(function(c){ return c.id===_uid; });
   var currentlyDone=!!(myc&&myc.done);
   var btn=g('ckb-'+taskId);
@@ -1049,6 +1129,30 @@ function taskAction(taskId){
   var up=file?uploadSubmission(t,file):Promise.resolve(null);
   up.then(function(extra){ return setCompletion(taskId, Object.assign({done:true}, extra||{})); })
     .catch(function(e){ toast('提出失敗: '+e.message); if(btn) btn.disabled=false; });
+}
+function taskProg(taskId, stateId){
+  if(!_isReal) return;
+  var t=_tasks.find(function(x){return x.id===taskId;}); if(!t) return;
+  if(!_taskActiveSelf(t)) return;
+  var st=_progStates(t); if(!st) return;
+  var myc=_myComp(t);
+  var cur=myc&&myc.progress;
+  // 同じ段階を再度押したら取り消し
+  if(cur===stateId){
+    setCompletion(taskId,{progress:'', done:false}).catch(function(e){ toast('更新失敗: '+e.message); });
+    return;
+  }
+  var isLast=(stateId===_progLastId(t));
+  if(isLast && t.requireFile){
+    var fi=g('ckf-'+taskId);
+    var file=(fi&&fi.files&&fi.files[0])||null;
+    if(!file && !(myc&&myc.fileUrl)){ toast('完了段階にはファイル提出が必要です'); return; }
+    var up=file?uploadSubmission(t,file):Promise.resolve(null);
+    up.then(function(extra){ return setCompletion(taskId, Object.assign({progress:stateId, done:true}, extra||{})); })
+      .catch(function(e){ toast('提出失敗: '+e.message); });
+    return;
+  }
+  setCompletion(taskId,{progress:stateId, done:isLast}).catch(function(e){ toast('更新失敗: '+e.message); });
 }
 function uploadSubmission(t,file){
   if(!storage) return Promise.reject(new Error('この環境ではアップロードできません'));
