@@ -113,6 +113,7 @@ a{color:var(--gold-d)}
 .sc-note{font-size:12px;color:var(--ink3);line-height:1.6;margin-top:2px;white-space:pre-wrap}
 .sc-meta{display:flex;gap:12px;flex-wrap:wrap;margin-top:3px;font-size:12px}
 .sc-cost{color:var(--gold-d);font-weight:600}
+.sc-cost-sub{font-size:10px;color:var(--ink3);font-weight:400;margin-left:4px}
 .sc-map{color:var(--teal);text-decoration:none;font-weight:600}
 #sc-map-el{height:260px;border-radius:var(--r);border:1px solid var(--border2);margin-bottom:12px;z-index:0}
 .sc-item.has-geo{cursor:pointer}
@@ -547,11 +548,17 @@ function _sortByJst(items){
     .sort(function(a,b){ return (a.ms-b.ms)||(a.seq-b.seq)||(a.i-b.i); });
 }
 function _idlCross(it){ return !!(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null && Math.abs(it.toLng-it.lng)>180); }
+/* ── 費用表示（円カンマ＋現地通貨） ── */
+var FX={USD:150, MXN:8};
+function curSym(c){ return c==='USD'?'US$':c==='MXN'?'MX$':'¥'; }
+function toYen(amt,cur){ if(amt==null) return null; if(cur==='JPY'||!cur) return Math.round(amt); return Math.round(amt*(FX[cur]||0)); }
+function costMain(it){ if(it.costAmount!=null){ var y=(it.costJpy!=null?it.costJpy:toYen(it.costAmount,it.costCurrency||'JPY')); return '¥'+Number(y).toLocaleString(); } return it.cost||''; }
+function costSub(it){ if(it.costAmount!=null && it.costCurrency && it.costCurrency!=='JPY') return curSym(it.costCurrency)+Number(it.costAmount).toLocaleString(); return ''; }
 function renderSchedItem(it){
   var ic=it.overnight?'🏨':(SCAT_ICON[it.category]||'📍');
   var geo=(it.lat!=null&&it.lng!=null);
   var meta=[];
-  if(it.cost) meta.push('<span class="sc-cost">'+esc(it.cost)+'</span>');
+  var cm=costMain(it); if(cm){ var cs=costSub(it); meta.push('<span class="sc-cost">'+esc(cm)+(cs?'<span class="sc-cost-sub">'+esc(cs)+'</span>':'')+'</span>'); }
   var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
   if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="'+esc(routeLink(it))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🚗 ルート</a>');
   var photos=_photosByItem[it.id]||[];
@@ -613,7 +620,8 @@ function initSchedMap(items){
   items.forEach(function(it){
     if(it.lat!=null&&it.lng!=null){
       var plng=_unwrapLng(it.lng, refLng); refLng=plng;
-      var m=L.marker([it.lat,plng]).addTo(map).bindPopup('<b>'+esc((it.time?it.time+' ':'')+(it.title||''))+'</b>'+(it.date?'<br>'+esc(fmtDate(it.date)):'')+(it.cost?'<br>'+esc(it.cost):''));
+      var _pcm=costMain(it);
+      var m=L.marker([it.lat,plng]).addTo(map).bindPopup('<b>'+esc((it.time?it.time+' ':'')+(it.title||''))+'</b>'+(it.date?'<br>'+esc(fmtDate(it.date)):'')+(_pcm?'<br>'+esc(_pcm):''));
       _scMarkers[it.id]=m; bounds.push([it.lat,plng]);
       if(it.isMove&&it.toLat!=null&&it.toLng!=null){
         var tplng=_unwrapLng(it.toLng, refLng); refLng=tplng;
