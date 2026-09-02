@@ -114,6 +114,9 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .se-caret{font-size:10px;color:var(--ink3);width:12px;display:inline-block}
 .se-cost-sub{font-size:10px;color:var(--ink3);font-weight:400}
 .pl-item{display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:var(--r);padding:8px 11px;margin-bottom:6px;background:var(--white)}
+.cat-item{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:var(--r);padding:8px 11px;margin-bottom:6px}
+.cat-item .cat-ic{font-size:18px;flex:0 0 auto}
+.cat-item .cat-nm{flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--ink)}
 .pl-item .nm{flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--ink)}
 .pl-item .co{font-family:var(--mono);font-size:11px;color:var(--ink3)}
 .se-ic{font-size:15px;flex:0 0 auto}
@@ -410,7 +413,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
   <div class="modal" style="max-width:640px">
     <div class="mhd"><span id="sch-mgr-title">スケジュール</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeSchedMgr()">✕</button></div>
     <div class="mbd">
-      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><span class="cnt" id="sch-total"></span></div>
+      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm" onclick="openCatMgr()">🏷 種別管理</button><span class="cnt" id="sch-total"></span></div>
       <div id="sch-list"><div class="ec">読み込み中…</div></div>
     </div>
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeSchedMgr()">閉じる</button></div>
@@ -485,6 +488,29 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       <div id="pl-list"><div class="ec">読み込み中…</div></div>
     </div>
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closePlaceMgr()">閉じる</button></div>
+  </div>
+</div>
+
+<!-- 種別管理モーダル -->
+<div class="mbg" id="cat-mgr-modal">
+  <div class="modal">
+    <div class="mhd"><span>🏷 種別管理</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeCatMgr()">✕</button></div>
+    <div class="mbd">
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">スケジュールの種別（名前・アイコン・背景色）を管理します。</div>
+      <div id="cat-list"><div class="ec">読み込み中…</div></div>
+      <div style="border-top:1px dashed var(--border2);margin-top:12px;padding-top:12px">
+        <div id="cat-form-title" style="font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:6px">種別を追加</div>
+        <div class="row2">
+          <div class="fg"><label class="fl">名前</label><input class="fi" id="cat-f-name" placeholder="例: 買い物"></div>
+          <div class="fg"><label class="fl">アイコン（絵文字）</label><input class="fi" id="cat-f-icon" placeholder="🛍" maxlength="4"></div>
+        </div>
+        <div class="fg"><label class="fl">背景色</label><input class="fi" id="cat-f-bg" type="color" value="#f0efea" style="height:38px;padding:2px;width:80px"></div>
+        <div class="err" id="cat-err"></div>
+        <button class="btn bp sm" id="cat-save-btn" onclick="saveCat()">＋ 追加</button>
+        <button class="btn bs sm" id="cat-cancel-btn" style="display:none" onclick="catFormReset()">キャンセル</button>
+      </div>
+    </div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeCatMgr()">閉じる</button></div>
   </div>
 </div>
 
@@ -1028,14 +1054,65 @@ function renderAgg(s, resp){
 
 /* ════════ スケジュール/タイムテーブル ════════ */
 var _schEventId=null, _schItems=[], _schEditId=null;
-var SCAT=[
-  {v:'flight',n:'✈️ 空路移動'},{v:'move',n:'🚗 陸路移動'},{v:'hotel',n:'🏨 宿泊'},
-  {v:'checkin',n:'🔑 チェックイン'},{v:'meal',n:'🍴 食事'},{v:'distillery',n:'🏭 蒸留所'},
-  {v:'activity',n:'🎉 アクティビティ'},{v:'free',n:'🚶 自由行動'},{v:'other',n:'📍 その他'}
+// 種別（名前・アイコン・背景色）は scheduleCategories コレクションで管理。未設定時は既定値。
+var DEFAULT_CATS=[
+  {id:'flight',name:'空路移動',icon:'✈️',bg:'#eaf1fb',seq:0},
+  {id:'move',name:'陸路移動',icon:'🚗',bg:'#f7efe0',seq:1},
+  {id:'hotel',name:'宿泊',icon:'🏨',bg:'#f0ecf8',seq:2},
+  {id:'checkin',name:'チェックイン',icon:'🔑',bg:'#e8f5f0',seq:3},
+  {id:'meal',name:'食事',icon:'🍴',bg:'#fbefe4',seq:4},
+  {id:'distillery',name:'蒸留所',icon:'🏭',bg:'#eef5e7',seq:5},
+  {id:'activity',name:'アクティビティ',icon:'🎉',bg:'#fbe9ef',seq:6},
+  {id:'free',name:'自由行動',icon:'🚶',bg:'#f0efea',seq:7},
+  {id:'other',name:'その他',icon:'📍',bg:'#f5f3ee',seq:8}
 ];
-var SCAT_ICON={flight:'✈️',move:'🚗',hotel:'🏨',checkin:'🔑',meal:'🍴',distillery:'🏭',activity:'🎉',free:'🚶',other:'📍'};
-var SC_BG={flight:'#eaf1fb',move:'#f7efe0',hotel:'#f0ecf8',checkin:'#e8f5f0',meal:'#fbefe4',distillery:'#eef5e7',activity:'#fbe9ef',free:'#f0efea',other:'#f5f3ee'};
-function scBg(it){ return SC_BG[it&&it.category]||SC_BG.other; }
+var _cats=DEFAULT_CATS.slice();
+function catCol(){ return db.collection('scheduleCategories'); }
+function loadCats(){
+  return catCol().get().then(function(s){
+    if(!s.empty) _cats=s.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).sort(function(a,b){ return (a.seq||0)-(b.seq||0); });
+    else _cats=DEFAULT_CATS.slice();
+  }).catch(function(){ _cats=DEFAULT_CATS.slice(); });
+}
+function catById(id){ for(var i=0;i<_cats.length;i++) if(_cats[i].id===id) return _cats[i]; return null; }
+function catIcon(id){ var c=catById(id); return (c&&c.icon)?c.icon:'📍'; }
+function catBg(id){ var c=catById(id); return (c&&c.bg)?c.bg:'#f5f3ee'; }
+// ── 種別管理 ──
+var _catEditId=null;
+function openCatMgr(){ g('cat-mgr-modal').classList.add('open'); catFormReset(); g('cat-list').innerHTML='<div class="ec">読み込み中…</div>'; ensureCatsSeeded().then(renderCatMgr); }
+function closeCatMgr(){ g('cat-mgr-modal').classList.remove('open'); }
+function ensureCatsSeeded(){
+  return catCol().get().then(function(s){
+    if(s.empty){ var b=db.batch(); DEFAULT_CATS.forEach(function(c){ b.set(catCol().doc(c.id),{name:c.name,icon:c.icon,bg:c.bg,seq:c.seq}); }); return b.commit().then(loadCats); }
+    return loadCats();
+  }).catch(function(){ return loadCats(); });
+}
+function refreshCatUI(){ if(g('sch-ed-modal').classList.contains('open')) catOptions(g('se-cat').value); if(_schItems&&_schItems.length) renderSchedList(); }
+function renderCatMgr(){
+  return loadCats().then(function(){
+    g('cat-list').innerHTML=_cats.length?_cats.map(function(c){
+      return '<div class="cat-item" style="background:'+esc(c.bg||'#fff')+'"><span class="cat-ic">'+esc(c.icon||'📍')+'</span><span class="cat-nm">'+esc(c.name||'（無題）')+'</span>'
+        +'<button class="btn bs sm" onclick="editCat(\''+esc(c.id)+'\')">編集</button>'
+        +'<button class="rm" title="削除" onclick="delCat(\''+esc(c.id)+'\')">×</button></div>';
+    }).join(''):'<div class="ec">種別がありません。</div>';
+    refreshCatUI();
+  });
+}
+function catFormReset(){ _catEditId=null; g('cat-f-name').value=''; g('cat-f-icon').value=''; g('cat-f-bg').value='#f0efea'; g('cat-form-title').textContent='種別を追加'; g('cat-save-btn').textContent='＋ 追加'; g('cat-cancel-btn').style.display='none'; g('cat-err').textContent=''; }
+function editCat(id){ var c=catById(id); if(!c) return; _catEditId=id; g('cat-f-name').value=c.name||''; g('cat-f-icon').value=c.icon||''; g('cat-f-bg').value=(c.bg&&/^#[0-9a-fA-F]{6}$/.test(c.bg))?c.bg:'#f0efea'; g('cat-form-title').textContent='種別を編集'; g('cat-save-btn').textContent='更新'; g('cat-cancel-btn').style.display='inline-block'; g('cat-err').textContent=''; }
+function saveCat(){
+  var name=(g('cat-f-name').value||'').trim(); if(!name){ g('cat-err').textContent='名前を入力してください'; return; }
+  var icon=(g('cat-f-icon').value||'').trim()||'📍'; var bg=g('cat-f-bg').value||'#f0efea';
+  var btn=g('cat-save-btn'); btn.disabled=true;
+  var data={ name:name, icon:icon, bg:bg, updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
+  var p;
+  if(_catEditId){ p=catCol().doc(_catEditId).set(data,{merge:true}); }
+  else { data.seq=_cats.length; data.createdAt=firebase.firestore.FieldValue.serverTimestamp(); p=catCol().add(data); }
+  p.then(function(){ toast(_catEditId?'更新しました':'追加しました'); catFormReset(); return renderCatMgr(); })
+   .catch(function(e){ g('cat-err').textContent='保存失敗: '+e.message; })
+   .finally(function(){ btn.disabled=false; });
+}
+function delCat(id){ if(!confirm('この種別を削除しますか？（この種別の項目は既定表示になります）')) return; catCol().doc(id).delete().then(function(){ toast('削除しました'); if(_catEditId===id) catFormReset(); renderCatMgr(); }).catch(function(e){ toast('削除失敗: '+e.message); }); }
 // JST絶対時刻（会員側event.htmlと同じ考え方）で並べ替え・日付変更線判定
 function _tzOffMin(inst,tz){ var m={}; new Intl.DateTimeFormat('en-US',{timeZone:tz,hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(inst).forEach(function(p){m[p.type]=p.value;}); if(m.hour==='24')m.hour='00'; return Math.round((Date.UTC(+m.year,+m.month-1,+m.day,+m.hour,+m.minute,+m.second)-inst.getTime())/60000); }
 function _wallInstant(dateStr,timeStr,tz){ var dp=(dateStr||'').split('-'),tp=(timeStr||'00:00').split(':'); if(dp.length<3)return null; var g=Date.UTC(+dp[0],+dp[1]-1,+dp[2],(+tp[0]||0),(+tp[1]||0)); return new Date(g-_tzOffMin(new Date(g),tz)*60000); }
@@ -1143,7 +1220,7 @@ function openSchedMgr(eventId){
   g('sch-list').innerHTML='<div class="ec">読み込み中…</div>';
   g('sch-mgr-modal').classList.add('open');
   loadPlaces(); loadFx();
-  loadSchedItems();
+  loadCats().then(loadSchedItems);
 }
 function closeSchedMgr(){ g('sch-mgr-modal').classList.remove('open'); }
 g('sch-mgr-modal').addEventListener('click',function(e){ if(e.target===g('sch-mgr-modal')) closeSchedMgr(); });
@@ -1157,7 +1234,7 @@ function loadSchedItems(){
   }).catch(function(e){ g('sch-list').innerHTML='<div class="ec">読込失敗: '+esc(e.message)+'</div>'; });
 }
 function renderSchedItemRow(it){
-  var ic=it.overnight?'🏨':(SCAT_ICON[it.category]||'📍');
+  var ic=it.overnight?'🏨':catIcon(it.category);
   var markers=[]; if(it.isMove) markers.push('🚗ルート'); if(it.lat!=null&&it.lng!=null) markers.push('📍地図');
   var noteHtml=it.note?'<div class="se-note-line">'+esc(it.note.slice(0,80))+(it.note.length>80?'…':'')+'</div>':'';
   var ct=costText(it);
@@ -1165,7 +1242,7 @@ function renderSchedItemRow(it){
   var timeHtml=(it.isMove&&it.toTime)
     ? '<span class="se-t">'+esc(it.time||'—')+'<span class="se-move-arrow">↓</span>'+esc(it.toTime)+'</span>'
     : '<span class="se-t">'+esc(it.time||'—')+(it.isMove?'<span class="se-move-arrow">↓</span>':'')+'</span>';
-  return '<div class="se-item'+(it.overnight?' ov':'')+'" onclick="openSchedEd(\''+esc(it.id)+'\')" style="cursor:pointer;background:'+scBg(it)+'">'
+  return '<div class="se-item'+(it.overnight?' ov':'')+'" onclick="openSchedEd(\''+esc(it.id)+'\')" style="cursor:pointer;background:'+catBg(it.category)+'">'
     +timeHtml+'<span class="se-ic">'+ic+'</span>'
     +'<div class="se-main"><div class="se-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'（無題）')+'</div>'+noteHtml+(markers.length?'<div class="se-sub">'+markers.join('　')+'</div>':'')+'</div>'
     +costHtml+'</div>';
@@ -1194,7 +1271,7 @@ function renderSchedList(){
   g('sch-total').textContent='計 '+_schItems.length+'項目 / 概算 ¥'+Math.round(total).toLocaleString();
 }
 
-function catOptions(sel){ g('se-cat').innerHTML=SCAT.map(function(c){ return '<option value="'+c.v+'"'+(sel===c.v?' selected':'')+'>'+c.n+'</option>'; }).join(''); }
+function catOptions(sel){ g('se-cat').innerHTML=_cats.map(function(c){ return '<option value="'+esc(c.id)+'"'+(sel===c.id?' selected':'')+'>'+esc((c.icon?c.icon+' ':'')+(c.name||''))+'</option>'; }).join(''); }
 function toggleMove(){ g('se-move-box').style.display=g('se-move').checked?'block':'none'; }
 function openSchedEd(id, presetDate){
   _schEditId=id;

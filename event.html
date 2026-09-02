@@ -482,17 +482,36 @@ function deleteParticipant(){
 g('mp-modal').addEventListener('click',function(e){ if(e.target===g('mp-modal')) closeMp(); });
 
 /* ════════ スケジュール/タイムテーブル（会員側・②） ════════ */
-var SCAT_ICON={flight:'✈️',move:'🚗',hotel:'🏨',checkin:'🔑',meal:'🍴',distillery:'🏭',activity:'🎉',free:'🚶',other:'📍'};
-// イベントタイプ別の薄い背景色（スケジュール項目を箱状に表示）
-var SC_BG={flight:'#eaf1fb',move:'#f7efe0',hotel:'#f0ecf8',checkin:'#e8f5f0',meal:'#fbefe4',distillery:'#eef5e7',activity:'#fbe9ef',free:'#f0efea',other:'#f5f3ee'};
-function scBg(it){ return SC_BG[it&&it.category]||SC_BG.other; }
+// 種別（名前・アイコン・背景色）は scheduleCategories コレクションで管理。未設定時は既定値。
+var DEFAULT_CATS=[
+  {id:'flight',name:'空路移動',icon:'✈️',bg:'#eaf1fb',seq:0},
+  {id:'move',name:'陸路移動',icon:'🚗',bg:'#f7efe0',seq:1},
+  {id:'hotel',name:'宿泊',icon:'🏨',bg:'#f0ecf8',seq:2},
+  {id:'checkin',name:'チェックイン',icon:'🔑',bg:'#e8f5f0',seq:3},
+  {id:'meal',name:'食事',icon:'🍴',bg:'#fbefe4',seq:4},
+  {id:'distillery',name:'蒸留所',icon:'🏭',bg:'#eef5e7',seq:5},
+  {id:'activity',name:'アクティビティ',icon:'🎉',bg:'#fbe9ef',seq:6},
+  {id:'free',name:'自由行動',icon:'🚶',bg:'#f0efea',seq:7},
+  {id:'other',name:'その他',icon:'📍',bg:'#f5f3ee',seq:8}
+];
+var _cats=DEFAULT_CATS.slice();
+function loadCats(){
+  return db.collection('scheduleCategories').get().then(function(s){
+    if(!s.empty) _cats=s.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).sort(function(a,b){ return (a.seq||0)-(b.seq||0); });
+    else _cats=DEFAULT_CATS.slice();
+  }).catch(function(){ _cats=DEFAULT_CATS.slice(); });
+}
+function catById(id){ for(var i=0;i<_cats.length;i++) if(_cats[i].id===id) return _cats[i]; return null; }
+function catIcon(id){ var c=catById(id); return (c&&c.icon)?c.icon:'📍'; }
+function catBg(id){ var c=catById(id); return (c&&c.bg)?c.bg:'#f5f3ee'; }
 var _schedItems=[], _photosByItem={};
 function phSort(a,b){ var ka=(a.takenAt||a.createdMs||0), kb=(b.takenAt||b.createdMs||0); return ka-kb; }
 function loadSchedule(){
   var ref=db.collection('events').doc(eventId);
   Promise.all([
     ref.collection('scheduleItems').get(),
-    ref.collection('photos').get().catch(function(){ return {docs:[]}; })
+    ref.collection('photos').get().catch(function(){ return {docs:[]}; }),
+    loadCats()
   ]).then(function(res){
     _schedItems=res[0].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
     _schedItems.sort(function(a,b){ var ka=(a.date||'')+' '+(a.time||'99:99')+' '+('00'+(a.seq||0)).slice(-3), kb=(b.date||'')+' '+(b.time||'99:99')+' '+('00'+(b.seq||0)).slice(-3); return ka<kb?-1:1; });
@@ -609,7 +628,7 @@ function costMain(it){ if(it.costAmount!=null){ var y=(it.costJpy!=null?it.costJ
 // 外貨換算時は「円貨（外貨）」で1行表示
 function costText(it){ var m=costMain(it); if(!m) return ''; if(it.costAmount!=null && it.costCurrency && it.costCurrency!=='JPY') return m+'（'+curSym(it.costCurrency)+Number(it.costAmount).toLocaleString()+'）'; return m; }
 function renderSchedItem(it){
-  var ic=it.overnight?'🏨':(SCAT_ICON[it.category]||'📍');
+  var ic=it.overnight?'🏨':catIcon(it.category);
   var geo=(it.lat!=null&&it.lng!=null);
   var meta=[];
   var ct=costText(it); if(ct) meta.push('<span class="sc-cost">'+esc(ct)+'</span>');
@@ -622,7 +641,7 @@ function renderSchedItem(it){
   var did=esc(it.id);
   var detail=hasDetail?'<div class="sc-detail" id="scd-'+did+'" style="display:none">'+inner+'</div>':'';
   var clickable=hasDetail||geo;
-  return '<div class="sc-item'+(clickable?' has-geo':'')+'" style="background:'+scBg(it)+'"'+(clickable?' onclick="onSchedItemClick(\''+did+'\','+(geo?'1':'0')+')"':'')+'>'+schedTimeHtml(it)+'<span class="sc-ic">'+ic+'</span>'
+  return '<div class="sc-item'+(clickable?' has-geo':'')+'" style="background:'+catBg(it.category)+'"'+(clickable?' onclick="onSchedItemClick(\''+did+'\','+(geo?'1':'0')+')"':'')+'>'+schedTimeHtml(it)+'<span class="sc-ic">'+ic+'</span>'
     +'<div class="sc-body"><div class="sc-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'')+(hasDetail?'<span class="sc-caret2" id="scc-'+did+'">▾</span>':'')+'</div>'
     +detail
     +'</div></div>';
