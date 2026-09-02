@@ -150,6 +150,22 @@ a{color:var(--gold-d)}
 .ph-pin{display:inline-flex;align-items:center;gap:1px;background:var(--gold-d);color:#fff;border-radius:12px;padding:2px 7px;font-size:13px;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;cursor:pointer}
 .ph-pin b{font-size:11px;font-weight:700}
 #ph-suggest{font-size:11px;color:var(--teal);margin-bottom:8px;min-height:14px}
+.ck-summary{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:5px 12px;border-radius:14px;border:1px solid rgba(0,0,0,.06)}
+.ck-summary.done{background:#e3edfb;color:#22568f}
+.ck-summary.todo{background:#fbf1d6;color:#8a6a1e}
+.ck-summary.over{background:#fbdcd6;color:#a5341f}
+.ck-warn{margin-top:6px;color:var(--red);font-size:12px;font-weight:700}
+.ck-item{border:1px solid var(--border);border-radius:var(--r);margin-bottom:8px;overflow:hidden}
+.ck-hd2{display:flex;align-items:center;gap:9px;padding:11px 13px;cursor:pointer;user-select:none}
+.ck-hd-ic{font-size:15px;flex:0 0 auto}
+.ck-hd-ttl{flex:1;min-width:0;font-size:14px;font-weight:600;color:var(--ink)}
+.ck-hd-caret{font-size:11px;color:var(--ink3);flex:0 0 auto}
+.ck-item.done .ck-hd2{background:#e7f0fb}
+.ck-item.todo .ck-hd2{background:#fdf6e3}
+.ck-item.over .ck-hd2{background:#fbe9e7}
+.ck-item.done .ck-hd-ttl{text-decoration:line-through;color:var(--ink3)}
+.ck-detail{padding:10px 13px;border-top:1px solid var(--border)}
+.ck-visrow{margin-bottom:6px}
 .ck-task{border:1px solid var(--border);border-left-width:4px;border-radius:var(--r);padding:12px 14px;margin-bottom:10px;background:var(--white)}
 .ck-task.pub{border-left-color:var(--teal)}
 .ck-task.priv{border-left-color:var(--ink3)}
@@ -950,35 +966,66 @@ function loadChecklist(){
   }).then(function(tasks){ _tasks=tasks; renderChecklist(); })
     .catch(function(){ var el=g('checklist-cont'); if(el) el.innerHTML='<div class="card"><div class="sec">✅ チェックリスト</div><div style="font-size:12px;color:var(--ink3)">読み込みに失敗しました</div></div>'; });
 }
+var _ckExpanded={};
+var CK_STATE_ICON={done:'〇', todo:'⚠️', over:'🚨'};
+function _taskMyState(t){
+  var myc=(t._comps||[]).find(function(c){ return c.id===_uid; });
+  var done=!!(myc&&myc.done);
+  if(done) return 'done';
+  if(t.deadline && t.deadline<_ckToday()) return 'over';
+  return 'todo';
+}
+function _taskCreatedMs(t){ if(t.createdAt&&t.createdAt.seconds) return t.createdAt.seconds; return (t.seq||0); }
+function taskDetailHtml(t){
+  var today=_ckToday();
+  var pub=(t.visibility!=='private');
+  var myc=(t._comps||[]).find(function(c){ return c.id===_uid; });
+  var done=!!(myc&&myc.done);
+  var over=(t.deadline&&t.deadline<today&&!done);
+  var hh='<div class="ck-visrow"><span class="ck-vis '+(pub?'pub':'priv')+'">'+(pub?'公開':'非公開')+'</span></div>';
+  if(t.content) hh+='<div class="ck-content">'+esc(t.content)+'</div>';
+  if(t.deadline) hh+='<div class="ck-dl'+(over?' over':'')+'">期限: '+esc(t.deadline)+(over?'（超過）':'')+'</div>';
+  if(t.sampleUrl) hh+='<div class="ck-attach">📄 提出見本: <a href="'+esc(t.sampleUrl)+'" target="_blank" rel="noopener">'+esc(t.sampleName||'見本ファイル')+'</a></div>';
+  if(t.attachmentUrl) hh+='<div class="ck-attach">📎 <a href="'+esc(t.attachmentUrl)+'" target="_blank" rel="noopener">'+esc(t.attachmentName||'参考ファイル')+'</a></div>';
+  if(_isReal){
+    if(t.requireFile && !done) hh+='<div class="ck-file"><input type="file" id="ckf-'+esc(t.id)+'"><div class="ck-hint">完了にはファイル提出が必要です'+(myc&&myc.fileUrl?'（提出済みのため省略可）':'')+'</div></div>';
+    if(myc&&myc.fileUrl) hh+='<div class="ck-sub">提出済: <a href="'+esc(myc.fileUrl)+'" target="_blank" rel="noopener">'+esc(myc.fileName||'提出ファイル')+'</a></div>';
+    hh+='<button class="ck-btn '+(done?'did':'todo')+'" id="ckb-'+esc(t.id)+'" onclick="taskAction(\''+esc(t.id)+'\')">'+(done?'✓ 完了済み（取り消す）':'完了にする')+'</button>';
+  }
+  else hh+='<div style="font-size:11px;color:var(--ink3);margin-top:6px">会員ログインで完了操作ができます</div>';
+  if(pub){
+    var comps={}; (t._comps||[]).forEach(function(c){ comps[c.id]=c; });
+    var list=_participants||[]; var doneN=0;
+    var pl=list.map(function(p){ var c=comps[p.id]; var ok=!!(c&&c.done); if(ok)doneN++; return '<span class="ck-p'+(ok?' ok':'')+'">'+(ok?'✓ ':'□ ')+esc(p.nickname||'（会員）')+'</span>'; }).join('');
+    hh+='<div class="ck-status"><div class="sh">全員の状況（'+doneN+'/'+list.length+'）</div>'+(list.length?'<div class="ck-plist">'+pl+'</div>':'<div style="font-size:12px;color:var(--ink3)">参加登録者がいません</div>')+'</div>';
+  }
+  return hh;
+}
+function toggleTaskDetail(id){ var d=g('ckd-'+id), c=g('ckcar-'+id); if(!d) return; var open=d.style.display!=='none'; d.style.display=open?'none':''; _ckExpanded[id]=!open; if(c)c.textContent=open?'▸':'▾'; }
 function renderChecklist(){
   var el=g('checklist-cont'); if(!el) return;
   if(!_tasks.length){ el.innerHTML='<div class="card"><div class="sec">✅ チェックリスト</div><div style="font-size:12px;color:var(--ink3)">チェックリストはまだありません。</div></div>'; return; }
-  var today=_ckToday();
-  var h='<div class="card"><div class="sec">✅ チェックリスト</div>';
-  h+=_tasks.map(function(t){
-    var pub=(t.visibility!=='private');
-    var myc=(t._comps||[]).find(function(c){ return c.id===_uid; });
-    var done=!!(myc&&myc.done);
-    var over=(t.deadline&&t.deadline<today&&!done);
-    var hh='<div class="ck-task '+(pub?'pub':'priv')+(done?' done':'')+'">'
-      +'<div class="ck-hd"><div class="ck-ttl'+(done?' done':'')+'">'+esc(t.title||'')+'</div><span class="ck-vis '+(pub?'pub':'priv')+'">'+(pub?'公開':'非公開')+'</span></div>';
-    if(t.content) hh+='<div class="ck-content">'+esc(t.content)+'</div>';
-    if(t.deadline) hh+='<div class="ck-dl'+(over?' over':'')+'">期限: '+esc(t.deadline)+(over?'（超過）':'')+'</div>';
-    if(t.sampleUrl) hh+='<div class="ck-attach">📄 提出見本: <a href="'+esc(t.sampleUrl)+'" target="_blank" rel="noopener">'+esc(t.sampleName||'見本ファイル')+'</a></div>';
-    if(t.attachmentUrl) hh+='<div class="ck-attach">📎 <a href="'+esc(t.attachmentUrl)+'" target="_blank" rel="noopener">'+esc(t.attachmentName||'参考ファイル')+'</a></div>';
-    if(_isReal){
-      if(t.requireFile && !done) hh+='<div class="ck-file"><input type="file" id="ckf-'+esc(t.id)+'"><div class="ck-hint">完了にはファイル提出が必要です'+(myc&&myc.fileUrl?'（提出済みのため省略可）':'')+'</div></div>';
-      if(myc&&myc.fileUrl) hh+='<div class="ck-sub">提出済: <a href="'+esc(myc.fileUrl)+'" target="_blank" rel="noopener">'+esc(myc.fileName||'提出ファイル')+'</a></div>';
-      hh+='<button class="ck-btn '+(done?'did':'todo')+'" id="ckb-'+esc(t.id)+'" onclick="taskAction(\''+esc(t.id)+'\')">'+(done?'✓ 完了済み（取り消す）':'完了にする')+'</button>';
-    }
-    else hh+='<div style="font-size:11px;color:var(--ink3);margin-top:6px">会員ログインで完了操作ができます</div>';
-    if(pub){
-      var comps={}; (t._comps||[]).forEach(function(c){ comps[c.id]=c; });
-      var list=_participants||[]; var doneN=0;
-      var pl=list.map(function(p){ var c=comps[p.id]; var ok=!!(c&&c.done); if(ok)doneN++; return '<span class="ck-p'+(ok?' ok':'')+'">'+(ok?'✓ ':'□ ')+esc(p.nickname||'（会員）')+'</span>'; }).join('');
-      hh+='<div class="ck-status"><div class="sh">全員の状況（'+doneN+'/'+list.length+'）</div>'+(list.length?'<div class="ck-plist">'+pl+'</div>':'<div style="font-size:12px;color:var(--ink3)">参加登録者がいません</div>')+'</div>';
-    }
-    return hh+'</div>';
+  // 並び順: 期限切れ→未チェック→チェック済、各グループ内は期限早い順→登録が早い順
+  var ORDER={over:0, todo:1, done:2};
+  var arr=_tasks.slice().sort(function(a,b){
+    var sa=ORDER[_taskMyState(a)], sb=ORDER[_taskMyState(b)];
+    if(sa!==sb) return sa-sb;
+    var da=a.deadline||'9999-99-99', db=b.deadline||'9999-99-99';
+    if(da!==db) return da<db?-1:1;
+    return _taskCreatedMs(a)-_taskCreatedMs(b);
+  });
+  var checked=0, unchecked=0, overdue=0;
+  arr.forEach(function(t){ var s=_taskMyState(t); if(s==='done')checked++; else { unchecked++; if(s==='over')overdue++; } });
+  var ov = overdue>0?'over':(unchecked>0?'todo':'done');
+  var h='<div class="card"><div class="sec-row"><div class="sec">✅ チェックリスト</div>'
+    +'<div class="ck-summary '+ov+'">'+CK_STATE_ICON[ov]+' チェック済：'+checked+'件 ／ 未チェック：'+unchecked+'件</div></div>';
+  if(overdue>0) h+='<div class="ck-warn">🚨 期限切れのチェック項目があります！</div>';
+  h+=arr.map(function(t){
+    var s=_taskMyState(t);
+    var open=!!_ckExpanded[t.id];
+    return '<div class="ck-item '+s+'">'
+      +'<div class="ck-hd2" onclick="toggleTaskDetail(\''+esc(t.id)+'\')"><span class="ck-hd-ic">'+CK_STATE_ICON[s]+'</span><span class="ck-hd-ttl">'+esc(t.title||'')+'</span><span class="ck-hd-caret" id="ckcar-'+esc(t.id)+'">'+(open?'▾':'▸')+'</span></div>'
+      +'<div class="ck-detail" id="ckd-'+esc(t.id)+'" style="display:'+(open?'':'none')+'">'+taskDetailHtml(t)+'</div></div>';
   }).join('');
   h+='</div>';
   el.innerHTML=h;
