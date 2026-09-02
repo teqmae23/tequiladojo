@@ -110,7 +110,8 @@ a{color:var(--gold-d)}
 .sc-ic{font-size:16px;flex:0 0 auto}
 .sc-body{flex:1;min-width:0}
 .sc-ttl{font-size:14px;font-weight:600;color:var(--ink)}
-.sc-note{font-size:12px;color:var(--ink3);line-height:1.6;margin-top:2px;white-space:pre-wrap}
+.sc-note{font-size:12px;color:var(--ink);line-height:1.6;margin-top:2px;white-space:pre-wrap}
+.sc-arrow{display:block;color:var(--gold-d);font-size:12px;line-height:1.1;text-align:center}
 .sc-meta{display:flex;gap:12px;flex-wrap:wrap;margin-top:3px;font-size:12px}
 .sc-cost{color:var(--gold-d);font-weight:600}
 .sc-cost-sub{font-size:10px;color:var(--ink3);font-weight:400;margin-left:4px}
@@ -521,20 +522,26 @@ function _tzAbbr(inst,tz){
 }
 function _fmtHM(inst,tz){ return new Intl.DateTimeFormat('en-GB',{timeZone:tz,hour12:false,hour:'2-digit',minute:'2-digit'}).format(inst); }
 function _dayKey(inst,tz){ return new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).format(inst); }
-function schedTimeHtml(it){
-  var t=it.time||'';
-  if(!t) return '<span class="sc-time">—</span>';
+function _tzTimeInner(dateStr,t,lat,lng){
+  if(!t) return '—';
   var tz=null;
-  if(window.tzlookup && it.lat!=null && it.lng!=null){ try{ tz=tzlookup(it.lat,it.lng); }catch(e){} }
-  var inst=tz?_wallInstant(it.date,t,tz):null;
-  if(!tz||!inst) return '<span class="sc-time">'+esc(t)+'</span>';
+  if(window.tzlookup && lat!=null && lng!=null){ try{ tz=tzlookup(lat,lng); }catch(e){} }
+  var inst=tz?_wallInstant(dateStr,t,tz):null;
+  if(!tz||!inst) return esc(t);
   var abbr=_tzAbbr(inst,tz);
-  if(tz==='Asia/Tokyo') return '<span class="sc-time">'+esc(t)+' <span class="sc-tz">(JST)</span></span>';
+  if(tz==='Asia/Tokyo') return esc(t)+' <span class="sc-tz">(JST)</span>';
   var jst=_fmtHM(inst,'Asia/Tokyo');
-  var dd=Math.round((Date.parse(_dayKey(inst,'Asia/Tokyo'))-Date.parse(it.date))/86400000);
+  var dd=Math.round((Date.parse(_dayKey(inst,'Asia/Tokyo'))-Date.parse(dateStr))/86400000);
   var ddTxt=dd?'<span class="sc-daydiff">'+(dd>0?'+'+dd:''+dd)+'日</span>':'';
-  return '<span class="sc-time">'+esc(t)+' <span class="sc-tz">('+esc(abbr)+')</span>'
-    +'<span class="sc-time-jst">'+esc(jst)+' (JST)'+ddTxt+'</span></span>';
+  return esc(t)+' <span class="sc-tz">('+esc(abbr)+')</span><span class="sc-time-jst">'+esc(jst)+' (JST)'+ddTxt+'</span>';
+}
+function schedTimeHtml(it){
+  var dep=_tzTimeInner(it.date, it.time, it.lat, it.lng);
+  if(it.isMove && it.toTime){
+    var arr=_tzTimeInner(it.date, it.toTime, (it.toLat!=null?it.toLat:it.lat), (it.toLng!=null?it.toLng:it.lng));
+    return '<span class="sc-time">'+dep+'<span class="sc-arrow">↓</span>'+arr+'</span>';
+  }
+  return '<span class="sc-time">'+(it.time?'':'')+dep+'</span>';
 }
 var _scMarkers={}, _scMap=null, _scItemBounds={};
 function _safeTz(la,ln){ try{ return window.tzlookup?tzlookup(la,ln):null; }catch(e){ return null; } }
@@ -553,12 +560,13 @@ var FX={USD:150, MXN:8};
 function curSym(c){ return c==='USD'?'US$':c==='MXN'?'MX$':'¥'; }
 function toYen(amt,cur){ if(amt==null) return null; if(cur==='JPY'||!cur) return Math.round(amt); return Math.round(amt*(FX[cur]||0)); }
 function costMain(it){ if(it.costAmount!=null){ var y=(it.costJpy!=null?it.costJpy:toYen(it.costAmount,it.costCurrency||'JPY')); return '¥'+Number(y).toLocaleString(); } return it.cost||''; }
-function costSub(it){ if(it.costAmount!=null && it.costCurrency && it.costCurrency!=='JPY') return curSym(it.costCurrency)+Number(it.costAmount).toLocaleString(); return ''; }
+// 外貨換算時は「円貨（外貨）」で1行表示
+function costText(it){ var m=costMain(it); if(!m) return ''; if(it.costAmount!=null && it.costCurrency && it.costCurrency!=='JPY') return m+'（'+curSym(it.costCurrency)+Number(it.costAmount).toLocaleString()+'）'; return m; }
 function renderSchedItem(it){
   var ic=it.overnight?'🏨':(SCAT_ICON[it.category]||'📍');
   var geo=(it.lat!=null&&it.lng!=null);
   var meta=[];
-  var cm=costMain(it); if(cm){ var cs=costSub(it); meta.push('<span class="sc-cost">'+esc(cm)+(cs?'<span class="sc-cost-sub">'+esc(cs)+'</span>':'')+'</span>'); }
+  var ct=costText(it); if(ct) meta.push('<span class="sc-cost">'+esc(ct)+'</span>');
   var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
   if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="'+esc(routeLink(it))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🚗 ルート</a>');
   var photos=_photosByItem[it.id]||[];
@@ -620,7 +628,7 @@ function initSchedMap(items){
   items.forEach(function(it){
     if(it.lat!=null&&it.lng!=null){
       var plng=_unwrapLng(it.lng, refLng); refLng=plng;
-      var _pcm=costMain(it);
+      var _pcm=costText(it);
       var m=L.marker([it.lat,plng]).addTo(map).bindPopup('<b>'+esc((it.time?it.time+' ':'')+(it.title||''))+'</b>'+(it.date?'<br>'+esc(fmtDate(it.date)):'')+(_pcm?'<br>'+esc(_pcm):''));
       _scMarkers[it.id]=m; bounds.push([it.lat,plng]);
       if(it.isMove&&it.toLat!=null&&it.toLng!=null){
