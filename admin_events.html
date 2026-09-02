@@ -108,7 +108,9 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .se-item.ov{background:#f6f1e6;border-style:dashed}
 .se-t{min-width:52px;font-family:var(--mono);font-size:16px;font-weight:700;color:var(--ink);flex:0 0 auto;text-align:center;line-height:1.1}
 .se-move-arrow{display:block;font-size:14px;color:var(--gold-d);line-height:1}
-.se-day-toggle{cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px}
+.se-day-toggle{user-select:none;display:flex;align-items:center;gap:6px}
+.se-day-hd{flex:1;min-width:0;cursor:pointer;display:flex;align-items:center;gap:6px}
+.se-day-add{flex:0 0 auto;padding:2px 9px;font-size:11px}
 .se-caret{font-size:10px;color:var(--ink3);width:12px;display:inline-block}
 .se-cost-sub{font-size:10px;color:var(--ink3);font-weight:400}
 .pl-item{display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:var(--r);padding:8px 11px;margin-bottom:6px;background:var(--white)}
@@ -1168,7 +1170,9 @@ function renderSchedItemRow(it){
     +'<div class="se-main"><div class="se-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'（無題）')+'</div>'+noteHtml+(markers.length?'<div class="se-sub">'+markers.join('　')+'</div>':'')+'</div>'
     +costHtml+'</div>';
 }
-function toggleDay(idx){ var b=g('se-day-body-'+idx), c=g('se-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▶':'▼'; }
+var _schExpandedDays={}; // 展開中の日付を記憶（追加・編集後も維持）
+function toggleDay(idx, date){ var b=g('se-day-body-'+idx), c=g('se-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▶':'▼'; _schExpandedDays[date]=!open; }
+function openSchedForDay(date){ _schExpandedDays[date]=true; openSchedEd(null, date); }
 function renderSchedList(){
   if(!_schItems.length){ g('sch-list').innerHTML='<div class="ec">スケジュール項目がありません。「＋ 項目追加」から登録してください。</div>'; g('sch-total').textContent=''; return; }
   var total=0; _schItems.forEach(function(it){ total+=itemYen(it); });
@@ -1181,22 +1185,25 @@ function renderSchedList(){
     if(_idlCross(it)) cur.rows+='<div class="se-idl">🌐 日付変更線</div>';
   });
   g('sch-list').innerHTML=groups.map(function(gp,idx){
-    return '<div class="se-day se-day-toggle" onclick="toggleDay('+idx+')"><span class="se-caret" id="se-caret-'+idx+'">▶</span> '+esc(gp.day||'日付未設定')+' <span style="font-weight:400;color:var(--ink3);font-size:11px">（'+gp.n+'件）</span></div>'
-      +'<div class="se-day-body" id="se-day-body-'+idx+'" style="display:none">'+gp.rows+'</div>';
+    var exp=!!_schExpandedDays[gp.day];
+    return '<div class="se-day se-day-toggle">'
+      +'<span class="se-day-hd" onclick="toggleDay('+idx+',\''+esc(gp.day)+'\')"><span class="se-caret" id="se-caret-'+idx+'">'+(exp?'▼':'▶')+'</span> '+esc(gp.day||'日付未設定')+' <span style="font-weight:400;color:var(--ink3);font-size:11px">（'+gp.n+'件）</span></span>'
+      +'<button class="btn bs sm se-day-add" onclick="openSchedForDay(\''+esc(gp.day)+'\')">＋ 追加</button></div>'
+      +'<div class="se-day-body" id="se-day-body-'+idx+'" style="display:'+(exp?'':'none')+'">'+gp.rows+'</div>';
   }).join('');
   g('sch-total').textContent='計 '+_schItems.length+'項目 / 概算 ¥'+Math.round(total).toLocaleString();
 }
 
 function catOptions(sel){ g('se-cat').innerHTML=SCAT.map(function(c){ return '<option value="'+c.v+'"'+(sel===c.v?' selected':'')+'>'+c.n+'</option>'; }).join(''); }
 function toggleMove(){ g('se-move-box').style.display=g('se-move').checked?'block':'none'; }
-function openSchedEd(id){
+function openSchedEd(id, presetDate){
   _schEditId=id;
   var it=id?_schItems.find(function(x){return x.id===id;}):null;
   var ev=events.find(function(x){return x.id===_schEventId;});
   g('sch-ed-title').textContent=id?'項目を編集':'項目追加';
   g('se-del').style.display=id?'inline-block':'none';
   g('se-err').textContent='';
-  g('se-date').value=it?(it.date||''):((ev&&ev.startDate)||'');
+  g('se-date').value=it?(it.date||''):(presetDate||((ev&&ev.startDate)||''));
   g('se-time').value=it?(it.time||''):'';
   g('se-time-move').value=it?(it.time||''):'';
   g('se-totime').value=it?(it.toTime||''):'';
@@ -1250,7 +1257,7 @@ function saveSched(){
       savePlaceIfNew(data.placeName, data.lat, data.lng, data.mapUrl),
       data.isMove?savePlaceIfNew(data.toName, data.toLat, data.toLng, data.toMapUrl):Promise.resolve()
     ]);
-  }).then(function(){ toast(_schEditId?'更新しました':'追加しました'); closeSchedEd(); loadSchedItems(); })
+  }).then(function(){ if(data.date) _schExpandedDays[data.date]=true; toast(_schEditId?'更新しました':'追加しました'); closeSchedEd(); loadSchedItems(); })
    .catch(function(e){ g('se-err').textContent='保存失敗: '+e.message; })
    .finally(function(){ btn.disabled=false; });
 }
