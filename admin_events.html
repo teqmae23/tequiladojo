@@ -553,13 +553,17 @@ function renderSched(){
   var days=daysBetween(g('f-start').value, g('f-end').value);
   if(!days.length){ g('sched').innerHTML='<div style="font-size:12px;color:var(--ink3)">開始・終了日付を入力してください</div>'; return; }
   g('sched').innerHTML=days.map(function(d){
-    var t=_schedMap[d]||{};
+    var t=_schedMap[d]||{}; var ad=!!t.allDay;
     return '<div class="sch-row"><span class="d">'+esc(d)+'</span>'
-      +'<input type="time" data-d="'+esc(d)+'" data-k="open" value="'+esc(t.open||'')+'"> 〜 '
-      +'<input type="time" data-d="'+esc(d)+'" data-k="close" value="'+esc(t.close||'')+'"></div>';
+      +'<input type="time" data-d="'+esc(d)+'" data-k="open" value="'+esc(t.open||'')+'"'+(ad?' disabled':'')+'> 〜 '
+      +'<input type="time" data-d="'+esc(d)+'" data-k="close" value="'+esc(t.close||'')+'"'+(ad?' disabled':'')+'>'
+      +'<label style="font-size:12px;color:var(--ink2);margin-left:8px;white-space:nowrap"><input type="checkbox" data-d="'+esc(d)+'" data-k="allDay"'+(ad?' checked':'')+'> 終日</label></div>';
   }).join('');
   Array.prototype.forEach.call(g('sched').querySelectorAll('input[type=time]'),function(inp){
     inp.addEventListener('input',function(){ var d=this.getAttribute('data-d'),k=this.getAttribute('data-k'); if(!_schedMap[d])_schedMap[d]={}; _schedMap[d][k]=this.value; });
+  });
+  Array.prototype.forEach.call(g('sched').querySelectorAll('input[type=checkbox][data-k=allDay]'),function(cb){
+    cb.addEventListener('change',function(){ var d=this.getAttribute('data-d'); if(!_schedMap[d])_schedMap[d]={}; _schedMap[d].allDay=this.checked; renderSched(); });
   });
 }
 g('f-start').addEventListener('change',renderSched);
@@ -706,7 +710,7 @@ function openEvent(id){
   g('f-top').value=ev?(ev.topPageUrl||''):'';
   g('f-pub').checked=!!(ev&&ev.published);
   _participants=(ev&&Array.isArray(ev.participantIds))?ev.participantIds.slice():[];
-  _schedMap={}; if(ev&&Array.isArray(ev.schedule)) ev.schedule.forEach(function(s){ if(s&&s.date)_schedMap[s.date]={open:s.open||'',close:s.close||''}; });
+  _schedMap={}; if(ev&&Array.isArray(ev.schedule)) ev.schedule.forEach(function(s){ if(s&&s.date)_schedMap[s.date]={open:s.open||'',close:s.close||'',allDay:!!s.allDay}; });
   _containers=normalizeContainers(ev&&ev.containers);
   g('p-search').value=''; g('p-results').style.display='none';
   renderSched(); renderChips(); renderContainers(); loadRegCount(id);
@@ -722,7 +726,7 @@ function saveEvent(){
   if(!start){ g('ev-err').textContent='開始日付を入力してください'; return; }
   if(!end) end=start;
   if(end<start){ g('ev-err').textContent='終了日付は開始日付以降にしてください'; return; }
-  var schedule=daysBetween(start,end).map(function(d){ var t=_schedMap[d]||{}; return {date:d, open:t.open||'', close:t.close||''}; });
+  var schedule=daysBetween(start,end).map(function(d){ var t=_schedMap[d]||{}; return {date:d, open:t.allDay?'':(t.open||''), close:t.allDay?'':(t.close||''), allDay:!!t.allDay}; });
   // 招待参加者の公開プロフィール(ニックネーム・アイコン)をイベントdocに保存し、
   // 会員(members非公開)でもTOPの参加者一覧に表示できるようにする。
   var participantsPublic=_participants.map(function(mid){
