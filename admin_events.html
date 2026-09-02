@@ -107,6 +107,9 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .doc-subrow a{color:var(--teal);font-size:12px;text-decoration:none;font-weight:600;flex:0 0 auto}
 .doc-subrow .rm{border:none;background:none;color:var(--red);font-size:15px;cursor:pointer;flex:0 0 auto}
 .doc-subrow .unsub{flex:1;font-size:12px;color:var(--red);font-weight:600}
+.doc-appr{font-size:10px;font-weight:700;color:#1f7a44;flex:0 0 auto}
+.doc-apbtn{border:1px solid var(--border2);background:var(--cream2);color:var(--ink2);border-radius:8px;font-size:11px;font-weight:700;padding:3px 9px;cursor:pointer;flex:0 0 auto}
+.doc-apbtn.on{background:var(--teal);color:#fff;border-color:var(--teal)}
 .tk-item{display:flex;align-items:center;gap:9px;background:var(--white);border:1px solid var(--border);border-left-width:4px;border-radius:var(--r);padding:9px 11px;margin-bottom:6px;cursor:pointer}
 .tk-item.pub{border-left-color:var(--teal)}
 .tk-item.priv{border-left-color:var(--ink3)}
@@ -1727,9 +1730,13 @@ function docTaskGroup(gp, idx){
   var exp=!!_docTaskExp[gp.id];
   var subCount=0, matched={};
   function fileRow(name, doc){
+    var ap=doc.approved
+      ? '<span class="doc-appr ok">✅承認済</span><button class="doc-apbtn" onclick="toggleApprove(\''+esc(doc.id)+'\',\''+esc(doc.taskId||'')+'\',\''+esc(doc.uploaderUid||'')+'\',false)">取消</button>'
+      : '<button class="doc-apbtn on" onclick="toggleApprove(\''+esc(doc.id)+'\',\''+esc(doc.taskId||'')+'\',\''+esc(doc.uploaderUid||'')+'\',true)">承認</button>';
     return '<div class="doc-subrow"><span class="nm">'+esc(name)+'</span>'
       +'<div class="doc-file"><span class="fn">'+esc(doc.fileName||'ファイル')+'</span>'+(doc.size?'<span class="sz">'+fmtSize(doc.size)+'</span>':'')+'</div>'
       +(doc.url?'<a href="'+esc(doc.url)+'" target="_blank" rel="noopener">開く</a>':'')
+      +ap
       +'<button class="rm" title="削除" onclick="delDoc(\''+esc(doc.id)+'\')">×</button></div>';
   }
   var rows=_docRoster.map(function(p){
@@ -1786,6 +1793,14 @@ function delDoc(id){
     if(d&&d.storagePath&&storage){ storage.ref(d.storagePath).delete().catch(function(){}); }
     after();
   }).catch(function(e){ toast('削除失敗: '+e.message,'err'); });
+}
+// 提出書類の承認/取消（提出ドキュメントと該当completionの両方に反映）
+function toggleApprove(docId, taskId, uid, val){
+  var ts=firebase.firestore.FieldValue.serverTimestamp();
+  var writes=[ docCol(_docEventId).doc(docId).set({approved:val, approvedAt:ts},{merge:true}) ];
+  if(taskId && uid) writes.push(taskCol(_docEventId).doc(taskId).collection('completions').doc(uid).set({approved:val, approvedAt:ts},{merge:true}));
+  Promise.all(writes).then(function(){ toast(val?'承認しました':'承認を取り消しました'); loadDocs(); })
+    .catch(function(e){ toast('更新失敗: '+e.message,'err'); });
 }
 </script>
 </body>
