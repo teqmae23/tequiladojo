@@ -106,7 +106,11 @@ a{color:var(--gold-d)}
 .sc-day-body{margin-top:6px}
 .sc-caret2{font-size:11px;color:var(--ink3);margin-left:6px}
 .sc-item{display:flex;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px}
-.sc-time{min-width:62px;font-family:var(--mono);font-size:13px;color:var(--ink2);flex:0 0 auto;padding-top:1px;line-height:1.35}
+.sc-time{min-width:56px;font-family:var(--mono);font-size:18px;font-weight:700;color:var(--ink);flex:0 0 auto;padding-top:1px;line-height:1.15;text-align:center}
+.sc-time-x{cursor:pointer}
+.sc-tzdiv{display:flex;align-items:center;gap:8px;margin:10px 2px;color:#8a5a2a;font-size:11px;font-weight:700;white-space:nowrap}
+.sc-tzdiv::before,.sc-tzdiv::after{content:"";flex:1;border-top:1px dashed #d0a97a}
+#sc-tzpop{position:fixed;z-index:400;background:#18110a;color:#fff;font-size:12px;line-height:1.7;padding:9px 12px;border-radius:8px;max-width:250px;box-shadow:0 4px 16px rgba(0,0,0,.35);display:none}
 .sc-tz{font-size:10px;color:var(--ink3)}
 .sc-time-jst{display:block;font-size:10px;color:var(--teal);font-weight:600;white-space:nowrap}
 .sc-daydiff{color:var(--red);margin-left:2px}
@@ -545,14 +549,46 @@ function _tzTimeInner(dateStr,t,lat,lng){
   var ddTxt=dd?'<span class="sc-daydiff">'+(dd>0?'+'+dd:''+dd)+'日</span>':'';
   return esc(t)+' <span class="sc-tz">('+esc(abbr)+')</span><span class="sc-time-jst">'+esc(jst)+' (JST)'+ddTxt+'</span>';
 }
+// 時刻はシンプルに表示（大きく黒字）。クリックで現地時間/JSTのポップアップ。
 function schedTimeHtml(it){
-  var dep=_tzTimeInner(it.date, it.time, it.lat, it.lng);
-  if(it.isMove && it.toTime){
-    var arr=_tzTimeInner(it.date, it.toTime, (it.toLat!=null?it.toLat:it.lat), (it.toLng!=null?it.toLng:it.lng));
-    return '<span class="sc-time">'+dep+'<span class="sc-arrow">↓</span>'+arr+'</span>';
-  }
-  return '<span class="sc-time">'+(it.time?'':'')+dep+'</span>';
+  var body=(it.isMove && it.toTime)
+    ? esc(it.time||'—')+'<span class="sc-arrow">↓</span>'+esc(it.toTime)
+    : esc(it.time||'—');
+  var clickable=!!it.time;
+  return '<span class="sc-time'+(clickable?' sc-time-x':'')+'"'+(clickable?' onclick="showTzPop(event,\''+esc(it.id)+'\')"':'')+'>'+body+'</span>';
 }
+// 時刻ポップアップ（現地時間＋JST）
+function _tzDetailLine(label, dateStr, t, lat, lng){
+  if(!t) return '';
+  var tz=(window.tzlookup && lat!=null && lng!=null)?_safeTz(lat,lng):null;
+  if(!tz) return (label?'<b>'+label+'</b> ':'')+esc(t);
+  var inst=_wallInstant(dateStr,t,tz);
+  var abbr=_tzAbbr(inst,tz), jst=_fmtHM(inst,'Asia/Tokyo');
+  var dd=Math.round((Date.parse(_dayKey(inst,'Asia/Tokyo'))-Date.parse(dateStr))/86400000);
+  var ddTxt=dd?(dd>0?'（+'+dd+'日）':'（'+dd+'日）'):'';
+  return (label?'<b>'+label+'</b> ':'')+'現地 '+esc(t)+'（'+esc(abbr)+'）／ JST '+esc(jst)+ddTxt;
+}
+function showTzPop(ev, id){
+  if(ev&&ev.stopPropagation) ev.stopPropagation();
+  var it=(_schedItems||[]).find(function(x){return x.id===id;}); if(!it) return;
+  var lines=[];
+  if(it.isMove && it.toTime){
+    lines.push(_tzDetailLine('出発', it.date, it.time, it.lat, it.lng));
+    lines.push(_tzDetailLine('到着', it.date, it.toTime, (it.toLat!=null?it.toLat:it.lat), (it.toLng!=null?it.toLng:it.lng)));
+  } else { lines.push(_tzDetailLine('', it.date, it.time, it.lat, it.lng)); }
+  lines=lines.filter(Boolean); if(!lines.length) return;
+  var pop=g('sc-tzpop'); if(!pop){ pop=document.createElement('div'); pop.id='sc-tzpop'; document.body.appendChild(pop); }
+  pop.innerHTML=lines.join('<br>'); pop.style.display='block';
+  var x=(ev&&ev.clientX!=null)?ev.clientX:20, y=(ev&&ev.clientY!=null)?ev.clientY:20;
+  pop.style.left=Math.max(6,Math.min(x, window.innerWidth-250))+'px';
+  pop.style.top=(y+16)+'px';
+}
+function hideTzPop(){ var p=g('sc-tzpop'); if(p) p.style.display='none'; }
+document.addEventListener('click',function(e){ var p=g('sc-tzpop'); if(p&&p.style.display==='block'&&!p.contains(e.target)) hideTzPop(); });
+// タイムゾーン変更の仕切り線（XXX（JST±x）→ YYY（JST±x）］
+function _itemTz(lat,lng){ if(window.tzlookup&&lat!=null&&lng!=null){ try{ return tzlookup(lat,lng); }catch(e){} } return null; }
+function _tzChip(tz, ms){ var inst=new Date(ms||Date.now()); var abbr=_tzAbbr(inst,tz); var rel=Math.round((_tzOffMin(inst,tz)-_tzOffMin(inst,'Asia/Tokyo'))/60); return esc(abbr)+'（JST'+(rel>=0?'+':'')+rel+'）'; }
+function tzDivider(tzA,tzB,ms){ return '<div class="sc-tzdiv">'+_tzChip(tzA,ms)+' → '+_tzChip(tzB,ms)+'</div>'; }
 var _scMarkers={}, _scMap=null, _scItemBounds={};
 function _safeTz(la,ln){ try{ return window.tzlookup?tzlookup(la,ln):null; }catch(e){ return null; } }
 function _schedInstant(it){
@@ -610,7 +646,11 @@ function renderSchedule(items){
     var it=e.it, d=it.date||'';
     if(!cur||cur.day!==d){ cur={day:d, rows:'', n:0}; groups.push(cur); }
     cur.rows+=renderSchedItem(it); cur.n++;
-    if(_idlCross(it)) cur.rows+='<div class="sc-idl">🌐 日付変更線</div>';
+    // 移動でタイムゾーンが変わる場合、その直後に仕切り線
+    if(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null){
+      var tzO=_itemTz(it.lat,it.lng), tzD=_itemTz(it.toLat,it.toLng);
+      if(tzO && tzD && tzO!==tzD) cur.rows+=tzDivider(tzO, tzD, e.ms);
+    }
   });
   h+=groups.map(function(gp,idx){
     return '<div class="sc-day sc-day-toggle" onclick="toggleSchedDay('+idx+')"><span class="sc-day-caret" id="sc-day-caret-'+idx+'">▾</span> '+esc(fmtDate(gp.day))+' '+wday(gp.day)+' <span class="sc-day-count">（'+gp.n+'件）</span></div>'
