@@ -169,6 +169,16 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .mp-pick-row input{width:16px;height:16px;accent-color:var(--gold-d);flex:0 0 auto}
 .mp-pick-nm{flex:1;min-width:0;color:var(--ink)}
 .mp-pick-id{font-family:var(--mono);font-size:11px;color:var(--ink3);flex:0 0 auto}
+.tk-prog-row{display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid var(--border)}
+.tk-prog-row:last-child{border-bottom:none}
+.tk-prog-row .ord{display:flex;flex-direction:column;flex:0 0 auto}
+.tk-prog-row .ord button{border:none;background:none;cursor:pointer;font-size:9px;line-height:1;color:var(--ink3);padding:1px}
+.tk-prog-row .lbl{flex:1;min-width:0}
+.tk-prog-row .col{flex:0 0 auto;width:96px}
+.tk-prog-row .rm{border:none;background:none;color:var(--red);font-size:16px;cursor:pointer;flex:0 0 auto}
+.tk-prog-row .sw{width:16px;height:16px;border-radius:4px;flex:0 0 auto;border:1px solid rgba(0,0,0,.15)}
+.tk-prog-row .last{font-size:10px;color:var(--teal);font-weight:700;flex:0 0 auto}
+.pg-badge{display:inline-block;font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;border:1px solid transparent}
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;font-size:13px;padding:10px 18px;border-radius:18px;z-index:9999;box-shadow:var(--shadow-lg)}
 .toast.err{background:var(--red)}
 .err{min-height:16px;color:var(--red);font-size:12px;margin-top:6px}
@@ -416,7 +426,29 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
         <div class="fg"><label class="fl">期限</label><input class="fi" id="tk-deadline" type="date"></div>
         <div class="fg"><label class="fl">公開範囲</label><select class="fi" id="tk-vis"><option value="public">公開（全員の状況を共有）</option><option value="private">非公開（本人のみ）</option></select></div>
       </div>
+      <div class="fg">
+        <label class="fl">対象者（このチェックを行う人）</label>
+        <label class="reqlbl"><input type="radio" name="tk-aud" value="all" checked onchange="onTkAud()"> 全員</label>
+        <label class="reqlbl"><input type="radio" name="tk-aud" value="selected" onchange="onTkAud()"> 選択者のみ</label>
+        <div id="tk-aud-box" style="display:none;margin-top:6px">
+          <div style="font-size:11px;color:var(--ink3);margin-bottom:6px">チェックした参加者がこの項目の対象になります。（一覧は招待済み・参加登録済みの会員です）</div>
+          <div id="tk-aud-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r)"></div>
+          <div class="fg" style="margin-top:8px">
+            <label class="fl">表示範囲（対象者以外への見せ方）</label>
+            <label class="reqlbl"><input type="radio" name="tk-show" value="all" checked> 全員に見せる（対象者以外はグレー表示）</label>
+            <label class="reqlbl"><input type="radio" name="tk-show" value="selected"> 選択者のみに見せる（対象者以外には非表示）</label>
+          </div>
+        </div>
+      </div>
       <label class="reqlbl"><input type="checkbox" id="tk-reqfile"> 完了時にファイル提出を求める（提出物はドキュメント管理「提出書類」へ）</label>
+      <div class="fg" style="margin-top:10px">
+        <label class="reqlbl"><input type="checkbox" id="tk-prog-en" onchange="onTkProgEn()"> 進捗管理を使う（完了/未完了ではなく段階で管理）</label>
+        <div id="tk-prog-box" style="display:none;margin-top:6px">
+          <div style="font-size:11px;color:var(--ink3);margin-bottom:6px">段階（名前と色）を上から順に設定します。<b>いちばん下の段階が「完了」扱い</b>になります。</div>
+          <div id="tk-prog-list"></div>
+          <button type="button" class="btn bs sm" style="margin-top:6px" onclick="tkProgAdd()">＋ 段階を追加</button>
+        </div>
+      </div>
       <div class="fg" style="margin-top:10px"><label class="fl">提出見本ファイル（任意・会員が閲覧可）</label><input class="fi" id="tk-sample" type="file"><div id="tk-sample-cur" style="font-size:11px;color:var(--ink3);margin-top:3px"></div><div style="font-size:11px;color:var(--ink3);margin-top:2px">提出物の見本をアップロードすると、参加者がチェックリスト上で確認できます。</div></div>
       <div class="fg" style="margin-top:10px"><label class="fl">参考ファイル（任意・会員が閲覧可）</label><input class="fi" id="tk-file" type="file"><div id="tk-file-cur" style="font-size:11px;color:var(--ink3);margin-top:3px"></div></div>
       <div id="tk-prog" style="font-size:12px;color:var(--ink3)"></div>
@@ -1395,7 +1427,21 @@ function delSched(){
 }
 
 /* ════════ チェックリスト（TODO・③） ════════ */
-var _tkEventId=null, _tkItems=[], _tkEditId=null;
+var _tkEventId=null, _tkItems=[], _tkEditId=null, _tkProg=[], _tkAudSel={}, _tkParticipants=[];
+var PROG_COLORS={
+  red:{bg:'#fbdcd6',tx:'#a5341f',bd:'#e5b0a6'},
+  yellow:{bg:'#fbf1d6',tx:'#8a6a1e',bd:'#e6d29a'},
+  green:{bg:'#dff3e6',tx:'#1f7a44',bd:'#a9dcbb'},
+  blue:{bg:'#e3edfb',tx:'#22568f',bd:'#b3ccec'},
+  orange:{bg:'#fde8d2',tx:'#a5601f',bd:'#e7c496'},
+  purple:{bg:'#ece3fb',tx:'#5a3a9f',bd:'#cdb8ec'},
+  gray:{bg:'#eceae6',tx:'#66605a',bd:'#d3cec7'}
+};
+var PROG_COLOR_ORDER=['red','yellow','green','blue','orange','purple','gray'];
+var PROG_COLOR_LABEL={red:'赤',yellow:'黄',green:'緑',blue:'青',orange:'橙',purple:'紫',gray:'灰'};
+var PROG_DEFAULTS=[{label:'未申請',color:'red'},{label:'申請中',color:'yellow'},{label:'許可済',color:'green'},{label:'コピー提出済',color:'blue'}];
+function progColor(c){ return PROG_COLORS[c]||PROG_COLORS.gray; }
+function newProgId(){ return 'p_'+Math.random().toString(36).slice(2,8); }
 function taskCol(eid){ return db.collection('events').doc(eid).collection('tasks'); }
 function openTaskMgr(eventId){
   _tkEventId=eventId;
@@ -1403,6 +1449,8 @@ function openTaskMgr(eventId){
   g('tk-mgr-title').textContent='✅ チェックリスト — '+(ev?ev.name:'');
   g('tk-list').innerHTML='<div class="ec">読み込み中…</div>';
   g('tk-mgr-modal').classList.add('open');
+  _tkParticipants=[];
+  loadDocRoster(eventId).then(function(r){ _tkParticipants=r||[]; if(g('tk-ed-modal').classList.contains('open')) renderTkAud(); }).catch(function(){});
   loadTasks();
 }
 function closeTaskMgr(){ g('tk-mgr-modal').classList.remove('open'); }
@@ -1420,6 +1468,8 @@ function renderTaskList(){
   g('tk-list').innerHTML=_tkItems.map(function(t){
     var pub=(t.visibility!=='private');
     var sub=[]; if(t.deadline) sub.push('期限 '+esc(t.deadline)); if(t.requireFile) sub.push('📎ファイル提出');
+    if(t.progressEnabled && Array.isArray(t.progressStates) && t.progressStates.length) sub.push('📊進捗'+t.progressStates.length+'段階');
+    if(t.audience==='selected') sub.push('👥対象'+((t.audienceIds||[]).length)+'名'+(t.showScope==='selected'?'（限定表示）':''));
     return '<div class="tk-item '+(pub?'pub':'priv')+'" onclick="openTaskEd(\''+esc(t.id)+'\')">'
       +'<div class="tk-main"><div class="tk-ttl">'+esc(t.title||'（無題）')+'</div>'+(sub.length?'<div class="tk-sub">'+sub.join('　')+'</div>':'')+'</div>'
       +'<span class="tk-badge '+(pub?'pub':'priv')+'">'+(pub?'公開':'非公開')+'</span></div>';
@@ -1436,6 +1486,17 @@ function openTaskEd(id){
   g('tk-deadline').value=t?(t.deadline||''):'';
   g('tk-vis').value=t?(t.visibility||'public'):'public';
   g('tk-reqfile').checked=!!(t&&t.requireFile);
+  // 対象者・表示範囲
+  var aud=(t&&t.audience==='selected')?'selected':'all';
+  _tkAudSel={}; if(t&&Array.isArray(t.audienceIds)) t.audienceIds.forEach(function(id){ _tkAudSel[id]=true; });
+  Array.prototype.forEach.call(document.getElementsByName('tk-aud'),function(r){ r.checked=(r.value===aud); });
+  var showScope=(t&&t.showScope==='selected')?'selected':'all';
+  Array.prototype.forEach.call(document.getElementsByName('tk-show'),function(r){ r.checked=(r.value===showScope); });
+  onTkAud();
+  // 進捗管理
+  _tkProg=(t&&Array.isArray(t.progressStates))?t.progressStates.map(function(s){ return {id:s.id||newProgId(), label:s.label||'', color:s.color||'gray'}; }):[];
+  g('tk-prog-en').checked=!!(t&&t.progressEnabled);
+  onTkProgEn(true);
   g('tk-file').value=''; g('tk-prog').textContent='';
   var cur=g('tk-file-cur');
   if(t&&t.attachmentUrl){ cur.innerHTML='現在: <a href="'+t.attachmentUrl+'" target="_blank" rel="noopener">'+esc(t.attachmentName||'参考ファイル')+'</a>（新しいファイルを選ぶと差し替え）'; }
@@ -1448,13 +1509,75 @@ function openTaskEd(id){
 }
 function closeTaskEd(){ g('tk-ed-modal').classList.remove('open'); }
 g('tk-ed-modal').addEventListener('click',function(e){ if(e.target===g('tk-ed-modal')) closeTaskEd(); });
+// ── 対象者ピッカー ──
+function onTkAud(){
+  var sel=(document.querySelector('input[name="tk-aud"]:checked')||{}).value==='selected';
+  g('tk-aud-box').style.display=sel?'block':'none';
+  if(sel) renderTkAud();
+}
+function renderTkAud(){
+  var box=g('tk-aud-list'); if(!box) return;
+  if(!_tkParticipants.length){ box.innerHTML='<div class="ec">対象にできる参加者がいません。参加者（招待）を登録するか、会員が参加登録すると選べます。</div>'; return; }
+  box.innerHTML=_tkParticipants.map(function(p){
+    var on=!!_tkAudSel[p.tid];
+    return '<label class="mp-pick-row'+(on?' on':'')+'"><input type="checkbox" data-tid="'+esc(p.tid)+'"'+(on?' checked':'')+'>'
+      +'<span class="mp-pick-nm">'+esc(p.name||p.memberId||'（会員）')+'</span>'
+      +'<span class="mp-pick-id">'+esc(p.memberId||'')+'</span></label>';
+  }).join('');
+  Array.prototype.forEach.call(box.querySelectorAll('input[data-tid]'),function(cb){
+    cb.addEventListener('change',function(){ var id=cb.getAttribute('data-tid'); if(cb.checked)_tkAudSel[id]=true; else delete _tkAudSel[id]; cb.parentNode.classList.toggle('on',cb.checked); });
+  });
+}
+// ── 進捗段階エディタ ──
+function onTkProgEn(keep){
+  var en=g('tk-prog-en').checked;
+  g('tk-prog-box').style.display=en?'block':'none';
+  if(en && !keep && !_tkProg.length){ _tkProg=PROG_DEFAULTS.map(function(s){ return {id:newProgId(), label:s.label, color:s.color}; }); }
+  if(en) renderTkProg();
+}
+function renderTkProg(){
+  var box=g('tk-prog-list'); if(!box) return;
+  if(!_tkProg.length){ box.innerHTML='<div style="font-size:12px;color:var(--ink3);padding:6px 0">段階がありません。「＋ 段階を追加」で追加してください。</div>'; return; }
+  var opts=PROG_COLOR_ORDER.map(function(c){ return '<option value="'+c+'">'+PROG_COLOR_LABEL[c]+'</option>'; }).join('');
+  box.innerHTML=_tkProg.map(function(s,i){
+    var col=progColor(s.color); var last=(i===_tkProg.length-1);
+    return '<div class="tk-prog-row">'
+      +'<span class="ord"><button type="button" onclick="tkProgMove('+i+',-1)">▲</button><button type="button" onclick="tkProgMove('+i+',1)">▼</button></span>'
+      +'<span class="sw" style="background:'+col.bg+';border-color:'+col.bd+'"></span>'
+      +'<input class="fi lbl" type="text" value="'+esc(s.label||'')+'" placeholder="段階名" oninput="tkProgSet('+i+',\'label\',this.value)">'
+      +'<select class="fi col" onchange="tkProgSet('+i+',\'color\',this.value)">'+opts+'</select>'
+      +(last?'<span class="last">完了</span>':'')
+      +'<button type="button" class="rm" title="削除" onclick="tkProgDel('+i+')">×</button></div>';
+  }).join('');
+  // set selected colors (avoid inline selected attr complexity)
+  Array.prototype.forEach.call(box.querySelectorAll('select.col'),function(sel,i){ sel.value=_tkProg[i].color||'gray'; });
+}
+function tkProgAdd(){ _tkProg.push({id:newProgId(), label:'', color:'gray'}); renderTkProg(); }
+function tkProgDel(i){ _tkProg.splice(i,1); renderTkProg(); }
+function tkProgSet(i,k,v){ if(_tkProg[i]){ _tkProg[i][k]=v; if(k==='color') renderTkProg(); } }
+function tkProgMove(i,dir){ var j=i+dir; if(j<0||j>=_tkProg.length) return; var tmp=_tkProg[i]; _tkProg[i]=_tkProg[j]; _tkProg[j]=tmp; renderTkProg(); }
 function saveTask(){
   var title=(g('tk-title').value||'').trim();
   if(!title){ g('tk-err').textContent='タイトルを入力してください'; return; }
+  // 対象者・表示範囲
+  var aud=(document.querySelector('input[name="tk-aud"]:checked')||{}).value==='selected'?'selected':'all';
+  var audienceIds=(aud==='selected')?Object.keys(_tkAudSel).filter(function(id){return _tkAudSel[id];}):[];
+  if(aud==='selected' && !audienceIds.length){ g('tk-err').textContent='対象者を1名以上選択してください'; return; }
+  var showScope=(aud==='selected' && (document.querySelector('input[name="tk-show"]:checked')||{}).value==='selected')?'selected':'all';
+  // 進捗段階
+  var progEnabled=!!g('tk-prog-en').checked;
+  var progStates=[];
+  if(progEnabled){
+    progStates=_tkProg.map(function(s){ return {id:s.id||newProgId(), label:(s.label||'').trim(), color:s.color||'gray'}; }).filter(function(s){ return s.label; });
+    if(progStates.length<2){ g('tk-err').textContent='進捗管理は2段階以上を設定してください（最後が完了）'; return; }
+  }
   var data={
     title:title, content:(g('tk-content').value||'').trim(),
     deadline:g('tk-deadline').value||'', visibility:(g('tk-vis').value==='private'?'private':'public'),
-    requireFile:!!g('tk-reqfile').checked, updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    requireFile:!!g('tk-reqfile').checked,
+    audience:aud, audienceIds:audienceIds, showScope:showScope,
+    progressEnabled:progEnabled, progressStates:progStates,
+    updatedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
   var btn=g('tk-save'); btn.disabled=true;
   var tid=_tkEditId||taskCol(_tkEventId).doc().id;
