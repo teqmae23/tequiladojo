@@ -368,12 +368,16 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 <!-- 参加申請/招待の承認モーダル -->
 <div class="mbg" id="join-mgr-modal">
   <div class="modal" style="max-width:560px">
-    <div class="mhd"><span id="join-mgr-title">参加申請・招待の承認</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeJoinMgr()">✕</button></div>
+    <div class="mhd"><span id="join-mgr-title">参加・閲覧の承認</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeJoinMgr()">✕</button></div>
     <div class="mbd">
       <div style="font-weight:700;font-size:13px;color:var(--gold-d);margin-bottom:6px">🙋 参加申請（会員の自己登録）</div>
       <div id="join-self-list"><div class="ec">読み込み中…</div></div>
-      <div style="font-weight:700;font-size:13px;color:var(--ink2);margin:16px 0 6px">✉️ 参加者からの招待</div>
+      <div style="font-weight:700;font-size:13px;color:var(--ink2);margin:16px 0 6px">✉️ 参加者からの参加招待</div>
       <div id="join-invite-list"><div class="ec">読み込み中…</div></div>
+      <div style="font-weight:700;font-size:13px;color:var(--gold-d);margin:16px 0 6px">👁 閲覧申請</div>
+      <div id="join-viewreq-list"><div class="ec">読み込み中…</div></div>
+      <div style="font-weight:700;font-size:13px;color:var(--ink2);margin:16px 0 6px">👨‍👩‍👧 家族閲覧の招待（参加者からの推薦）</div>
+      <div id="join-family-list"><div class="ec">読み込み中…</div></div>
     </div>
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeJoinMgr()">閉じる</button></div>
   </div>
@@ -909,12 +913,16 @@ function onPaidToggle(){ var b=g('f-paid-box'); if(b) b.style.display=g('f-paid'
 // 参加申請/招待の承認
 function pendCol(eid){ return db.collection('events').doc(eid).collection('participants'); }
 function inviteCol(eid){ return db.collection('events').doc(eid).collection('participantInvites'); }
+function vreqCol(eid){ return db.collection('events').doc(eid).collection('viewRequests'); }
+function faminvCol(eid){ return db.collection('events').doc(eid).collection('familyInvites'); }
 function loadJoinCount(id){
   var el=g('f-join-cnt'); if(!el||!id){ if(el)el.textContent='0'; return; }
   Promise.all([
     pendCol(id).where('status','==','pending').get().then(function(s){return s.size;}).catch(function(){return 0;}),
-    inviteCol(id).where('status','==','pending').get().then(function(s){return s.size;}).catch(function(){return 0;})
-  ]).then(function(a){ el.textContent=(a[0]+a[1]); }).catch(function(){});
+    inviteCol(id).where('status','==','pending').get().then(function(s){return s.size;}).catch(function(){return 0;}),
+    vreqCol(id).where('status','==','pending').get().then(function(s){return s.size;}).catch(function(){return 0;}),
+    faminvCol(id).where('status','==','pending').get().then(function(s){return s.size;}).catch(function(){return 0;})
+  ]).then(function(a){ el.textContent=(a[0]+a[1]+a[2]+a[3]); }).catch(function(){});
 }
 function openJoinMgr(){ if(!_editId){ toast('先にイベントを保存してください'); return; } g('join-mgr-modal').classList.add('open'); renderJoinMgr(); }
 function closeJoinMgr(){ g('join-mgr-modal').classList.remove('open'); loadJoinCount(_editId); }
@@ -940,6 +948,45 @@ function renderJoinMgr(){
     });
     g('join-invite-list').innerHTML=rows.length?rows.join(''):'<div class="ec">保留中の招待はありません。</div>';
   }).catch(function(e){ g('join-invite-list').innerHTML='<div class="ec">読込失敗: '+esc(e.message)+'</div>'; });
+  // 閲覧申請
+  vreqCol(eid).where('status','==','pending').get().then(function(snap){
+    var rows=snap.docs.map(function(d){ var v=Object.assign({id:d.id},d.data());
+      return '<div class="doc-subrow"><span class="nm">'+esc(v.name||v.memberId||'（会員）')+'</span>'
+        +'<div class="doc-file"><span class="fn">会員ID: '+esc(v.memberId||'')+'</span></div>'
+        +'<button class="doc-apbtn on" onclick="approveViewReq(\''+esc(v.id)+'\')">承認</button>'
+        +'<button class="rm" title="却下" onclick="rejectViewReq(\''+esc(v.id)+'\')">×</button></div>';
+    });
+    g('join-viewreq-list').innerHTML=rows.length?rows.join(''):'<div class="ec">保留中の閲覧申請はありません。</div>';
+  }).catch(function(e){ g('join-viewreq-list').innerHTML='<div class="ec">読込失敗: '+esc(e.message)+'</div>'; });
+  // 家族閲覧の招待
+  faminvCol(eid).where('status','==','pending').get().then(function(snap){
+    var rows=snap.docs.map(function(d){ var iv=Object.assign({id:d.id},d.data());
+      return '<div class="doc-subrow"><span class="nm">'+esc(iv.memberId||'（会員ID未指定）')+'</span>'
+        +'<div class="doc-file"><span class="fn">推薦者: '+esc(iv.invitedByName||iv.invitedBy||'')+'</span></div>'
+        +'<button class="doc-apbtn on" onclick="approveFamily(\''+esc(iv.id)+'\',\''+esc(iv.memberId||'')+'\')">承認して閲覧許可</button>'
+        +'<button class="rm" title="却下" onclick="rejectFamily(\''+esc(iv.id)+'\')">×</button></div>';
+    });
+    g('join-family-list').innerHTML=rows.length?rows.join(''):'<div class="ec">保留中の家族招待はありません。</div>';
+  }).catch(function(e){ g('join-family-list').innerHTML='<div class="ec">読込失敗: '+esc(e.message)+'</div>'; });
+}
+function approveViewReq(uid){
+  vreqCol(_editId).doc(uid).set({status:'approved', approvedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .then(function(){ toast('閲覧を許可しました'); renderJoinMgr(); }).catch(function(e){ toast('失敗: '+e.message,'err'); });
+}
+function rejectViewReq(uid){
+  if(!confirm('この閲覧申請を却下（削除）しますか？')) return;
+  vreqCol(_editId).doc(uid).delete().then(function(){ toast('却下しました'); renderJoinMgr(); }).catch(function(e){ toast('失敗: '+e.message,'err'); });
+}
+function approveFamily(inviteId, memberId){
+  if(!memberId){ toast('会員IDが未指定です','err'); return; }
+  var mid=String(memberId);
+  db.collection('events').doc(_editId).set({ familyViewerIds:firebase.firestore.FieldValue.arrayUnion(mid) },{merge:true})
+    .then(function(){ return faminvCol(_editId).doc(inviteId).delete(); })
+    .then(function(){ toast('家族の閲覧を許可しました'); renderJoinMgr(); load(); }).catch(function(e){ toast('失敗: '+e.message,'err'); });
+}
+function rejectFamily(inviteId){
+  if(!confirm('この家族招待を却下（削除）しますか？')) return;
+  faminvCol(_editId).doc(inviteId).delete().then(function(){ toast('却下しました'); renderJoinMgr(); }).catch(function(e){ toast('失敗: '+e.message,'err'); });
 }
 function approveSelfReg(uid){
   pendCol(_editId).doc(uid).set({status:'approved', approvedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})

@@ -420,24 +420,50 @@ auth.onAuthStateChanged(function(user){
   }).finally(loadEvent);
 });
 
-var _selfReg=false;
+var _selfReg=false, _viewReqStatus='';
 function loadEvent(){
   if(!eventId){ g('wrap').innerHTML='<div class="msg">イベントが指定されていません。</div>'; return; }
   var ref=db.collection('events').doc(eventId);
   Promise.all([
     ref.get(),
-    ref.collection('participants').doc(_uid).get().catch(function(){ return {exists:false}; })
+    ref.collection('participants').doc(_uid).get().catch(function(){ return {exists:false}; }),
+    ref.collection('viewRequests').doc(_uid).get().catch(function(){ return {exists:false}; })
   ]).then(function(res){
     var doc=res[0];
     if(!doc.exists){ g('wrap').innerHTML='<div class="msg">イベントが見つかりません。</div>'; return; }
-    var ev=doc.data();
+    var ev=doc.data(); _ev=ev;
     if(!ev.published && !_isStaff){ g('wrap').innerHTML='<div class="msg">このイベントは現在公開されていません。</div>'; return; }
     var pdoc=(res[1]&&res[1].exists)?res[1].data():null;
     _selfReg=!!pdoc && (pdoc.status!=='pending'); // 承認待ちは参加者扱いにしない（安全側）
+    _viewReqStatus=(res[2]&&res[2].exists)?(res[2].data().status||''):'';
     var acc=computeViewAccess(ev, _selfReg);
-    if(!acc.allowed){ g('wrap').innerHTML='<div class="msg">'+esc(acc.msg||'このイベントの閲覧権限がありません。')+'</div>'; return; }
+    if(!acc.allowed){ renderViewGate(ev, acc); return; }
     render(ev);
   }).catch(function(e){ g('wrap').innerHTML='<div class="msg">読み込みに失敗しました: '+esc(e.message)+'</div>'; });
+}
+// 閲覧不可時のゲート表示（申請ボタン等）
+function renderViewGate(ev, acc){
+  var h='<div class="hero"><div class="ev-title">'+esc(ev.name||'（無題イベント）')+'</div></div>';
+  h+='<div class="card"><div class="sec">閲覧できません</div><div style="font-size:13px;color:var(--ink2);line-height:1.7;margin-bottom:10px">'+esc(acc.msg||'このイベントの閲覧権限がありません。')+'</div>';
+  if(acc.gate==='request' && _isReal){
+    if(_viewReqStatus==='pending') h+='<div style="font-size:13px;color:var(--gold-d);font-weight:700">閲覧申請中（承認待ち）</div>';
+    else h+='<button class="mpbtn" onclick="submitViewRequest()">閲覧を申請する</button>';
+  } else if(acc.gate==='request' && !_isReal){
+    h+='<div style="font-size:12px;color:var(--ink3)">会員ログインで閲覧申請ができます。</div>';
+  }
+  h+='</div>';
+  g('wrap').innerHTML=h;
+}
+// ② 閲覧申請（承認不要なら即approved、承認制はpending）
+function submitViewRequest(){
+  if(!_isReal){ toast('会員ログインが必要です'); return; }
+  var auto=(_ev&&_ev.viewApproval!=='manual');
+  db.collection('events').doc(eventId).collection('viewRequests').doc(_uid).set({
+    authUid:_uid, memberId:_memberId||'', name:_memberName||'',
+    status:auto?'approved':'pending',
+    createdAt:firebase.firestore.FieldValue.serverTimestamp()
+  }).then(function(){ toast(auto?'閲覧が許可されました':'閲覧を申請しました（承認待ち）'); loadEvent(); })
+    .catch(function(e){ toast('申請失敗: '+e.message); });
 }
 // 閲覧者の権限クラスと遅延を判定
 function _uidInParticipants(ev){
@@ -456,11 +482,11 @@ function computeViewAccess(ev, selfReg){
   if(_isStaff || _isParticipant || _isFamily){ _viewClass='full'; _viewDelayMs=0; }
   else {
     var mode=(ev&&ev.viewAccess)||'public';
-    if(mode==='invite') return {allowed:false, msg:'このイベントは参加者からの招待（家族閲覧）のみ閲覧できます。'};
+    if(mode==='invite') return {allowed:false, gate:'invite', msg:'このイベントは参加者からの招待（家族閲覧）のみ閲覧できます。参加者にご家族としての招待をご依頼ください。'};
     if(mode==='request'){
       var appr=(ev&&Array.isArray(ev.viewApprovedIds))?ev.viewApprovedIds:[];
-      var ok=(appr.indexOf(_uid)>=0)||(!!_memberId && appr.indexOf(String(_memberId))>=0);
-      if(!ok) return {allowed:false, msg:'このイベントの閲覧には申請が必要です。（閲覧申請の受付は準備中です）'};
+      var ok=(_viewReqStatus==='approved')||(appr.indexOf(_uid)>=0)||(!!_memberId && appr.indexOf(String(_memberId))>=0);
+      if(!ok) return {allowed:false, gate:'request', msg:'このイベントの閲覧には申請が必要です。'};
     }
     var paid=(_planLevel>=1)||!!(_member&&_member.eventViewRight);
     var h=paid?(ev.viewDelayPaidH!=null?ev.viewDelayPaidH:3):(ev.viewDelayFreeH!=null?ev.viewDelayFreeH:24);
@@ -582,11 +608,25 @@ function renderMypageBar(){
     if(ev.joinSelfEnabled) h='<button class="mpbtn" onclick="openMp()">＋ '+(ev.paidEvent?'このイベントに参加申込（有料）':(ev.joinApproval==='manual'?'このイベントに参加を申請':'このイベントに参加登録'))+'</button>';
     else h='<span style="font-size:12px;color:var(--ink3)">このイベントは管理者の招待制です。</span>';
   } else h='<button class="mpbtn off" disabled>👤 参加者マイページ</button><span style="font-size:11px;color:var(--ink3)">会員ログインで参加登録できます</span>';
-  // ③ 参加者が他の会員を招待
+  // ③ 参加者が他の会員を参加に招待
   if(_isReal && ev.joinInviteEnabled && _isParticipant && !(_myPt&&_myPt.status==='pending')){
     h+='<button class="mpbtn" style="margin-left:6px" onclick="inviteParticipant()">＋ 会員を招待</button>';
   }
+  // ③(閲覧) 参加者が家族を閲覧に招待（クローズイベント・承認済み参加者のみ）
+  if(_isReal && ev.eventType!=='open' && _isParticipant && !(_myPt&&_myPt.status==='pending')){
+    h+='<button class="mpbtn" style="margin-left:6px;background:var(--teal)" onclick="inviteFamily()">👨‍👩‍👧 家族を閲覧に招待</button>';
+  }
   bar.innerHTML=h;
+}
+// ③(閲覧) 家族の会員IDを推薦（管理者承認後にリアルタイム閲覧可＝参加者と同内容）
+function inviteFamily(){
+  if(!_isReal) return;
+  var mid=(prompt('閲覧に招待するご家族の会員IDを入力してください。\n承認後、その方は参加者と同じ内容をリアルタイムで閲覧できます（管理者の承認待ち）。')||'').trim();
+  if(!mid) return;
+  db.collection('events').doc(eventId).collection('familyInvites').add({
+    memberId:mid, invitedBy:_uid, invitedByName:_memberName||'', status:'pending',
+    createdAt:firebase.firestore.FieldValue.serverTimestamp()
+  }).then(function(){ toast('家族の閲覧招待を送信しました（管理者の承認待ち）'); }).catch(function(e){ toast('送信失敗: '+e.message); });
 }
 // ③ 参加者による招待（会員ID入力→管理者承認）
 function inviteParticipant(){
