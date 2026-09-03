@@ -42,6 +42,10 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/events/$(eid)).data.get('joinApproval','auto') != 'manual'
         && get(/databases/$(database)/documents/events/$(eid)).data.get('paidEvent', false) != true;
     }
+    // 閲覧申請をクライアントが自動承認にしてよいイベントか（viewApproval!='manual'）
+    function evViewAutoApprove(eid) {
+      return get(/databases/$(database)/documents/events/$(eid)).data.get('viewApproval','auto') != 'manual';
+    }
 
     // ── 会員情報（個人情報）: スタッフ全件 / 会員は自分のみ ─────
     // 作成・引継はCloud Functions（registerMember）がサーバー権限で行う
@@ -214,6 +218,27 @@ service cloud.firestore {
       }
       // 参加者による招待（会員が作成→管理者が承認）
       match /participantInvites/{iid} {
+        allow read: if isStaff() || (realUser() && resource.data.get('invitedBy','') == request.auth.uid);
+        allow create: if realUser()
+          && request.resource.data.get('invitedBy','') == request.auth.uid
+          && request.resource.data.get('status','') == 'pending';
+        allow update, delete: if isStaff();
+      }
+      // 閲覧申請（会員が作成→承認不要なら approved、承認制は pending→管理者承認）
+      match /viewRequests/{uid} {
+        allow read: if signedIn();
+        allow create: if isStaff()
+          || (realUser() && request.auth.uid == uid
+              && (request.resource.data.get('status','approved') == 'pending' || evViewAutoApprove(id)));
+        allow update: if isStaff()
+          || (realUser() && request.auth.uid == uid
+              && (request.resource.data.get('status', resource.data.get('status','pending')) == resource.data.get('status','pending')
+                  || request.resource.data.get('status','approved') == 'pending'
+                  || evViewAutoApprove(id)));
+        allow delete: if isStaff() || (realUser() && request.auth.uid == uid);
+      }
+      // 家族閲覧の招待（参加者が作成→管理者が承認）
+      match /familyInvites/{iid} {
         allow read: if isStaff() || (realUser() && resource.data.get('invitedBy','') == request.auth.uid);
         allow create: if realUser()
           && request.resource.data.get('invitedBy','') == request.auth.uid
