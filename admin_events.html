@@ -182,6 +182,16 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .tk-prog-row .sw{width:16px;height:16px;border-radius:4px;flex:0 0 auto;border:1px solid rgba(0,0,0,.15)}
 .tk-prog-row .last{font-size:10px;color:var(--teal);font-weight:700;flex:0 0 auto}
 .pg-badge{display:inline-block;font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;border:1px solid transparent}
+.rm-room{border:1px solid var(--border2);border-radius:var(--r);padding:10px;margin-bottom:10px;background:var(--cream)}
+.rm-room-hd{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.rm-roomname{flex:1;min-width:0}
+.rm-cap{font-size:12px;color:var(--ink2);display:flex;align-items:center;gap:4px;flex:0 0 auto}
+.rm-cap input{width:60px}
+.rm-beds{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.rm-bed{display:flex;align-items:center;gap:6px}
+.rm-bedname{flex:0 0 40%}
+.rm-person{flex:1;min-width:0}
+.rm-x{border:none;background:none;color:var(--red);font-size:16px;cursor:pointer;flex:0 0 auto}
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;font-size:13px;padding:10px 18px;border-radius:18px;z-index:9999;box-shadow:var(--shadow-lg)}
 .toast.err{background:var(--red)}
 .err{min-height:16px;color:var(--red);font-size:12px;margin-top:6px}
@@ -620,6 +630,8 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
         <div class="fg"><label class="fl">表示ラベル（自由入力）</label><input class="fi" id="se-nametext" placeholder="例: 合流 / 離脱"></div>
         <div class="fg"><label class="fl">対象の参加者を選択</label><div id="se-names-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r)"></div></div>
       </div>
+      <label class="reqlbl"><input type="checkbox" id="se-rooming" onchange="onSeRooming()"> 🛏 部屋割りを設定する</label>
+      <div id="se-rooming-row" style="display:none;margin-top:4px"><button type="button" class="btn bs sm" onclick="openRoomModal()">🛏 部屋割りを編集（<span id="se-rooming-cnt">0</span>部屋）</button></div>
       <div class="err" id="se-err"></div>
     </div>
     <div class="mft">
@@ -628,6 +640,19 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       <button class="btn bs" onclick="closeSchedEd()">キャンセル</button>
       <button class="btn bp" id="se-save" onclick="saveSched()">保存</button>
     </div>
+  </div>
+</div>
+
+<!-- 部屋割りモーダル -->
+<div class="mbg" id="sch-room-modal" style="z-index:260">
+  <div class="modal" style="max-width:640px">
+    <div class="mhd"><span>🛏 部屋割り</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeRoomModal()">✕</button></div>
+    <div class="mbd">
+      <div class="fg"><label class="fl">ホテル名</label><input class="fi" id="rm-hotel" placeholder="地点名から自動セット（編集可）"></div>
+      <div id="rm-rooms"></div>
+      <button type="button" class="btn bs sm" style="margin-top:6px" onclick="roomAdd()">＋ 部屋を追加</button>
+    </div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bp" onclick="closeRoomModal()">完了</button></div>
   </div>
 </div>
 
@@ -1496,6 +1521,58 @@ function renderSeNames(){
   });
 }
 
+// 部屋割り（イベントアイテム）
+var _rooms=[], _roomHotel='';
+function _newBed(){ return {bed:'', personId:'', personName:''}; }
+function _newRoom(){ return {name:'', capacity:1, beds:[_newBed()]}; }
+function onSeRooming(){
+  var on=g('se-rooming').checked;
+  g('se-rooming-row').style.display=on?'block':'none';
+  if(on){ if(!_rooms.length) _rooms=[_newRoom()]; openRoomModal(); }
+  updateRoomCnt();
+}
+function updateRoomCnt(){ var el=g('se-rooming-cnt'); if(el) el.textContent=_rooms.length; }
+function openRoomModal(){ g('rm-hotel').value=_roomHotel||g('se-place').value||''; renderRooms(); g('sch-room-modal').classList.add('open'); }
+function closeRoomModal(){ _roomHotel=g('rm-hotel').value; g('sch-room-modal').classList.remove('open'); updateRoomCnt(); }
+g('sch-room-modal').addEventListener('click',function(e){ if(e.target===g('sch-room-modal')) closeRoomModal(); });
+function _roomOpts(sel){
+  var o='<option value="">— 未割当 —</option>';
+  o+=_schRoster.map(function(p){ return '<option value="'+esc(p.tid)+'"'+(sel===p.tid?' selected':'')+'>'+esc(p.name||p.memberId||'（会員）')+'</option>'; }).join('');
+  return o;
+}
+function renderRooms(){
+  var box=g('rm-rooms'); if(!box) return;
+  box.innerHTML=_rooms.map(function(r,i){
+    var beds=(r.beds||[]).map(function(b,j){
+      return '<div class="rm-bed">'
+        +'<input class="fi rm-bedname" value="'+esc(b.bed||'')+'" placeholder="ベッド（例: シングルA）" oninput="bedSet('+i+','+j+',this.value)">'
+        +'<select class="fi rm-person" onchange="bedPerson('+i+','+j+',this.value)">'+_roomOpts(b.personId)+'</select>'
+        +'<button type="button" class="rm-x" title="削除" onclick="bedDel('+i+','+j+')">×</button></div>';
+    }).join('');
+    return '<div class="rm-room">'
+      +'<div class="rm-room-hd">'
+      +'<input class="fi rm-roomname" value="'+esc(r.name||'')+'" placeholder="部屋名（例: 501号室）" oninput="roomSet('+i+',this.value)">'
+      +'<label class="rm-cap">人数 <input class="fi" type="number" min="1" step="1" value="'+(r.capacity||1)+'" onchange="roomCap('+i+',this.value)"></label>'
+      +'<button type="button" class="rm-x" title="部屋を削除" onclick="roomDel('+i+')">🗑</button></div>'
+      +'<div class="rm-beds">'+beds+'</div>'
+      +'<button type="button" class="btn bs sm" onclick="bedAdd('+i+')">＋ ベッドを追加</button>'
+      +'</div>';
+  }).join('');
+}
+function roomSet(i,v){ if(_rooms[i]) _rooms[i].name=v; }
+function bedSet(i,j,v){ if(_rooms[i]&&_rooms[i].beds[j]) _rooms[i].beds[j].bed=v; }
+function bedPerson(i,j,tid){ if(!(_rooms[i]&&_rooms[i].beds[j])) return; var p=_schRoster.find(function(x){return x.tid===tid;}); _rooms[i].beds[j].personId=tid; _rooms[i].beds[j].personName=p?(p.name||p.memberId||''):''; }
+function roomCap(i,v){ var n=Math.max(1,parseInt(v,10)||1); var r=_rooms[i]; if(!r) return; r.capacity=n; r.beds=r.beds||[]; while(r.beds.length<n) r.beds.push(_newBed()); if(r.beds.length>n) r.beds=r.beds.slice(0,n); renderRooms(); }
+function bedAdd(i){ var r=_rooms[i]; if(!r) return; r.beds=r.beds||[]; r.beds.push(_newBed()); r.capacity=r.beds.length; renderRooms(); }
+function bedDel(i,j){ var r=_rooms[i]; if(!r) return; r.beds.splice(j,1); if(!r.beds.length) r.beds.push(_newBed()); r.capacity=r.beds.length; renderRooms(); }
+function roomDel(i){ _rooms.splice(i,1); renderRooms(); updateRoomCnt(); }
+function roomAdd(){ _rooms.push(_newRoom()); renderRooms(); updateRoomCnt(); }
+function _cleanRooms(){
+  return (_rooms||[]).map(function(r){
+    return { name:(r.name||'').trim(), capacity:(r.beds||[]).length,
+      beds:(r.beds||[]).map(function(b){ return {bed:(b.bed||'').trim(), personId:b.personId||'', personName:b.personName||''}; }) };
+  }).filter(function(r){ return r.name || r.beds.some(function(b){ return b.bed||b.personId; }); });
+}
 /* ── 場所ライブラリ（登録済みの地点を再利用） ── */
 var _places=[];
 function loadPlaces(){ return db.collection('places').get().then(function(s){ _places=s.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }); _places.sort(function(a,b){ return String(a.name||'').localeCompare(String(b.name||'')); }); fillPlacePickers(); }).catch(function(){ _places=[]; }); }
@@ -1563,7 +1640,7 @@ function loadSchedItems(){
 }
 function renderSchedItemRow(it){
   var ic=it.overnight?'🏨':catIcon(it.category);
-  var markers=[]; if(it.isMove) markers.push('🚗ルート'); if(it.lat!=null&&it.lng!=null) markers.push('📍地図'); if(it.hideUntilDone) markers.push('🙈完了後公開'); if(it.showNames&&(it.nameParticipants||[]).length) markers.push('👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名');
+  var markers=[]; if(it.isMove) markers.push('🚗ルート'); if(it.lat!=null&&it.lng!=null) markers.push('📍地図'); if(it.hideUntilDone) markers.push('🙈完了後公開'); if(it.showNames&&(it.nameParticipants||[]).length) markers.push('👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名'); if(it.roomingEnabled&&(it.rooms||[]).length) markers.push('🛏部屋割り'+it.rooms.length);
   var noteHtml=it.note?'<div class="se-note-line">'+esc(it.note.slice(0,80))+(it.note.length>80?'…':'')+'</div>':'';
   var ct=costText(it);
   var costHtml=ct?('<span class="se-cost">'+esc(ct)+'</span>'):'';
@@ -1635,6 +1712,12 @@ function openSchedEd(id, presetDate){
   g('se-nametext').value=(it&&it.nameLabel)||'';
   _seNameSel={}; if(it&&Array.isArray(it.nameParticipants)) it.nameParticipants.forEach(function(x){ if(x&&x.id) _seNameSel[x.id]=x.name||x.id; });
   onSeShowNames();
+  // 部屋割り
+  g('se-rooming').checked=!!(it&&it.roomingEnabled);
+  _roomHotel=(it&&it.hotelName)||'';
+  _rooms=(it&&Array.isArray(it.rooms))?JSON.parse(JSON.stringify(it.rooms)):[];
+  g('se-rooming-row').style.display=g('se-rooming').checked?'block':'none';
+  updateRoomCnt();
   toggleMove(); updateCostPreview();
   g('sch-ed-modal').classList.add('open');
 }
@@ -1659,6 +1742,9 @@ function saveSched(){
     showNames:!!g('se-shownames').checked,
     nameLabel:(g('se-nametext').value||'').trim(),
     nameParticipants:(g('se-shownames').checked?Object.keys(_seNameSel).map(function(id){ return {id:id, name:_seNameSel[id]||id}; }):[]),
+    roomingEnabled:!!g('se-rooming').checked,
+    hotelName:(g('se-rooming').checked?((g('sch-room-modal').classList.contains('open')?g('rm-hotel').value:_roomHotel)||'').trim():''),
+    rooms:(g('se-rooming').checked?_cleanRooms():[]),
     updatedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
   var btn=g('se-save'); btn.disabled=true;
