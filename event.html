@@ -116,7 +116,9 @@ a{color:var(--gold-d)}
 .pt-nm{font-size:13px;font-weight:700;color:var(--ink)}
 .pt-bio{font-size:11px;color:var(--ink3);line-height:1.4;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pt-me{border-color:var(--gold);background:#fffaf0}
-.mpbtn{background:var(--gold-d);color:var(--cream);border:none;border-radius:20px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer}
+.mpbtn{background:var(--gold-d);color:var(--cream);border:none;border-radius:20px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
+.mp-fee-box{background:#fff7e6;border:1px solid var(--gold);border-radius:var(--r);padding:10px 12px;margin-bottom:12px;font-size:14px;color:var(--ink)}
+.mp-fee-note{font-size:12px;color:var(--ink2);margin-top:4px}
 .mpbtn.off{background:var(--cream3);color:var(--ink3);cursor:default}
 .soon-card{background:var(--white);border:1px dashed var(--border2);border-radius:var(--rl);padding:20px;margin-bottom:14px;text-align:center;color:var(--ink3);font-size:13px}
 .sc-day{font-size:13px;font-weight:700;color:var(--gold-d);margin:14px 0 6px}
@@ -318,6 +320,7 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
     <div class="mhd"><span>👤 参加者マイページ</span><button class="x" onclick="closeMp()">閉じる</button></div>
     <div class="mbd">
       <div id="mp-guest" style="font-size:12px;color:var(--ink3);line-height:1.7;margin-bottom:10px"></div>
+      <div id="mp-fee" style="display:none"></div>
       <div class="fg"><label class="fl">ニックネーム</label><input class="fi ro" id="mp-nick" readonly><div class="mnote">会員プロフィールから取得（会員マイページで編集）</div></div>
       <div class="fg"><label class="fl">自己紹介（公開）</label><textarea class="fi" id="mp-bio" placeholder="ひとことプロフィール（任意）" maxlength="200"></textarea></div>
       <div class="fg"><label class="fl">本名（非公開・管理者のみ）</label><input class="fi ro" id="mp-name" readonly></div>
@@ -429,7 +432,8 @@ function loadEvent(){
     if(!doc.exists){ g('wrap').innerHTML='<div class="msg">イベントが見つかりません。</div>'; return; }
     var ev=doc.data();
     if(!ev.published && !_isStaff){ g('wrap').innerHTML='<div class="msg">このイベントは現在公開されていません。</div>'; return; }
-    _selfReg=!!(res[1]&&res[1].exists);
+    var pdoc=(res[1]&&res[1].exists)?res[1].data():null;
+    _selfReg=!!pdoc && (pdoc.status!=='pending'); // 承認待ちは参加者扱いにしない（安全側）
     var acc=computeViewAccess(ev, _selfReg);
     if(!acc.allowed){ g('wrap').innerHTML='<div class="msg">'+esc(acc.msg||'このイベントの閲覧権限がありません。')+'</div>'; return; }
     render(ev);
@@ -536,8 +540,9 @@ function ovCfg(){ var cs=(_ev&&Array.isArray(_ev.containers))?_ev.containers:[];
 function initials(n){ n=(n||'').trim(); return n?n.slice(0,1):'👤'; }
 function ptAvatar(p){ return p.iconUrl?('<img class="pt-av" src="'+esc(p.iconUrl)+'" alt="">'):('<span class="pt-av">'+esc(initials(p.nickname))+'</span>'); }
 function _ptDone(snap){
-  var reg=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }); // 自己登録（編集可・bioあり）
-  _myPt=reg.find(function(p){ return p.id===_uid; })||null; // マイページ判定は自己登録分のみ
+  var regAll=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }); // 自己登録（編集可・bioあり）
+  _myPt=regAll.find(function(p){ return p.id===_uid; })||null; // 自分の申請状況（承認待ち含む）
+  var reg=regAll.filter(function(p){ return p.status!=='pending'; }); // 公開名簿は承認済のみ
   // 管理者が招待した参加者（event.participantsPublic）を、未登録分だけ追加
   var have={}; reg.forEach(function(p){ have[p.id]=true; if(p.memberId)have['mid:'+p.memberId]=true; });
   var invited=(_ev&&Array.isArray(_ev.participantsPublic))?_ev.participantsPublic:[];
@@ -564,13 +569,50 @@ function renderRoster(){
 }
 function renderMypageBar(){
   var bar=g('mypage-bar'); if(!bar) return;
-  if(_myPt) bar.innerHTML='<button class="mpbtn" onclick="openMp()">👤 参加者マイページ</button><span style="font-size:12px;color:var(--teal);font-weight:600">参加登録済み</span>';
-  else if(_isReal) bar.innerHTML='<button class="mpbtn" onclick="openMp()">＋ このイベントに参加登録</button>';
-  else bar.innerHTML='<button class="mpbtn off" disabled>👤 参加者マイページ</button><span style="font-size:11px;color:var(--ink3)">会員ログインで参加登録できます</span>';
+  var ev=_ev||{};
+  var h='';
+  if(_myPt){
+    var pending=(_myPt.status==='pending');
+    h='<button class="mpbtn" onclick="openMp()">👤 参加者マイページ</button>';
+    if(pending){
+      var pay=(ev.paidEvent&&_myPt.paymentStatus!=='確認済')?'（お支払い確認後に確定）':'';
+      h+='<span style="font-size:12px;color:var(--gold-d);font-weight:600">参加申請中（承認待ち）'+pay+'</span>';
+    } else h+='<span style="font-size:12px;color:var(--teal);font-weight:600">参加登録済み</span>';
+  } else if(_isReal){
+    if(ev.joinSelfEnabled) h='<button class="mpbtn" onclick="openMp()">＋ '+(ev.paidEvent?'このイベントに参加申込（有料）':(ev.joinApproval==='manual'?'このイベントに参加を申請':'このイベントに参加登録'))+'</button>';
+    else h='<span style="font-size:12px;color:var(--ink3)">このイベントは管理者の招待制です。</span>';
+  } else h='<button class="mpbtn off" disabled>👤 参加者マイページ</button><span style="font-size:11px;color:var(--ink3)">会員ログインで参加登録できます</span>';
+  // ③ 参加者が他の会員を招待
+  if(_isReal && ev.joinInviteEnabled && _isParticipant && !(_myPt&&_myPt.status==='pending')){
+    h+='<button class="mpbtn" style="margin-left:6px" onclick="inviteParticipant()">＋ 会員を招待</button>';
+  }
+  bar.innerHTML=h;
 }
+// ③ 参加者による招待（会員ID入力→管理者承認）
+function inviteParticipant(){
+  if(!_isReal) return;
+  var mid=(prompt('招待する会員の会員IDを入力してください（相手には管理者の承認後に反映されます）')||'').trim();
+  if(!mid) return;
+  db.collection('events').doc(eventId).collection('participantInvites').add({
+    memberId:mid, invitedBy:_uid, invitedByName:_memberName||'', status:'pending',
+    createdAt:firebase.firestore.FieldValue.serverTimestamp()
+  }).then(function(){ toast('招待を送信しました（管理者の承認待ち）'); }).catch(function(e){ toast('送信失敗: '+e.message); });
+}
+function _feeText(ev){ if(ev.feeAmount==null) return '有料'; return curSym(ev.feeCurrency||'JPY')+Number(ev.feeAmount).toLocaleString(); }
 function openMp(){
   if(!_isReal) return;
+  if(!_myPt && !(_ev&&_ev.joinSelfEnabled)){ toast('このイベントは管理者の招待制です'); return; }
   var p=_myPt||{};
+  // 有料イベントの課金誘導
+  var feeEl=g('mp-fee');
+  if(feeEl){
+    if(_ev&&_ev.paidEvent){
+      var payBtn=_ev.feePaymentUrl?('<a class="mpbtn" href="'+esc(_ev.feePaymentUrl)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">💳 お支払いへ ↗</a>'):'<span style="font-size:11px;color:var(--ink3)">お支払い方法は管理者からご案内します。</span>';
+      var paidNote=(_myPt&&_myPt.paymentStatus==='確認済')?'<span style="color:var(--teal);font-weight:700;font-size:12px">お支払い確認済み</span>':payBtn;
+      feeEl.style.display='block';
+      feeEl.innerHTML='<div class="mp-fee-box">💳 参加費: <b>'+esc(_feeText(_ev))+'</b>'+(_ev.feeNote?'<div class="mp-fee-note">'+esc(_ev.feeNote)+'</div>':'')+'<div style="margin-top:6px">'+paidNote+'</div></div>';
+    } else feeEl.style.display='none';
+  }
   g('mp-nick').value=(_myPt?p.nickname:_mProfile.nickname)||'';
   g('mp-bio').value=p.bio||'';
   g('mp-name').value=(_myPt?p.name:_mProfile.name)||'';
@@ -603,10 +645,22 @@ function saveParticipant(){
     phone:(g('mp-phone').value||_mProfile.phone||'').trim(),
     sns:(g('mp-sns').value||_mProfile.sns||'').trim(),
     updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
-  if(isNew) data.registeredAt=firebase.firestore.FieldValue.serverTimestamp();
+  // 新規は承認要否・有料に応じてステータス設定。既存はプロフィール編集のみ（状態維持）。
+  if(isNew){
+    data.registeredAt=firebase.firestore.FieldValue.serverTimestamp();
+    data.via='self';
+    var needApproval=(_ev&&(_ev.paidEvent || _ev.joinApproval==='manual'));
+    data.status=needApproval?'pending':'approved';
+    if(_ev&&_ev.paidEvent) data.paymentStatus='未確認';
+  }
+  var isNewPending=isNew && data.status==='pending';
   var btn=g('mp-save'); btn.disabled=true;
   db.collection('events').doc(eventId).collection('participants').doc(_uid).set(data,{merge:true})
-    .then(function(){ toast(isNew?'参加登録しました':'保存しました'); closeMp(); loadParticipants(); })
+    .then(function(){
+      toast(isNew?(isNewPending?'参加を申請しました（承認待ち）':'参加登録しました'):'保存しました');
+      if(isNew && _ev && _ev.paidEvent && _ev.feePaymentUrl){ try{ window.open(_ev.feePaymentUrl,'_blank'); }catch(e){} }
+      closeMp(); loadParticipants();
+    })
     .catch(function(e){ g('mp-err').textContent='保存失敗: '+e.message; })
     .finally(function(){ btn.disabled=false; });
 }
