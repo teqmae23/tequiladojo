@@ -70,6 +70,10 @@ a{color:var(--gold-d)}
 .kv{display:flex;gap:10px;padding:6px 0;font-size:14px;align-items:flex-start}
 .kv .k{min-width:78px;color:var(--ink3);font-size:12px;padding-top:2px}
 .kv .v{flex:1;color:var(--ink)}
+.kv-big{align-items:baseline}
+.kv-big .k{min-width:78px;color:var(--ink);font-size:17px;font-weight:700;padding-top:0}
+.kv-big .v{flex:1;color:var(--ink);font-size:17px;font-weight:700}
+.pt-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:12px}
 .sch{border-top:1px solid var(--border)}
 .sch-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:14px}
 .sch-row .d{font-weight:600;color:var(--ink2)}
@@ -578,16 +582,18 @@ function toggleHours(){ var b=g('ev-hours'),btn=g('hours-btn'); if(!b)return; va
 function overviewHtml(ev, period){
   var sched=(ev.schedule||[]).filter(function(s){ return s&&s.date; });
   var h='<div class="card"><div class="sec">開催概要</div>';
-  h+='<div class="kv"><div class="k">期間</div><div class="v">'+esc(period)+(sched.length?' <button class="hours-btn" id="hours-btn" onclick="toggleHours()">各日の開催時間 ▾</button>':'')+'</div></div>';
+  h+='<div class="kv kv-big"><div class="k">期間</div><div class="v">'+esc(period)+(sched.length?' <button class="hours-btn" id="hours-btn" onclick="toggleHours()">各日の開催時間 ▾</button>':'')+'</div></div>';
   if(sched.length){
     h+='<div id="ev-hours" class="ev-hours" style="display:none"><div class="sch">'
       +sched.map(function(s){ return '<div class="sch-row"><span class="d">'+esc(fmtDate(s.date))+' '+wday(s.date)+'</span><span class="t">'+esc(_hoursText(s))+'</span></div>'; }).join('')
       +'</div></div>';
   }
+  h+='<div class="kv kv-big"><div class="k">参加者</div><div class="v" id="mypage-note"></div></div>';
   if(ev.location) h+='<div class="kv"><div class="k">場所</div><div class="v">'+esc(ev.location)+'</div></div>';
+  h+='<div class="pt-grid" id="roster" style="margin-top:8px"><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div>';
+  h+='<div class="pt-actions" id="mypage-actions"></div>';
   h+='</div>';
   if(ev.description){ h+='<div class="card"><div class="sec">詳細</div><div class="desc">'+esc(ev.description)+'</div></div>'; }
-  h+='<div class="card"><div class="sec">参加者</div><div class="pt-bar" id="mypage-bar"></div><div class="pt-grid" id="roster"><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div></div>';
   return h;
 }
 
@@ -624,29 +630,27 @@ function renderRoster(){
   }).join('');
 }
 function renderMypageBar(){
-  var bar=g('mypage-bar'); if(!bar) return;
+  var noteEl=g('mypage-note'), actEl=g('mypage-actions');
+  if(!noteEl && !actEl) return;
   var ev=_ev||{};
-  var h='';
+  var note='', acts=[];
   if(_myPt){
     var pending=(_myPt.status==='pending');
-    h='<button class="mpbtn" onclick="openMp()">👤 参加者マイページ</button>';
     if(pending){
       var pay=(ev.paidEvent&&_myPt.paymentStatus!=='確認済')?'（お支払い確認後に確定）':'';
-      h+='<span style="font-size:12px;color:var(--gold-d);font-weight:600">参加申請中（承認待ち）'+pay+'</span>';
-    } else h+='<span style="font-size:12px;color:var(--teal);font-weight:600">参加登録済み</span>';
+      note='<span style="font-size:12px;color:var(--gold-d);font-weight:700">参加申請中（承認待ち）'+pay+'</span>';
+    } else note='<span style="font-size:12px;color:var(--teal);font-weight:700">参加登録済み</span>';
+    acts.push('<button class="mpbtn" onclick="openMp()">👤 参加者マイページ</button>');
   } else if(_isReal){
-    if(ev.joinSelfEnabled) h='<button class="mpbtn" onclick="openMp()">＋ '+(ev.paidEvent?'このイベントに参加申込（有料）':(ev.joinApproval==='manual'?'このイベントに参加を申請':'このイベントに参加登録'))+'</button>';
-    else h='<span style="font-size:12px;color:var(--ink3)">このイベントは管理者の招待制です。</span>';
-  } else h='<button class="mpbtn off" disabled>👤 参加者マイページ</button><span style="font-size:11px;color:var(--ink3)">会員ログインで参加登録できます</span>';
+    if(ev.joinSelfEnabled) acts.push('<button class="mpbtn" onclick="openMp()">＋ '+(ev.paidEvent?'参加申込（有料）':(ev.joinApproval==='manual'?'参加を申請':'参加登録'))+'</button>');
+    else note='<span style="font-size:12px;color:var(--ink3)">（このイベントは管理者の招待制です）</span>';
+  } else note='<span style="font-size:12px;color:var(--ink3)">会員ログインで参加登録できます</span>';
   // ③ 参加者が他の会員を参加に招待
-  if(_isReal && ev.joinInviteEnabled && _isParticipant && !(_myPt&&_myPt.status==='pending')){
-    h+='<button class="mpbtn" style="margin-left:6px" onclick="inviteParticipant()">＋ 会員を招待</button>';
-  }
+  if(_isReal && ev.joinInviteEnabled && _isParticipant && !(_myPt&&_myPt.status==='pending')) acts.push('<button class="mpbtn" onclick="inviteParticipant()">＋ 会員を招待</button>');
   // ③(閲覧) 参加者が家族を閲覧に招待（クローズイベント・承認済み参加者のみ）
-  if(_isReal && ev.eventType!=='open' && _isParticipant && !(_myPt&&_myPt.status==='pending')){
-    h+='<button class="mpbtn" style="margin-left:6px;background:var(--teal)" onclick="inviteFamily()">👨‍👩‍👧 家族を閲覧に招待</button>';
-  }
-  bar.innerHTML=h;
+  if(_isReal && ev.eventType!=='open' && _isParticipant && !(_myPt&&_myPt.status==='pending')) acts.push('<button class="mpbtn" style="background:var(--teal)" onclick="inviteFamily()">👨‍👩‍👧 家族を閲覧に招待</button>');
+  if(noteEl) noteEl.innerHTML=note;
+  if(actEl) actEl.innerHTML=acts.join('');
 }
 // ③(閲覧) 家族の会員IDを推薦（管理者承認後にリアルタイム閲覧可＝参加者と同内容）
 var _famPendingIds={}, _FAM_ST={approved:'承認済',pending:'承認待',rejected:'招待却下'};
