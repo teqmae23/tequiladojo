@@ -615,6 +615,11 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       </div>
       <label class="reqlbl"><input type="checkbox" id="se-overnight"> 宿泊</label>
       <label class="reqlbl"><input type="checkbox" id="se-hideuntildone"> 閲覧者に隠す（完了後に公開）— クローズイベントで、参加者・家族以外にはこのアイテムを完了まで非表示</label>
+      <label class="reqlbl"><input type="checkbox" id="se-shownames" onchange="onSeShowNames()"> 参加者名を表示（合流／離脱など）</label>
+      <div id="se-names-box" style="display:none;border:1px solid var(--border);border-radius:var(--r);padding:8px 10px;margin-top:4px">
+        <div class="fg"><label class="fl">表示ラベル（自由入力）</label><input class="fi" id="se-nametext" placeholder="例: 合流 / 離脱"></div>
+        <div class="fg"><label class="fl">対象の参加者を選択</label><div id="se-names-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r)"></div></div>
+      </div>
       <div class="err" id="se-err"></div>
     </div>
     <div class="mft">
@@ -1472,6 +1477,21 @@ function updateCostPreview(){
   el.textContent=(cur==='JPY')?('¥'+y.toLocaleString()):('≈ ¥'+y.toLocaleString()+'（'+curSym(cur)+n.toLocaleString()+' × 約'+Math.round(FX[cur])+'円）');
 }
 function onSeCat(){ var v=g('se-cat').value; if(v==='hotel') g('se-overnight').checked=true; if(v==='flight'||v==='move'){ g('se-move').checked=true; toggleMove(); } }
+// 参加者名の表示（合流/離脱など）
+var _seNameSel={};
+function onSeShowNames(){ var on=g('se-shownames').checked; g('se-names-box').style.display=on?'block':'none'; if(on) renderSeNames(); }
+function renderSeNames(){
+  var box=g('se-names-list'); if(!box) return;
+  if(!_schRoster.length){ box.innerHTML='<div class="ec">対象にできる参加者がいません。</div>'; return; }
+  box.innerHTML=_schRoster.map(function(p){
+    var on=!!_seNameSel[p.tid];
+    return '<label class="mp-pick-row'+(on?' on':'')+'"><input type="checkbox" data-tid="'+esc(p.tid)+'" data-nm="'+esc(p.name||p.memberId||'')+'"'+(on?' checked':'')+'>'
+      +'<span class="mp-pick-nm">'+esc(p.name||p.memberId||'（会員）')+'</span><span class="mp-pick-id">'+esc(p.memberId||'')+'</span></label>';
+  }).join('');
+  Array.prototype.forEach.call(box.querySelectorAll('input[data-tid]'),function(cb){
+    cb.addEventListener('change',function(){ var id=cb.getAttribute('data-tid'); if(cb.checked)_seNameSel[id]=cb.getAttribute('data-nm')||id; else delete _seNameSel[id]; cb.parentNode.classList.toggle('on',cb.checked); });
+  });
+}
 
 /* ── 場所ライブラリ（登録済みの地点を再利用） ── */
 var _places=[];
@@ -1515,12 +1535,15 @@ function editPlace(pid){
 }
 function delPlace(pid){ if(!confirm('この場所を削除しますか？')) return; db.collection('places').doc(pid).delete().then(function(){ toast('削除しました'); renderPlaceMgr(); }).catch(function(e){ toast('削除失敗: '+e.message); }); }
 
+var _schRoster=[];
 function openSchedMgr(eventId){
   _schEventId=eventId;
   var ev=events.find(function(x){return x.id===eventId;});
   g('sch-mgr-title').textContent='🗓 スケジュール — '+(ev?ev.name:'');
   g('sch-list').innerHTML='<div class="ec">読み込み中…</div>';
   g('sch-mgr-modal').classList.add('open');
+  _schRoster=[];
+  loadDocRoster(eventId).then(function(r){ _schRoster=r||[]; }).catch(function(){});
   loadPlaces(); loadFx();
   loadCats().then(loadSchedItems);
 }
@@ -1537,7 +1560,7 @@ function loadSchedItems(){
 }
 function renderSchedItemRow(it){
   var ic=it.overnight?'🏨':catIcon(it.category);
-  var markers=[]; if(it.isMove) markers.push('🚗ルート'); if(it.lat!=null&&it.lng!=null) markers.push('📍地図'); if(it.hideUntilDone) markers.push('🙈完了後公開');
+  var markers=[]; if(it.isMove) markers.push('🚗ルート'); if(it.lat!=null&&it.lng!=null) markers.push('📍地図'); if(it.hideUntilDone) markers.push('🙈完了後公開'); if(it.showNames&&(it.nameParticipants||[]).length) markers.push('👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名');
   var noteHtml=it.note?'<div class="se-note-line">'+esc(it.note.slice(0,80))+(it.note.length>80?'…':'')+'</div>':'';
   var ct=costText(it);
   var costHtml=ct?('<span class="se-cost">'+esc(ct)+'</span>'):'';
@@ -1605,6 +1628,10 @@ function openSchedEd(id, presetDate){
   g('se-travelmode').value=it?(it.travelMode||''):'';
   g('se-overnight').checked=!!(it&&it.overnight);
   g('se-hideuntildone').checked=!!(it&&it.hideUntilDone);
+  g('se-shownames').checked=!!(it&&it.showNames);
+  g('se-nametext').value=(it&&it.nameLabel)||'';
+  _seNameSel={}; if(it&&Array.isArray(it.nameParticipants)) it.nameParticipants.forEach(function(x){ if(x&&x.id) _seNameSel[x.id]=x.name||x.id; });
+  onSeShowNames();
   toggleMove(); updateCostPreview();
   g('sch-ed-modal').classList.add('open');
 }
@@ -1626,6 +1653,9 @@ function saveSched(){
     toName:(g('se-toplace').value||'').trim(), travelMode:g('se-travelmode').value||'',
     overnight:!!g('se-overnight').checked,
     hideUntilDone:!!g('se-hideuntildone').checked,
+    showNames:!!g('se-shownames').checked,
+    nameLabel:(g('se-nametext').value||'').trim(),
+    nameParticipants:(g('se-shownames').checked?Object.keys(_seNameSel).map(function(id){ return {id:id, name:_seNameSel[id]||id}; }):[]),
     updatedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
   var btn=g('se-save'); btn.disabled=true;
