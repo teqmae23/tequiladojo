@@ -281,6 +281,12 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
         <div style="font-size:11px;color:var(--ink3);margin-bottom:6px">開始・終了日付を入れると各日の行が生成されます。</div>
         <div id="sched"></div>
       </div>
+      <div class="fg"><label class="fl">イベント種別</label>
+        <select class="fi" id="f-evtype">
+          <option value="closed">クローズ（参加者のみ全内容。閲覧者は権限に応じ時間差・未完了予定は非表示）</option>
+          <option value="open">オープン（誰でもスケジュール・詳細を閲覧可）</option>
+        </select>
+      </div>
       <div class="fg"><label class="fl">開催場所</label><input class="fi" id="f-loc" placeholder="例: テキーラ道場 本店"></div>
       <div class="fg"><label class="fl">詳細</label><textarea class="fi" id="f-desc" placeholder="イベントの説明・内容など"></textarea></div>
       <div class="fg"><label class="fl">イベントTOPページ（任意のURL）</label><input class="fi" id="f-top" placeholder="空欄なら自動で /event.html?id=... を使用"></div>
@@ -303,6 +309,29 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
         <input type="checkbox" id="f-pub" style="width:16px;height:16px;accent-color:var(--gold-d)">
         公開する（会員マイページにバナー表示）
       </label>
+      <div class="fg" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+        <label class="fl">👁 閲覧設定（イベント閲覧ページ）</label>
+        <div class="row2">
+          <div class="fg"><label class="fl">閲覧できる範囲</label>
+            <select class="fi" id="f-viewaccess">
+              <option value="public">誰でも閲覧可（登録不要）</option>
+              <option value="request">閲覧申請した人のみ</option>
+              <option value="invite">参加者からの招待（家族）のみ</option>
+            </select>
+          </div>
+          <div class="fg"><label class="fl">申請の承認</label>
+            <select class="fi" id="f-viewapproval">
+              <option value="auto">承認不要（自動許可）</option>
+              <option value="manual">管理者の承認が必要</option>
+            </select>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="fg"><label class="fl">遅延（無料会員）時間</label><input class="fi" id="f-delayfree" type="number" min="0" step="1" value="24"></div>
+          <div class="fg"><label class="fl">遅延（有料/閲覧権）時間</label><input class="fi" id="f-delaypaid" type="number" min="0" step="1" value="3"></div>
+        </div>
+        <div style="font-size:11px;color:var(--ink3)">閲覧ページは権限で表示が変わります。参加者・家族招待はリアルタイム、無料/有料会員は上記時間だけ過去の状態を表示します。参加者・家族以外には、滞在中の場所（ホテル/アクティビティ等）の地図・住所・座標を伏せます。</div>
+      </div>
       <div class="err" id="ev-err"></div>
     </div>
     <div class="mft">
@@ -545,6 +574,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
         </select><div style="font-size:11px;color:var(--ink3);margin-top:3px">🚗ルートを開いたときのGoogleマップの経路手段です（空路はGoogle自動）。</div></div>
       </div>
       <label class="reqlbl"><input type="checkbox" id="se-overnight"> 宿泊</label>
+      <label class="reqlbl"><input type="checkbox" id="se-hideuntildone"> 閲覧者に隠す（完了後に公開）— クローズイベントで、参加者・家族以外にはこのアイテムを完了まで非表示</label>
       <div class="err" id="se-err"></div>
     </div>
     <div class="mft">
@@ -815,6 +845,11 @@ function openEvent(id){
   g('f-desc').value=ev?(ev.description||''):'';
   g('f-top').value=ev?(ev.topPageUrl||''):'';
   g('f-pub').checked=!!(ev&&ev.published);
+  g('f-evtype').value=(ev&&ev.eventType)||'closed';
+  g('f-viewaccess').value=(ev&&ev.viewAccess)||'public';
+  g('f-viewapproval').value=(ev&&ev.viewApproval)||'auto';
+  g('f-delayfree').value=(ev&&ev.viewDelayFreeH!=null)?ev.viewDelayFreeH:24;
+  g('f-delaypaid').value=(ev&&ev.viewDelayPaidH!=null)?ev.viewDelayPaidH:3;
   _participants=(ev&&Array.isArray(ev.participantIds))?ev.participantIds.slice():[];
   _schedMap={}; if(ev&&Array.isArray(ev.schedule)) ev.schedule.forEach(function(s){ if(s&&s.date)_schedMap[s.date]={open:s.open||'',close:s.close||'',allDay:!!s.allDay}; });
   _containers=normalizeContainers(ev&&ev.containers);
@@ -850,6 +885,11 @@ function saveEvent(){
     description:(g('f-desc').value||'').trim(), topPageUrl:(g('f-top').value||'').trim(),
     published:!!g('f-pub').checked, participantIds:_participants.slice(),
     participantsPublic:participantsPublic,
+    eventType:g('f-evtype').value||'closed',
+    viewAccess:g('f-viewaccess').value||'public',
+    viewApproval:g('f-viewapproval').value||'auto',
+    viewDelayFreeH:Math.max(0, parseInt(g('f-delayfree').value,10)||0),
+    viewDelayPaidH:Math.max(0, parseInt(g('f-delaypaid').value,10)||0),
     containers:_containers,
     updatedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
@@ -1338,7 +1378,7 @@ function loadSchedItems(){
 }
 function renderSchedItemRow(it){
   var ic=it.overnight?'🏨':catIcon(it.category);
-  var markers=[]; if(it.isMove) markers.push('🚗ルート'); if(it.lat!=null&&it.lng!=null) markers.push('📍地図');
+  var markers=[]; if(it.isMove) markers.push('🚗ルート'); if(it.lat!=null&&it.lng!=null) markers.push('📍地図'); if(it.hideUntilDone) markers.push('🙈完了後公開');
   var noteHtml=it.note?'<div class="se-note-line">'+esc(it.note.slice(0,80))+(it.note.length>80?'…':'')+'</div>':'';
   var ct=costText(it);
   var costHtml=ct?('<span class="se-cost">'+esc(ct)+'</span>'):'';
@@ -1405,6 +1445,7 @@ function openSchedEd(id, presetDate){
   g('se-toplace').value=it?(it.toName||''):'';
   g('se-travelmode').value=it?(it.travelMode||''):'';
   g('se-overnight').checked=!!(it&&it.overnight);
+  g('se-hideuntildone').checked=!!(it&&it.hideUntilDone);
   toggleMove(); updateCostPreview();
   g('sch-ed-modal').classList.add('open');
 }
@@ -1425,6 +1466,7 @@ function saveSched(){
     isMove:!!g('se-move').checked, toTime:g('se-totime').value||'', toMapUrl:(g('se-tomap').value||'').trim(), toLat:numOrNull(g('se-tolat').value), toLng:numOrNull(g('se-tolng').value),
     toName:(g('se-toplace').value||'').trim(), travelMode:g('se-travelmode').value||'',
     overnight:!!g('se-overnight').checked,
+    hideUntilDone:!!g('se-hideuntildone').checked,
     updatedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
   var btn=g('se-save'); btn.disabled=true;

@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/tz-lookup.js"></script>
+<script src="/member-plan.js?v=20260903"></script>
 <script>
 var FIREBASE_CONFIG={
   apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -168,6 +169,10 @@ a{color:var(--gold-d)}
 .sc-dbg input{font-size:12px;padding:4px 6px;border:1px solid var(--border2);border-radius:6px}
 .sc-dbg-btn{font-size:12px;font-weight:600;padding:4px 10px;border:1px solid var(--border2);border-radius:6px;background:var(--white);color:var(--ink2);cursor:pointer}
 .sc-dbg-on{font-weight:700;color:var(--red)}
+.sc-dbg-sel{font-size:12px;padding:3px 6px;border:1px solid var(--border2);border-radius:6px}
+.sc-dbg-note{font-size:11px;color:var(--ink3)}
+.sc-loclock{color:var(--ink3);font-weight:600;font-size:12px}
+.sc-hiddennote{margin-top:8px;font-size:12px;color:var(--ink3);background:var(--cream2);border-radius:var(--r);padding:8px 10px}
 .sc-item.has-geo{cursor:pointer}
 .sc-item.has-geo:hover{box-shadow:0 2px 8px rgba(0,0,0,.12)}
 .sc-pin{color:var(--teal);font-weight:600;font-size:12px}
@@ -388,6 +393,9 @@ var eventId=qs('id');
 var _isStaff=false, _uid=null, _isReal=false, _memberId='', _memberName='';
 var _mProfile={nickname:'',iconUrl:'',name:'',phone:'',sns:''};
 var _ev=null, _participants=[], _myPt=null;
+// 閲覧権限（参加者/家族=full・リアルタイム、無料/有料会員=restricted・遅延+位置伏せ）
+var _member=null, _plans=[], _planLevel=0;
+var _isParticipant=false, _isFamily=false, _viewClass='full', _viewDelayMs=0, _previewTier='';
 
 auth.onAuthStateChanged(function(user){
   if(!user){ g('wrap').innerHTML='<div class="msg">このページの閲覧には会員ログインが必要です。<br><br><a href="/member.html">▶ 会員ページでログイン</a></div>'; return; }
@@ -396,22 +404,70 @@ auth.onAuthStateChanged(function(user){
   user.getIdTokenResult().then(function(r){
     _isStaff=(r.claims&&(r.claims.role==='owner'||r.claims.role==='staff'))||false;
   }).catch(function(){}).then(function(){
-    // 会員プロフィール（アンケート回答時の氏名保存用）
-    return db.collection('members').where('authUid','==',_uid).limit(1).get().then(function(snap){
-      if(!snap.empty){ var m=snap.docs[0].data(); _memberId=m.displayId||m.memberId||snap.docs[0].id; _memberName=m.nickname||m.name||_memberId;
-        _mProfile={nickname:m.nickname||'', iconUrl:m.iconUrl||'', name:m.name||'', phone:m.phone||'', sns:m.mainSns||''}; }
-    }).catch(function(){});
+    // 会員プロフィール＋グレード（プラン）を取得
+    return Promise.all([
+      db.collection('members').where('authUid','==',_uid).limit(1).get().then(function(snap){
+        if(!snap.empty){ var m=snap.docs[0].data(); _member=m; _memberId=m.displayId||m.memberId||snap.docs[0].id; _memberName=m.nickname||m.name||_memberId;
+          _mProfile={nickname:m.nickname||'', iconUrl:m.iconUrl||'', name:m.name||'', phone:m.phone||'', sns:m.mainSns||''}; }
+      }).catch(function(){}),
+      (window.MemberPlan?MemberPlan.loadPlans(db).then(function(p){ _plans=p||[]; }).catch(function(){}):Promise.resolve())
+    ]).then(function(){
+      try{ var eff=window.MemberPlan?MemberPlan.effectivePlan(_member||{}, _plans):null; _planLevel=eff?(Number(eff.level)||0):0; }catch(e){ _planLevel=0; }
+    });
   }).finally(loadEvent);
 });
 
+var _selfReg=false;
 function loadEvent(){
   if(!eventId){ g('wrap').innerHTML='<div class="msg">イベントが指定されていません。</div>'; return; }
-  db.collection('events').doc(eventId).get().then(function(doc){
+  var ref=db.collection('events').doc(eventId);
+  Promise.all([
+    ref.get(),
+    ref.collection('participants').doc(_uid).get().catch(function(){ return {exists:false}; })
+  ]).then(function(res){
+    var doc=res[0];
     if(!doc.exists){ g('wrap').innerHTML='<div class="msg">イベントが見つかりません。</div>'; return; }
     var ev=doc.data();
     if(!ev.published && !_isStaff){ g('wrap').innerHTML='<div class="msg">このイベントは現在公開されていません。</div>'; return; }
+    _selfReg=!!(res[1]&&res[1].exists);
+    var acc=computeViewAccess(ev, _selfReg);
+    if(!acc.allowed){ g('wrap').innerHTML='<div class="msg">'+esc(acc.msg||'このイベントの閲覧権限がありません。')+'</div>'; return; }
     render(ev);
   }).catch(function(e){ g('wrap').innerHTML='<div class="msg">読み込みに失敗しました: '+esc(e.message)+'</div>'; });
+}
+// 閲覧者の権限クラスと遅延を判定
+function _uidInParticipants(ev){
+  var pp=(ev&&Array.isArray(ev.participantsPublic))?ev.participantsPublic:[];
+  for(var i=0;i<pp.length;i++){ if(pp[i].uid && pp[i].uid===_uid) return true; if(pp[i].memberId && _memberId && String(pp[i].memberId)===String(_memberId)) return true; }
+  var pids=(ev&&Array.isArray(ev.participantIds))?ev.participantIds:[];
+  if(_memberId && pids.some(function(x){ return String(x)===String(_memberId); })) return true;
+  return false;
+}
+function computeViewAccess(ev, selfReg){
+  _isParticipant=_uidInParticipants(ev) || !!selfReg;
+  var fam=(ev&&Array.isArray(ev.familyViewerIds))?ev.familyViewerIds:[];
+  _isFamily = (fam.indexOf(_uid)>=0) || (!!_memberId && fam.indexOf(String(_memberId))>=0);
+  // オープンイベント: 誰でも全内容をリアルタイム閲覧可（遅延・非表示なし）
+  if((ev&&ev.eventType)==='open' && !(_isStaff&&_previewTier)){ _viewClass='full'; _viewDelayMs=0; return {allowed:true}; }
+  if(_isStaff || _isParticipant || _isFamily){ _viewClass='full'; _viewDelayMs=0; }
+  else {
+    var mode=(ev&&ev.viewAccess)||'public';
+    if(mode==='invite') return {allowed:false, msg:'このイベントは参加者からの招待（家族閲覧）のみ閲覧できます。'};
+    if(mode==='request'){
+      var appr=(ev&&Array.isArray(ev.viewApprovedIds))?ev.viewApprovedIds:[];
+      var ok=(appr.indexOf(_uid)>=0)||(!!_memberId && appr.indexOf(String(_memberId))>=0);
+      if(!ok) return {allowed:false, msg:'このイベントの閲覧には申請が必要です。（閲覧申請の受付は準備中です）'};
+    }
+    var paid=(_planLevel>=1)||!!(_member&&_member.eventViewRight);
+    var h=paid?(ev.viewDelayPaidH!=null?ev.viewDelayPaidH:3):(ev.viewDelayFreeH!=null?ev.viewDelayFreeH:24);
+    _viewClass='restricted'; _viewDelayMs=Math.max(0,Number(h)||0)*3600000;
+  }
+  // 管理者プレビュー: 権限クラスの上書き（デバッグ）
+  if(_isStaff && _previewTier){
+    if(_previewTier==='full'){ _viewClass='full'; _viewDelayMs=0; }
+    else { _viewClass='restricted'; var hh=(_previewTier==='paid')?(ev.viewDelayPaidH!=null?ev.viewDelayPaidH:3):(ev.viewDelayFreeH!=null?ev.viewDelayFreeH:24); _viewDelayMs=Math.max(0,Number(hh)||0)*3600000; }
+  }
+  return {allowed:true};
 }
 
 function fmtDate(s){ if(!s)return ''; var p=s.split('-'); return p.length===3?(p[0]+'年'+parseInt(p[1],10)+'月'+parseInt(p[2],10)+'日'):s; }
@@ -702,6 +758,41 @@ function _sortByJst(items){
     .sort(function(a,b){ return (a.ms-b.ms)||(a.seq-b.seq)||(a.i-b.i); });
 }
 function _idlCross(it){ return !!(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null && Math.abs(it.toLng-it.lng)>180); }
+/* ── ストーカー対策: 位置情報の公開タイミング（restricted閲覧者向け） ── */
+var _revealMap={};
+function _isLodging(it){ return !!it.overnight || it.category==='hotel' || it.category==='checkin'; }
+function _checkoutMs(it, b){
+  // 明示チェックアウト日時があれば優先
+  if(it.checkoutDate){ var tz=(it.lat!=null&&it.lng!=null)?(_safeTz(it.lat,it.lng)||'Asia/Tokyo'):'Asia/Tokyo'; var c=_wallInstant(it.checkoutDate, it.checkoutTime||'11:00', tz); if(c) return c.getTime(); }
+  // 無指定はイベント終了境界まで伏せる（ホテルは荷物滞在のため安全側）
+  if(b&&b.endMs!=null) return b.endMs;
+  var si=_schedInstant(it); return si?si.getTime()+2*86400000:(Date.now()+3.15e10);
+}
+// enr=_sortByJst済み。位置を公開してよい時刻(ms)を項目ごとに算出。
+function _computeReveals(enr){
+  var b=_eventBounds(_schedItems), map={};
+  for(var i=0;i<enr.length;i++){
+    var it=enr[i].it;
+    if(_isLodging(it)){ map[it.id]=_checkoutMs(it,b); continue; }
+    // 次の項目が始まったら（＝その場を離れたら）完了扱い。最後の項目は+3h。
+    map[it.id]=(i+1<enr.length)?enr[i+1].ms:(enr[i].ms+3*3600000);
+  }
+  return map;
+}
+// この項目の位置情報を伏せるべきか（restricted・座標あり・完了時刻前）
+function _locHidden(it){
+  if(_viewClass!=='restricted') return false;
+  if(it.lat==null&&it.lng==null) return false;
+  var rev=_revealMap[it.id]; if(!rev) return false;
+  return nowMs() < rev;
+}
+// この項目自体を隠すべきか（restricted・hideUntilDone・完了時刻前）
+function _itemHidden(it){
+  if(_viewClass!=='restricted') return false;
+  if(!it.hideUntilDone) return false;
+  var rev=_revealMap[it.id]; if(!rev) return false;
+  return nowMs() < rev;
+}
 /* ── 費用表示（円カンマ＋現地通貨） ── */
 var FX={USD:150, MXN:8};
 function curSym(c){ return c==='USD'?'US$':c==='MXN'?'MX$':'¥'; }
@@ -712,10 +803,15 @@ function costText(it){ var m=costMain(it); if(!m) return ''; if(it.costAmount!=n
 function renderSchedItem(it){
   var ic=it.overnight?'🏨':catIcon(it.category);
   var geo=(it.lat!=null&&it.lng!=null);
+  var hideLoc=_locHidden(it); // ストーカー対策: 滞在中は位置を伏せる
   var meta=[];
   var ct=costText(it); if(ct) meta.push('<span class="sc-cost">'+esc(ct)+'</span>');
-  var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
-  if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="'+esc(routeLink(it))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🚗 ルート</a>');
+  if(hideLoc){
+    meta.push('<span class="sc-loclock">'+(_isLodging(it)?'🏨 ホテル情報はチェックアウト後に公開されます':'📍 位置情報は滞在終了後に公開されます')+'</span>');
+  } else {
+    var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
+    if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="'+esc(routeLink(it))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🚗 ルート</a>');
+  }
   var photos=_photosByItem[it.id]||[];
   var gallery=photos.length?('<div class="sc-gallery">'+photos.map(function(p,idx){ return '<img class="sc-thumb" src="'+esc(p.thumbUrl||p.url)+'" alt="" loading="lazy" onclick="event.stopPropagation();openLb(\''+esc(it.id)+'\','+idx+')">'; }).join('')+'</div>'):'';
   var inner=(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')+(meta.length?'<div class="sc-meta">'+meta.join('')+'</div>':'')+gallery;
@@ -736,7 +832,8 @@ function onSchedItemClick(id, geo){
 }
 /* ── 現在時刻（デバッグ上書き対応）とイベントの進行フェーズ ── */
 var _nowOverride=null, _nowMap=null, _nowTimer=null;
-function nowMs(){ return _nowOverride!=null?_nowOverride:Date.now(); }
+// 表示上の「現在時刻」= 実時刻(またはデバッグ上書き) − 閲覧遅延。参加者/家族/管理者は遅延0。
+function nowMs(){ return (_nowOverride!=null?_nowOverride:Date.now()) - _viewDelayMs; }
 function _pad2(n){ return ('0'+n).slice(-2); }
 function _fmtLocalInput(ms){ var d=new Date(ms); return d.getFullYear()+'-'+_pad2(d.getMonth()+1)+'-'+_pad2(d.getDate())+'T'+_pad2(d.getHours())+':'+_pad2(d.getMinutes()); }
 function _fmtDbg(ms){ var d=new Date(ms); return d.getFullYear()+'/'+_pad2(d.getMonth()+1)+'/'+_pad2(d.getDate())+' '+_pad2(d.getHours())+':'+_pad2(d.getMinutes()); }
@@ -750,9 +847,9 @@ function _eventBounds(items){
   var endMs=null; if(endDate){ var e=_wallInstant(endDate,'00:00','Asia/Tokyo'); if(e) endMs=e.getTime()+86400000; }
   return {startMs:startMs, endMs:endMs, sorted:sorted};
 }
-// スケジュールTOP: 現在時刻からフェーズを判定して表示
-function nowSectionHtml(items){
-  var b=_eventBounds(items); var now=nowMs();
+// スケジュールTOP: 現在時刻からフェーズを判定して表示（visEnr=表示対象の{it,ms}配列）
+function nowSectionHtml(visEnr){
+  var b=_eventBounds(_schedItems); var now=nowMs();
   if(b.startMs==null) return '';
   if(now < b.startMs){
     return '<div class="sc-now before"><div class="sc-now-lbl">🕒 イベント開始まで</div><div class="sc-now-cd" id="sc-now-cd">'+fmtCountdown(b.startMs-now)+'</div>'
@@ -761,18 +858,19 @@ function nowSectionHtml(items){
   if(b.endMs!=null && now >= b.endMs){
     return '<div class="sc-now ended"><div class="sc-now-lbl">🏁 イベント終了</div><div class="sc-now-sub">ご参加ありがとうございました。</div></div>';
   }
-  // 開催中: 現在の項目（開始済みで最新）を特定
+  // 開催中: 表示対象の中から現在の項目（開始済みで最新）を特定
   var cur=null, next=null;
-  b.sorted.forEach(function(e){ if(e.ms<=now) cur=e; else if(!next) next=e; });
+  (visEnr||[]).forEach(function(e){ if(e.ms<=now) cur=e; else if(!next) next=e; });
   var entry=cur||next; if(!entry) return '';
-  _nowMapItem=entry.it;
-  var it=entry.it, geo=(it.lat!=null&&it.lng!=null);
+  var it=entry.it, hideLoc=_locHidden(it), geo=(it.lat!=null&&it.lng!=null)&&!hideLoc;
+  _nowMapItem=geo?it:null;
   var ic=it.overnight?'🏨':catIcon(it.category);
   var tline=it.time?('<span class="sc-now-t">'+esc(it.time)+(it.isMove&&it.toTime?' → '+esc(it.toTime):'')+'</span>'):'';
   var h='<div class="sc-now live"><div class="sc-now-lbl">'+(cur?'▶ 現在のイベント':'⏭ まもなく')+'</div>'
     +'<div class="sc-now-item">'+tline+'<span class="sc-now-ic">'+ic+'</span><span class="sc-now-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'')+'</span></div>'
     +(it.date?'<div class="sc-now-sub">'+esc(fmtDate(it.date))+' '+wday(it.date)+'</div>':'');
   if(geo && window.L) h+='<div id="sc-now-map"></div>';
+  else if(hideLoc) h+='<div class="sc-now-sub sc-loclock">'+(_isLodging(it)?'🏨 ホテル情報はチェックアウト後に公開されます':'📍 位置情報は滞在終了後に公開されます')+'</div>';
   if(cur && next) h+='<div class="sc-now-next">次: '+(next.it.time?esc(next.it.time)+' ':'')+esc(next.it.title||'')+'</div>';
   h+='</div>';
   return h;
@@ -813,26 +911,37 @@ function _startNowTimer(){
 // 管理者プレビュー用: 現在時刻を任意に設定して動作確認
 function applyDbgTime(){ var v=(g('sc-dbg-in')||{}).value; if(v){ var t=new Date(v).getTime(); if(!isNaN(t)){ _nowOverride=t; renderSchedule(_schedItems); } } }
 function clearDbgTime(){ _nowOverride=null; renderSchedule(_schedItems); }
+// 管理者プレビュー用: 閲覧権限（遅延＋位置伏せ）を切替えて確認
+function applyDbgTier(v){ _previewTier=v||''; if(_ev) computeViewAccess(_ev, _selfReg); renderSchedule(_schedItems); }
 function debugTimeBar(){
   if(!_isStaff) return '';
   var val=_nowOverride!=null?_fmtLocalInput(_nowOverride):_fmtLocalInput(Date.now());
-  return '<div class="sc-dbg">🛠 <span class="sc-dbg-ttl">プレビュー時刻（動作確認用）</span>'
+  var tierOpt=function(v,l){ return '<option value="'+v+'"'+(_previewTier===v?' selected':'')+'>'+l+'</option>'; };
+  var delayNote=(_viewClass==='restricted')?('（'+Math.round(_viewDelayMs/3600000)+'時間前を表示）'):'（リアルタイム）';
+  return '<div class="sc-dbg">🛠 <span class="sc-dbg-ttl">プレビュー（管理者のみ）</span>'
+    +'<label style="display:flex;align-items:center;gap:4px">権限:<select class="sc-dbg-sel" onchange="applyDbgTier(this.value)">'
+    +tierOpt('','自分の権限')+tierOpt('full','参加者/家族(即時)')+tierOpt('paid','有料会員')+tierOpt('free','無料会員')+'</select></label>'
+    +'<span class="sc-dbg-note">'+delayNote+'</span>'
     +'<input type="datetime-local" id="sc-dbg-in" value="'+val+'">'
-    +'<button type="button" class="sc-dbg-btn" onclick="applyDbgTime()">適用</button>'
-    +'<button type="button" class="sc-dbg-btn" onclick="clearDbgTime()">現在時刻に戻す</button>'
+    +'<button type="button" class="sc-dbg-btn" onclick="applyDbgTime()">時刻適用</button>'
+    +'<button type="button" class="sc-dbg-btn" onclick="clearDbgTime()">現在時刻</button>'
     +(_nowOverride!=null?'<span class="sc-dbg-on">'+esc(_fmtDbg(_nowOverride))+' に固定中</span>':'')+'</div>';
 }
 function renderSchedule(items){
   var el=g('schedule-cont'); if(!el) return;
   if(!items.length){ el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div>'+debugTimeBar()+'<div style="font-size:12px;color:var(--ink3)">スケジュールは準備中です。</div></div>'; return; }
   var enr=_sortByJst(items);
+  _revealMap=_computeReveals(enr); // 各アイテムの完了時刻を算出（restricted閲覧者向け）
+  // restricted閲覧者には hideUntilDone のアイテムを完了まで非表示
+  var visEnr=enr.filter(function(e){ return !_itemHidden(e.it); });
   _nowMapItem=null;
   var h='<div class="card"><div class="sec-row"><div class="sec">🗓 スケジュール</div>'+(_isReal?'<button class="ph-btn" onclick="openPh()">📷 写真を追加</button>':'')+'</div>';
   h+=debugTimeBar();
-  h+=nowSectionHtml(items);
+  h+=nowSectionHtml(visEnr);
+  var hiddenCount=enr.length-visEnr.length;
   // 日付ごとにまとめ、日付クリックで開閉（既定は畳んだ状態）。並び順はJST、見出しは現地日付。
   var groups=[], cur=null;
-  enr.forEach(function(e){
+  visEnr.forEach(function(e){
     var it=e.it, d=it.date||'';
     if(!cur||cur.day!==d){ cur={day:d, rows:'', n:0}; groups.push(cur); }
     cur.rows+=renderSchedItem(it); cur.n++;
@@ -846,6 +955,7 @@ function renderSchedule(items){
     return '<div class="sc-day sc-day-toggle" onclick="toggleSchedDay('+idx+')"><span class="sc-day-caret" id="sc-day-caret-'+idx+'">▸</span> '+esc(fmtDate(gp.day))+' '+wday(gp.day)+' <span class="sc-day-count">（'+gp.n+'件）</span></div>'
       +'<div class="sc-day-body" id="sc-day-body-'+idx+'" style="display:none">'+gp.rows+'</div>';
   }).join('');
+  if(hiddenCount>0) h+='<div class="sc-hiddennote">🙈 未完了の非公開アイテムが '+hiddenCount+' 件あります（完了後に表示されます）。</div>';
   h+='</div>';
   el.innerHTML=h;
   if(_nowMapItem && window.L) initNowMap(_nowMapItem);
