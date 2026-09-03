@@ -36,6 +36,12 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/events/$(eid)/surveys/$(sid))
         .data.get('resultVisibility', 'staff');
     }
+    // 参加をクライアントが自動承認(approved)にしてよいイベントか
+    // （承認不要＝joinApproval!='manual' かつ 無料＝paidEvent!=true のときのみ）
+    function evAllowsAutoApprove(eid) {
+      return get(/databases/$(database)/documents/events/$(eid)).data.get('joinApproval','auto') != 'manual'
+        && get(/databases/$(database)/documents/events/$(eid)).data.get('paidEvent', false) != true;
+    }
 
     // ── 会員情報（個人情報）: スタッフ全件 / 会員は自分のみ ─────
     // 作成・引継はCloud Functions（registerMember）がサーバー権限で行う
@@ -191,10 +197,28 @@ service cloud.firestore {
       // 本人が自己登録・編集・取消（authUidを本人に固定）。スタッフは全操作可。
       match /participants/{uid} {
         allow read: if signedIn();
-        allow create, update: if isStaff()
+        // 会員は自分の参加docのみ。status を 'approved' にできるのは
+        // 承認不要＆無料イベントのときだけ（それ以外は 'pending' で申請）。
+        // 既存 status の維持は許可（承認済み参加者のプロフィール編集）。
+        allow create: if isStaff()
           || (realUser() && request.auth.uid == uid
-              && request.resource.data.get('authUid', '') == request.auth.uid);
+              && request.resource.data.get('authUid', '') == request.auth.uid
+              && (request.resource.data.get('status','approved') == 'pending' || evAllowsAutoApprove(id)));
+        allow update: if isStaff()
+          || (realUser() && request.auth.uid == uid
+              && request.resource.data.get('authUid', '') == request.auth.uid
+              && (request.resource.data.get('status', resource.data.get('status','approved')) == resource.data.get('status','approved')
+                  || request.resource.data.get('status','approved') == 'pending'
+                  || evAllowsAutoApprove(id)));
         allow delete: if isStaff() || (realUser() && request.auth.uid == uid);
+      }
+      // 参加者による招待（会員が作成→管理者が承認）
+      match /participantInvites/{iid} {
+        allow read: if isStaff() || (realUser() && resource.data.get('invitedBy','') == request.auth.uid);
+        allow create: if realUser()
+          && request.resource.data.get('invitedBy','') == request.auth.uid
+          && request.resource.data.get('status','') == 'pending';
+        allow update, delete: if isStaff();
       }
     }
 
