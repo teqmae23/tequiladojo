@@ -119,6 +119,13 @@ a{color:var(--gold-d)}
 .mpbtn{background:var(--gold-d);color:var(--cream);border:none;border-radius:20px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
 .mp-fee-box{background:#fff7e6;border:1px solid var(--gold);border-radius:var(--r);padding:10px 12px;margin-bottom:12px;font-size:14px;color:var(--ink)}
 .mp-fee-note{font-size:12px;color:var(--ink2);margin-top:4px}
+.fam-row{display:flex;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid var(--border)}
+.fam-row:last-child{border-bottom:none}
+.fam-id{flex:1;min-width:0;color:var(--ink);word-break:break-all}
+.fam-st{font-size:11px;font-weight:700;padding:2px 8px;border-radius:9px;flex:0 0 auto}
+.fam-st.ok{background:#dff3e6;color:#1f7a44}
+.fam-st.wait{background:#fbf1d6;color:#8a6a1e}
+.fam-st.no{background:#fbdcd6;color:#a5341f}
 .mpbtn.off{background:var(--cream3);color:var(--ink3);cursor:default}
 .soon-card{background:var(--white);border:1px dashed var(--border2);border-radius:var(--rl);padding:20px;margin-bottom:14px;text-align:center;color:var(--ink3);font-size:13px}
 .sc-day{font-size:13px;font-weight:700;color:var(--gold-d);margin:14px 0 6px}
@@ -340,6 +347,25 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
       <button class="btn bd" id="mp-del" style="display:none" onclick="deleteParticipant()">参加を取り消す</button>
       <div style="flex:1"></div>
       <button class="btn bp" id="mp-save" onclick="saveParticipant()">参加登録する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 家族閲覧の招待 -->
+<div class="mbg" id="fam-modal">
+  <div class="modal">
+    <div class="mhd"><span>招待者の選択</span><button class="x" onclick="closeFam()">閉じる</button></div>
+    <div class="mbd">
+      <div style="font-size:12px;color:var(--ink3);line-height:1.7;margin-bottom:8px">閲覧に招待するご家族の会員IDを入力してください。承認後、その方は参加者と同じ内容をリアルタイムで閲覧できます。</div>
+      <div class="fg"><input class="fi" id="fam-mid" placeholder="会員ID"></div>
+      <div class="sv-err" id="fam-err"></div>
+      <div style="font-weight:700;font-size:12px;color:var(--ink2);margin:12px 0 4px">あなたが招待した会員</div>
+      <div id="fam-my-list" style="font-size:12px;color:var(--ink3)">—</div>
+    </div>
+    <div class="mft">
+      <div style="flex:1"></div>
+      <button class="btn bs" onclick="closeFam()">キャンセル</button>
+      <button class="btn bp" id="fam-submit" onclick="submitFam()">招待する</button>
     </div>
   </div>
 </div>
@@ -622,14 +648,60 @@ function renderMypageBar(){
   bar.innerHTML=h;
 }
 // ③(閲覧) 家族の会員IDを推薦（管理者承認後にリアルタイム閲覧可＝参加者と同内容）
-function inviteFamily(){
+var _famPendingIds={}, _FAM_ST={approved:'承認済',pending:'承認待',rejected:'招待却下'};
+function inviteFamily(){ if(!_isReal) return; openFam(); }
+function openFam(){
+  g('fam-mid').value=''; g('fam-err').textContent='';
+  g('fam-my-list').innerHTML='読み込み中…';
+  g('fam-modal').classList.add('open');
+  loadFamData();
+}
+function closeFam(){ g('fam-modal').classList.remove('open'); }
+g('fam-modal').addEventListener('click',function(e){ if(e.target===g('fam-modal')) closeFam(); });
+function loadFamData(){
+  var col=db.collection('events').doc(eventId).collection('familyInvites');
+  // 全招待（重複チェック用の pending 集合）＋ 自分の招待一覧
+  col.get().then(function(snap){
+    _famPendingIds={}; var mine=[];
+    snap.docs.forEach(function(d){ var iv=Object.assign({id:d.id},d.data());
+      if(iv.status==='pending' && iv.memberId) _famPendingIds[String(iv.memberId)]=true;
+      if(iv.invitedBy===_uid) mine.push(iv);
+    });
+    mine.sort(function(a,b){ return String(a.memberId||'').localeCompare(String(b.memberId||'')); });
+    g('fam-my-list').innerHTML=mine.length?mine.map(function(iv){
+      var st=iv.status||'pending', cls=(st==='approved'?'ok':(st==='rejected'?'no':'wait'));
+      return '<div class="fam-row"><span class="fam-id">'+esc(iv.memberId||'')+(iv.memberName?'（'+esc(iv.memberName)+'）':'')+'</span><span class="fam-st '+cls+'">'+esc(_FAM_ST[st]||st)+'</span></div>';
+    }).join(''):'<div style="color:var(--ink3)">まだ招待はありません。</div>';
+  }).catch(function(e){ g('fam-my-list').innerHTML='<div style="color:var(--ink3)">読み込みに失敗しました</div>'; });
+}
+function _isParticipantId(mid){
+  mid=String(mid); var ev=_ev||{};
+  var pp=(Array.isArray(ev.participantsPublic)?ev.participantsPublic:[]);
+  if(pp.some(function(p){ return String(p.memberId||'')===mid; })) return true;
+  var pids=(Array.isArray(ev.participantIds)?ev.participantIds:[]);
+  return pids.some(function(x){ return String(x)===mid; });
+}
+function _isFamilyId(mid){
+  mid=String(mid); var ev=_ev||{};
+  var fam=(Array.isArray(ev.familyViewerIds)?ev.familyViewerIds:[]);
+  if(fam.some(function(x){ return String(x)===mid; })) return true; // 承認済
+  return !!_famPendingIds[mid]; // 承認待ち
+}
+function submitFam(){
   if(!_isReal) return;
-  var mid=(prompt('閲覧に招待するご家族の会員IDを入力してください。\n承認後、その方は参加者と同じ内容をリアルタイムで閲覧できます（管理者の承認待ち）。')||'').trim();
-  if(!mid) return;
+  var mid=(g('fam-mid').value||'').trim();
+  var err=g('fam-err'); err.textContent='';
+  if(!mid){ err.textContent='会員IDを入力してください'; return; }
+  if(_memberId && String(mid)===String(_memberId)){ err.textContent='ご自身は招待できません'; return; }
+  if(_isParticipantId(mid)){ err.textContent='参加者は招待できません'; return; }
+  if(_isFamilyId(mid)){ err.textContent='既に家族招待済の会員です'; return; }
+  var btn=g('fam-submit'); btn.disabled=true;
   db.collection('events').doc(eventId).collection('familyInvites').add({
     memberId:mid, invitedBy:_uid, invitedByName:_memberName||'', status:'pending',
     createdAt:firebase.firestore.FieldValue.serverTimestamp()
-  }).then(function(){ toast('家族の閲覧招待を送信しました（管理者の承認待ち）'); }).catch(function(e){ toast('送信失敗: '+e.message); });
+  }).then(function(){ toast('家族の閲覧招待を送信しました'); g('fam-mid').value=''; loadFamData(); })
+    .catch(function(e){ err.textContent='送信失敗: '+e.message; })
+    .finally(function(){ btn.disabled=false; });
 }
 // ③ 参加者による招待（会員ID入力→管理者承認）
 function inviteParticipant(){
