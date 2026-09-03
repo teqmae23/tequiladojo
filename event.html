@@ -47,6 +47,25 @@ a{color:var(--gold-d)}
 .ev-period{font-size:13px;color:var(--ink2);margin-top:8px;font-weight:600}
 .card{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);padding:16px 18px;margin-bottom:14px}
 .sec{font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--ink3);text-transform:uppercase;margin-bottom:8px}
+/* ── 各項目バナー（アコーディオン）── */
+.acc{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);margin-bottom:10px;overflow:hidden;box-shadow:0 1px 4px rgba(24,17,10,.05)}
+.acc-hd{width:100%;display:flex;align-items:center;gap:11px;padding:16px 18px;background:none;border:none;cursor:pointer;text-align:left;font-family:inherit}
+.acc-hd:hover{background:var(--cream)}
+.acc-ic{font-size:20px;flex:0 0 auto;line-height:1}
+.acc-ttl{flex:1;min-width:0;font-size:16px;font-weight:700;color:var(--ink)}
+.acc-car{font-size:13px;color:var(--ink2);flex:0 0 auto}
+.acc.open .acc-hd{border-bottom:1px solid var(--border);background:var(--cream)}
+.acc-bd{padding:14px 16px}
+/* 単一コンテナ（#*-cont でラップ）: カードを平坦化し先頭タイトルを隠す */
+.acc-bd > div > .card{background:transparent;border:none;box-shadow:none;padding:0;margin:0 0 10px;border-radius:0}
+.acc-bd > div > .card:last-child{margin-bottom:0}
+.acc-bd > div > .card > .sec{display:none}
+.acc-bd > div > .card > .sec-row > .sec{display:none}
+.acc-bd > #surveys > .sec{display:none}
+/* 開催概要（複数カード直下）: 平坦化し先頭タイトルのみ隠す */
+.acc-ov .acc-bd > .card{border:none;box-shadow:none;padding:0;margin:0 0 16px;background:transparent}
+.acc-ov .acc-bd > .card:last-child{margin-bottom:0}
+.acc-ov .acc-bd > .card:first-child > .sec{display:none}
 .kv{display:flex;gap:10px;padding:6px 0;font-size:14px;align-items:flex-start}
 .kv .k{min-width:78px;color:var(--ink3);font-size:12px;padding-top:2px}
 .kv .v{flex:1;color:var(--ink)}
@@ -198,6 +217,10 @@ a{color:var(--gold-d)}
 .ck-item.ck-grayed .ck-hd2{background:var(--cream2)!important}
 .ck-item.ck-grayed .ck-hd-ttl{color:var(--ink3)}
 .ck-graynote{font-size:11px;color:var(--ink3);font-weight:600;margin-bottom:6px}
+.ck-appr{font-size:11px;font-weight:700;padding:2px 8px;border-radius:9px;margin-left:6px}
+.ck-appr.ok{background:#dff3e6;color:#1f7a44}
+.ck-appr.no{background:#fbf1d6;color:#8a6a1e}
+.ck-del{margin-left:8px;font-size:11px;font-weight:600;color:var(--red);background:none;border:1px solid var(--border2);border-radius:8px;padding:2px 9px;cursor:pointer}
 .ck-attach{font-size:12px;margin:6px 0}
 .ck-attach a{color:var(--teal);font-weight:600}
 .ck-file{margin-top:8px}
@@ -375,6 +398,17 @@ function fmtDate(s){ if(!s)return ''; var p=s.split('-'); return p.length===3?(p
 function wday(s){ try{ var d=new Date(s+'T00:00:00'); return '（'+['日','月','火','水','木','金','土'][d.getDay()]+'）'; }catch(e){ return ''; } }
 
 var CN_NAMES={schedule:'🗓 スケジュール/タイムテーブル',checklist:'✅ チェックリスト',documents:'📁 ドキュメント保管庫'};
+function accSection(type, icon, title, innerHtml, open){
+  return '<section class="acc'+(type==='overview'?' acc-ov':'')+(open?' open':'')+'" id="acc-'+type+'">'
+    +'<button type="button" class="acc-hd" onclick="toggleAcc(\''+type+'\')"><span class="acc-ic">'+icon+'</span><span class="acc-ttl">'+esc(title)+'</span><span class="acc-car">'+(open?'▾':'▸')+'</span></button>'
+    +'<div class="acc-bd" id="accbd-'+type+'"'+(open?'':' style="display:none"')+'>'+innerHtml+'</div></section>';
+}
+function toggleAcc(type){
+  var b=g('accbd-'+type), s=g('acc-'+type); if(!b) return;
+  var open=b.style.display!=='none';
+  b.style.display=open?'none':'';
+  if(s){ s.classList.toggle('open',!open); var c=s.querySelector('.acc-car'); if(c) c.textContent=open?'▸':'▾'; }
+}
 function render(ev){
   _ev=ev;
   var period=fmtDate(ev.startDate)+(ev.endDate&&ev.endDate!==ev.startDate?(' 〜 '+fmtDate(ev.endDate)):'');
@@ -383,14 +417,15 @@ function render(ev){
   var containers=(Array.isArray(ev.containers)&&ev.containers.length)?ev.containers
     :[{type:'overview',enabled:true,config:{mypage:{survey:true,checklist:true,image:true}}},{type:'survey',enabled:true,config:{}}];
   var hasSurvey=false, hasSchedule=false, hasChecklist=false, hasDocs=false, hasBoard=false;
+  var _loadcard=function(ic,ttl){ return '<div class="card"><div class="sec">'+ic+' '+ttl+'</div><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div>'; };
   containers.forEach(function(c){
     if(!c||!c.enabled) return;
-    if(c.type==='overview') html+=overviewHtml(ev, period);
-    else if(c.type==='survey'){ html+='<div id="surveys"></div>'; hasSurvey=true; }
-    else if(c.type==='schedule'){ html+='<div id="schedule-cont"><div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div></div>'; hasSchedule=true; }
-    else if(c.type==='checklist'){ html+='<div id="checklist-cont"><div class="card"><div class="sec">✅ チェックリスト</div><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div></div>'; hasChecklist=true; }
-    else if(c.type==='documents'){ html+='<div id="documents-cont"><div class="card"><div class="sec">📁 ドキュメント</div><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div></div>'; hasDocs=true; }
-    else if(c.type==='board'){ _boardCfg=c.config||{}; html+='<div id="board-cont"><div class="card"><div class="sec">💬 掲示板</div><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div></div>'; hasBoard=true; }
+    if(c.type==='overview') html+=accSection('overview','📋','開催概要', overviewHtml(ev, period), true);
+    else if(c.type==='survey'){ html+=accSection('survey','📋','アンケート', '<div id="surveys"></div>', false); hasSurvey=true; }
+    else if(c.type==='schedule'){ html+=accSection('schedule','🗓','スケジュール', '<div id="schedule-cont">'+_loadcard('🗓','スケジュール')+'</div>', false); hasSchedule=true; }
+    else if(c.type==='checklist'){ html+=accSection('checklist','✅','チェックリスト', '<div id="checklist-cont">'+_loadcard('✅','チェックリスト')+'</div>', false); hasChecklist=true; }
+    else if(c.type==='documents'){ html+=accSection('documents','📁','ドキュメント', '<div id="documents-cont">'+_loadcard('📁','ドキュメント')+'</div>', false); hasDocs=true; }
+    else if(c.type==='board'){ _boardCfg=c.config||{}; html+=accSection('board','💬','掲示板', '<div id="board-cont">'+_loadcard('💬','掲示板')+'</div>', false); hasBoard=true; }
     else if(CN_NAMES[c.type]) html+='<div class="soon-card">'+CN_NAMES[c.type]+'<br><span style="font-size:11px">このコンテンツは準備中です。</span></div>';
   });
   g('wrap').innerHTML=html;
@@ -1016,6 +1051,13 @@ function _progChip(st, on, ro, taskId){
   if(ro){ return '<span class="ck-prog-chip ro'+(on?' on':'')+'" style="'+style+'">'+(on?'● ':'')+esc(st.label||'')+'</span>'; }
   return '<button type="button" class="ck-prog-chip'+(on?' on':'')+'" style="'+style+'" onclick="taskProg(\''+esc(taskId)+'\',\''+esc(st.id)+'\')">'+(on?'● ':'')+esc(st.label||'')+'</button>';
 }
+// 提出済ファイル: 承認状態バッジ＋削除ボタン（本人のみ削除可）
+function submittedFileHtml(t, myc){
+  if(!(myc&&myc.fileUrl)) return '';
+  var ap=myc.approved?'<span class="ck-appr ok">✅ 承認済み</span>':'<span class="ck-appr no">⏳ 未承認</span>';
+  var del=_isReal?'<button type="button" class="ck-del" onclick="deleteSubmission(\''+esc(t.id)+'\')">削除</button>':'';
+  return '<div class="ck-sub">提出済: <a href="'+esc(myc.fileUrl)+'" target="_blank" rel="noopener">'+esc(myc.fileName||'提出ファイル')+'</a> '+ap+del+'</div>';
+}
 function taskDetailHtml(t){
   var today=_ckToday();
   var pub=(t.visibility!=='private');
@@ -1028,19 +1070,19 @@ function taskDetailHtml(t){
   if(!active) hh+='<div class="ck-graynote">👁 この項目の対象者ではありません（閲覧のみ）</div>';
   if(t.content) hh+='<div class="ck-content">'+esc(t.content)+'</div>';
   if(t.deadline) hh+='<div class="ck-dl'+(over?' over':'')+'">期限: '+esc(t.deadline)+(over?'（超過）':'')+'</div>';
-  if(t.sampleUrl) hh+='<div class="ck-attach">📄 提出見本: <a href="'+esc(t.sampleUrl)+'" target="_blank" rel="noopener">'+esc(t.sampleName||'見本ファイル')+'</a></div>';
+  if(t.sampleUrl) hh+='<div class="ck-attach">📄 <a href="'+esc(t.sampleUrl)+'" target="_blank" rel="noopener">提出見本を見る ↗</a></div>';
   if(t.attachmentUrl) hh+='<div class="ck-attach">📎 <a href="'+esc(t.attachmentUrl)+'" target="_blank" rel="noopener">'+esc(t.attachmentName||'参考ファイル')+'</a></div>';
   if(_isReal && active){
     if(st){
       // 進捗管理: 段階を選択
       var lastId=_progLastId(t);
-      if(t.requireFile && !done) hh+='<div class="ck-file"><input type="file" id="ckf-'+esc(t.id)+'"><div class="ck-hint">「'+esc((st[st.length-1]||{}).label||'完了')+'」にはファイル提出が必要です'+(myc&&myc.fileUrl?'（提出済みのため省略可）':'')+'</div></div>';
-      if(myc&&myc.fileUrl) hh+='<div class="ck-sub">提出済: <a href="'+esc(myc.fileUrl)+'" target="_blank" rel="noopener">'+esc(myc.fileName||'提出ファイル')+'</a></div>';
+      if(t.requireFile && !(myc&&myc.fileUrl)) hh+='<div class="ck-file"><input type="file" id="ckf-'+esc(t.id)+'"><div class="ck-hint">「'+esc((st[st.length-1]||{}).label||'完了')+'」にはファイル提出が必要です</div></div>';
+      hh+=submittedFileHtml(t, myc);
       hh+='<div class="ck-prog-sel">'+st.map(function(s){ return _progChip(s, myc&&myc.progress===s.id, false, t.id); }).join('')+'</div>';
       hh+='<div class="ck-prog-note">段階を選んで進捗を更新します。「'+esc((st[st.length-1]||{}).label||'完了')+'」で完了になります。同じ段階をもう一度押すと取り消せます。</div>';
     } else {
-      if(t.requireFile && !done) hh+='<div class="ck-file"><input type="file" id="ckf-'+esc(t.id)+'"><div class="ck-hint">完了にはファイル提出が必要です'+(myc&&myc.fileUrl?'（提出済みのため省略可）':'')+'</div></div>';
-      if(myc&&myc.fileUrl) hh+='<div class="ck-sub">提出済: <a href="'+esc(myc.fileUrl)+'" target="_blank" rel="noopener">'+esc(myc.fileName||'提出ファイル')+'</a></div>';
+      if(t.requireFile && !(myc&&myc.fileUrl)) hh+='<div class="ck-file"><input type="file" id="ckf-'+esc(t.id)+'"><div class="ck-hint">完了にはファイル提出が必要です</div></div>';
+      hh+=submittedFileHtml(t, myc);
       hh+='<button class="ck-btn '+(done?'did':'todo')+'" id="ckb-'+esc(t.id)+'" onclick="taskAction(\''+esc(t.id)+'\')">'+(done?'✓ 完了済み（取り消す）':'完了にする')+'</button>';
     }
   } else if(_isReal && !active){
@@ -1169,8 +1211,23 @@ function uploadSubmission(t,file){
         uploaderUid:_uid, uploaderName:_memberName||'', memberId:_memberId||'',
         url:url, fileName:file.name, size:file.size, storagePath:path,
         createdAt:firebase.firestore.FieldValue.serverTimestamp()
-      }).then(function(){ return {fileUrl:url, fileName:file.name, submissionDocId:docId, submissionPath:path}; });
+      }).then(function(){ return {fileUrl:url, fileName:file.name, submissionDocId:docId, submissionPath:path, approved:false}; });
     });
+}
+// 提出ファイルを削除して未提出に戻す（再アップロード可・承認もリセット）
+function deleteSubmission(taskId){
+  if(!_isReal) return;
+  var t=_tasks.find(function(x){return x.id===taskId;}); if(!t) return;
+  var myc=_myComp(t); if(!(myc&&myc.fileUrl)) return;
+  if(!confirm('提出ファイルを削除して未提出に戻します。よろしいですか？')) return;
+  var docId=myc.submissionDocId||('sub_'+t.id+'_'+_uid);
+  var delDoc=db.collection('events').doc(eventId).collection('documents').doc(docId).delete().catch(function(){});
+  if(storage && myc.submissionPath){ storage.ref(myc.submissionPath).delete().catch(function(){}); }
+  var reset={ fileUrl:'', fileName:'', submissionDocId:'', submissionPath:'', approved:false, done:false };
+  if(_progStates(t) && myc.progress===_progLastId(t)) reset.progress=''; // 完了段階だった場合は解除
+  delDoc.then(function(){ return setCompletion(taskId, reset); })
+    .then(function(){ toast('削除しました'); })
+    .catch(function(e){ toast('削除失敗: '+e.message); });
 }
 function setCompletion(taskId, extra){
   var data=Object.assign({ authUid:_uid, memberId:_memberId||'', memberName:_memberName||'',

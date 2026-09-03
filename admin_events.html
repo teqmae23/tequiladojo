@@ -23,7 +23,7 @@ var FIREBASE_CONFIG={
 <script src="/auth-role.js?v=20260829"></script>
 <style>
 :root{
-  --ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;
+  --ink:#18110a;--ink2:#3a2c14;--ink3:#6b5a44;
   --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
   --cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;
   --red:#b03020;--teal:#1a6e58;
@@ -107,6 +107,9 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .doc-subrow a{color:var(--teal);font-size:12px;text-decoration:none;font-weight:600;flex:0 0 auto}
 .doc-subrow .rm{border:none;background:none;color:var(--red);font-size:15px;cursor:pointer;flex:0 0 auto}
 .doc-subrow .unsub{flex:1;font-size:12px;color:var(--red);font-weight:600}
+.doc-appr{font-size:10px;font-weight:700;color:#1f7a44;flex:0 0 auto}
+.doc-apbtn{border:1px solid var(--border2);background:var(--cream2);color:var(--ink2);border-radius:8px;font-size:11px;font-weight:700;padding:3px 9px;cursor:pointer;flex:0 0 auto}
+.doc-apbtn.on{background:var(--teal);color:#fff;border-color:var(--teal)}
 .tk-item{display:flex;align-items:center;gap:9px;background:var(--white);border:1px solid var(--border);border-left-width:4px;border-radius:var(--r);padding:9px 11px;margin-bottom:6px;cursor:pointer}
 .tk-item.pub{border-left-color:var(--teal)}
 .tk-item.priv{border-left-color:var(--ink3)}
@@ -209,6 +212,25 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .rbar-ct{min-width:44px;color:var(--ink3);flex-shrink:0}
 .agg-txt{border:1px solid var(--border);border-radius:var(--r);padding:8px 10px;font-size:13px;margin-bottom:5px;background:var(--white)}
 .agg-txt .who{font-size:10px;color:var(--ink3);margin-top:3px}
+
+/* ===== 可読性向上・スマホ最適化（イベント管理）===== */
+.ev-name{font-size:17px}
+.ev-meta{font-size:13.5px;color:var(--ink2)}
+.fl{font-size:12.5px;color:var(--ink2)}
+.tk-ttl,.se-ttl,.doc-ttl,.doc-task-ttl,.cat-item .cat-nm,.pl-item .nm,.cn-nm,.mp-pick-nm,.sv-name,.doc-subrow .nm{font-size:14px}
+.tk-sub,.se-sub,.doc-sub,.sv-row-meta,.doc-task-cnt,.doc-subrow .doc-file .fn,.pl-item .co,.mp-pick-id{font-size:12.5px;color:var(--ink2)}
+.sch-row,.sch-row .d{font-size:14px}
+.cnt,.pdesc{font-size:12.5px;color:var(--ink2)}
+.ec{font-size:14px}
+.ev-actions{flex-wrap:wrap}
+@media (max-width:560px){
+  .wrap{padding:16px 12px 60px}
+  .ev-top{flex-direction:column;align-items:flex-start;gap:6px}
+  .ev-actions{margin-left:0;width:100%}
+  .ev-actions .btn{flex:1 1 auto;text-align:center}
+  .row2{flex-direction:column;gap:0}
+  .toolbar{gap:8px}
+}
 </style>
 </head>
 <body>
@@ -1708,9 +1730,13 @@ function docTaskGroup(gp, idx){
   var exp=!!_docTaskExp[gp.id];
   var subCount=0, matched={};
   function fileRow(name, doc){
+    var ap=doc.approved
+      ? '<span class="doc-appr ok">✅承認済</span><button class="doc-apbtn" onclick="toggleApprove(\''+esc(doc.id)+'\',\''+esc(doc.taskId||'')+'\',\''+esc(doc.uploaderUid||'')+'\',false)">取消</button>'
+      : '<button class="doc-apbtn on" onclick="toggleApprove(\''+esc(doc.id)+'\',\''+esc(doc.taskId||'')+'\',\''+esc(doc.uploaderUid||'')+'\',true)">承認</button>';
     return '<div class="doc-subrow"><span class="nm">'+esc(name)+'</span>'
       +'<div class="doc-file"><span class="fn">'+esc(doc.fileName||'ファイル')+'</span>'+(doc.size?'<span class="sz">'+fmtSize(doc.size)+'</span>':'')+'</div>'
       +(doc.url?'<a href="'+esc(doc.url)+'" target="_blank" rel="noopener">開く</a>':'')
+      +ap
       +'<button class="rm" title="削除" onclick="delDoc(\''+esc(doc.id)+'\')">×</button></div>';
   }
   var rows=_docRoster.map(function(p){
@@ -1767,6 +1793,14 @@ function delDoc(id){
     if(d&&d.storagePath&&storage){ storage.ref(d.storagePath).delete().catch(function(){}); }
     after();
   }).catch(function(e){ toast('削除失敗: '+e.message,'err'); });
+}
+// 提出書類の承認/取消（提出ドキュメントと該当completionの両方に反映）
+function toggleApprove(docId, taskId, uid, val){
+  var ts=firebase.firestore.FieldValue.serverTimestamp();
+  var writes=[ docCol(_docEventId).doc(docId).set({approved:val, approvedAt:ts},{merge:true}) ];
+  if(taskId && uid) writes.push(taskCol(_docEventId).doc(taskId).collection('completions').doc(uid).set({approved:val, approvedAt:ts},{merge:true}));
+  Promise.all(writes).then(function(){ toast(val?'承認しました':'承認を取り消しました'); loadDocs(); })
+    .catch(function(e){ toast('更新失敗: '+e.message,'err'); });
 }
 </script>
 </body>
