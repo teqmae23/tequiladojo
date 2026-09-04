@@ -896,8 +896,10 @@ function _tzTimeInner(dateStr,t,lat,lng){
 function schedTimeHtml(it){
   var body=(it.isMove && it.toTime)
     ? esc(it.time||'—')+'<span class="sc-arrow">↓</span>'+esc(it.toTime)
-    : esc(it.time||'—');
-  var clickable=!!it.time;
+    : ((!it.isMove && it.endTime)
+      ? esc(it.time||'—')+'<span class="sc-arrow">↓</span>'+esc(it.endTime)
+      : esc(it.time||'—'));
+  var clickable=!!(it.time||it.endTime);
   return '<span class="sc-time'+(clickable?' sc-time-x':'')+'"'+(clickable?' onclick="showTzPop(event,\''+esc(it.id)+'\')"':'')+'>'+body+'</span>';
 }
 // 時刻ポップアップ（現地時間＋JST）
@@ -918,6 +920,9 @@ function showTzPop(ev, id){
   if(it.isMove && it.toTime){
     lines.push(_tzDetailLine('出発', it.date, it.time, it.lat, it.lng));
     lines.push(_tzDetailLine('到着', it.date, it.toTime, (it.toLat!=null?it.toLat:it.lat), (it.toLng!=null?it.toLng:it.lng)));
+  } else if(!it.isMove && it.endTime){
+    lines.push(_tzDetailLine('開始', it.date, it.time, it.lat, it.lng));
+    lines.push(_tzDetailLine('終了', it.date, it.endTime, it.lat, it.lng));
   } else { lines.push(_tzDetailLine('', it.date, it.time, it.lat, it.lng)); }
   lines=lines.filter(Boolean); if(!lines.length) return;
   var pop=g('sc-tzpop'); if(!pop){ pop=document.createElement('div'); pop.id='sc-tzpop'; document.body.appendChild(pop); }
@@ -960,6 +965,8 @@ function _computeReveals(enr){
   for(var i=0;i<enr.length;i++){
     var it=enr[i].it;
     if(_isLodging(it)){ map[it.id]=_checkoutMs(it,b); continue; }
+    // 滞在終了(endTime)が入力されていればそれを完了時刻に採用。
+    if(it.endTime){ var tz=(it.lat!=null&&it.lng!=null)?(_safeTz(it.lat,it.lng)||'Asia/Tokyo'):'Asia/Tokyo'; var e=_wallInstant(it.date, it.endTime, tz); if(e){ map[it.id]=e.getTime(); continue; } }
     // 次の項目が始まったら（＝その場を離れたら）完了扱い。最後の項目は+3h。
     map[it.id]=(i+1<enr.length)?enr[i+1].ms:(enr[i].ms+3*3600000);
   }
@@ -1096,7 +1103,7 @@ function nowSectionHtml(visEnr){
   var it=entry.it, hideLoc=_locHidden(it), geo=(it.lat!=null&&it.lng!=null)&&!hideLoc;
   _nowMapItem=geo?it:null;
   var ic=it.overnight?'🏨':catIcon(it.category);
-  var tline=it.time?('<span class="sc-now-t">'+esc(it.time)+(it.isMove&&it.toTime?' → '+esc(it.toTime):'')+'</span>'):'';
+  var tline=(it.time||it.endTime)?('<span class="sc-now-t">'+esc(it.time||'—')+(it.isMove&&it.toTime?' → '+esc(it.toTime):(!it.isMove&&it.endTime?' → '+esc(it.endTime):''))+'</span>'):'';
   var h='<div class="sc-now live"><div class="sc-now-lbl">'+(cur?'▶ 現在のイベント':'⏭ まもなく')+'</div>'
     +'<div class="sc-now-item">'+tline+'<span class="sc-now-ic">'+ic+'</span><span class="sc-now-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'')+'</span></div>'
     +(it.date?'<div class="sc-now-sub">'+esc(fmtDate(it.date))+' '+wday(it.date)+'</div>':'')
