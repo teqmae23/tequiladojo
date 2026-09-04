@@ -1574,9 +1574,8 @@ function renderRooms(){
     var photos=(r.photos||[]).map(function(p,k){ return '<div class="rm-thumb"><img src="'+esc(p.url)+'" alt=""><button type="button" class="rm-thx" onclick="roomPhotoDel('+i+','+k+')">×</button></div>'; }).join('');
     return '<div class="rm-room">'
       +'<div class="rm-room-hd">'
-      +'<input class="fi rm-roomname" value="'+esc(r.name||'')+'" placeholder="部屋名（例: 501号室）" oninput="roomSet('+i+',this.value)">'
-      +'<button type="button" class="rm-photobtn" title="部屋の写真" onclick="roomPhotoPick('+i+')">📷 写真</button>'
-      +'<label class="rm-cap">人数 <input class="fi" type="number" min="1" step="1" value="'+((r.beds||[]).length||1)+'" onchange="roomCap('+i+',this.value)"></label>'
+      +'<input class="fi rm-roomname" value="'+esc(r.name||'')+'" placeholder="部屋名（例: 501号室）" oninput="roomSet('+i+',this.value)" onfocus="_roomPhotoIdx='+i+'">'
+      +'<button type="button" class="rm-photobtn" title="部屋の写真（選択／貼り付け）" onclick="roomPhotoPick('+i+')">📷 写真（選択/貼付）</button>'
       +'<button type="button" class="rm-x" title="部屋を削除" onclick="roomDel('+i+')">🗑</button></div>'
       +(photos?'<div class="rm-thumbs">'+photos+'</div>':'')
       +'<div class="rm-beds">'+beds+'</div>'
@@ -1589,24 +1588,39 @@ function bedSet(i,j,v){ if(_rooms[i]&&_rooms[i].beds[j]) _rooms[i].beds[j].bed=v
 function personSet(i,j,k,tid){ var b=_rooms[i]&&_rooms[i].beds[j]; if(!b||!b.persons[k]) return; var p=_schRoster.find(function(x){return x.tid===tid;}); b.persons[k].id=tid; b.persons[k].name=p?(p.name||p.memberId||''):''; }
 function personAdd(i,j){ var b=_rooms[i]&&_rooms[i].beds[j]; if(!b) return; b.persons=b.persons||[]; b.persons.push({id:'',name:''}); renderRooms(); }
 function personDel(i,j,k){ var b=_rooms[i]&&_rooms[i].beds[j]; if(!b) return; b.persons.splice(k,1); if(!b.persons.length) b.persons.push({id:'',name:''}); renderRooms(); }
-function roomCap(i,v){ var n=Math.max(1,parseInt(v,10)||1); var r=_rooms[i]; if(!r) return; r.beds=r.beds||[]; while(r.beds.length<n) r.beds.push(_newBed()); if(r.beds.length>n) r.beds=r.beds.slice(0,n); r.capacity=r.beds.length; renderRooms(); }
 function bedAdd(i){ var r=_rooms[i]; if(!r) return; r.beds=r.beds||[]; r.beds.push(_newBed()); r.capacity=r.beds.length; renderRooms(); }
 function bedDel(i,j){ var r=_rooms[i]; if(!r) return; r.beds.splice(j,1); if(!r.beds.length) r.beds.push(_newBed()); r.capacity=r.beds.length; renderRooms(); }
 function roomDel(i){ _rooms.splice(i,1); renderRooms(); updateRoomCnt(); }
 function roomAdd(){ _rooms.push(_newRoom()); renderRooms(); updateRoomCnt(); }
 function roomPhotoPick(i){ _roomPhotoIdx=i; var inp=g('rm-photo-input'); if(inp){ inp.value=''; inp.click(); } }
-function roomPhotoUpload(inp){
-  var i=_roomPhotoIdx, f=(inp.files&&inp.files[0])||null; if(i<0||!f||!_rooms[i]) return;
+function roomPhotoUpload(inp){ _roomUploadFile(_roomPhotoIdx, (inp.files&&inp.files[0])||null); }
+function _roomUploadFile(i, f){
+  if(i<0 || !f || !_rooms[i]){ toast('写真を追加する部屋を選んでください（部屋名をクリック）'); return; }
   if(!storage){ toast('この環境では画像アップロードを利用できません','err'); return; }
+  if(!/^image\//.test(f.type||'')){ toast('画像ファイルを指定してください','err'); return; }
   if(f.size>10*1024*1024){ toast('画像は10MB以内にしてください','err'); return; }
-  var ext=(f.name.match(/\.([A-Za-z0-9]+)$/)||[,'jpg'])[1].toLowerCase();
+  var ext=((f.name||'').match(/\.([A-Za-z0-9]+)$/)||[,(f.type&&f.type.split('/')[1])||'png'])[1].toLowerCase();
   var path='event_docs/'+_schEventId+'/room_'+Date.now()+'_'+Math.random().toString(36).slice(2,7)+'.'+ext;
   toast('アップロード中…');
   var ref=storage.ref(path);
-  ref.put(f,{contentType:f.type||'image/jpeg'}).then(function(){ return ref.getDownloadURL(); })
-    .then(function(url){ _rooms[i].photos=_rooms[i].photos||[]; _rooms[i].photos.push({url:url,path:path,name:f.name}); renderRooms(); toast('写真を追加しました'); })
+  ref.put(f,{contentType:f.type||'image/png'}).then(function(){ return ref.getDownloadURL(); })
+    .then(function(url){ _rooms[i].photos=_rooms[i].photos||[]; _rooms[i].photos.push({url:url,path:path,name:f.name||'pasted.png'}); renderRooms(); toast('写真を追加しました'); })
     .catch(function(e){ toast('アップロード失敗: '+e.message,'err'); });
 }
+// クリップボードから画像を貼り付けてアップロード（直近に触れた部屋、または部屋が1つなら自動）
+document.addEventListener('paste', function(e){
+  var modal=g('sch-room-modal'); if(!modal||!modal.classList.contains('open')) return;
+  var items=(e.clipboardData&&e.clipboardData.items)||[];
+  for(var k=0;k<items.length;k++){
+    if(items[k].type&&items[k].type.indexOf('image')===0){
+      var f=items[k].getAsFile(); if(!f) continue;
+      var idx=(_roomPhotoIdx>=0)?_roomPhotoIdx:(_rooms.length===1?0:-1);
+      if(idx<0){ toast('貼り付け先の部屋名を一度クリックしてから貼り付けてください'); }
+      else { _roomUploadFile(idx, f); }
+      e.preventDefault(); return;
+    }
+  }
+});
 function roomPhotoDel(i,k){ var r=_rooms[i]; if(!r||!r.photos[k]) return; var ph=r.photos[k]; r.photos.splice(k,1); if(ph.path&&storage) storage.ref(ph.path).delete().catch(function(){}); renderRooms(); }
 function _cleanRooms(){
   return (_rooms||[]).map(function(r){
