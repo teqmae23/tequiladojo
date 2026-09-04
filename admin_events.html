@@ -661,6 +661,9 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
     <div class="mhd"><span>🛏 部屋割り</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeRoomModal()">✕</button></div>
     <div class="mbd">
       <div class="fg"><label class="fl">ホテル名</label><input class="fi" id="rm-hotel" placeholder="地点名から自動セット（編集可）"></div>
+      <div class="fg" id="rm-copy-row" style="display:none"><label class="fl">他のアイテムからコピー（連泊など）</label>
+        <div style="display:flex;gap:6px"><select class="fi" id="rm-copy-src" style="flex:1"></select><button type="button" class="btn bs sm" style="flex:0 0 auto;white-space:nowrap" onclick="roomCopyFrom()">コピー</button></div>
+      </div>
       <label class="reqlbl" style="margin-bottom:8px"><input type="checkbox" id="rm-usebuildings" onchange="onUseBuildings()"> 🏠 建物（棟）で分ける（貸切複数棟など）</label>
       <div id="rm-rooms"></div>
       <input type="file" id="rm-photo-input" accept="image/*" style="display:none" onchange="roomPhotoUpload(this)">
@@ -1570,7 +1573,39 @@ function openRoomModal(){
   g('rm-hotel').value=_roomHotel||g('se-place').value||'';
   if(g('rm-usebuildings')) g('rm-usebuildings').checked=_useBuildings;
   _photoBi=-1; _photoRi=-1;
+  renderRoomCopyOptions();
   renderRooms(); g('sch-room-modal').classList.add('open');
+}
+// 部屋割りのコピー元（他アイテムで設定済みの部屋割り）
+function _roomingSources(){
+  return (_schItems||[]).filter(function(it){
+    if(_schEditId && it.id===_schEditId) return false;
+    if(!it.roomingEnabled) return false;
+    return (Array.isArray(it.buildings)&&it.buildings.length) || (Array.isArray(it.rooms)&&it.rooms.length);
+  }).sort(function(a,b){ return schSortKey(a)<schSortKey(b)?-1:1; });
+}
+function renderRoomCopyOptions(){
+  var sel=g('rm-copy-src'), row=g('rm-copy-row'); if(!sel||!row) return;
+  var srcs=_roomingSources();
+  if(!srcs.length){ row.style.display='none'; sel.innerHTML=''; return; }
+  row.style.display='block';
+  sel.innerHTML='<option value="">— コピー元を選択 —</option>'+srcs.map(function(it){
+    var label=((it.date||'')+' '+(it.time||'')+' '+(it.title||'')).trim()+(it.hotelName?('（'+it.hotelName+'）'):'');
+    return '<option value="'+esc(it.id)+'">'+esc(label)+'</option>';
+  }).join('');
+}
+function _clonePhotosNoPath(arr){ return (arr||[]).map(function(p){ return {url:p.url||'', path:'', name:p.name||''}; }); }
+function roomCopyFrom(){
+  var id=(g('rm-copy-src')||{}).value; if(!id){ toast('コピー元を選択してください'); return; }
+  var src=(_schItems||[]).find(function(x){return x.id===id;}); if(!src){ toast('コピー元が見つかりません','err'); return; }
+  var hasData=_buildings.some(function(b){ return (b.name||'')||(b.photos&&b.photos.length)||(b.rooms||[]).some(function(r){ return r.name||(r.photos&&r.photos.length)||(r.beds||[]).some(function(bd){ return bd.bed||(bd.persons||[]).some(function(p){return p.id;}); }); }); });
+  if(hasData && !confirm('現在の入力内容を、選択したアイテムの部屋割りで上書きします。よろしいですか？')) return;
+  _buildings=_normBuildings(src); // _useBuildings も設定される
+  _buildings.forEach(function(b){ b.photos=_clonePhotosNoPath(b.photos); (b.rooms||[]).forEach(function(r){ r.photos=_clonePhotosNoPath(r.photos); }); });
+  if(src.hotelName){ _roomHotel=src.hotelName; g('rm-hotel').value=src.hotelName; }
+  if(g('rm-usebuildings')) g('rm-usebuildings').checked=_useBuildings;
+  renderRooms(); updateRoomCnt();
+  toast('部屋割りをコピーしました');
 }
 function closeRoomModal(){ _roomHotel=g('rm-hotel').value; g('sch-room-modal').classList.remove('open'); updateRoomCnt(); }
 g('sch-room-modal').addEventListener('click',function(e){ if(e.target===g('sch-room-modal')) closeRoomModal(); });
