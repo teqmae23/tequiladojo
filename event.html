@@ -120,6 +120,17 @@ a{color:var(--gold-d)}
 .pt-nm{font-size:12.5px;font-weight:600;color:var(--ink)}
 .pt-bio{font-size:11px;color:var(--ink3);line-height:1.4;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pt-me{border-color:var(--gold);background:#fffaf0}
+/* 参加者プロフィール一覧 */
+.pf-item{display:flex;align-items:flex-start;gap:11px;padding:12px 2px;border-bottom:1px solid var(--border)}
+.pf-item:last-child{border-bottom:none}
+.pf-item.pf-me{background:#fffaf0;border-radius:10px;padding:12px 10px;margin:0 -8px}
+.pf-av{width:42px;height:42px;border-radius:50%;object-fit:cover;background:var(--cream3);flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--ink3);font-weight:700}
+.pf-body{flex:1;min-width:0}
+.pf-nm{font-size:14px;font-weight:700;color:var(--ink)}
+.pf-me .pf-nm::after{content:'（あなた）';font-size:11px;color:var(--gold-d);font-weight:600;margin-left:5px}
+.pf-bio{font-size:12.5px;color:var(--ink2);line-height:1.65;margin-top:4px;white-space:pre-wrap;word-break:break-word}
+.pf-empty{font-size:12px;color:var(--ink3)}
+.pf-edit{margin-top:6px}
 .mpbtn{background:var(--gold-d);color:var(--cream);border:none;border-radius:20px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
 .mp-fee-box{background:#fff7e6;border:1px solid var(--gold);border-radius:var(--r);padding:10px 12px;margin-bottom:12px;font-size:14px;color:var(--ink)}
 .mp-fee-note{font-size:12px;color:var(--ink2);margin-top:4px}
@@ -387,6 +398,34 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
   </div>
 </div>
 
+<!-- 参加者プロフィール一覧 -->
+<div class="mbg" id="prof-modal">
+  <div class="modal">
+    <div class="mhd"><span>👥 参加者プロフィール</span><button class="x" onclick="closeProfiles()">閉じる</button></div>
+    <div class="mbd">
+      <div style="font-size:12px;color:var(--ink3);line-height:1.6;margin-bottom:6px">参加者の自己紹介です。ご自身の欄の「編集」から内容を変更できます。</div>
+      <div id="prof-list" style="font-size:13px;color:var(--ink3)">読み込み中…</div>
+    </div>
+  </div>
+</div>
+
+<!-- 自己紹介の編集 -->
+<div class="mbg" id="profedit-modal">
+  <div class="modal">
+    <div class="mhd"><span>✏️ 自己紹介を編集</span><button class="x" onclick="closeProfileEdit()">閉じる</button></div>
+    <div class="mbd">
+      <div class="fg"><label class="fl">ニックネーム</label><input class="fi ro" id="pe-nick" readonly><div class="mnote">会員プロフィールから取得（会員マイページで編集）</div></div>
+      <div class="fg"><label class="fl">自己紹介（公開）</label><textarea class="fi" id="pe-bio" placeholder="ひとことプロフィールや、参加者へのメッセージなど（任意）" maxlength="300"></textarea></div>
+      <div class="sv-err" id="pe-err"></div>
+    </div>
+    <div class="mft">
+      <div style="flex:1"></div>
+      <button class="btn bs" onclick="closeProfileEdit()">キャンセル</button>
+      <button class="btn bp" id="pe-save" onclick="saveProfile()">保存する</button>
+    </div>
+  </div>
+</div>
+
 <!-- 写真アップロード -->
 <div class="mbg" id="ph-modal">
   <div class="modal">
@@ -600,7 +639,7 @@ function overviewHtml(ev, period){
       +sched.map(function(s){ return '<div class="sch-row"><span class="d">'+esc(fmtDate(s.date))+' '+wday(s.date)+'</span><span class="t">'+esc(_hoursText(s))+'</span></div>'; }).join('')
       +'</div></div>';
   }
-  h+='<div class="kv kv-big"><div class="k">参加者</div><div class="v" id="mypage-note"></div></div>';
+  h+='<div class="kv kv-big"><div class="k" style="white-space:nowrap">参加者 <button class="hours-btn" style="border-color:var(--gold-d);color:var(--gold-d)" onclick="openProfiles()">👥 プロフィール</button></div><div class="v" id="mypage-note"></div></div>';
   if(ev.location) h+='<div class="kv"><div class="k">場所</div><div class="v">'+esc(ev.location)+'</div></div>';
   h+='<div class="pt-grid" id="roster" style="margin-top:8px"><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div>';
   h+='<div class="pt-actions" id="mypage-actions"></div>';
@@ -804,6 +843,65 @@ function deleteParticipant(){
     .catch(function(e){ g('mp-err').textContent='取消失敗: '+e.message; });
 }
 g('mp-modal').addEventListener('click',function(e){ if(e.target===g('mp-modal')) closeMp(); });
+
+/* ════════ 参加者プロフィール（自己紹介） ════════ */
+// profiles サブコレクション（docID=authUid）。参加状況とは独立に自己紹介を保存。
+var _profiles={};
+function openProfiles(){ g('prof-modal').classList.add('open'); loadProfiles(); }
+function closeProfiles(){ g('prof-modal').classList.remove('open'); }
+function loadProfiles(){
+  db.collection('events').doc(eventId).collection('profiles').get()
+    .then(function(snap){
+      _profiles={};
+      snap.docs.forEach(function(d){ var pr=d.data()||{}; _profiles[d.id]=pr; if(pr.memberId) _profiles['mid:'+pr.memberId]=pr; });
+      renderProfiles();
+    })
+    .catch(function(){ _profiles={}; renderProfiles(); });
+}
+function _profFor(p){ return _profiles[p.id] || (p.memberId?_profiles['mid:'+p.memberId]:null) || null; }
+function _isMe(p){ return (!!_uid && p.id===_uid) || (!!_memberId && !!p.memberId && String(p.memberId)===String(_memberId)); }
+function renderProfiles(){
+  var el=g('prof-list'); if(!el) return;
+  if(!_participants.length){ el.innerHTML='<div class="pf-empty">まだ参加者がいません。</div>'; return; }
+  el.innerHTML=_participants.map(function(p){
+    var pr=_profFor(p)||{};
+    var bio=(pr.bio||p.bio||'').trim();
+    var icon=pr.iconUrl||p.iconUrl||'';
+    var nick=p.nickname||pr.nickname||'（会員）';
+    var me=_isMe(p);
+    var av=icon?('<img class="pf-av" src="'+esc(icon)+'" alt="">'):('<span class="pf-av">'+esc(initials(nick))+'</span>');
+    var body='<div class="pf-nm">'+esc(nick)+'</div>';
+    body+= bio?('<div class="pf-bio">'+esc(bio)+'</div>'):('<div class="pf-empty">'+(me?'自己紹介はまだありません。「編集」から追加できます。':'自己紹介はまだありません。')+'</div>');
+    if(me && _isReal) body+='<div class="pf-edit"><button class="hours-btn" style="border-color:var(--gold-d);color:var(--gold-d)" onclick="openProfileEdit()">✏️ 編集</button></div>';
+    return '<div class="pf-item'+(me?' pf-me':'')+'">'+av+'<div class="pf-body">'+body+'</div></div>';
+  }).join('');
+}
+function openProfileEdit(){
+  if(!_isReal){ toast('会員ログインが必要です'); return; }
+  var pr=_profiles[_uid]||{};
+  var myBio=pr.bio;
+  if((myBio==null||myBio==='') && _myPt) myBio=_myPt.bio; // 未設定なら参加者docのbioを初期値に
+  g('pe-nick').value=(_mProfile.nickname||(_myPt&&_myPt.nickname)||_memberName||'').trim();
+  g('pe-bio').value=myBio||'';
+  g('pe-err').textContent='';
+  g('profedit-modal').classList.add('open');
+}
+function closeProfileEdit(){ g('profedit-modal').classList.remove('open'); }
+function saveProfile(){
+  if(!_isReal){ g('pe-err').textContent='会員ログインが必要です'; return; }
+  var data={ authUid:_uid, memberId:_memberId||'',
+    nickname:(_mProfile.nickname||(_myPt&&_myPt.nickname)||_memberName||'').trim(),
+    iconUrl:_mProfile.iconUrl||(_myPt&&_myPt.iconUrl)||'',
+    bio:(g('pe-bio').value||'').trim(),
+    updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
+  var btn=g('pe-save'); btn.disabled=true;
+  db.collection('events').doc(eventId).collection('profiles').doc(_uid).set(data,{merge:true})
+    .then(function(){ toast('自己紹介を保存しました'); closeProfileEdit(); loadProfiles(); })
+    .catch(function(e){ g('pe-err').textContent='保存失敗: '+e.message; })
+    .finally(function(){ btn.disabled=false; });
+}
+g('prof-modal').addEventListener('click',function(e){ if(e.target===g('prof-modal')) closeProfiles(); });
+g('profedit-modal').addEventListener('click',function(e){ if(e.target===g('profedit-modal')) closeProfileEdit(); });
 
 /* ════════ スケジュール/タイムテーブル（会員側・②） ════════ */
 // 種別（名前・アイコン・背景色）は scheduleCategories コレクションで管理。未設定時は既定値。
