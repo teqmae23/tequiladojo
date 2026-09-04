@@ -197,6 +197,8 @@ a{color:var(--gold-d)}
 .sc-rooming .rm-b{color:var(--ink3);flex:0 0 40%;min-width:0}
 .sc-rooming .rm-p{color:var(--ink);font-weight:600;min-width:0}
 .sc-rooming .rm-photolink{color:var(--teal);font-weight:600;text-decoration:none;font-size:12.5px;margin-left:4px}
+.sc-rooming .rm-bld-r{margin-top:6px}
+.sc-rooming .rm-bld-name{font-size:13px;font-weight:700;color:var(--gold-d);margin:6px 0 3px}
 .sc-names-lbl{display:inline-block;background:var(--teal);color:#fff;font-size:11px;font-weight:700;padding:1px 8px;border-radius:9px;margin-right:2px}
 .sc-now .sc-names{margin-top:6px}
 .sc-hiddennote{margin-top:8px;font-size:12px;color:var(--ink3);background:var(--cream2);border-radius:var(--r);padding:8px 10px}
@@ -987,24 +989,33 @@ function schedNamesHtml(it, inline){
   return '<'+tag+' class="sc-names'+(inline?' inline':'')+'">👥 '+lbl+names+'</'+tag+'>';
 }
 function _circNum(n){ return (n>=1&&n<=20)?String.fromCharCode(0x2460+(n-1)):String(n); }
-// 部屋割りの表示（滞在中/チェックアウト前は位置と同様に非表示）
+function _roomBlockHtml(r){
+  var beds=(r.beds||[]).map(function(b){
+    var names=(Array.isArray(b.persons)&&b.persons.length)
+      ? b.persons.map(function(p){ return (p&&p.name)?esc(p.name):''; }).filter(Boolean).join('、')
+      : ((b&&b.personName)?esc(b.personName):'');
+    return '<div class="rm-line"><span class="rm-b">'+((b&&b.bed)?esc(b.bed):'—')+'</span><span class="rm-p">'+(names||'（未割当）')+'</span></div>';
+  }).join('');
+  var links=(Array.isArray(r.photos)&&r.photos.length)
+    ? ' '+r.photos.map(function(p,idx){ return p&&p.url?'<a class="rm-photolink" href="'+esc(p.url)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">[写真'+_circNum(idx+1)+']</a>':''; }).join('')
+    : '';
+  return '<div class="rm-r"><div class="rm-rn">'+esc(r.name||'部屋')+links+'</div>'+beds+'</div>';
+}
+// 部屋割りの表示（建物>部屋>ベッド。滞在中/チェックアウト前は位置と同様に非表示）
 function schedRoomingHtml(it){
-  if(!it||!it.roomingEnabled||!Array.isArray(it.rooms)||!it.rooms.length) return '';
+  if(!it||!it.roomingEnabled) return '';
+  var blds=(Array.isArray(it.buildings)&&it.buildings.length)?it.buildings
+    :((Array.isArray(it.rooms)&&it.rooms.length)?[{name:'',rooms:it.rooms}]:[]);
+  if(!blds.length) return '';
   if(_locHidden(it)) return ''; // ホテル位置が伏せられている間は部屋割りも伏せる
-  var rooms=it.rooms.map(function(r){
-    var beds=(r.beds||[]).map(function(b){
-      var names=(Array.isArray(b.persons)&&b.persons.length)
-        ? b.persons.map(function(p){ return (p&&p.name)?esc(p.name):''; }).filter(Boolean).join('、')
-        : ((b&&b.personName)?esc(b.personName):'');
-      return '<div class="rm-line"><span class="rm-b">'+((b&&b.bed)?esc(b.bed):'—')+'</span><span class="rm-p">'+(names||'（未割当）')+'</span></div>';
-    }).join('');
-    var links=(Array.isArray(r.photos)&&r.photos.length)
-      ? ' '+r.photos.map(function(p,idx){ return p&&p.url?'<a class="rm-photolink" href="'+esc(p.url)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">[写真'+_circNum(idx+1)+']</a>':''; }).join('')
-      : '';
-    return '<div class="rm-r"><div class="rm-rn">'+esc(r.name||'部屋')+links+'</div>'+beds+'</div>';
+  var useB=!!it.useBuildings;
+  var body=blds.map(function(b){
+    var rooms=(b.rooms||[]).map(_roomBlockHtml).join('');
+    if(useB){ var bn=(b.name||'').trim(); return '<div class="rm-bld-r">'+(bn?'<div class="rm-bld-name">🏠 '+esc(bn)+'</div>':'')+rooms+'</div>'; }
+    return rooms;
   }).join('');
   var hotel=it.hotelName?('<span class="rm-hotel">'+esc(it.hotelName)+'</span>'):'';
-  return '<div class="sc-rooming"><div class="sc-rm-hd">🛏 部屋割り '+hotel+'</div>'+rooms+'</div>';
+  return '<div class="sc-rooming"><div class="sc-rm-hd">🛏 部屋割り '+hotel+'</div>'+body+'</div>';
 }
 /* ── 費用表示（円カンマ＋現地通貨） ── */
 var FX={USD:150, MXN:8};
