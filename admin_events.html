@@ -827,7 +827,10 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       </div>
       <div class="cost-sec-t" style="margin-top:14px;display:flex;align-items:center;gap:10px">デポジット（事前徴収） <button class="btn bp sm" onclick="addCostDeposit()">＋ デポジットを追加</button></div>
       <div class="cost-table-wrap"><div id="cost-deposits"></div></div>
-      <div class="cost-sec-t" style="margin-top:16px;display:flex;align-items:center;gap:10px">計算表 <button class="btn bp sm" onclick="addCostItem()">＋ 費目を追加</button></div>
+      <div class="cost-sec-t" style="margin-top:16px;display:flex;align-items:center;gap:10px">計算表 <button class="btn bp sm" onclick="addCostItem()">＋ 費目を追加</button>
+        <span style="margin-left:auto;font-size:11px;font-weight:400;color:var(--ink3)">並び順</span>
+        <select id="cost-sort" onchange="setCostSort(this.value)" style="padding:4px 8px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:#fff"><option value="datetime">日時順</option><option value="name">費目順</option></select>
+      </div>
       <div class="cost-table-wrap"><table class="cost-table" id="cost-table"></table></div>
       <div style="font-size:11px;color:var(--ink3);margin-top:6px">・按分は100円未満切り上げ。実費を入力するとその金額での按分に置き換わります。<br>・<b>参加者の金額セルをクリック</b>すると、その費目の按分対象に含める／外せます（「—」＝対象外）。費目ごとに対象を変えられます。<br>・<b>支払者</b>を選ぶと立て替え精算に反映されます。<br>・対応スケジュールを選ぶと、その項目にひとりあたりの費用が表示されます（旧「各自〇円」は廃止）。</div>
       <div id="cost-settle"></div>
@@ -2091,7 +2094,15 @@ function editPlace(pid){
 function delPlace(pid){ if(!confirm('この場所を削除しますか？')) return; db.collection('places').doc(pid).delete().then(function(){ toast('削除しました'); renderPlaceMgr(); }).catch(function(e){ toast('削除失敗: '+e.message); }); }
 
 /* ════════ 費用計算 ════════ */
-var _costEventId=null, _costMembers=[], _costItems=[], _costRoster=[], _costSched=[], _costDates=[], _costDirty=false, _costDefaultPayer='', _costDeposits=[];
+var _costEventId=null, _costMembers=[], _costItems=[], _costRoster=[], _costSched=[], _costDates=[], _costDirty=false, _costDefaultPayer='', _costDeposits=[], _costSort='datetime';
+function _costSortKey(it){ return (it.date||'9999-99-99')+(it.time||'99:99'); }
+function _sortCostItemsInPlace(){
+  _costItems.sort(function(a,b){
+    if(_costSort==='name'){ var c=(a.name||'').localeCompare((b.name||''),'ja'); if(c) return c; }
+    var ak=_costSortKey(a), bk=_costSortKey(b); return ak<bk?-1:(ak>bk?1:0);
+  });
+}
+function setCostSort(v){ _costSort=(v==='name')?'name':'datetime'; _costDirty=true; renderCostTable(); }
 function _rangeDates(start,end){
   var out=[]; if(!start) return out;
   var s=new Date(start+'T00:00:00'), e=new Date(((end||start))+'T00:00:00');
@@ -2113,6 +2124,8 @@ function openCostMgr(eid){
   _costItems=(ev&&Array.isArray(ev.costItems))?ev.costItems.map(function(m){return Object.assign({},m);}):[];
   _costDefaultPayer=(ev&&ev.costDefaultPayer)||'';
   _costDeposits=(ev&&Array.isArray(ev.costDeposits))?ev.costDeposits.map(function(m){return Object.assign({},m);}):[];
+  _costSort=(ev&&ev.costSort==='name')?'name':'datetime';
+  var cs=g('cost-sort'); if(cs) cs.value=_costSort;
   g('cost-published').checked=!!(ev&&ev.costPublished);
   _costDirty=false;
   g('cost-members').innerHTML='<div class="ec">読み込み中…</div>';
@@ -2189,7 +2202,7 @@ function _dateOptions(sel){
   return o;
 }
 function renderCostTable(){
-  _costItems.sort(function(a,b){ return ((a.date||'9999-99-99')+(a.time||'99:99')) < ((b.date||'9999-99-99')+(b.time||'99:99')) ? -1 : 1; });
+  _sortCostItemsInPlace();
   var mem=_costMembers;
   // 並び順: 日付/時間/費目/予算/実費/参加者名/対応スケジュール/備考
   var head='<thead><tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th><th>支払者</th>'
@@ -2321,15 +2334,15 @@ function addCostItem(){
 function delCostItem(i){ if(!confirm('この費目を削除しますか？')) return; _costDirty=true; _costItems.splice(i,1); renderCostTable(); }
 function saveCost(closeAfter){
   var btn=g('cost-save'); btn.disabled=true; g('cost-msg').style.color='var(--green)'; g('cost-msg').textContent='';
-  _costItems.sort(function(a,b){ return ((a.date||'9999-99-99')+(a.time||'99:99')) < ((b.date||'9999-99-99')+(b.time||'99:99')) ? -1 : 1; });
+  _sortCostItemsInPlace();
   // 対応スケジュールのタイトルを保存（会員側の表示用・改名にも追随）
   _costItems.forEach(function(it){ it.schedTitle = it.schedItemId ? _schTitle(it.schedItemId) : ''; });
   var pub=!!g('cost-published').checked;
   // デフォルト支払者が計算メンバーから外れていたら未設定に正規化
   if(_costDefaultPayer && !_costMembers.some(function(m){return m.tid===_costDefaultPayer;})) _costDefaultPayer='';
-  db.collection('events').doc(_costEventId).set({ costMembers:_costMembers, costItems:_costItems, costPublished:pub, costDefaultPayer:_costDefaultPayer||'', costDeposits:_costDeposits, updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
+  db.collection('events').doc(_costEventId).set({ costMembers:_costMembers, costItems:_costItems, costPublished:pub, costDefaultPayer:_costDefaultPayer||'', costDeposits:_costDeposits, costSort:_costSort, updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
     .then(function(){
-      var ev=events.find(function(x){return x.id===_costEventId;}); if(ev){ ev.costMembers=_costMembers.slice(); ev.costItems=_costItems.slice(); ev.costPublished=pub; ev.costDefaultPayer=_costDefaultPayer||''; ev.costDeposits=_costDeposits.slice(); }
+      var ev=events.find(function(x){return x.id===_costEventId;}); if(ev){ ev.costMembers=_costMembers.slice(); ev.costItems=_costItems.slice(); ev.costPublished=pub; ev.costDefaultPayer=_costDefaultPayer||''; ev.costDeposits=_costDeposits.slice(); ev.costSort=_costSort; }
       _costDirty=false;
       g('cost-msg').textContent='保存しました'; toast('費用計算を保存しました');
       if(closeAfter===true) closeCostMgr();
@@ -2339,7 +2352,9 @@ function saveCost(closeAfter){
 }
 // 閲覧用（変更不可）の計算表HTML。myTid の列を黄色でハイライト。
 function costViewHtml(myTid){
-  var its=_costItems.slice().sort(function(a,b){ return ((a.date||'9999-99-99')+(a.time||'99:99'))<((b.date||'9999-99-99')+(b.time||'99:99'))?-1:1; });
+  var its=_costItems.slice().sort(function(a,b){
+    if(_costSort==='name'){ var c=(a.name||'').localeCompare((b.name||''),'ja'); if(c) return c; }
+    var ak=_costSortKey(a), bk=_costSortKey(b); return ak<bk?-1:(ak>bk?1:0); });
   var mem=_costMembers;
   if(!mem.length) return '<div style="color:var(--ink3);padding:10px">費用計算メンバーが未設定です</div>';
   var head='<tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th><th>支払者</th>'
