@@ -166,6 +166,10 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .cost-table .ci-num{width:78px;text-align:right}
 .cost-table .ci-note{width:120px}
 .cost-table .ci-share{color:var(--gold-d);font-weight:600;background:#fffdf6}
+.cost-table .ci-on{cursor:pointer;user-select:none}
+.cost-table .ci-on:hover{background:#fdefce}
+.cost-table .ci-off{cursor:pointer;user-select:none;color:#c9c2b4;background:#f6f4ef}
+.cost-table .ci-off:hover{background:#efe9dd}
 .cost-table tfoot td{background:#fff8e9;font-weight:700}
 .cost-table .ci-del{color:var(--red);border:none;background:none;cursor:pointer;font-size:14px}
 .cn-row{display:flex;align-items:center;gap:8px;background:var(--white);border:1px solid var(--border2);border-radius:var(--r);padding:8px 10px;margin-bottom:6px}
@@ -799,7 +803,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       <div id="cost-members" class="cost-members"><div class="ec">読み込み中…</div></div>
       <div class="cost-sec-t" style="margin-top:16px;display:flex;align-items:center;gap:10px">計算表 <button class="btn bp sm" onclick="addCostItem()">＋ 費目を追加</button></div>
       <div class="cost-table-wrap"><table class="cost-table" id="cost-table"></table></div>
-      <div style="font-size:11px;color:var(--ink3);margin-top:6px">・按分は100円未満切り上げ。実費を入力するとその金額での按分に置き換わります。<br>・対応スケジュールを選ぶと、その項目にひとりあたりの費用が表示されます（旧「各自〇円」は廃止）。</div>
+      <div style="font-size:11px;color:var(--ink3);margin-top:6px">・按分は100円未満切り上げ。実費を入力するとその金額での按分に置き換わります。<br>・<b>参加者の金額セルをクリック</b>すると、その費目の按分対象に含める／外せます（「—」＝対象外）。費目ごとに対象を変えられます。<br>・対応スケジュールを選ぶと、その項目にひとりあたりの費用が表示されます（旧「各自〇円」は廃止）。</div>
     </div>
     <div class="mft"><span id="cost-msg" style="font-size:12px;color:var(--green);flex:1"></span><button class="btn bp" id="cost-save" onclick="saveCost()">保存</button><button class="btn bs" onclick="closeCostMgr()">閉じる</button></div>
   </div>
@@ -2080,7 +2084,20 @@ function _costBase(it){
   if(a!=null&&isFinite(a)&&a>=0) return a;
   var b=Number(it.budget||0); return isFinite(b)&&b>0?b:0;
 }
-function costShare(it){ var n=_costMembers.length; if(!n) return 0; var base=_costBase(it); if(base<=0) return 0; return Math.ceil(base/n/100)*100; }
+// この費目の按分対象メンバー（未設定なら全計算メンバー。常に現在の計算メンバーに限定）
+function _itemMembers(it){
+  var all=_costMembers.map(function(m){return m.tid;});
+  var set=(it&&Array.isArray(it.members))?it.members:all;
+  return all.filter(function(t){ return set.indexOf(t)>=0; });
+}
+function costShare(it){ var n=_itemMembers(it).length; if(!n) return 0; var base=_costBase(it); if(base<=0) return 0; return Math.ceil(base/n/100)*100; }
+function costToggleMember(i, tid){
+  var it=_costItems[i]; if(!it) return;
+  if(!Array.isArray(it.members)) it.members=_costMembers.map(function(m){return m.tid;});
+  var k=it.members.indexOf(tid);
+  if(k>=0) it.members.splice(k,1); else it.members.push(tid);
+  renderCostTable();
+}
 function _schedOptions(sel, dateFilter){
   // 対応スケジュールは費目名で表示（日付・時間は別列にあるため不要）
   var opts='<option value="">（なし）</option>';
@@ -2108,8 +2125,12 @@ function renderCostTable(){
   if(!_costItems.length){ g('cost-table').innerHTML=head+'<tbody><tr><td colspan="'+(8+mem.length)+'" style="color:var(--ink3);padding:12px">「＋ 費目を追加」で行を追加してください</td></tr></tbody>'; return; }
   var totals={}; mem.forEach(function(m){ totals[m.tid]=0; });
   var body=_costItems.map(function(it,i){
-    var sh=costShare(it); mem.forEach(function(m){ totals[m.tid]+=sh; });
-    var cells=mem.map(function(){ return '<td class="ci-share">¥'+sh.toLocaleString()+'</td>'; }).join('');
+    var sh=costShare(it);
+    var imset={}; _itemMembers(it).forEach(function(t){ imset[t]=1; });
+    var cells=mem.map(function(m){
+      if(imset[m.tid]){ totals[m.tid]+=sh; return '<td class="ci-share ci-on" title="クリックで対象外にする" onclick="costToggleMember('+i+',\''+esc(m.tid)+'\')">¥'+sh.toLocaleString()+'</td>'; }
+      return '<td class="ci-off" title="クリックで対象にする" onclick="costToggleMember('+i+',\''+esc(m.tid)+'\')">—</td>';
+    }).join('');
     return '<tr>'
       +'<td><select class="ci-date" onchange="costEdit('+i+',\'date\',this.value);renderCostTable()">'+_dateOptions(it.date)+'</select></td>'
       +'<td><input class="ci-time" type="time" value="'+esc(it.time||'')+'" onchange="costEdit('+i+',\'time\',this.value);renderCostTable()"></td>'
