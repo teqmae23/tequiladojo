@@ -1232,11 +1232,18 @@ function loadSchedule(){
     renderSchedule(_schedItems);
   }).catch(function(){ var el=g('schedule-cont'); if(el) el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">読み込みに失敗しました</div></div>'; });
 }
-// Google Maps リンク：座標があれば座標を正としてピンを立て、名称はラベル表示（カスタム座標対応）
-// q=緯度,経度(名称) 形式は Google が名称で再検索せず、指定座標に名称ラベル付きのピンを表示する
+// Google Maps リンク。表示方法(mapMode)で切替:
+//  name … 名称で検索（実在の場所。名称・情報が正しく出る。座標があれば近辺を中心表示）
+//  coord … 座標を固定（手動修正した座標をそのままピン表示）
 function gmapLink(it){
   var label=(it.placeName||it.title||'').trim();
-  if(it.lat!=null&&it.lng!=null){
+  var hasGeo=(it.lat!=null&&it.lng!=null);
+  var mode=(it.mapMode==='coord')?'coord':'name';
+  if(mode==='name' && label){
+    if(hasGeo) return 'https://www.google.com/maps/search/'+encodeURIComponent(label)+'/@'+it.lat+','+it.lng+',17z';
+    return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
+  }
+  if(hasGeo){
     if(label) return 'https://www.google.com/maps?q='+it.lat+','+it.lng+'('+encodeURIComponent(label)+')';
     return 'https://www.google.com/maps/search/?api=1&query='+it.lat+','+it.lng;
   }
@@ -1244,10 +1251,17 @@ function gmapLink(it){
   if(label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
   return '';
 }
-// 2地点ルート: 座標があれば座標を正に（カスタム座標対応）。無い場合のみ地点名でフォールバック
+// 2地点ルート。端点ごとに mapMode/toMapMode で 名称 or 座標 を選択
 function routeLink(it){
-  var o=(it.lat!=null&&it.lng!=null)?(it.lat+','+it.lng):((it.placeName&&it.placeName.trim())?encodeURIComponent(it.placeName.trim()):'');
-  var d=(it.toLat!=null&&it.toLng!=null)?(it.toLat+','+it.toLng):((it.toName&&it.toName.trim())?encodeURIComponent(it.toName.trim()):'');
+  function endp(mode, name, lat, lng){
+    name=(name&&name.trim())?name.trim():'';
+    if(mode!=='coord' && name) return encodeURIComponent(name);
+    if(lat!=null&&lng!=null) return lat+','+lng;
+    if(name) return encodeURIComponent(name);
+    return '';
+  }
+  var o=endp((it.mapMode==='coord')?'coord':'name', it.placeName, it.lat, it.lng);
+  var d=endp((it.toMapMode==='coord')?'coord':'name', it.toName, it.toLat, it.toLng);
   var tm=(it.travelMode&&/^(driving|transit|walking|bicycling)$/.test(it.travelMode))?('&travelmode='+it.travelMode):'';
   return 'https://www.google.com/maps/dir/?api=1&origin='+o+'&destination='+d+tm;
 }
