@@ -1486,12 +1486,38 @@ function toYen(amt,cur){ if(amt==null) return null; if(cur==='JPY'||!cur) return
 function costMain(it){ if(it.costAmount!=null){ var y=(it.costJpy!=null?it.costJpy:toYen(it.costAmount,it.costCurrency||'JPY')); return '¥'+Number(y).toLocaleString(); } return it.cost||''; }
 // 外貨換算時は「円貨（外貨）」で1行表示
 function costText(it){ var m=costMain(it); if(!m) return ''; if(it.costAmount!=null && it.costCurrency && it.costCurrency!=='JPY') return m+'（'+curSym(it.costCurrency)+Number(it.costAmount).toLocaleString()+'）'; return m; }
+// ── 費用計算（計算表）: スケジュール項目に紐づく費目から、閲覧者のひとりあたり負担を算出 ──
+function _isCostMember(){
+  var cms=(_ev&&Array.isArray(_ev.costMembers))?_ev.costMembers:[];
+  var mid=String(_memberId||'');
+  return cms.some(function(m){
+    return (m.uid&&m.uid===_uid) || (m.tid&&m.tid===_uid)
+      || (m.memberId&&String(m.memberId)===mid) || (m.tid&&String(m.tid)===mid);
+  });
+}
+function _costItemForSched(schedId){
+  var cis=(_ev&&Array.isArray(_ev.costItems))?_ev.costItems:[];
+  for(var i=0;i<cis.length;i++){ if(cis[i].schedItemId===schedId) return cis[i]; }
+  return null;
+}
+function _costShareOf(ci){
+  var n=(_ev&&Array.isArray(_ev.costMembers))?_ev.costMembers.length:0; if(!n||!ci) return 0;
+  var base=(ci.actual!=null&&ci.actual!=='')?Number(ci.actual):Number(ci.budget||0);
+  if(!isFinite(base)||base<=0) return 0;
+  return Math.ceil(base/n/100)*100;
+}
+// 表示は費用計算を優先。紐づく費目が無い項目は旧costText（後方互換）にフォールバック。
+function costLineFor(it){
+  var ci=_costItemForSched(it.id);
+  if(ci && _isCostMember()){ var sh=_costShareOf(ci); if(sh>0) return '💰 あなたの負担 ¥'+sh.toLocaleString(); }
+  return costText(it);
+}
 function renderSchedItem(it){
   var ic=itemIcon(it);
   var geo=(it.lat!=null&&it.lng!=null);
   var hideLoc=_locHidden(it); // ストーカー対策: 滞在中は位置を伏せる
   var meta=[];
-  var ct=costText(it); if(ct) meta.push('<span class="sc-cost">'+esc(ct)+'</span>');
+  var ct=costLineFor(it); if(ct) meta.push('<span class="sc-cost">'+esc(ct)+'</span>');
   if(it.linkUrl && /^https?:\/\//i.test(it.linkUrl)) meta.push('<a class="sc-map" href="'+esc(it.linkUrl)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🔗 参考URL</a>');
   if(hideLoc){
     meta.push('<span class="sc-loclock">'+(_isLodging(it)?'🏨 ホテル情報はチェックアウト後に公開されます':'📍 位置情報は滞在終了後に公開されます')+'</span>');
@@ -1689,7 +1715,7 @@ function initSchedMap(items){
   items.forEach(function(it){
     if(it.lat!=null&&it.lng!=null){
       var plng=_unwrapLng(it.lng, refLng); refLng=plng;
-      var _pcm=costText(it);
+      var _pcm=costLineFor(it);
       var m=L.marker([it.lat,plng]).addTo(map).bindPopup('<b>'+esc((it.time?it.time+' ':'')+(it.title||''))+'</b>'+(it.date?'<br>'+esc(fmtDate(it.date)):'')+(_pcm?'<br>'+esc(_pcm):''));
       _scMarkers[it.id]=m; bounds.push([it.lat,plng]);
       if(it.isMove&&it.toLat!=null&&it.toLng!=null){
