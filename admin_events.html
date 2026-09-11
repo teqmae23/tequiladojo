@@ -1737,7 +1737,9 @@ function _tzOffMin(inst,tz){ var m={}; new Intl.DateTimeFormat('en-US',{timeZone
 function _wallInstant(dateStr,timeStr,tz){ var dp=(dateStr||'').split('-'),tp=(timeStr||'00:00').split(':'); if(dp.length<3)return null; var g=Date.UTC(+dp[0],+dp[1]-1,+dp[2],(+tp[0]||0),(+tp[1]||0)); return new Date(g-_tzOffMin(new Date(g),tz)*60000); }
 function _safeTz(la,ln){ try{ return window.tzlookup?tzlookup(la,ln):null; }catch(e){ return null; } }
 function _schedInstant(it){ var tz=(it.lat!=null&&it.lng!=null)?_safeTz(it.lat,it.lng):null; return _wallInstant(it.date, it.time||'23:59', tz||'Asia/Tokyo'); }
-function _sortByJst(items){ return items.map(function(it,i){ var d=_schedInstant(it); return {it:it, ms:d?d.getTime():0, seq:it.seq||0, i:i}; }).sort(function(a,b){ return (a.ms-b.ms)||(a.seq-b.seq)||(a.i-b.i); }); }
+// 終了時刻（滞在終了 or 移動の到着）が無い項目を先に（同じ開始時刻なら「10:30-」を「10:30-12:30」より上に）
+function _endMark(it){ var e=(it&&it.endTime&&it.endTime.trim())||(it&&it.isMove&&it.toTime&&it.toTime.trim()); return e?1:0; }
+function _sortByJst(items){ return items.map(function(it,i){ var d=_schedInstant(it); return {it:it, ms:d?d.getTime():0, em:_endMark(it), seq:it.seq||0, i:i}; }).sort(function(a,b){ return (a.ms-b.ms)||(a.em-b.em)||(a.seq-b.seq)||(a.i-b.i); }); }
 function _idlCross(it){ return !!(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null && Math.abs(it.toLng-it.lng)>180); }
 function schCol(eid){ return db.collection('events').doc(eid).collection('scheduleItems'); }
 function parseLatLng(url){
@@ -2474,7 +2476,7 @@ function openSchedMgr(eventId){
 function closeSchedMgr(){ g('sch-mgr-modal').classList.remove('open'); }
 g('sch-mgr-modal').addEventListener('click',function(e){ if(e.target===g('sch-mgr-modal')) closeSchedMgr(); });
 
-function schSortKey(it){ return (it.date||'')+' '+(it.time||'99:99')+' '+('00'+(it.seq||0)).slice(-3); }
+function schSortKey(it){ return (it.date||'')+' '+(it.time||'99:99')+' '+_endMark(it)+' '+('00'+(it.seq||0)).slice(-3); }
 function loadSchedItems(){
   schCol(_schEventId).get().then(function(snap){
     _schItems=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
