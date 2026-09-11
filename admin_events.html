@@ -1768,7 +1768,24 @@ function loadFx(){
 function curSym(c){ return c==='USD'?'US$':c==='MXN'?'MX$':'¥'; }
 function costAmountNum(s){ if(s==null) return null; var m=String(s).replace(/[,，\s]/g,'').match(/-?\d+(\.\d+)?/); return m?parseFloat(m[0]):null; }
 function toYen(amt,cur){ if(amt==null) return null; if(cur==='JPY'||!cur) return Math.round(amt); return Math.round(amt*(FX[cur]||0)); }
-function itemYen(it){ if(it.costJpy!=null) return it.costJpy; if(it.costAmount!=null) return toYen(it.costAmount, it.costCurrency||'JPY'); return costNum(it.cost); }
+// このスケジュール項目に紐づく費用計算の費目（対応スケジュール）を探し、金額・1人按分を返す
+function _schedCostInfo(schedId){
+  var ev=events.find(function(x){return x.id===_schEventId;});
+  var items=(ev&&Array.isArray(ev.costItems))?ev.costItems:[];
+  if(!items.length) return null;
+  var ci=null; for(var i=0;i<items.length;i++){ if(items[i].schedItemId===schedId){ ci=items[i]; break; } }
+  if(!ci) return null;
+  var members=(ev&&Array.isArray(ev.costMembers))?ev.costMembers:[];
+  var hasA=(ci.actual!=null&&ci.actual!==''), hasB=(ci.budget!=null&&ci.budget!=='');
+  var base=hasA?Number(ci.actual):(hasB?Number(ci.budget):0); if(!isFinite(base)||base<0) base=0;
+  var allTids=members.map(function(m){return m.tid;});
+  var set=Array.isArray(ci.members)?ci.members:allTids;
+  var n=allTids.filter(function(t){return set.indexOf(t)>=0;}).length;
+  var share=(n>0&&base>0)?Math.ceil(base/n/100)*100:0;
+  return { base:base, share:share, n:n, priced:(hasA||hasB), name:(ci.name||'') };
+}
+// 概算合計: 費用計算に紐づく項目は計算表の金額を優先（旧・手入力費用は紐づきが無い場合のみ）
+function itemYen(it){ var ci=_schedCostInfo(it.id); if(ci) return ci.priced?ci.base:0; if(it.costJpy!=null) return it.costJpy; if(it.costAmount!=null) return toYen(it.costAmount, it.costCurrency||'JPY'); return costNum(it.cost); }
 function costMain(it){ if(it.costAmount!=null){ var y=(it.costJpy!=null?it.costJpy:toYen(it.costAmount,it.costCurrency||'JPY')); return '¥'+Number(y).toLocaleString(); } return it.cost||''; }
 function costSub(it){ if(it.costAmount!=null && it.costCurrency && it.costCurrency!=='JPY') return curSym(it.costCurrency)+Number(it.costAmount).toLocaleString(); return ''; }
 function costText(it){ var m=costMain(it); if(!m) return ''; if(it.costAmount!=null && it.costCurrency && it.costCurrency!=='JPY') return m+'（'+curSym(it.costCurrency)+Number(it.costAmount).toLocaleString()+'）'; return m; }
@@ -2457,8 +2474,16 @@ function renderSchedItemRow(it){
   var ic=itemIcon(it);
   var markers=[]; if(it.isMove) markers.push('🚗ルート'); if(it.lat!=null&&it.lng!=null) markers.push('📍地図'); if(it.hideUntilDone) markers.push('🙈完了後公開'); if(it.showNames&&(it.nameParticipants||[]).length) markers.push('👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名'); if(it.roomingEnabled&&(it.rooms||[]).length) markers.push('🛏部屋割り'+it.rooms.length);
   var noteHtml=it.note?'<div class="se-note-line">'+esc(it.note.slice(0,80))+(it.note.length>80?'…':'')+'</div>':'';
-  var ct=costText(it);
-  var costHtml=ct?('<span class="se-cost">'+esc(ct)+'</span>'):'';
+  var info=_schedCostInfo(it.id);
+  var costHtml;
+  if(info){
+    var amt=info.priced?('¥'+info.base.toLocaleString()):'¥?';
+    var per=info.n>0?('／1人 '+(info.priced?(info.share>0?'¥'+info.share.toLocaleString():'¥0'):'¥?')):'';
+    costHtml='<span class="se-cost" title="費用計算より（'+esc(info.name)+'）">💰'+amt+per+'</span>';
+  } else {
+    var ct=costText(it);
+    costHtml=ct?('<span class="se-cost">'+esc(ct)+'</span>'):'';
+  }
   var timeHtml=(it.isMove&&it.toTime)
     ? '<span class="se-t">'+esc(it.time||'—')+'<span class="se-move-arrow">↓</span>'+esc(it.toTime)+'</span>'
     : ((!it.isMove&&it.endTime)
