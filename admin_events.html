@@ -160,6 +160,8 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .cost-table th,.cost-table td{border:1px solid var(--border2);padding:4px 6px;white-space:nowrap;text-align:center}
 .cost-table th{background:var(--cream2);font-weight:700}
 .cost-table input,.cost-table select{border:1px solid var(--border2);border-radius:4px;padding:3px 5px;font-size:12px;background:#fff}
+.cost-table .ci-date{width:62px;padding:3px 2px}
+.cost-table .ci-time{width:72px}
 .cost-table .ci-name{width:110px}
 .cost-table .ci-num{width:78px;text-align:right}
 .cost-table .ci-note{width:120px}
@@ -2026,10 +2028,22 @@ function editPlace(pid){
 function delPlace(pid){ if(!confirm('この場所を削除しますか？')) return; db.collection('places').doc(pid).delete().then(function(){ toast('削除しました'); renderPlaceMgr(); }).catch(function(e){ toast('削除失敗: '+e.message); }); }
 
 /* ════════ 費用計算 ════════ */
-var _costEventId=null, _costMembers=[], _costItems=[], _costRoster=[], _costSched=[];
+var _costEventId=null, _costMembers=[], _costItems=[], _costRoster=[], _costSched=[], _costDates=[];
+function _rangeDates(start,end){
+  var out=[]; if(!start) return out;
+  var s=new Date(start+'T00:00:00'), e=new Date(((end||start))+'T00:00:00');
+  if(isNaN(s.getTime())) return out; if(isNaN(e.getTime())||e<s) e=new Date(s.getTime());
+  for(var d=new Date(s.getTime()); d<=e; d.setDate(d.getDate()+1)){
+    out.push(d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2));
+  }
+  return out;
+}
+function _mmdd(ymd){ if(!ymd) return ''; var p=String(ymd).split('-'); return p.length>=3?(p[1]+'/'+p[2]):String(ymd); }
+function _shortName(n){ var a=Array.from(String(n||'')); return a.length>3?(a.slice(0,3).join('')+'…'):a.join(''); }
 function openCostMgr(eid){
   _costEventId=eid;
   var ev=events.find(function(x){return x.id===eid;});
+  _costDates=_rangeDates(ev&&ev.startDate, ev&&ev.endDate);
   g('cost-mgr-title').textContent='💰 費用計算 — '+(ev?ev.name:'');
   g('cost-msg').textContent='';
   _costMembers=(ev&&Array.isArray(ev.costMembers))?ev.costMembers.map(function(m){return Object.assign({},m);}):[];
@@ -2048,7 +2062,9 @@ function closeCostMgr(){ g('cost-mgr-modal').classList.remove('open'); }
 g('cost-mgr-modal').addEventListener('click',function(e){ if(e.target===g('cost-mgr-modal')) closeCostMgr(); });
 function _cmChecked(tid){ return _costMembers.some(function(m){return m.tid===tid;}); }
 function renderCostMembers(){
-  var h=_costRoster.map(function(r){
+  // 現地ホストは計算メンバーに含めない
+  var list=_costRoster.filter(function(r){ return !r.isHost; });
+  var h=list.map(function(r){
     return '<label><input type="checkbox" data-cm="'+esc(r.tid)+'"'+(_cmChecked(r.tid)?' checked':'')+' onchange="toggleCostMember(this)">'+esc(r.name)+'</label>';
   }).join('');
   g('cost-members').innerHTML=h||'<div class="ec">参加者がいません（先に参加者を登録してください）</div>';
@@ -2066,38 +2082,48 @@ function _costBase(it){
 }
 function costShare(it){ var n=_costMembers.length; if(!n) return 0; var base=_costBase(it); if(base<=0) return 0; return Math.ceil(base/n/100)*100; }
 function _schedOptions(sel, dateFilter){
+  // 対応スケジュールは費目名で表示（日付・時間は別列にあるため不要）
   var opts='<option value="">（なし）</option>';
   _costSched.forEach(function(s){
     if(dateFilter && s.date && s.date!==dateFilter) return;
-    var lbl=((s.date||'')+' '+(s.time||'')+' '+(s.title||'')).trim();
-    opts+='<option value="'+esc(s.id)+'"'+(sel===s.id?' selected':'')+'>'+esc(lbl)+'</option>';
+    opts+='<option value="'+esc(s.id)+'"'+(sel===s.id?' selected':'')+'>'+esc(s.title||'（無題）')+'</option>';
   });
   return opts;
+}
+function _dateOptions(sel){
+  var dates=_costDates.slice();
+  if(sel && dates.indexOf(sel)<0) dates.push(sel); // 範囲外（スケジュール紐づけ由来）も含める
+  dates.sort();
+  var o='<option value="">—</option>';
+  dates.forEach(function(d){ o+='<option value="'+esc(d)+'"'+(sel===d?' selected':'')+'>'+esc(_mmdd(d))+'</option>'; });
+  return o;
 }
 function renderCostTable(){
   _costItems.sort(function(a,b){ return ((a.date||'9999-99-99')+(a.time||'99:99')) < ((b.date||'9999-99-99')+(b.time||'99:99')) ? -1 : 1; });
   var mem=_costMembers;
-  var head='<thead><tr><th>費目</th><th>日付</th><th>時間</th><th>対応スケジュール</th><th>予算</th><th>実費</th>'
-    +mem.map(function(m){return '<th>'+esc(m.name)+'</th>';}).join('')+'<th>備考</th><th></th></tr></thead>';
+  // 並び順: 日付/時間/費目/予算/実費/参加者名/対応スケジュール/備考
+  var head='<thead><tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th>'
+    +mem.map(function(m){return '<th title="'+esc(m.name)+'">'+esc(_shortName(m.name))+'</th>';}).join('')
+    +'<th>対応スケジュール</th><th>備考</th><th></th></tr></thead>';
   if(!_costItems.length){ g('cost-table').innerHTML=head+'<tbody><tr><td colspan="'+(8+mem.length)+'" style="color:var(--ink3);padding:12px">「＋ 費目を追加」で行を追加してください</td></tr></tbody>'; return; }
   var totals={}; mem.forEach(function(m){ totals[m.tid]=0; });
   var body=_costItems.map(function(it,i){
     var sh=costShare(it); mem.forEach(function(m){ totals[m.tid]+=sh; });
     var cells=mem.map(function(){ return '<td class="ci-share">¥'+sh.toLocaleString()+'</td>'; }).join('');
     return '<tr>'
+      +'<td><select class="ci-date" onchange="costEdit('+i+',\'date\',this.value);renderCostTable()">'+_dateOptions(it.date)+'</select></td>'
+      +'<td><input class="ci-time" type="time" value="'+esc(it.time||'')+'" onchange="costEdit('+i+',\'time\',this.value);renderCostTable()"></td>'
       +'<td><input class="ci-name" value="'+esc(it.name||'')+'" oninput="costEdit('+i+',\'name\',this.value)"></td>'
-      +'<td><input type="date" value="'+esc(it.date||'')+'" onchange="costEdit('+i+',\'date\',this.value);renderCostTable()"></td>'
-      +'<td><input type="time" value="'+esc(it.time||'')+'" style="width:82px" onchange="costEdit('+i+',\'time\',this.value);renderCostTable()"></td>'
-      +'<td><select onchange="costLinkSched('+i+',this.value)">'+_schedOptions(it.schedItemId,it.date)+'</select></td>'
       +'<td><input class="ci-num" type="number" min="0" value="'+(it.budget!=null&&it.budget!==''?esc(String(it.budget)):'')+'" onchange="costEdit('+i+',\'budget\',this.value);renderCostTable()"></td>'
       +'<td><input class="ci-num" type="number" min="0" placeholder="—" value="'+(it.actual!=null&&it.actual!==''?esc(String(it.actual)):'')+'" onchange="costEdit('+i+',\'actual\',this.value);renderCostTable()"></td>'
       +cells
+      +'<td><select onchange="costLinkSched('+i+',this.value)">'+_schedOptions(it.schedItemId,it.date)+'</select></td>'
       +'<td><input class="ci-note" value="'+esc(it.notes||'')+'" oninput="costEdit('+i+',\'notes\',this.value)"></td>'
       +'<td><button class="ci-del" title="削除" onclick="delCostItem('+i+')">🗑</button></td>'
     +'</tr>';
   }).join('');
-  var foot='<tfoot><tr><td colspan="6" style="text-align:right">1人あたり合計 →</td>'
-    +mem.map(function(m){return '<td>¥'+(totals[m.tid]||0).toLocaleString()+'</td>';}).join('')+'<td colspan="2"></td></tr></tfoot>';
+  var foot='<tfoot><tr><td colspan="5" style="text-align:right">1人あたり合計 →</td>'
+    +mem.map(function(m){return '<td>¥'+(totals[m.tid]||0).toLocaleString()+'</td>';}).join('')+'<td colspan="3"></td></tr></tfoot>';
   g('cost-table').innerHTML=head+'<tbody>'+body+'</tbody>'+foot;
 }
 function costEdit(i, field, val){
