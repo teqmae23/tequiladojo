@@ -1232,21 +1232,24 @@ function loadSchedule(){
     renderSchedule(_schedItems);
   }).catch(function(){ var el=g('schedule-cont'); if(el) el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">読み込みに失敗しました</div></div>'; });
 }
+// 緯度・経度を数値に正規化（文字列や余分な空白でも安全に）
+function _geoNum(v){ if(v==null) return null; var n=parseFloat(String(v).trim()); return isFinite(n)?n:null; }
 // Google Maps リンク。表示方法(mapMode)で切替:
 //  name … 名称で検索（実在の場所。名称・情報が正しく出る。座標があれば近辺を中心表示）
-//  coord … 座標を固定（手動修正した座標をそのままピン表示）
+//  coord … 座標を固定（名称は付けず、純粋な座標クエリで確実にその地点へピン）
 function gmapLink(it){
   var label=(it.placeName||it.title||'').trim();
-  var hasGeo=(it.lat!=null&&it.lng!=null);
+  var la=_geoNum(it.lat), ln=_geoNum(it.lng);
+  var hasGeo=(la!=null&&ln!=null);
   var mode=(it.mapMode==='coord')?'coord':'name';
-  if(mode==='name' && label){
-    if(hasGeo) return 'https://www.google.com/maps/search/'+encodeURIComponent(label)+'/@'+it.lat+','+it.lng+',17z';
-    return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
-  }
   if(hasGeo){
-    if(label) return 'https://www.google.com/maps?q='+it.lat+','+it.lng+'('+encodeURIComponent(label)+')';
-    return 'https://www.google.com/maps/search/?api=1&query='+it.lat+','+it.lng;
+    var q=la+','+ln;
+    // coord モードは名称を付けない（名称ラベルがあると座標が認識されない場合があるため）
+    if(mode==='coord') return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q);
+    if(label) return 'https://www.google.com/maps/search/'+encodeURIComponent(label)+'/@'+q+',17z';
+    return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q);
   }
+  if(mode==='name' && label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
   if(it.mapUrl) return it.mapUrl;
   if(label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
   return '';
@@ -1254,9 +1257,10 @@ function gmapLink(it){
 // 2地点ルート。端点ごとに mapMode/toMapMode で 名称 or 座標 を選択
 function routeLink(it){
   function endp(mode, name, lat, lng){
+    var la=_geoNum(lat), ln=_geoNum(lng);
     name=(name&&name.trim())?name.trim():'';
-    if(mode!=='coord' && name) return encodeURIComponent(name);
-    if(lat!=null&&lng!=null) return lat+','+lng;
+    if(mode!=='coord' && name) return encodeURIComponent(name);        // 名称モード優先
+    if(la!=null&&ln!=null) return encodeURIComponent(la+','+ln);       // 座標モード or 名称なし
     if(name) return encodeURIComponent(name);
     return '';
   }
