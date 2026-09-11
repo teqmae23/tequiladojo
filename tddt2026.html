@@ -1225,7 +1225,7 @@ function loadSchedule(){
     loadCats()
   ]).then(function(res){
     _schedItems=res[0].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
-    _schedItems.sort(function(a,b){ var ka=(a.date||'')+' '+(a.time||'99:99')+' '+('00'+(a.seq||0)).slice(-3), kb=(b.date||'')+' '+(b.time||'99:99')+' '+('00'+(b.seq||0)).slice(-3); return ka<kb?-1:1; });
+    _schedItems.sort(function(a,b){ var ka=(a.date||'')+' '+(a.time||'99:99')+' '+_endMark(a)+' '+('00'+(a.seq||0)).slice(-3), kb=(b.date||'')+' '+(b.time||'99:99')+' '+_endMark(b)+' '+('00'+(b.seq||0)).slice(-3); return ka<kb?-1:1; });
     _photosByItem={};
     res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).forEach(function(p){ (_photosByItem[p.scheduleItemId]=_photosByItem[p.scheduleItemId]||[]).push(p); });
     Object.keys(_photosByItem).forEach(function(k){ _photosByItem[k].sort(phSort); });
@@ -1356,9 +1356,11 @@ function _schedInstant(it){
   return _wallInstant(it.date, it.time||'23:59', tz||'Asia/Tokyo');
 }
 // JST絶対時刻で並べ替え（時差のある行程も実際の時系列で並ぶ）
+// 終了時刻（滞在終了 or 移動の到着）が無い項目を先に（同じ開始時刻なら「10:30-」を「10:30-12:30」より上に）
+function _endMark(it){ var e=(it&&it.endTime&&it.endTime.trim())||(it&&it.isMove&&it.toTime&&it.toTime.trim()); return e?1:0; }
 function _sortByJst(items){
-  return items.map(function(it,i){ var d=_schedInstant(it); return {it:it, ms:d?d.getTime():0, seq:it.seq||0, i:i}; })
-    .sort(function(a,b){ return (a.ms-b.ms)||(a.seq-b.seq)||(a.i-b.i); });
+  return items.map(function(it,i){ var d=_schedInstant(it); return {it:it, ms:d?d.getTime():0, em:_endMark(it), seq:it.seq||0, i:i}; })
+    .sort(function(a,b){ return (a.ms-b.ms)||(a.em-b.em)||(a.seq-b.seq)||(a.i-b.i); });
 }
 function _idlCross(it){ return !!(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null && Math.abs(it.toLng-it.lng)>180); }
 /* ── ストーカー対策: 位置情報の公開タイミング（restricted閲覧者向け） ── */
