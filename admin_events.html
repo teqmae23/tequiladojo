@@ -2176,6 +2176,9 @@ function _itemMembers(it){
   return all.filter(function(t){ return set.indexOf(t)>=0; });
 }
 function costShare(it){ var n=_itemMembers(it).length; if(!n) return 0; var base=_costBase(it); if(base<=0) return 0; return Math.ceil(base/n/100)*100; }
+// 予算・実費とも未入力なら金額未確定（按分額は「?」表示）
+function _costUnpriced(it){ var b=(it&&it.budget!=null&&it.budget!==''); var a=(it&&it.actual!=null&&it.actual!==''); return !b && !a; }
+function _shareCell(sh, unpriced){ return unpriced?'?':('¥'+sh.toLocaleString()); }
 function costToggleMember(i, tid){
   _costDirty=true;
   var it=_costItems[i]; if(!it) return;
@@ -2211,10 +2214,10 @@ function renderCostTable(){
   if(!_costItems.length){ g('cost-table').innerHTML=head+'<tbody><tr><td colspan="'+(9+mem.length)+'" style="color:var(--ink3);padding:12px">「＋ 費目を追加」で行を追加してください</td></tr></tbody>'; renderCostSettle(); return; }
   var totals={}; mem.forEach(function(m){ totals[m.tid]=0; });
   var body=_costItems.map(function(it,i){
-    var sh=costShare(it);
+    var sh=costShare(it); var up=_costUnpriced(it);
     var imset={}; _itemMembers(it).forEach(function(t){ imset[t]=1; });
     var cells=mem.map(function(m){
-      if(imset[m.tid]){ totals[m.tid]+=sh; return '<td class="ci-share ci-on" title="クリックで対象外にする" onclick="costToggleMember('+i+',\''+esc(m.tid)+'\')">¥'+sh.toLocaleString()+'</td>'; }
+      if(imset[m.tid]){ totals[m.tid]+=sh; return '<td class="ci-share ci-on" title="クリックで対象外にする" onclick="costToggleMember('+i+',\''+esc(m.tid)+'\')">'+_shareCell(sh,up)+'</td>'; }
       return '<td class="ci-off" title="クリックで対象にする" onclick="costToggleMember('+i+',\''+esc(m.tid)+'\')">—</td>';
     }).join('');
     return '<tr>'
@@ -2273,7 +2276,7 @@ function renderCostSettle(){
   if(!mem.length||!_costItems.length){ el.innerHTML=''; return; }
   var s=_computeSettle(_costItems, mem, _costDeposits, _costDefaultPayer);
   var rows=mem.map(function(m){
-    return '<tr><td style="text-align:left">'+esc(m.name)+(m.tid===_costDefaultPayer?' <span class="cs-tag">既定</span>':'')+'</td>'
+    return '<tr><td style="text-align:left">'+esc(m.name)+(m.tid===_costDefaultPayer?' <span class="cs-tag">主催</span>':'')+'</td>'
       +'<td>¥'+(s.paidCost[m.tid]||0).toLocaleString()+'</td><td>¥'+(s.dep[m.tid]||0).toLocaleString()+'</td><td>¥'+(s.share[m.tid]||0).toLocaleString()+'</td>'+_netCell(s.net[m.tid]||0)+'</tr>';
   }).join('');
   var note=s.depTotal>0 ? (s.applied?('デポジット計 ¥'+s.depTotal.toLocaleString()+' はデフォルト支払者（'+esc(_payerName(_costDefaultPayer)||'—')+'）が受領済みとして差し引きに反映しています。'):'⚠ デポジットを精算に反映するにはデフォルト支払者を設定してください。') : '';
@@ -2361,9 +2364,9 @@ function costViewHtml(myTid){
     +mem.map(function(m){return '<th'+(m.tid===myTid?' class="cv-me"':'')+' title="'+esc(m.name)+'">'+esc(_shortName(m.name))+'</th>';}).join('')+'<th>対応スケジュール</th><th>備考</th></tr>';
   var totals={}; mem.forEach(function(m){totals[m.tid]=0;});
   var rows=its.map(function(it){
-    var sh=costShare(it); var imset={}; _itemMembers(it).forEach(function(t){imset[t]=1;});
+    var sh=costShare(it); var up=_costUnpriced(it); var imset={}; _itemMembers(it).forEach(function(t){imset[t]=1;});
     var cells=mem.map(function(m){ var me=(m.tid===myTid)?' cv-me':'';
-      if(imset[m.tid]){ totals[m.tid]+=sh; return '<td class="cv-amt'+me+'">¥'+sh.toLocaleString()+'</td>'; }
+      if(imset[m.tid]){ totals[m.tid]+=sh; return '<td class="cv-amt'+me+'">'+_shareCell(sh,up)+'</td>'; }
       return '<td class="cv-off'+me+'">—</td>'; }).join('');
     var pn=_payerName(it.payer);
     return '<tr><td>'+esc(_mmdd(it.date))+'</td><td>'+esc(it.time||'')+'</td><td style="text-align:left">'+esc(it.name||'')+'</td>'
@@ -2382,7 +2385,7 @@ function _settleView(its, mem, myTid){
   var s=_computeSettle(its, mem, _costDeposits, _costDefaultPayer);
   var rows=mem.map(function(m){
     var me=(m.tid===myTid)?' class="cv-me"':'';
-    return '<tr'+me+'><td style="text-align:left">'+esc(m.name)+(m.tid===_costDefaultPayer?' <span class="cs-tag">既定</span>':'')+'</td>'
+    return '<tr'+me+'><td style="text-align:left">'+esc(m.name)+(m.tid===_costDefaultPayer?' <span class="cs-tag">主催</span>':'')+'</td>'
       +'<td>¥'+(s.paidCost[m.tid]||0).toLocaleString()+'</td><td>¥'+(s.dep[m.tid]||0).toLocaleString()+'</td><td>¥'+(s.share[m.tid]||0).toLocaleString()+'</td>'+_netCell(s.net[m.tid]||0)+'</tr>';
   }).join('');
   var note=s.depTotal>0&&s.applied?('<div class="cv-settle-sum" style="margin-top:4px">デポジット計 ¥'+s.depTotal.toLocaleString()+' はデフォルト支払者（'+esc(_payerName(_costDefaultPayer)||'—')+'）が受領済みとして反映。</div>'):'';
