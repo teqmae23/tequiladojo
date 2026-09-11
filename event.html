@@ -686,7 +686,8 @@ function render(ev){
   _ev=ev;
   var period=fmtDate(ev.startDate)+(ev.endDate&&ev.endDate!==ev.startDate?(' 〜 '+fmtDate(ev.endDate)):'');
   var html='<div class="hero"><div class="ev-title">'+esc(ev.name||'（無題イベント）')+(ev.published?'':'<span class="pill">非公開（プレビュー）</span>')+'</div>'
-    +'<div class="ev-period">📅 '+esc(period)+'</div></div>';
+    +'<div class="ev-period">📅 '+esc(period)+'</div></div>'
+    +'<div id="cost-banner"></div>';
   var containers=(Array.isArray(ev.containers)&&ev.containers.length)?ev.containers
     :[{type:'overview',enabled:true,config:{mypage:{survey:true,checklist:true,image:true}}},{type:'survey',enabled:true,config:{}}];
   var hasSurvey=false, hasSchedule=false, hasChecklist=false, hasDocs=false, hasBoard=false;
@@ -900,7 +901,7 @@ function _ptDone(snap){
       }
     }
   }
-  renderRoster(); renderMypageBar(); renderFamSection(); if(g('checklist-cont')&&_tasks.length) renderChecklist();
+  renderRoster(); renderMypageBar(); renderFamSection(); renderCostBanner(); if(g('checklist-cont')&&_tasks.length) renderChecklist();
   // 参加者名簿が揃ったら、既に描画済みのスケジュールの参加メンバーを再計算して反映
   if(_schedItems.length){ var sc=g('schedule-cont'); if(sc&&sc.innerHTML) renderSchedule(_schedItems); }
 }
@@ -1524,6 +1525,43 @@ function costLineFor(it){
   }
   return costText(it);
 }
+// ── 費用計算表（閲覧のみ） ──
+function _cvMmdd(ymd){ if(!ymd) return ''; var p=String(ymd).split('-'); return p.length>=3?(p[1]+'/'+p[2]):String(ymd); }
+function _cvShort(n){ var a=Array.from(String(n||'')); return a.length>3?(a.slice(0,3).join('')+'…'):a.join(''); }
+function costViewHtml(items, members, myTid){
+  var its=(items||[]).slice().sort(function(a,b){ return ((a.date||'9999-99-99')+(a.time||'99:99')) < ((b.date||'9999-99-99')+(b.time||'99:99')) ? -1:1; });
+  var mem=members||[];
+  function imembers(it){ var all=mem.map(function(m){return m.tid;}); var set=(it&&Array.isArray(it.members))?it.members:all; return all.filter(function(t){return set.indexOf(t)>=0;}); }
+  function share(it){ var n=imembers(it).length; if(!n) return 0; var base=(it.actual!=null&&it.actual!=='')?Number(it.actual):Number(it.budget||0); if(!isFinite(base)||base<=0) return 0; return Math.ceil(base/n/100)*100; }
+  if(!mem.length) return '<div style="color:var(--ink3);font-size:13px;padding:10px">費用計算メンバーが設定されていません。</div>';
+  var head='<tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th>'
+    +mem.map(function(m){ return '<th'+(m.tid===myTid?' class="cv-me"':'')+' title="'+esc(m.name)+'">'+esc(_cvShort(m.name))+'</th>'; }).join('')+'<th>備考</th></tr>';
+  var totals={}; mem.forEach(function(m){totals[m.tid]=0;});
+  var rows=its.map(function(it){
+    var sh=share(it); var imset={}; imembers(it).forEach(function(t){imset[t]=1;});
+    var cells=mem.map(function(m){ var me=(m.tid===myTid)?' cv-me':'';
+      if(imset[m.tid]){ totals[m.tid]+=sh; return '<td class="cv-amt'+me+'">¥'+sh.toLocaleString()+'</td>'; }
+      return '<td class="cv-off'+me+'">—</td>'; }).join('');
+    return '<tr><td>'+esc(_cvMmdd(it.date))+'</td><td>'+esc(it.time||'')+'</td><td style="text-align:left">'+esc(it.name||'')+'</td>'
+      +'<td>¥'+Number(it.budget||0).toLocaleString()+'</td><td>'+((it.actual!=null&&it.actual!=='')?'¥'+Number(it.actual).toLocaleString():'—')+'</td>'
+      +cells+'<td style="text-align:left">'+esc(it.notes||'')+'</td></tr>';
+  }).join('');
+  var foot='<tr class="cv-foot"><td colspan="5" style="text-align:right">合計 →</td>'
+    +mem.map(function(m){ return '<td'+(m.tid===myTid?' class="cv-me"':'')+'>¥'+(totals[m.tid]||0).toLocaleString()+'</td>'; }).join('')+'<td></td></tr>';
+  var summary=myTid?('<div class="cv-summary">あなたの合計負担：<b>¥'+(totals[myTid]||0).toLocaleString()+'</b></div>'):'';
+  return summary+'<div class="cv-wrap"><table class="cv-table"><thead>'+head+'</thead><tbody>'+rows+'</tbody><tfoot>'+foot+'</tfoot></table></div>';
+}
+function renderCostBanner(){
+  var el=g('cost-banner'); if(!el) return;
+  var pub=!!(_ev&&_ev.costPublished), mine=_myCostTid();
+  if(pub && mine){ el.innerHTML='<div class="cost-banner" onclick="openCostView()">💰 費用計算表があります　<span class="cost-banner-go">見る ›</span></div>'; }
+  else { el.innerHTML=''; }
+}
+function openCostView(){
+  g('cost-view-body').innerHTML=costViewHtml((_ev&&_ev.costItems)||[], (_ev&&_ev.costMembers)||[], _myCostTid());
+  g('cost-view-modal').classList.add('open');
+}
+function closeCostView(){ g('cost-view-modal').classList.remove('open'); }
 function renderSchedItem(it){
   var ic=itemIcon(it);
   var geo=(it.lat!=null&&it.lng!=null);
@@ -2726,6 +2764,25 @@ function agg(s,resp){
 }
 function toast(m){ var d=document.createElement('div'); d.textContent=m; d.style.cssText='position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#18110a;color:#fff;font-size:13px;padding:10px 18px;border-radius:18px;z-index:9999'; document.body.appendChild(d); setTimeout(function(){d.remove();},2600); }
 </script>
+<style>
+.cost-banner{background:linear-gradient(135deg,#7a5610,#c8921e);color:#fff;border-radius:12px;padding:12px 16px;margin-bottom:14px;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;box-shadow:0 2px 8px rgba(200,146,30,.22)}
+.cost-banner-go{margin-left:auto;font-size:13px;opacity:.92}
+.cv-summary{font-size:14px;color:var(--ink2);margin-bottom:8px;background:#fff8e9;border:1px solid #ecd9a0;border-radius:8px;padding:8px 12px}
+.cv-wrap{overflow-x:auto;border:1px solid var(--border2);border-radius:8px}
+.cv-table{border-collapse:collapse;font-size:12px;min-width:100%;background:#fff}
+.cv-table th,.cv-table td{border:1px solid var(--border2);padding:4px 7px;white-space:nowrap;text-align:center}
+.cv-table th{background:var(--cream2);font-weight:700}
+.cv-table .cv-amt{color:var(--gold-d);font-weight:600}
+.cv-table .cv-off{color:#c9c2b4;background:#f6f4ef}
+.cv-table .cv-me{background:#fdefce !important}
+.cv-table .cv-foot td{background:#fff8e9;font-weight:700}
+</style>
+<div class="mbg" id="cost-view-modal">
+  <div class="modal" style="max-width:960px">
+    <div class="mhd"><span>💰 費用計算表</span><button class="x" onclick="closeCostView()">閉じる</button></div>
+    <div class="mbd"><div id="cost-view-body"></div></div>
+  </div>
+</div>
 <script src="/access-log.js?v=20260826"></script>
 </body>
 </html>
