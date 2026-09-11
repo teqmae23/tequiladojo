@@ -1487,29 +1487,41 @@ function costMain(it){ if(it.costAmount!=null){ var y=(it.costJpy!=null?it.costJ
 // 外貨換算時は「円貨（外貨）」で1行表示
 function costText(it){ var m=costMain(it); if(!m) return ''; if(it.costAmount!=null && it.costCurrency && it.costCurrency!=='JPY') return m+'（'+curSym(it.costCurrency)+Number(it.costAmount).toLocaleString()+'）'; return m; }
 // ── 費用計算（計算表）: スケジュール項目に紐づく費目から、閲覧者のひとりあたり負担を算出 ──
-function _isCostMember(){
+// 閲覧者に対応する計算メンバーの tid（見つからなければ null）
+function _myCostTid(){
   var cms=(_ev&&Array.isArray(_ev.costMembers))?_ev.costMembers:[];
   var mid=String(_memberId||'');
-  return cms.some(function(m){
-    return (m.uid&&m.uid===_uid) || (m.tid&&m.tid===_uid)
-      || (m.memberId&&String(m.memberId)===mid) || (m.tid&&String(m.tid)===mid);
-  });
+  for(var i=0;i<cms.length;i++){ var m=cms[i];
+    if((m.uid&&m.uid===_uid)||(m.tid&&m.tid===_uid)||(m.memberId&&String(m.memberId)===mid)||(m.tid&&String(m.tid)===mid)) return m.tid;
+  }
+  return null;
 }
 function _costItemForSched(schedId){
   var cis=(_ev&&Array.isArray(_ev.costItems))?_ev.costItems:[];
   for(var i=0;i<cis.length;i++){ if(cis[i].schedItemId===schedId) return cis[i]; }
   return null;
 }
+// この費目の按分対象 tid（未設定なら全計算メンバー。常に現在の計算メンバーに限定）
+function _ciMembers(ci){
+  var all=(_ev&&Array.isArray(_ev.costMembers))?_ev.costMembers.map(function(m){return m.tid;}):[];
+  var set=(ci&&Array.isArray(ci.members))?ci.members:all;
+  return all.filter(function(t){ return set.indexOf(t)>=0; });
+}
 function _costShareOf(ci){
-  var n=(_ev&&Array.isArray(_ev.costMembers))?_ev.costMembers.length:0; if(!n||!ci) return 0;
+  var n=_ciMembers(ci).length; if(!n||!ci) return 0;
   var base=(ci.actual!=null&&ci.actual!=='')?Number(ci.actual):Number(ci.budget||0);
   if(!isFinite(base)||base<=0) return 0;
   return Math.ceil(base/n/100)*100;
 }
-// 表示は費用計算を優先。紐づく費目が無い項目は旧costText（後方互換）にフォールバック。
+// 表示は費用計算を優先。費目が紐づく項目で自分が対象なら負担額、対象外なら非表示。
+// 費目の紐づけが無い項目のみ旧costtext（後方互換）にフォールバック。
 function costLineFor(it){
   var ci=_costItemForSched(it.id);
-  if(ci && _isCostMember()){ var sh=_costShareOf(ci); if(sh>0) return '💰 あなたの負担 ¥'+sh.toLocaleString(); }
+  if(ci){
+    var mytid=_myCostTid();
+    if(mytid && _ciMembers(ci).indexOf(mytid)>=0){ var sh=_costShareOf(ci); if(sh>0) return '💰 あなたの負担 ¥'+sh.toLocaleString(); }
+    return '';
+  }
   return costText(it);
 }
 function renderSchedItem(it){
