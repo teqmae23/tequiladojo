@@ -1557,11 +1557,21 @@ function costViewHtml(items, members, myTid){
     +mem.map(function(m){ return '<td'+(m.tid===myTid?' class="cv-me"':'')+'>¥'+(totals[m.tid]||0).toLocaleString()+'</td>'; }).join('')+'<td colspan="2"></td></tr>';
   var summary=myTid?('<div class="cv-summary">あなたの合計負担：<b>¥'+(totals[myTid]||0).toLocaleString()+'</b></div>'):'';
   function netCell(net){ var t=net<0?('−¥'+Math.abs(net).toLocaleString()+' 支払'):(net>0?('¥'+net.toLocaleString()+' 受取'):'¥0'); return '<td class="'+(net>0?'cs-plus':net<0?'cs-minus':'')+'">'+t+'</td>'; }
-  var srows=mem.map(function(m){ var p=paid[m.tid]||0, s=totals[m.tid]||0, net=p-s; var me=(m.tid===myTid)?' class="cv-me"':'';
-    return '<tr'+me+'><td style="text-align:left">'+esc(m.name)+'</td><td>¥'+p.toLocaleString()+'</td><td>¥'+s.toLocaleString()+'</td>'+netCell(net)+'</tr>'; }).join('');
+  // デポジット（事前徴収）と差し引き
+  var deposits=(_ev&&Array.isArray(_ev.costDeposits))?_ev.costDeposits:[];
+  var defPayer=(_ev&&_ev.costDefaultPayer)||'';
+  var dep={}, depTotal=0; mem.forEach(function(m){dep[m.tid]=0;});
+  deposits.forEach(function(d){ var a=Number(d.amount||0); if(!isFinite(a)||a<=0) return; if(dep[d.tid]!=null){ dep[d.tid]+=a; depTotal+=a; } });
+  var applied=!!(defPayer && dep[defPayer]!=null);
+  var srows=mem.map(function(m){
+    var p=paid[m.tid]||0, s=totals[m.tid]||0, dv=dep[m.tid]||0;
+    var net=applied?(p+dv-s-((m.tid===defPayer)?depTotal:0)):(p-s);
+    var me=(m.tid===myTid)?' class="cv-me"':'';
+    return '<tr'+me+'><td style="text-align:left">'+esc(m.name)+(m.tid===defPayer?' <span class="cs-tag">既定</span>':'')+'</td><td>¥'+p.toLocaleString()+'</td><td>¥'+dv.toLocaleString()+'</td><td>¥'+s.toLocaleString()+'</td>'+netCell(net)+'</tr>'; }).join('');
+  var dnote=(depTotal>0&&applied)?('<div class="cv-settle-sum" style="margin-top:4px">デポジット計 ¥'+depTotal.toLocaleString()+' はデフォルト支払者（'+esc(pName(defPayer)||'—')+'）が受領済みとして反映。</div>'):'';
   var settle='<div class="cv-settle-t">集計・立て替え精算</div>'
     +'<div class="cv-settle-sum">予算合計 <b>¥'+tb.toLocaleString()+'</b>　／　実費合計 <b>¥'+ta.toLocaleString()+'</b></div>'
-    +'<div class="cv-wrap"><table class="cv-table cv-settle"><thead><tr><th>メンバー</th><th>立て替え</th><th>負担</th><th>差し引き</th></tr></thead><tbody>'+srows+'</tbody></table></div>';
+    +'<div class="cv-wrap"><table class="cv-table cv-settle"><thead><tr><th>メンバー</th><th>立て替え</th><th>デポジット</th><th>負担</th><th>差し引き</th></tr></thead><tbody>'+srows+'</tbody></table></div>'+dnote;
   return summary+'<div class="cv-wrap"><table class="cv-table"><thead>'+head+'</thead><tbody>'+rows+'</tbody><tfoot>'+foot+'</tfoot></table></div>'+settle;
 }
 function renderCostBanner(){
@@ -1592,6 +1602,7 @@ function _costPrintCss(){
     +'.cv-settle td{text-align:right}'
     +'.cv-settle .cs-plus{color:#1a7a3c;font-weight:700}'
     +'.cv-settle .cs-minus{color:#b3261e;font-weight:700}'
+    +'.cs-tag{font-size:9px;background:#7a5610;color:#fff;border-radius:4px;padding:1px 4px;font-weight:700}'
     +'@media print{body{padding:0}}';
 }
 function printCostView(){
@@ -2820,6 +2831,7 @@ function toast(m){ var d=document.createElement('div'); d.textContent=m; d.style
 .cv-settle td{text-align:right}
 .cv-settle .cs-plus{color:#1a7a3c;font-weight:700}
 .cv-settle .cs-minus{color:#b3261e;font-weight:700}
+.cs-tag{font-size:10px;background:#7a5610;color:#fff;border-radius:4px;padding:1px 5px;font-weight:700;vertical-align:middle}
 </style>
 <div class="mbg" id="cost-view-modal">
   <div class="modal" style="max-width:960px">

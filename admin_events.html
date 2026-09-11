@@ -178,6 +178,8 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .cost-settle th{background:var(--cream2);font-weight:700;text-align:center}
 .cost-settle .cs-plus,.cv-settle .cs-plus{color:var(--green);font-weight:700}
 .cost-settle .cs-minus,.cv-settle .cs-minus{color:var(--red);font-weight:700}
+.cs-tag{font-size:10px;background:var(--gold-d,#7a5610);color:#fff;border-radius:4px;padding:1px 5px;font-weight:700;vertical-align:middle}
+.cost-table .ci-dep-date{width:130px}
 .cv-settle-t{font-weight:700;font-size:13px;margin:16px 0 4px}
 .cv-settle-sum{font-size:12px;margin-bottom:6px}
 .cv-summary{font-size:14px;color:var(--ink2);margin-bottom:8px;background:#fff8e9;border:1px solid #ecd9a0;border-radius:8px;padding:8px 12px}
@@ -818,6 +820,12 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
     <div class="mbd">
       <div class="cost-sec-t">費用計算メンバー（チェックした人で按分します）</div>
       <div id="cost-members" class="cost-members"><div class="ec">読み込み中…</div></div>
+      <div class="cost-sec-t" style="margin-top:14px;display:flex;align-items:center;gap:10px">デフォルト支払者
+        <select id="cost-default-payer" onchange="setCostDefaultPayer(this.value)" style="padding:4px 8px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:#fff"><option value="">（未設定）</option></select>
+        <span style="font-size:11px;color:var(--ink3);font-weight:400">新しい費目の支払者に自動設定。デポジットの受領者になります。</span>
+      </div>
+      <div class="cost-sec-t" style="margin-top:14px;display:flex;align-items:center;gap:10px">デポジット（事前徴収） <button class="btn bp sm" onclick="addCostDeposit()">＋ デポジットを追加</button></div>
+      <div class="cost-table-wrap"><div id="cost-deposits"></div></div>
       <div class="cost-sec-t" style="margin-top:16px;display:flex;align-items:center;gap:10px">計算表 <button class="btn bp sm" onclick="addCostItem()">＋ 費目を追加</button></div>
       <div class="cost-table-wrap"><table class="cost-table" id="cost-table"></table></div>
       <div style="font-size:11px;color:var(--ink3);margin-top:6px">・按分は100円未満切り上げ。実費を入力するとその金額での按分に置き換わります。<br>・<b>参加者の金額セルをクリック</b>すると、その費目の按分対象に含める／外せます（「—」＝対象外）。費目ごとに対象を変えられます。<br>・<b>支払者</b>を選ぶと立て替え精算に反映されます。<br>・対応スケジュールを選ぶと、その項目にひとりあたりの費用が表示されます（旧「各自〇円」は廃止）。</div>
@@ -2082,7 +2090,7 @@ function editPlace(pid){
 function delPlace(pid){ if(!confirm('この場所を削除しますか？')) return; db.collection('places').doc(pid).delete().then(function(){ toast('削除しました'); renderPlaceMgr(); }).catch(function(e){ toast('削除失敗: '+e.message); }); }
 
 /* ════════ 費用計算 ════════ */
-var _costEventId=null, _costMembers=[], _costItems=[], _costRoster=[], _costSched=[], _costDates=[], _costDirty=false;
+var _costEventId=null, _costMembers=[], _costItems=[], _costRoster=[], _costSched=[], _costDates=[], _costDirty=false, _costDefaultPayer='', _costDeposits=[];
 function _rangeDates(start,end){
   var out=[]; if(!start) return out;
   var s=new Date(start+'T00:00:00'), e=new Date(((end||start))+'T00:00:00');
@@ -2102,6 +2110,8 @@ function openCostMgr(eid){
   g('cost-msg').textContent='';
   _costMembers=(ev&&Array.isArray(ev.costMembers))?ev.costMembers.map(function(m){return Object.assign({},m);}):[];
   _costItems=(ev&&Array.isArray(ev.costItems))?ev.costItems.map(function(m){return Object.assign({},m);}):[];
+  _costDefaultPayer=(ev&&ev.costDefaultPayer)||'';
+  _costDeposits=(ev&&Array.isArray(ev.costDeposits))?ev.costDeposits.map(function(m){return Object.assign({},m);}):[];
   g('cost-published').checked=!!(ev&&ev.costPublished);
   _costDirty=false;
   g('cost-members').innerHTML='<div class="ec">読み込み中…</div>';
@@ -2111,7 +2121,7 @@ function openCostMgr(eid){
     _costRoster=res[0]||[];
     _costSched=res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
     _costSched.sort(function(a,b){ return schSortKey(a)<schSortKey(b)?-1:1; });
-    renderCostMembers(); renderCostTable();
+    renderCostMembers(); renderCostAux(); renderCostTable();
   }).catch(function(){ g('cost-members').innerHTML='<div class="ec">読込に失敗しました</div>'; });
 }
 function closeCostMgr(){ g('cost-mgr-modal').classList.remove('open'); }
@@ -2137,8 +2147,8 @@ function toggleCostMember(cb){
   _costDirty=true;
   var tid=cb.getAttribute('data-cm'), r=_costRoster.find(function(x){return x.tid===tid;}); if(!r)return;
   if(cb.checked){ if(!_cmChecked(tid)) _costMembers.push({tid:r.tid,uid:r.uid||'',name:r.name,memberId:r.memberId||''}); }
-  else { _costMembers=_costMembers.filter(function(m){return m.tid!==tid;}); }
-  renderCostTable();
+  else { _costMembers=_costMembers.filter(function(m){return m.tid!==tid;}); if(_costDefaultPayer===tid) _costDefaultPayer=''; }
+  renderCostAux(); renderCostTable();
 }
 function _costBase(it){
   var a=(it.actual!=null&&it.actual!=='')?Number(it.actual):null;
@@ -2217,17 +2227,26 @@ function _payerOptions(sel){
   return o;
 }
 function _payerName(tid){ var m=_costMembers.find(function(x){return x.tid===tid;}); return m?m.name:''; }
-// 立て替え精算の集計: 予算/実費合計、各人の 立て替え(支払者指定費目の合計)・負担(按分合計)・差し引き
-function _computeSettle(its, mem){
-  var share={}, paid={}, tb=0, ta=0;
-  mem.forEach(function(m){ share[m.tid]=0; paid[m.tid]=0; });
+// 立て替え精算の集計: 予算/実費合計、各人の 立て替え(支払者指定費目)・デポジット(事前徴収)・負担(按分)・差し引き
+// デポジットはデフォルト支払者へ事前に払った額として、支払者が受領済み扱いで差し引きに反映する。
+function _computeSettle(its, mem, deposits, defPayer){
+  var share={}, paidCost={}, dep={}, tb=0, ta=0;
+  mem.forEach(function(m){ share[m.tid]=0; paidCost[m.tid]=0; dep[m.tid]=0; });
   its.forEach(function(it){
     tb+=Number(it.budget||0);
     if(it.actual!=null&&it.actual!=='') ta+=Number(it.actual)||0;
     var sh=costShare(it); _itemMembers(it).forEach(function(t){ if(share[t]!=null) share[t]+=sh; });
-    if(it.payer && paid[it.payer]!=null) paid[it.payer]+=_costBase(it);
+    if(it.payer && paidCost[it.payer]!=null) paidCost[it.payer]+=_costBase(it);
   });
-  return { tb:tb, ta:ta, paid:paid, share:share };
+  var depTotal=0;
+  (deposits||[]).forEach(function(d){ var a=Number(d.amount||0); if(!isFinite(a)||a<=0) return; if(dep[d.tid]!=null){ dep[d.tid]+=a; depTotal+=a; } });
+  var applied=!!(defPayer && dep[defPayer]!=null); // デフォルト支払者が計算メンバーの場合のみ精算に反映
+  var net={};
+  mem.forEach(function(m){
+    if(applied){ var received=(m.tid===defPayer)?depTotal:0; net[m.tid]=(paidCost[m.tid]||0)+(dep[m.tid]||0)-(share[m.tid]||0)-received; }
+    else { net[m.tid]=(paidCost[m.tid]||0)-(share[m.tid]||0); }
+  });
+  return { tb:tb, ta:ta, paidCost:paidCost, share:share, dep:dep, net:net, depTotal:depTotal, applied:applied, defPayer:defPayer };
 }
 function _netCell(net, cls){
   cls=cls||'';
@@ -2238,16 +2257,44 @@ function renderCostSettle(){
   var el=g('cost-settle'); if(!el) return;
   var mem=_costMembers;
   if(!mem.length||!_costItems.length){ el.innerHTML=''; return; }
-  var s=_computeSettle(_costItems, mem);
+  var s=_computeSettle(_costItems, mem, _costDeposits, _costDefaultPayer);
   var rows=mem.map(function(m){
-    var p=s.paid[m.tid]||0, sh=s.share[m.tid]||0, net=p-sh;
-    return '<tr><td style="text-align:left">'+esc(m.name)+'</td><td>¥'+p.toLocaleString()+'</td><td>¥'+sh.toLocaleString()+'</td>'+_netCell(net)+'</tr>';
+    return '<tr><td style="text-align:left">'+esc(m.name)+(m.tid===_costDefaultPayer?' <span class="cs-tag">既定</span>':'')+'</td>'
+      +'<td>¥'+(s.paidCost[m.tid]||0).toLocaleString()+'</td><td>¥'+(s.dep[m.tid]||0).toLocaleString()+'</td><td>¥'+(s.share[m.tid]||0).toLocaleString()+'</td>'+_netCell(s.net[m.tid]||0)+'</tr>';
   }).join('');
+  var note=s.depTotal>0 ? (s.applied?('デポジット計 ¥'+s.depTotal.toLocaleString()+' はデフォルト支払者（'+esc(_payerName(_costDefaultPayer)||'—')+'）が受領済みとして差し引きに反映しています。'):'⚠ デポジットを精算に反映するにはデフォルト支払者を設定してください。') : '';
   el.innerHTML='<div class="cv-settle-t">集計・立て替え精算</div>'
     +'<div class="cv-settle-sum">予算合計 <b>¥'+s.tb.toLocaleString()+'</b>　／　実費合計 <b>¥'+s.ta.toLocaleString()+'</b></div>'
-    +'<div class="cost-table-wrap"><table class="cost-settle"><thead><tr><th>メンバー</th><th>立て替え</th><th>負担</th><th>差し引き</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
-    +'<div style="font-size:11px;color:var(--ink3);margin-top:4px">立て替え＝支払者に指定した費目の合計（実費優先／なければ予算）。差し引き＝立て替え−負担（＋受取／−支払）。</div>';
+    +'<div class="cost-table-wrap"><table class="cost-settle"><thead><tr><th>メンバー</th><th>立て替え</th><th>デポジット</th><th>負担</th><th>差し引き</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    +'<div style="font-size:11px;color:var(--ink3);margin-top:4px">立て替え＝支払者に指定した費目の合計。デポジット＝事前徴収。差し引き＝立て替え＋デポジット−負担（デフォルト支払者は受領デポジットを控除）。＋受取／−支払。'+(note?'<br>'+note:'')+'</div>';
 }
+function renderCostAux(){
+  var dp=g('cost-default-payer');
+  if(dp){ dp.innerHTML='<option value="">（未設定）</option>'+_costMembers.map(function(m){return '<option value="'+esc(m.tid)+'"'+(_costDefaultPayer===m.tid?' selected':'')+'>'+esc(m.name)+'</option>';}).join(''); }
+  renderCostDeposits();
+}
+function setCostDefaultPayer(v){ _costDefaultPayer=v||''; _costDirty=true; renderCostSettle(); }
+function _depNameOptions(sel){
+  var o='<option value="">—</option>';
+  _costMembers.forEach(function(m){ o+='<option value="'+esc(m.tid)+'"'+(sel===m.tid?' selected':'')+'>'+esc(m.name)+'</option>'; });
+  return o;
+}
+function renderCostDeposits(){
+  var el=g('cost-deposits'); if(!el) return;
+  if(!_costMembers.length){ el.innerHTML='<div style="font-size:12px;color:var(--ink3)">先に費用計算メンバーを選択してください。</div>'; return; }
+  var rows=_costDeposits.map(function(d,i){
+    return '<tr>'
+      +'<td><input type="date" class="ci-dep-date" value="'+esc(d.date||'')+'" onchange="depEdit('+i+',\'date\',this.value)"></td>'
+      +'<td><select onchange="depEdit('+i+',\'tid\',this.value);renderCostSettle()">'+_depNameOptions(d.tid)+'</select></td>'
+      +'<td><input class="ci-num" type="number" min="0" placeholder="¥" value="'+(d.amount!=null&&d.amount!==''?esc(String(d.amount)):'')+'" onchange="depEdit('+i+',\'amount\',this.value);renderCostSettle()"></td>'
+      +'<td><button class="ci-del" title="削除" onclick="delCostDeposit('+i+')">🗑</button></td></tr>';
+  }).join('');
+  if(!_costDeposits.length) rows='<tr><td colspan="4" style="color:var(--ink3);padding:8px">「＋ デポジットを追加」で行を追加してください</td></tr>';
+  el.innerHTML='<table class="cost-table"><thead><tr><th>日付</th><th>名前</th><th>金額</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+}
+function addCostDeposit(){ _costDirty=true; _costDeposits.push({ id:'dp_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), date:'', tid:'', amount:null }); renderCostDeposits(); }
+function delCostDeposit(i){ if(!confirm('このデポジットを削除しますか？')) return; _costDirty=true; _costDeposits.splice(i,1); renderCostDeposits(); renderCostSettle(); }
+function depEdit(i, field, val){ _costDirty=true; var d=_costDeposits[i]; if(!d) return; if(field==='amount'){ d.amount=(val===''?null:Math.max(0,Number(val)||0)); } else { d[field]=val; } }
 function costEdit(i, field, val){
   _costDirty=true;
   var it=_costItems[i]; if(!it) return;
@@ -2267,7 +2314,7 @@ function costLinkSched(i, schedId){
 }
 function addCostItem(){
   _costDirty=true;
-  _costItems.push({ id:'ci_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), name:'', date:'', time:'', schedItemId:'', budget:null, actual:null, notes:'' });
+  _costItems.push({ id:'ci_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), name:'', date:'', time:'', schedItemId:'', budget:null, actual:null, payer:_costDefaultPayer||'', notes:'' });
   renderCostTable();
 }
 function delCostItem(i){ if(!confirm('この費目を削除しますか？')) return; _costDirty=true; _costItems.splice(i,1); renderCostTable(); }
@@ -2277,9 +2324,11 @@ function saveCost(closeAfter){
   // 対応スケジュールのタイトルを保存（会員側の表示用・改名にも追随）
   _costItems.forEach(function(it){ it.schedTitle = it.schedItemId ? _schTitle(it.schedItemId) : ''; });
   var pub=!!g('cost-published').checked;
-  db.collection('events').doc(_costEventId).set({ costMembers:_costMembers, costItems:_costItems, costPublished:pub, updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
+  // デフォルト支払者が計算メンバーから外れていたら未設定に正規化
+  if(_costDefaultPayer && !_costMembers.some(function(m){return m.tid===_costDefaultPayer;})) _costDefaultPayer='';
+  db.collection('events').doc(_costEventId).set({ costMembers:_costMembers, costItems:_costItems, costPublished:pub, costDefaultPayer:_costDefaultPayer||'', costDeposits:_costDeposits, updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
     .then(function(){
-      var ev=events.find(function(x){return x.id===_costEventId;}); if(ev){ ev.costMembers=_costMembers.slice(); ev.costItems=_costItems.slice(); ev.costPublished=pub; }
+      var ev=events.find(function(x){return x.id===_costEventId;}); if(ev){ ev.costMembers=_costMembers.slice(); ev.costItems=_costItems.slice(); ev.costPublished=pub; ev.costDefaultPayer=_costDefaultPayer||''; ev.costDeposits=_costDeposits.slice(); }
       _costDirty=false;
       g('cost-msg').textContent='保存しました'; toast('費用計算を保存しました');
       if(closeAfter===true) closeCostMgr();
@@ -2314,14 +2363,16 @@ function costViewHtml(myTid){
 // 立て替え精算ブロック（閲覧・印刷用）
 function _settleView(its, mem, myTid){
   if(!mem.length) return '';
-  var s=_computeSettle(its, mem);
+  var s=_computeSettle(its, mem, _costDeposits, _costDefaultPayer);
   var rows=mem.map(function(m){
-    var p=s.paid[m.tid]||0, sh=s.share[m.tid]||0, net=p-sh; var me=(m.tid===myTid)?' class="cv-me"':'';
-    return '<tr'+me+'><td style="text-align:left">'+esc(m.name)+'</td><td>¥'+p.toLocaleString()+'</td><td>¥'+sh.toLocaleString()+'</td>'+_netCell(net)+'</tr>';
+    var me=(m.tid===myTid)?' class="cv-me"':'';
+    return '<tr'+me+'><td style="text-align:left">'+esc(m.name)+(m.tid===_costDefaultPayer?' <span class="cs-tag">既定</span>':'')+'</td>'
+      +'<td>¥'+(s.paidCost[m.tid]||0).toLocaleString()+'</td><td>¥'+(s.dep[m.tid]||0).toLocaleString()+'</td><td>¥'+(s.share[m.tid]||0).toLocaleString()+'</td>'+_netCell(s.net[m.tid]||0)+'</tr>';
   }).join('');
+  var note=s.depTotal>0&&s.applied?('<div class="cv-settle-sum" style="margin-top:4px">デポジット計 ¥'+s.depTotal.toLocaleString()+' はデフォルト支払者（'+esc(_payerName(_costDefaultPayer)||'—')+'）が受領済みとして反映。</div>'):'';
   return '<div class="cv-settle-t">集計・立て替え精算</div>'
     +'<div class="cv-settle-sum">予算合計 <b>¥'+s.tb.toLocaleString()+'</b>　／　実費合計 <b>¥'+s.ta.toLocaleString()+'</b></div>'
-    +'<div class="cv-wrap"><table class="cv-table cv-settle"><thead><tr><th>メンバー</th><th>立て替え</th><th>負担</th><th>差し引き</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    +'<div class="cv-wrap"><table class="cv-table cv-settle"><thead><tr><th>メンバー</th><th>立て替え</th><th>デポジット</th><th>負担</th><th>差し引き</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+note;
 }
 function openCostPreview(){
   var sel=g('cost-view-user');
@@ -2348,6 +2399,7 @@ function _costPrintCss(){
     +'.cv-settle td{text-align:right}'
     +'.cv-settle .cs-plus{color:#1a7a3c;font-weight:700}'
     +'.cv-settle .cs-minus{color:#b3261e;font-weight:700}'
+    +'.cs-tag{font-size:9px;background:#7a5610;color:#fff;border-radius:4px;padding:1px 4px;font-weight:700}'
     +'@media print{body{padding:0}}';
 }
 function printCostView(){
