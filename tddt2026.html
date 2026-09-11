@@ -1534,22 +1534,35 @@ function costViewHtml(items, members, myTid){
   function imembers(it){ var all=mem.map(function(m){return m.tid;}); var set=(it&&Array.isArray(it.members))?it.members:all; return all.filter(function(t){return set.indexOf(t)>=0;}); }
   function share(it){ var n=imembers(it).length; if(!n) return 0; var base=(it.actual!=null&&it.actual!=='')?Number(it.actual):Number(it.budget||0); if(!isFinite(base)||base<=0) return 0; return Math.ceil(base/n/100)*100; }
   if(!mem.length) return '<div style="color:var(--ink3);font-size:13px;padding:10px">費用計算メンバーが設定されていません。</div>';
-  var head='<tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th>'
-    +mem.map(function(m){ return '<th'+(m.tid===myTid?' class="cv-me"':'')+' title="'+esc(m.name)+'">'+esc(_cvShort(m.name))+'</th>'; }).join('')+'<th>備考</th></tr>';
-  var totals={}; mem.forEach(function(m){totals[m.tid]=0;});
+  function base(it){ var a=(it.actual!=null&&it.actual!=='')?Number(it.actual):Number(it.budget||0); return (isFinite(a)&&a>0)?a:0; }
+  function pName(tid){ var m=mem.find(function(x){return x.tid===tid;}); return m?m.name:''; }
+  var head='<tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th><th>支払者</th>'
+    +mem.map(function(m){ return '<th'+(m.tid===myTid?' class="cv-me"':'')+' title="'+esc(m.name)+'">'+esc(_cvShort(m.name))+'</th>'; }).join('')+'<th>対応スケジュール</th><th>備考</th></tr>';
+  var totals={}, paid={}; mem.forEach(function(m){totals[m.tid]=0;paid[m.tid]=0;});
+  var tb=0, ta=0;
   var rows=its.map(function(it){
     var sh=share(it); var imset={}; imembers(it).forEach(function(t){imset[t]=1;});
+    tb+=Number(it.budget||0); if(it.actual!=null&&it.actual!=='') ta+=Number(it.actual)||0;
+    if(it.payer && paid[it.payer]!=null) paid[it.payer]+=base(it);
     var cells=mem.map(function(m){ var me=(m.tid===myTid)?' cv-me':'';
       if(imset[m.tid]){ totals[m.tid]+=sh; return '<td class="cv-amt'+me+'">¥'+sh.toLocaleString()+'</td>'; }
       return '<td class="cv-off'+me+'">—</td>'; }).join('');
+    var pn=pName(it.payer);
     return '<tr><td>'+esc(_cvMmdd(it.date))+'</td><td>'+esc(it.time||'')+'</td><td style="text-align:left">'+esc(it.name||'')+'</td>'
       +'<td>¥'+Number(it.budget||0).toLocaleString()+'</td><td>'+((it.actual!=null&&it.actual!=='')?'¥'+Number(it.actual).toLocaleString():'—')+'</td>'
-      +cells+'<td style="text-align:left">'+esc(it.notes||'')+'</td></tr>';
+      +'<td title="'+esc(pn)+'">'+(pn?esc(_cvShort(pn)):'—')+'</td>'
+      +cells+'<td style="text-align:left">'+esc(it.schedTitle||'')+'</td><td style="text-align:left">'+esc(it.notes||'')+'</td></tr>';
   }).join('');
-  var foot='<tr class="cv-foot"><td colspan="5" style="text-align:right">合計 →</td>'
-    +mem.map(function(m){ return '<td'+(m.tid===myTid?' class="cv-me"':'')+'>¥'+(totals[m.tid]||0).toLocaleString()+'</td>'; }).join('')+'<td></td></tr>';
+  var foot='<tr class="cv-foot"><td colspan="6" style="text-align:right">合計 →</td>'
+    +mem.map(function(m){ return '<td'+(m.tid===myTid?' class="cv-me"':'')+'>¥'+(totals[m.tid]||0).toLocaleString()+'</td>'; }).join('')+'<td colspan="2"></td></tr>';
   var summary=myTid?('<div class="cv-summary">あなたの合計負担：<b>¥'+(totals[myTid]||0).toLocaleString()+'</b></div>'):'';
-  return summary+'<div class="cv-wrap"><table class="cv-table"><thead>'+head+'</thead><tbody>'+rows+'</tbody><tfoot>'+foot+'</tfoot></table></div>';
+  function netCell(net){ var t=net<0?('−¥'+Math.abs(net).toLocaleString()+' 支払'):(net>0?('¥'+net.toLocaleString()+' 受取'):'¥0'); return '<td class="'+(net>0?'cs-plus':net<0?'cs-minus':'')+'">'+t+'</td>'; }
+  var srows=mem.map(function(m){ var p=paid[m.tid]||0, s=totals[m.tid]||0, net=p-s; var me=(m.tid===myTid)?' class="cv-me"':'';
+    return '<tr'+me+'><td style="text-align:left">'+esc(m.name)+'</td><td>¥'+p.toLocaleString()+'</td><td>¥'+s.toLocaleString()+'</td>'+netCell(net)+'</tr>'; }).join('');
+  var settle='<div class="cv-settle-t">集計・立て替え精算</div>'
+    +'<div class="cv-settle-sum">予算合計 <b>¥'+tb.toLocaleString()+'</b>　／　実費合計 <b>¥'+ta.toLocaleString()+'</b></div>'
+    +'<div class="cv-wrap"><table class="cv-table cv-settle"><thead><tr><th>メンバー</th><th>立て替え</th><th>負担</th><th>差し引き</th></tr></thead><tbody>'+srows+'</tbody></table></div>';
+  return summary+'<div class="cv-wrap"><table class="cv-table"><thead>'+head+'</thead><tbody>'+rows+'</tbody><tfoot>'+foot+'</tfoot></table></div>'+settle;
 }
 function renderCostBanner(){
   var el=g('cost-banner'); if(!el) return;
@@ -1562,6 +1575,32 @@ function openCostView(){
   g('cost-view-modal').classList.add('open');
 }
 function closeCostView(){ g('cost-view-modal').classList.remove('open'); }
+function _costPrintCss(){
+  return 'body{font-family:"Hiragino Sans","Noto Sans JP",sans-serif;padding:16px;color:#18110a}'
+    +'h2{font-size:16px;margin:0 0 12px}'
+    +'.cv-summary{font-size:13px;margin-bottom:10px;background:#fff8e9;border:1px solid #ecd9a0;border-radius:6px;padding:8px 12px}'
+    +'.cv-wrap{overflow:visible;border:0;margin-bottom:8px}'
+    +'table.cv-table{border-collapse:collapse;font-size:11px;width:100%}'
+    +'.cv-table th,.cv-table td{border:1px solid #c9beac;padding:3px 6px;text-align:center;white-space:nowrap}'
+    +'.cv-table th{background:#efe9dd}'
+    +'.cv-table .cv-amt{color:#7a5610;font-weight:600}'
+    +'.cv-table .cv-off{color:#b7ae9e;background:#f6f4ef}'
+    +'.cv-table .cv-me{background:#fdefce}'
+    +'.cv-table .cv-foot td{background:#fff8e9;font-weight:700}'
+    +'.cv-settle-t{font-weight:700;font-size:13px;margin:16px 0 4px}'
+    +'.cv-settle-sum{font-size:11px;margin-bottom:6px}'
+    +'.cv-settle td{text-align:right}'
+    +'.cv-settle .cs-plus{color:#1a7a3c;font-weight:700}'
+    +'.cv-settle .cs-minus{color:#b3261e;font-weight:700}'
+    +'@media print{body{padding:0}}';
+}
+function printCostView(){
+  var el=g('cost-view-body'); if(!el||!el.innerHTML) return;
+  var title='<h2>💰 費用計算表'+((_ev&&_ev.name)?' — '+esc(_ev.name):'')+'</h2>';
+  var w=window.open('','_blank','width=1000,height=760'); if(!w){ toast('ポップアップを許可してください'); return; }
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>費用計算表</title><style>'+_costPrintCss()+'</style></head><body>'+title+el.innerHTML+'</body></html>');
+  w.document.close(); w.focus(); setTimeout(function(){ try{ w.print(); }catch(e){} }, 350);
+}
 function renderSchedItem(it){
   var ic=itemIcon(it);
   var geo=(it.lat!=null&&it.lng!=null);
@@ -2776,10 +2815,15 @@ function toast(m){ var d=document.createElement('div'); d.textContent=m; d.style
 .cv-table .cv-off{color:#c9c2b4;background:#f6f4ef}
 .cv-table .cv-me{background:#fdefce !important}
 .cv-table .cv-foot td{background:#fff8e9;font-weight:700}
+.cv-settle-t{font-weight:700;font-size:14px;margin:16px 0 4px;color:var(--ink2)}
+.cv-settle-sum{font-size:13px;margin-bottom:6px;color:var(--ink2)}
+.cv-settle td{text-align:right}
+.cv-settle .cs-plus{color:#1a7a3c;font-weight:700}
+.cv-settle .cs-minus{color:#b3261e;font-weight:700}
 </style>
 <div class="mbg" id="cost-view-modal">
   <div class="modal" style="max-width:960px">
-    <div class="mhd"><span>💰 費用計算表</span><button class="x" onclick="closeCostView()">閉じる</button></div>
+    <div class="mhd"><span>💰 費用計算表</span><button class="x" onclick="printCostView()" style="margin-left:auto">🖨 印刷</button><button class="x" onclick="closeCostView()">閉じる</button></div>
     <div class="mbd"><div id="cost-view-body"></div></div>
   </div>
 </div>

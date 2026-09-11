@@ -172,6 +172,14 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .cost-table .ci-off:hover{background:#efe9dd}
 .cost-table tfoot td{background:#fff8e9;font-weight:700}
 .cost-table .ci-del{color:var(--red);border:none;background:none;cursor:pointer;font-size:14px}
+.cost-table .ci-payer{width:90px}
+.cost-settle{border-collapse:collapse;font-size:12px;min-width:100%}
+.cost-settle th,.cost-settle td{border:1px solid var(--border2);padding:4px 12px;white-space:nowrap;text-align:right}
+.cost-settle th{background:var(--cream2);font-weight:700;text-align:center}
+.cost-settle .cs-plus,.cv-settle .cs-plus{color:var(--green);font-weight:700}
+.cost-settle .cs-minus,.cv-settle .cs-minus{color:var(--red);font-weight:700}
+.cv-settle-t{font-weight:700;font-size:13px;margin:16px 0 4px}
+.cv-settle-sum{font-size:12px;margin-bottom:6px}
 .cv-summary{font-size:14px;color:var(--ink2);margin-bottom:8px;background:#fff8e9;border:1px solid #ecd9a0;border-radius:8px;padding:8px 12px}
 .cv-wrap{overflow-x:auto;border:1px solid var(--border2);border-radius:8px}
 .cv-table{border-collapse:collapse;font-size:12px;min-width:100%;background:#fff}
@@ -812,7 +820,8 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       <div id="cost-members" class="cost-members"><div class="ec">読み込み中…</div></div>
       <div class="cost-sec-t" style="margin-top:16px;display:flex;align-items:center;gap:10px">計算表 <button class="btn bp sm" onclick="addCostItem()">＋ 費目を追加</button></div>
       <div class="cost-table-wrap"><table class="cost-table" id="cost-table"></table></div>
-      <div style="font-size:11px;color:var(--ink3);margin-top:6px">・按分は100円未満切り上げ。実費を入力するとその金額での按分に置き換わります。<br>・<b>参加者の金額セルをクリック</b>すると、その費目の按分対象に含める／外せます（「—」＝対象外）。費目ごとに対象を変えられます。<br>・対応スケジュールを選ぶと、その項目にひとりあたりの費用が表示されます（旧「各自〇円」は廃止）。</div>
+      <div style="font-size:11px;color:var(--ink3);margin-top:6px">・按分は100円未満切り上げ。実費を入力するとその金額での按分に置き換わります。<br>・<b>参加者の金額セルをクリック</b>すると、その費目の按分対象に含める／外せます（「—」＝対象外）。費目ごとに対象を変えられます。<br>・<b>支払者</b>を選ぶと立て替え精算に反映されます。<br>・対応スケジュールを選ぶと、その項目にひとりあたりの費用が表示されます（旧「各自〇円」は廃止）。</div>
+      <div id="cost-settle"></div>
     </div>
     <div class="mft">
       <label style="font-size:12px;display:inline-flex;align-items:center;gap:5px"><input type="checkbox" id="cost-published" onchange="_costDirty=true"> 公開（対象メンバーに表示）</label>
@@ -831,7 +840,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       <button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeCostView()">✕</button>
     </div>
     <div class="mbd"><div style="font-size:11px;color:var(--ink3);margin-bottom:6px">この会員のイベントページでの見え方です（黄色ハイライト＝その人の負担）。保存前の内容で表示します。</div><div id="cost-view-body"></div></div>
-    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeCostView()">閉じる</button></div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="printCostView()">🖨 印刷</button><button class="btn bs" onclick="closeCostView()">閉じる</button></div>
   </div>
 </div>
 
@@ -2172,10 +2181,10 @@ function renderCostTable(){
   _costItems.sort(function(a,b){ return ((a.date||'9999-99-99')+(a.time||'99:99')) < ((b.date||'9999-99-99')+(b.time||'99:99')) ? -1 : 1; });
   var mem=_costMembers;
   // 並び順: 日付/時間/費目/予算/実費/参加者名/対応スケジュール/備考
-  var head='<thead><tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th>'
+  var head='<thead><tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th><th>支払者</th>'
     +mem.map(function(m){return '<th title="'+esc(m.name)+'">'+esc(_shortName(m.name))+'</th>';}).join('')
     +'<th>対応スケジュール</th><th>備考</th><th></th></tr></thead>';
-  if(!_costItems.length){ g('cost-table').innerHTML=head+'<tbody><tr><td colspan="'+(8+mem.length)+'" style="color:var(--ink3);padding:12px">「＋ 費目を追加」で行を追加してください</td></tr></tbody>'; return; }
+  if(!_costItems.length){ g('cost-table').innerHTML=head+'<tbody><tr><td colspan="'+(9+mem.length)+'" style="color:var(--ink3);padding:12px">「＋ 費目を追加」で行を追加してください</td></tr></tbody>'; renderCostSettle(); return; }
   var totals={}; mem.forEach(function(m){ totals[m.tid]=0; });
   var body=_costItems.map(function(it,i){
     var sh=costShare(it);
@@ -2190,15 +2199,54 @@ function renderCostTable(){
       +'<td><input class="ci-name" value="'+esc(it.name||'')+'" oninput="costEdit('+i+',\'name\',this.value)"></td>'
       +'<td><input class="ci-num" type="number" min="0" value="'+(it.budget!=null&&it.budget!==''?esc(String(it.budget)):'')+'" onchange="costEdit('+i+',\'budget\',this.value);renderCostTable()"></td>'
       +'<td><input class="ci-num" type="number" min="0" placeholder="—" value="'+(it.actual!=null&&it.actual!==''?esc(String(it.actual)):'')+'" onchange="costEdit('+i+',\'actual\',this.value);renderCostTable()"></td>'
+      +'<td><select class="ci-payer" onchange="costEdit('+i+',\'payer\',this.value);renderCostSettle()">'+_payerOptions(it.payer)+'</select></td>'
       +cells
       +'<td><select onchange="costLinkSched('+i+',this.value)">'+_schedOptions(it.schedItemId,it.date)+'</select></td>'
       +'<td><input class="ci-note" value="'+esc(it.notes||'')+'" oninput="costEdit('+i+',\'notes\',this.value)"></td>'
       +'<td><button class="ci-del" title="削除" onclick="delCostItem('+i+')">🗑</button></td>'
     +'</tr>';
   }).join('');
-  var foot='<tfoot><tr><td colspan="5" style="text-align:right">1人あたり合計 →</td>'
+  var foot='<tfoot><tr><td colspan="6" style="text-align:right">1人あたり合計 →</td>'
     +mem.map(function(m){return '<td>¥'+(totals[m.tid]||0).toLocaleString()+'</td>';}).join('')+'<td colspan="3"></td></tr></tfoot>';
   g('cost-table').innerHTML=head+'<tbody>'+body+'</tbody>'+foot;
+  renderCostSettle();
+}
+function _payerOptions(sel){
+  var o='<option value="">（未設定）</option>';
+  _costMembers.forEach(function(m){ o+='<option value="'+esc(m.tid)+'"'+(sel===m.tid?' selected':'')+'>'+esc(m.name)+'</option>'; });
+  return o;
+}
+function _payerName(tid){ var m=_costMembers.find(function(x){return x.tid===tid;}); return m?m.name:''; }
+// 立て替え精算の集計: 予算/実費合計、各人の 立て替え(支払者指定費目の合計)・負担(按分合計)・差し引き
+function _computeSettle(its, mem){
+  var share={}, paid={}, tb=0, ta=0;
+  mem.forEach(function(m){ share[m.tid]=0; paid[m.tid]=0; });
+  its.forEach(function(it){
+    tb+=Number(it.budget||0);
+    if(it.actual!=null&&it.actual!=='') ta+=Number(it.actual)||0;
+    var sh=costShare(it); _itemMembers(it).forEach(function(t){ if(share[t]!=null) share[t]+=sh; });
+    if(it.payer && paid[it.payer]!=null) paid[it.payer]+=_costBase(it);
+  });
+  return { tb:tb, ta:ta, paid:paid, share:share };
+}
+function _netCell(net, cls){
+  cls=cls||'';
+  var txt=net<0?('−¥'+Math.abs(net).toLocaleString()+' 支払'):(net>0?('¥'+net.toLocaleString()+' 受取'):'¥0');
+  return '<td class="'+cls+(net>0?' cs-plus':net<0?' cs-minus':'')+'">'+txt+'</td>';
+}
+function renderCostSettle(){
+  var el=g('cost-settle'); if(!el) return;
+  var mem=_costMembers;
+  if(!mem.length||!_costItems.length){ el.innerHTML=''; return; }
+  var s=_computeSettle(_costItems, mem);
+  var rows=mem.map(function(m){
+    var p=s.paid[m.tid]||0, sh=s.share[m.tid]||0, net=p-sh;
+    return '<tr><td style="text-align:left">'+esc(m.name)+'</td><td>¥'+p.toLocaleString()+'</td><td>¥'+sh.toLocaleString()+'</td>'+_netCell(net)+'</tr>';
+  }).join('');
+  el.innerHTML='<div class="cv-settle-t">集計・立て替え精算</div>'
+    +'<div class="cv-settle-sum">予算合計 <b>¥'+s.tb.toLocaleString()+'</b>　／　実費合計 <b>¥'+s.ta.toLocaleString()+'</b></div>'
+    +'<div class="cost-table-wrap"><table class="cost-settle"><thead><tr><th>メンバー</th><th>立て替え</th><th>負担</th><th>差し引き</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    +'<div style="font-size:11px;color:var(--ink3);margin-top:4px">立て替え＝支払者に指定した費目の合計（実費優先／なければ予算）。差し引き＝立て替え−負担（＋受取／−支払）。</div>';
 }
 function costEdit(i, field, val){
   _costDirty=true;
@@ -2207,12 +2255,14 @@ function costEdit(i, field, val){
   else if(field==='actual'){ it.actual=(val===''?null:Math.max(0,Number(val)||0)); }
   else { it[field]=val; }
 }
+function _schTitle(id){ var s=_costSched.find(function(x){return x.id===id;}); return s?(s.title||''):''; }
 function costLinkSched(i, schedId){
   _costDirty=true;
   var it=_costItems[i]; if(!it) return;
   it.schedItemId=schedId||'';
   var s=_costSched.find(function(x){return x.id===schedId;});
-  if(s){ if(s.date) it.date=s.date; if(s.time) it.time=s.time; if(!it.name&&s.title) it.name=s.title; }
+  if(s){ it.schedTitle=s.title||''; if(s.date) it.date=s.date; if(s.time) it.time=s.time; if(!it.name&&s.title) it.name=s.title; }
+  else { it.schedTitle=''; }
   renderCostTable();
 }
 function addCostItem(){
@@ -2224,6 +2274,8 @@ function delCostItem(i){ if(!confirm('この費目を削除しますか？')) re
 function saveCost(closeAfter){
   var btn=g('cost-save'); btn.disabled=true; g('cost-msg').style.color='var(--green)'; g('cost-msg').textContent='';
   _costItems.sort(function(a,b){ return ((a.date||'9999-99-99')+(a.time||'99:99')) < ((b.date||'9999-99-99')+(b.time||'99:99')) ? -1 : 1; });
+  // 対応スケジュールのタイトルを保存（会員側の表示用・改名にも追随）
+  _costItems.forEach(function(it){ it.schedTitle = it.schedItemId ? _schTitle(it.schedItemId) : ''; });
   var pub=!!g('cost-published').checked;
   db.collection('events').doc(_costEventId).set({ costMembers:_costMembers, costItems:_costItems, costPublished:pub, updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
     .then(function(){
@@ -2240,22 +2292,36 @@ function costViewHtml(myTid){
   var its=_costItems.slice().sort(function(a,b){ return ((a.date||'9999-99-99')+(a.time||'99:99'))<((b.date||'9999-99-99')+(b.time||'99:99'))?-1:1; });
   var mem=_costMembers;
   if(!mem.length) return '<div style="color:var(--ink3);padding:10px">費用計算メンバーが未設定です</div>';
-  var head='<tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th>'
-    +mem.map(function(m){return '<th'+(m.tid===myTid?' class="cv-me"':'')+' title="'+esc(m.name)+'">'+esc(_shortName(m.name))+'</th>';}).join('')+'<th>備考</th></tr>';
+  var head='<tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th><th>支払者</th>'
+    +mem.map(function(m){return '<th'+(m.tid===myTid?' class="cv-me"':'')+' title="'+esc(m.name)+'">'+esc(_shortName(m.name))+'</th>';}).join('')+'<th>対応スケジュール</th><th>備考</th></tr>';
   var totals={}; mem.forEach(function(m){totals[m.tid]=0;});
   var rows=its.map(function(it){
     var sh=costShare(it); var imset={}; _itemMembers(it).forEach(function(t){imset[t]=1;});
     var cells=mem.map(function(m){ var me=(m.tid===myTid)?' cv-me':'';
       if(imset[m.tid]){ totals[m.tid]+=sh; return '<td class="cv-amt'+me+'">¥'+sh.toLocaleString()+'</td>'; }
       return '<td class="cv-off'+me+'">—</td>'; }).join('');
+    var pn=_payerName(it.payer);
     return '<tr><td>'+esc(_mmdd(it.date))+'</td><td>'+esc(it.time||'')+'</td><td style="text-align:left">'+esc(it.name||'')+'</td>'
       +'<td>¥'+Number(it.budget||0).toLocaleString()+'</td><td>'+((it.actual!=null&&it.actual!=='')?'¥'+Number(it.actual).toLocaleString():'—')+'</td>'
-      +cells+'<td style="text-align:left">'+esc(it.notes||'')+'</td></tr>';
+      +'<td title="'+esc(pn)+'">'+(pn?esc(_shortName(pn)):'—')+'</td>'
+      +cells+'<td style="text-align:left">'+esc(it.schedTitle||_schTitle(it.schedItemId))+'</td><td style="text-align:left">'+esc(it.notes||'')+'</td></tr>';
   }).join('');
-  var foot='<tr class="cv-foot"><td colspan="5" style="text-align:right">合計 →</td>'
-    +mem.map(function(m){return '<td'+(m.tid===myTid?' class="cv-me"':'')+'>¥'+(totals[m.tid]||0).toLocaleString()+'</td>';}).join('')+'<td></td></tr>';
+  var foot='<tr class="cv-foot"><td colspan="6" style="text-align:right">合計 →</td>'
+    +mem.map(function(m){return '<td'+(m.tid===myTid?' class="cv-me"':'')+'>¥'+(totals[m.tid]||0).toLocaleString()+'</td>';}).join('')+'<td colspan="2"></td></tr>';
   var summary=myTid?('<div class="cv-summary">この会員の合計負担：<b>¥'+(totals[myTid]||0).toLocaleString()+'</b></div>'):'';
-  return summary+'<div class="cv-wrap"><table class="cv-table"><thead>'+head+'</thead><tbody>'+rows+'</tbody><tfoot>'+foot+'</tfoot></table></div>';
+  return summary+'<div class="cv-wrap"><table class="cv-table"><thead>'+head+'</thead><tbody>'+rows+'</tbody><tfoot>'+foot+'</tfoot></table></div>'+_settleView(its, mem, myTid);
+}
+// 立て替え精算ブロック（閲覧・印刷用）
+function _settleView(its, mem, myTid){
+  if(!mem.length) return '';
+  var s=_computeSettle(its, mem);
+  var rows=mem.map(function(m){
+    var p=s.paid[m.tid]||0, sh=s.share[m.tid]||0, net=p-sh; var me=(m.tid===myTid)?' class="cv-me"':'';
+    return '<tr'+me+'><td style="text-align:left">'+esc(m.name)+'</td><td>¥'+p.toLocaleString()+'</td><td>¥'+sh.toLocaleString()+'</td>'+_netCell(net)+'</tr>';
+  }).join('');
+  return '<div class="cv-settle-t">集計・立て替え精算</div>'
+    +'<div class="cv-settle-sum">予算合計 <b>¥'+s.tb.toLocaleString()+'</b>　／　実費合計 <b>¥'+s.ta.toLocaleString()+'</b></div>'
+    +'<div class="cv-wrap"><table class="cv-table cv-settle"><thead><tr><th>メンバー</th><th>立て替え</th><th>負担</th><th>差し引き</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 function openCostPreview(){
   var sel=g('cost-view-user');
@@ -2265,6 +2331,33 @@ function openCostPreview(){
 function renderCostView(){ var el=g('cost-view-user'); g('cost-view-body').innerHTML=costViewHtml((el&&el.value)||''); }
 function closeCostView(){ g('cost-view-modal').classList.remove('open'); }
 g('cost-view-modal').addEventListener('click',function(e){ if(e.target===g('cost-view-modal')) closeCostView(); });
+function _costPrintCss(){
+  return 'body{font-family:"Hiragino Sans","Noto Sans JP",sans-serif;padding:16px;color:#18110a}'
+    +'h2{font-size:16px;margin:0 0 12px}'
+    +'.cv-summary{font-size:13px;margin-bottom:10px;background:#fff8e9;border:1px solid #ecd9a0;border-radius:6px;padding:8px 12px}'
+    +'.cv-wrap{overflow:visible;border:0}'
+    +'table.cv-table{border-collapse:collapse;font-size:11px;width:100%}'
+    +'.cv-table th,.cv-table td{border:1px solid #c9beac;padding:3px 6px;text-align:center;white-space:nowrap}'
+    +'.cv-table th{background:#efe9dd}'
+    +'.cv-table .cv-amt{color:#7a5610;font-weight:600}'
+    +'.cv-table .cv-off{color:#b7ae9e;background:#f6f4ef}'
+    +'.cv-table .cv-me{background:#fdefce}'
+    +'.cv-table .cv-foot td{background:#fff8e9;font-weight:700}'
+    +'.cv-settle-t{font-weight:700;font-size:13px;margin:16px 0 4px}'
+    +'.cv-settle-sum{font-size:11px;margin-bottom:6px}'
+    +'.cv-settle td{text-align:right}'
+    +'.cv-settle .cs-plus{color:#1a7a3c;font-weight:700}'
+    +'.cv-settle .cs-minus{color:#b3261e;font-weight:700}'
+    +'@media print{body{padding:0}}';
+}
+function printCostView(){
+  var el=g('cost-view-body'); if(!el||!el.innerHTML) return;
+  var ev=events.find(function(x){return x.id===_costEventId;});
+  var title='<h2>💰 費用計算表'+(ev&&ev.name?' — '+esc(ev.name):'')+'</h2>';
+  var w=window.open('','_blank','width=1000,height=760'); if(!w){ toast('ポップアップを許可してください','err'); return; }
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>費用計算表</title><style>'+_costPrintCss()+'</style></head><body>'+title+el.innerHTML+'</body></html>');
+  w.document.close(); w.focus(); setTimeout(function(){ try{ w.print(); }catch(e){} }, 350);
+}
 
 var _schRoster=[];
 function openSchedMgr(eventId){
