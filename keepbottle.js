@@ -708,7 +708,17 @@ window.KB = (function () {
       qty: qty, unit: 'ml', unitPrice: 0, blindMarkId: null, keepBottleId: k.id
     };
     document.getElementById('kb-drink-modal').style.display = 'none';
-    if (typeof _drinkCtx.onAdd === 'function') _drinkCtx.onAdd(item);
+    if (typeof _drinkCtx.onAdd === 'function') {
+      _drinkCtx.onAdd(item);
+      // ソーダ割りは ml に関わらず炭酸代として一律¥100を別行で加算（キープ本体は¥0のまま）。
+      // productType 'misc' は金額計算が unitPrice×qty のため 100×1=¥100 になる。
+      if (soda) {
+        _drinkCtx.onAdd({
+          productId: 'soda', productName: '🥤 ソーダ（炭酸代）', productType: 'misc',
+          qty: 1, unit: '杯', unitPrice: 100, blindMarkId: null
+        });
+      }
+    }
   }
 
   // ========================================================================
