@@ -545,6 +545,67 @@ exports.loginWithMemberId = functions.region('asia-northeast1')
     }
   });
 
+// ── パスワード再設定メールの送信（会員ID指定・ログイン不要） ─────────
+// 会員IDから登録メール（外部の実アドレス）をサーバー側で特定し、Firebase の
+// パスワード再設定メール（Identity Toolkit の PASSWORD_RESET）を送信する。
+// メールアドレスはクライアントへ返さず、ID/メールの有無も秘匿（常に ok を返す）。
+exports.requestPasswordReset = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    const memberId = ((data && data.memberId) || '').trim();
+    if (!/^[A-Za-z0-9_-]{1,20}$/.test(memberId)) {
+      throw new functions.https.HttpsError('invalid-argument', 'IDを入力してください');
+    }
+    // ID→会員ドキュメント特定（loginWithMemberId と同じ方針）
+    let memberDoc = null;
+    try {
+      const direct = await db.collection('members').doc(memberId).get();
+      if (direct.exists) {
+        memberDoc = direct;
+      } else {
+        const tryFields = ['displayId', 'memberId'];
+        const vals = [memberId];
+        if (/^\d+$/.test(memberId)) vals.push(Number(memberId));
+        for (let fi = 0; fi < tryFields.length && !memberDoc; fi++) {
+          for (let vi = 0; vi < vals.length && !memberDoc; vi++) {
+            const snap = await db.collection('members').where(tryFields[fi], '==', vals[vi]).limit(1).get();
+            if (!snap.empty) memberDoc = snap.docs[0];
+          }
+        }
+      }
+    } catch (e) { /* noop */ }
+
+    // 送信可能な外部メールを特定（内部仮想アドレス @tequiladojo.member は除外）
+    const isReal = (e) => !!e && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) && !/@tequiladojo\.member$/i.test(e);
+    let email = null;
+    if (memberDoc) {
+      const m = memberDoc.data() || {};
+      if (m.authUid) {
+        try { const u = await auth.getUser(m.authUid); if (u && isReal(u.email)) email = u.email; } catch (e) { /* noop */ }
+      }
+      if (!email && isReal(m.email)) email = m.email;
+    }
+
+    let sent = false;
+    if (email) {
+      const API_KEY = 'AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0';
+      try {
+        const resp = await fetch(
+          'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=' + API_KEY,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ requestType: 'PASSWORD_RESET', email }),
+          }
+        );
+        sent = resp.ok;
+        if (!resp.ok) { const b = await resp.json().catch(() => ({})); console.warn('sendOobCode not ok:', b && b.error && b.error.message); }
+      } catch (e) { console.warn('sendOobCode failed:', (e && e.message) || e); }
+    }
+    // ID/メールの有無は返さない（列挙対策）。sent は内部ログ用途にとどめる。
+    console.log('requestPasswordReset memberId=%s hasEmail=%s sent=%s', memberId, !!email, sent);
+    return { ok: true };
+  });
+
 // ── 店頭ステータス（Firestore + RTDB）をスタッフ権限で更新 ──────
 // RTDB側は「.write: false」にしてこの関数経由のみとする
 // RTDBはデプロイ後に作成されてもよいようURLを明示し、失敗しても
