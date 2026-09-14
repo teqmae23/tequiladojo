@@ -274,7 +274,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         </select>
       </div>
       <div class="fg" id="rsv-companions-wrap" style="display:none">
-        <label class="fl">同伴者の会員ID（任意・2名以上のとき） <span style="font-weight:400;color:#888;font-size:11px">全員のマイページに予約が表示されます</span></label>
+        <label class="fl">同伴者（会員選択ボタンで選べます・任意） <span style="font-weight:400;color:#888;font-size:11px">全員のマイページに予約が表示されます</span></label>
         <div id="rsv-companions"></div>
       </div>
       <div class="fg">
@@ -437,7 +437,16 @@ function loadMembers(){
     .catch(function(){ /* 権限やネットワーク不調時は選択不可（手動入力もreadonly） */ });
 }
 function memberCode(m){ return String(m.displayId || m.memberId || m.id || ""); }
+var _pickTarget={type:"primary"}; // 会員選択の反映先（primary=顧客コード / comp=同伴者[idx]）
 function openMemberPicker(){
+  _pickTarget={type:"primary"};
+  g("picker-search").value = "";
+  renderPicker("");
+  g("m-picker").classList.add("open");
+  setTimeout(function(){ var s=g("picker-search"); if(s) s.focus(); }, 50);
+}
+function openMemberPickerFor(idx){
+  _pickTarget={type:"comp",idx:idx};
   g("picker-search").value = "";
   renderPicker("");
   g("m-picker").classList.add("open");
@@ -466,9 +475,10 @@ function updateCustomerName(){
   var code = gv("rsv-customer"), el = g("rsv-customer-name"); if(!el) return;
   if(!code){ el.textContent = ""; return; }
   var m = members.find(function(x){ var c=memberCode(x); return c===code || c.padStart(6,"0")===code; });
-  el.textContent = m ? ("→ "+(m.nickname||m.name||"")) : "";
+  var nk = m ? (m.nickname||m.name||"") : nickByCode(code);
+  el.textContent = nk ? ("→ "+nk) : "";
 }
-// 人数2名以上のとき、同伴者の会員ID入力欄を(人数-1)個表示
+// 人数2名以上のとき、同伴者の会員ID入力欄を(人数-1)個表示（会員選択ボタン＋ニックネーム表示付き）
 function renderRsvCompanions(prevVals){
   var wrap=g("rsv-companions-wrap"), box=g("rsv-companions"); if(!box) return;
   var guests=parseInt(gv("rsv-guests"))||0;
@@ -478,9 +488,27 @@ function renderRsvCompanions(prevVals){
   var prev = prevVals || [].map.call(box.querySelectorAll(".rsv-comp"), function(i){return i.value;});
   var html="";
   for(var k=0;k<n;k++){
-    html+='<input class="fi mono rsv-comp" inputmode="numeric" maxlength="6" placeholder="同伴者'+(k+1)+'の会員ID（6桁・任意）" style="margin-bottom:6px" value="'+escHtml(prev[k]||"")+'">';
+    html+='<div class="rsv-comp-row" style="margin-bottom:8px">'
+      +'<div style="display:flex;gap:6px;align-items:center">'
+      +'<input class="fi mono rsv-comp" inputmode="numeric" maxlength="6" placeholder="同伴者'+(k+1)+'の会員ID（6桁・任意）" oninput="updateCompName(this)" style="flex:1" value="'+escHtml(prev[k]||"")+'">'
+      +'<button type="button" class="btn bs" onclick="openMemberPickerFor('+k+')" style="flex:0 0 auto;white-space:nowrap">会員選択</button>'
+      +'</div>'
+      +'<div class="rsv-comp-name" style="font-size:11px;color:#1a6e58;margin-top:3px;min-height:14px"></div>'
+      +'</div>';
   }
   box.innerHTML=html;
+  // 既存値のニックネームを反映
+  [].forEach.call(box.querySelectorAll(".rsv-comp"), function(inp){ updateCompName(inp); });
+}
+// 同伴者入力欄の右にニックネーム（IDの後に名前）を表示
+function updateCompName(inp){
+  if(!inp) return;
+  var row=inp.closest(".rsv-comp-row"); if(!row) return;
+  var el=row.querySelector(".rsv-comp-name"); if(!el) return;
+  var code=(inp.value||"").trim();
+  var nk=code?nickByCode(code):"";
+  el.textContent=nk?("→ "+nk):(code?"（未登録の会員ID）":"");
+  el.style.color=nk?"#1a6e58":"#b26a00";
 }
 // 主顧客コード＋同伴者を memberIds（6桁ゼロ埋め）にまとめる
 function collectMemberIds(primaryCode){
@@ -497,8 +525,15 @@ function collectMemberIds(primaryCode){
   var pl=g("picker-list");
   if(pl) pl.addEventListener("click", function(e){
     var row=e.target.closest(".picker-row"); if(!row) return;
-    sv("rsv-customer", String(row.getAttribute("data-code")).padStart(6,"0"));
-    updateCustomerName();
+    var code=String(row.getAttribute("data-code")).padStart(6,"0");
+    if(_pickTarget && _pickTarget.type==="comp"){
+      var inputs=document.querySelectorAll("#rsv-companions .rsv-comp");
+      var inp=inputs[_pickTarget.idx];
+      if(inp){ inp.value=code; updateCompName(inp); }
+    }else{
+      sv("rsv-customer", code);
+      updateCustomerName();
+    }
     closePicker();
   });
 })();
