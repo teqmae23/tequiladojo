@@ -120,6 +120,11 @@ input,select,textarea{font-family:var(--sans)}
       <label>人数</label>
       <select id="r-guests"></select>
     </div>
+    <div class="fg" id="r-companions-wrap" style="display:none">
+      <label>同伴者の会員ID（任意）</label>
+      <div id="r-companions"></div>
+      <div class="note" style="margin-top:4px">同伴する会員のID（6桁）を入力すると、その方のマイページにも予約が表示されます。会員でない方は空欄でOKです。</div>
+    </div>
     <div class="fg">
       <label>ご要望・備考（任意）</label>
       <textarea id="r-memo" rows="2" placeholder="アレルギー・記念日など"></textarea>
@@ -248,6 +253,21 @@ function fillGuestOptions(max){
   var html='';
   for(var i=1;i<=m;i++){ html+='<option value="'+i+'"'+(i===Math.min(cur,m)?' selected':'')+'>'+i+'名</option>'; }
   sel.innerHTML=html;
+  renderCompanions();
+}
+// 人数2名以上のとき、同伴者の会員ID入力欄を(人数-1)個表示
+function renderCompanions(){
+  var wrap=g('r-companions-wrap'), box=g('r-companions'); if(!box) return;
+  var guests=parseInt(g('r-guests').value)||1;
+  var n=Math.max(0, guests-1);
+  if(n<=0){ wrap.style.display='none'; box.innerHTML=''; return; }
+  wrap.style.display='';
+  var prev=[].map.call(box.querySelectorAll('.companion-id'), function(i){return i.value;});
+  var html='';
+  for(var k=0;k<n;k++){
+    html+='<input class="companion-id" inputmode="numeric" maxlength="6" placeholder="同伴者'+(k+1)+'の会員ID（6桁・任意）" style="margin-bottom:6px" value="'+(prev[k]||'')+'">';
+  }
+  box.innerHTML=html;
 }
 function onDateChange(){
   currentSchedule=null;
@@ -289,6 +309,12 @@ g('r-submit').addEventListener('click',async function(){
   var cap=(currentSchedule&&currentSchedule.capacity!=null)?parseInt(currentSchedule.capacity)||6:6;
   if(guests>cap){ toast('人数が席数（'+cap+'名）を超えています'); return; }
 
+  // 同伴者の会員ID（数字6桁以内）。本人＋同伴者を memberIds にまとめる
+  var companions=[].map.call(document.querySelectorAll('#r-companions .companion-id'), function(i){ return (i.value||'').trim(); }).filter(function(v){ return v; });
+  for(var ci=0; ci<companions.length; ci++){ if(!/^\d{1,6}$/.test(companions[ci])){ toast('同伴者の会員IDは数字6桁以内で入力してください'); return; } }
+  var memberIds=[]; var pushId=function(v){ if(!v) return; var s=String(v); if(memberIds.indexOf(s)<0) memberIds.push(s); };
+  pushId(String(currentMember.memberId||currentMember.displayId||currentMember.id||'')); companions.forEach(pushId);
+
   var btn=g('r-submit'); btn.disabled=true; btn.textContent='送信中...';
   try{
     await db.collection('reservationRequests').add({
@@ -299,6 +325,7 @@ g('r-submit').addEventListener('click',async function(){
       startTime: start,
       endTime: end,
       guests: guests,
+      memberIds: memberIds,
       memo: memo||null,
       status: 'pending',
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
