@@ -381,7 +381,7 @@ function idxMakeRsvIcon(rvs){
 function idxBuildSchedule(){
   var wrap=document.getElementById('idx-schedule');
   if(!wrap)return;
-  wrap.innerHTML='<div style="color:#aaa;font-size:12px;padding:8px 0;">読み込み中...</div>';
+  wrap.innerHTML='<div style="color:#aaa;font-size:12px;padding:8px 0;">'+tt('idx_loading','読み込み中...')+'</div>';
   // Initialize Firebase
   if(!firebase.apps.length){
     firebase.initializeApp(FIREBASE_CONFIG);
@@ -408,9 +408,19 @@ function idxBuildSchedule(){
         schMap[sid]=data;
       });
     }).catch(function(){});
-    // 予約アイコンは一時非表示（idxMakeRsvIcon参照）のため、
-    // 予約データ（氏名等の個人情報を含む）は公開ページでは取得しない
-    var p2=Promise.resolve();
+    // 予約は個人情報を含まない集計（getReservationSummary）で「予約N名（残M席）」のみ表示。
+    // 氏名・顧客コード等は取得しない。
+    var _p2=function(n){ return String(n).padStart(2,'0'); };
+    var _fromY=String(days[0].y).slice(2)+_p2(days[0].m+1)+_p2(days[0].d);
+    var _lastD=days[days.length-1];
+    var _toY=String(_lastD.y).slice(2)+_p2(_lastD.m+1)+_p2(_lastD.d);
+    var p2=(function(){
+      try{
+        if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+        return firebase.app().functions('asia-northeast1').httpsCallable('getReservationSummary')({from:_fromY,to:_toY})
+          .then(function(res){ rsvMap=(res&&res.data&&res.data.summary)||{}; }).catch(function(){});
+      }catch(e){ return Promise.resolve(); }
+    })();
     var p3=fetch('https://api.open-meteo.com/v1/forecast?latitude=35.602145&longitude=140.121287&daily=weathercode,precipitation_probability_max,temperature_2m_max,temperature_2m_min&timezone=Asia%2FTokyo&forecast_days=7')
       .then(function(r){return r.json();})
       .then(function(data){
@@ -437,7 +447,9 @@ function idxBuildSchedule(){
         var dstr=ym+String(d2).padStart(2,'0');
         var key=idxDkey(y2,m2,d2);
         var sch=schMap[dstr];
-        var rvs=rsvMap[dstr];
+        var yymmdd=String(y2).slice(2)+String(m2+1).padStart(2,'0')+String(d2).padStart(2,'0');
+        var rsum=rsvMap[yymmdd];
+        var rvs=null;
         var isHol=!!IDX_HOLIDAYS[key];
         var dow=new Date(y2,m2,d2).getDay();
         var isC23=idxIsC23(m2,d2);
@@ -478,20 +490,19 @@ function idxBuildSchedule(){
         if(sch){
           var bt=parseInt(sch.businessType)||0;
           console.log('idx bt='+bt+' btype='+sch.businessType+' open='+sch.openTime);
-          var IDX_BT_LABEL=['夜のみ','昼夜営業','昼のみ','予約営業のみ','定休日','休業日','イベント','貸切','臨時休業'];
           if(bt===4||bt===5||bt===8){
             var badge=document.createElement('span');
             badge.style.cssText='font-size:13px;font-weight:600;padding:2px 8px;border-radius:3px;background:rgba(68,68,65,0.9);color:#F1EFE8;';
-            badge.textContent=IDX_BT_LABEL[bt]||'休業';
+            badge.textContent=idxBtLabel(bt)||tt('idx_bt_5','休業');
             infoWrap.appendChild(badge);
           } else if(sch.openTime&&sch.closeTime){
             var eiEl=document.createElement('span');
             if(bt===7){
               eiEl.style.cssText='font-size:12px;font-weight:600;background:rgba(255,140,40,.25);color:#9a5800;border-radius:3px;padding:2px 6px;flex-shrink:0;';
-              eiEl.textContent='貸切';
+              eiEl.textContent=tt('idx_charter','貸切');
             } else {
               eiEl.style.cssText='font-size:12px;font-weight:600;background:rgba(68,68,65,0.9);color:#F1EFE8;border-radius:3px;padding:2px 6px;flex-shrink:0;';
-              eiEl.textContent='営';
+              eiEl.textContent=tt('idx_open','営');
             }
             infoWrap.appendChild(eiEl);
             var timeEl=document.createElement('span');
@@ -510,7 +521,7 @@ function idxBuildSchedule(){
             }
           } else {
             // 時間なし：タイプ名アイコンを表示（イベント、貸切等）
-            var typeLabel=IDX_BT_LABEL[bt];
+            var typeLabel=idxBtLabel(bt);
             if(typeLabel){
               var typeEl=document.createElement('span');
               typeEl.style.cssText='font-size:13px;font-weight:600;padding:2px 8px;border-radius:3px;background:rgba(68,68,65,0.9);color:#F1EFE8;';
@@ -530,7 +541,21 @@ function idxBuildSchedule(){
         } else {
           var noEl=document.createElement('span');
           noEl.style.cssText='font-size:14px;color:rgba(40,60,40,0.55);';
-          noEl.textContent='予定未定';infoWrap.appendChild(noEl);
+          noEl.textContent=tt('idx_tbd','予定未定');infoWrap.appendChild(noEl);
+        }
+
+        // 予約サマリー（予約がある日: from-to ＋ 予約N名（残M席））
+        if(rsum && rsum.guests>0){
+          var _cap=(sch&&sch.capacity!=null&&sch.capacity!=='')?(parseInt(sch.capacity)||0):null;
+          var _remain=(_cap!=null)?Math.max(0,_cap-rsum.guests):null;
+          var rEl=document.createElement('span');
+          rEl.style.cssText='font-size:11px;font-weight:600;color:#0d6b5a;flex-shrink:0;white-space:nowrap;';
+          var _ft=(rsum.start&&rsum.end)?(idxFmtT(rsum.start)+'〜'+idxFmtT(rsum.end)+' '):'';
+          var _txt=(_remain!=null)
+            ? tt('idx_rsv_tpl','予約{g}名（残{s}席）').replace('{g}',rsum.guests).replace('{s}',_remain)
+            : tt('idx_rsv_tpl_nocap','予約{g}名').replace('{g}',rsum.guests);
+          rEl.textContent=_ft+_txt;
+          infoWrap.appendChild(rEl);
         }
 
         row.appendChild(infoWrap);
@@ -575,13 +600,13 @@ function idxBuildSchedule(){
         legendDiv.style.cssText='padding:8px 14px 6px;border-top:0.5px solid rgba(200,140,60,0.18);';
         var legendTitle=document.createElement('div');
         legendTitle.style.cssText='font-size:10px;color:#18110a;letter-spacing:.06em;margin-bottom:5px;';
-        legendTitle.textContent='天気アイコン凡例';
+        legendTitle.textContent=tt('idx_wx_legend','天気アイコン凡例');
         legendDiv.appendChild(legendTitle);
         var legendGrid=document.createElement('div');
         legendGrid.style.cssText='display:flex;flex-wrap:wrap;gap:4px 10px;';
         var LEGEND_ITEMS=[
-          ['☀️','快晴'],['🌤️','概ね晴れ'],['⛅','晴れ時々曇り'],['☁️','曇り'],
-          ['🌦️','にわか雨'],['🌧️','雨'],['❄️','雪'],['⛈️','雷雨'],['🌫️','霧']
+          ['☀️',tt('idx_wx_0','快晴')],['🌤️',tt('idx_wx_1','概ね晴れ')],['⛅',tt('idx_wx_2','晴れ時々曇り')],['☁️',tt('idx_wx_3','曇り')],
+          ['🌦️',tt('idx_wx_4','にわか雨')],['🌧️',tt('idx_wx_5','雨')],['❄️',tt('idx_wx_6','雪')],['⛈️',tt('idx_wx_7','雷雨')],['🌫️',tt('idx_wx_8','霧')]
         ];
         LEGEND_ITEMS.forEach(function(item){
           var cell=document.createElement('span');
@@ -601,9 +626,10 @@ function idxBuildSchedule(){
       var moreA=document.createElement('a');
       moreA.href='/calendar/'+ym2+'calendar.html';
       moreA.style.cssText='display:block;text-align:center;padding:10px 16px;background:#1a5e3a;color:#fff;font-weight:700;font-size:14px;border-radius:8px;text-decoration:none;margin:8px 14px;letter-spacing:.05em;';
-      moreA.textContent='📅 営業カレンダーはこちら';
+      moreA.textContent=tt('idx_more_cal','📅 営業カレンダーはこちら');
       moreDiv.appendChild(moreA);
       wrap.appendChild(moreDiv);
+      _idxReady=true;
     });
   });
 }
@@ -848,6 +874,30 @@ function loadStoreStatus(){
     callGetStatus();
   });
 }
+
+// ── スケジュール（カレンダー）多言語対応 ──────────────────────
+function tt(k,f){ try{ if(window.I18N&&I18N.t){ var r=I18N.t(k); return (r===k&&f!=null)?f:r; } }catch(e){} return f; }
+var IDX_BT_LABEL_JA=['夜のみ','昼夜営業','昼のみ','予約営業のみ','定休日','休業日','イベント','貸切','臨時休業'];
+function idxBtLabel(bt){ return tt('idx_bt_'+bt, IDX_BT_LABEL_JA[bt]||''); }
+var INDEX_SCHED_I18N={
+  en:{
+    idx_bt_0:'Night only', idx_bt_1:'Day & night', idx_bt_2:'Day only', idx_bt_3:'Reservation only', idx_bt_4:'Closed', idx_bt_5:'Closed', idx_bt_6:'Event', idx_bt_7:'Private', idx_bt_8:'Temp. closed',
+    idx_open:'Open', idx_charter:'Private', idx_tbd:'TBD', idx_loading:'Loading...',
+    idx_rsv_tpl:'{g} reserved ({s} left)', idx_rsv_tpl_nocap:'{g} reserved',
+    idx_wx_legend:'Weather icon legend', idx_more_cal:'📅 Business calendar',
+    idx_wx_0:'Clear', idx_wx_1:'Mostly sunny', idx_wx_2:'Partly cloudy', idx_wx_3:'Cloudy', idx_wx_4:'Showers', idx_wx_5:'Rain', idx_wx_6:'Snow', idx_wx_7:'Thunderstorm', idx_wx_8:'Fog'
+  },
+  es:{
+    idx_bt_0:'Solo noche', idx_bt_1:'Día y noche', idx_bt_2:'Solo día', idx_bt_3:'Solo reserva', idx_bt_4:'Cerrado', idx_bt_5:'Cerrado', idx_bt_6:'Evento', idx_bt_7:'Privado', idx_bt_8:'Cierre temporal',
+    idx_open:'Abierto', idx_charter:'Privado', idx_tbd:'Por confirmar', idx_loading:'Cargando...',
+    idx_rsv_tpl:'{g} reservados (quedan {s})', idx_rsv_tpl_nocap:'{g} reservados',
+    idx_wx_legend:'Leyenda de iconos del tiempo', idx_more_cal:'📅 Calendario de apertura',
+    idx_wx_0:'Despejado', idx_wx_1:'Mayormente soleado', idx_wx_2:'Parcialmente nublado', idx_wx_3:'Nublado', idx_wx_4:'Chubascos', idx_wx_5:'Lluvia', idx_wx_6:'Nieve', idx_wx_7:'Tormenta', idx_wx_8:'Niebla'
+  }
+};
+if(window.I18N) I18N.extend(INDEX_SCHED_I18N);
+var _idxReady=false;
+window.onI18nApplied=function(lang){ try{ if(_idxReady) idxBuildSchedule(); }catch(e){} };
 
 window.addEventListener('DOMContentLoaded',function(){
   idxBuildSchedule();

@@ -649,6 +649,41 @@ exports.getMyReservations = functions.region('asia-northeast1')
     return { reservations: out };
   });
 
+// ── 予約サマリー（個人情報を含まない集計）──────────────────────
+// 日付ごとの「予約人数合計・予約件数・時間帯(from-to)」だけを返す。
+// 氏名・顧客コード等は返さないため、公開ページ/会員ページから利用可能（認証不要）。
+// data: { from?: 'YYMMDD', to?: 'YYMMDD' } 省略時は本日(JST)から14日間。
+exports.getReservationSummary = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    const jst = new Date(Date.now() + 9 * 3600 * 1000);
+    const todayY = String(jst.getUTCFullYear()).slice(2) + ('0' + (jst.getUTCMonth() + 1)).slice(-2) + ('0' + jst.getUTCDate()).slice(-2);
+    let from = (data && typeof data.from === 'string' && /^\d{6}$/.test(data.from)) ? data.from : todayY;
+    let to = (data && typeof data.to === 'string' && /^\d{6}$/.test(data.to)) ? data.to : null;
+    if (!to) {
+      const end = new Date(jst.getTime() + 14 * 86400 * 1000);
+      to = String(end.getUTCFullYear()).slice(2) + ('0' + (end.getUTCMonth() + 1)).slice(-2) + ('0' + end.getUTCDate()).slice(-2);
+    }
+    let rs;
+    try { rs = await db.collection('reservations').where('reservationDate', '>=', from).where('reservationDate', '<=', to).get(); }
+    catch (e) { rs = await db.collection('reservations').get(); }
+    const summary = {};
+    rs.forEach((d) => {
+      const r = d.data() || {};
+      const rd = String(r.reservationDate || '');
+      if (rd.length < 6) return;
+      if (rd < from || rd > to) return;
+      if (!summary[rd]) summary[rd] = { guests: 0, count: 0, start: '', end: '' };
+      const s = summary[rd];
+      s.guests += parseInt(r.guests, 10) || 0;
+      s.count += 1;
+      const st = String(r.startTime || '');
+      const et = String(r.endTime || '');
+      if (st && (!s.start || st < s.start)) s.start = st;
+      if (et && (!s.end || et > s.end)) s.end = et;
+    });
+    return { summary };
+  });
+
 // ── 店頭ステータス（Firestore + RTDB）をスタッフ権限で更新 ──────
 // RTDB側は「.write: false」にしてこの関数経由のみとする
 // RTDBはデプロイ後に作成されてもよいようURLを明示し、失敗しても
