@@ -253,12 +253,12 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       </div>
       <div class="frow">
         <div class="fg">
-          <label class="fl">開始時間（HHMMSS）<span class="req">*</span></label>
-          <input class="fi mono" id="rsv-start" maxlength="6" placeholder="183000">
+          <label class="fl">開始時間（HHMM）<span class="req">*</span></label>
+          <input class="fi mono" id="rsv-start" maxlength="4" placeholder="1830">
         </div>
         <div class="fg">
-          <label class="fl">終了時間（HHMMSS）<span class="req">*</span></label>
-          <input class="fi mono" id="rsv-end" maxlength="6" placeholder="200000">
+          <label class="fl">終了時間（HHMM）<span class="req">*</span></label>
+          <input class="fi mono" id="rsv-end" maxlength="4" placeholder="2000">
         </div>
       </div>
       <div class="fg">
@@ -338,7 +338,23 @@ function toast(msg,type) {
 }
 
 function fmtDate(d){ if(!d||d.length<6) return d||"—"; return d.slice(0,2)+"/"+d.slice(2,4)+"/"+d.slice(4,6); }
-function fmtTime(t){ if(!t||t.length<4) return t||"—"; return t.slice(0,2)+":"+t.slice(2,4)+(t.length>=6?":"+t.slice(4,6):""); }
+function fmtTime(t){ if(!t||t.length<4) return t||"—"; return t.slice(0,2)+":"+t.slice(2,4); }
+// 顧客コードからニックネーム（会員名）を引く
+var nickMap={}; // 顧客コード→ニックネーム（全会員対象）
+function nickByCode(code){
+  if(!code) return "";
+  var c=String(code); return nickMap[c] || nickMap[c.padStart(6,"0")] || "";
+}
+// 予約が過去かどうか（終了時刻が現在より前）
+function isPastRsv(r){
+  if(!r||!r.reservationDate||r.reservationDate.length<6) return false;
+  var yy=2000+(parseInt(r.reservationDate.slice(0,2),10)||0);
+  var mm=(parseInt(r.reservationDate.slice(2,4),10)||1)-1;
+  var dd=parseInt(r.reservationDate.slice(4,6),10)||1;
+  var t=(r.endTime||r.startTime||"235959");
+  var hh=parseInt(t.slice(0,2),10)||0, mi=parseInt(t.slice(2,4),10)||0, ss=parseInt(t.slice(4,6),10)||0;
+  return new Date(yy,mm,dd,hh,mi,ss).getTime() < Date.now();
+}
 function todayStr6(){ var d=new Date(); return String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0"); }
 
 // ── 状態 ────────────────────────────────────────────────────
@@ -400,11 +416,15 @@ function loadReservations(){
 function loadMembers(){
   db.collection("members").get()
     .then(function(snap){
-      members = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); })
-        .filter(function(m){
+      var all = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+      members = all.filter(function(m){
           return !m.deleted && !m.isGuest && !m.pendingEmail
-            && m.email && m.email.indexOf("@tequiladojo.member") < 0; // 本会員のみ
+            && m.email && m.email.indexOf("@tequiladojo.member") < 0; // 本会員のみ（顧客選択用）
         });
+      // ニックネーム表示は全会員から引く（会員ID登録＝仮想メールの会員も対象）
+      nickMap = {};
+      all.forEach(function(m){ var c=memberCode(m), nk=m.nickname||m.name||""; if(c&&nk){ nickMap[c]=nk; nickMap[c.padStart(6,"0")]=nk; } });
+      renderTable(); // 一覧にニックネームを反映
     })
     .catch(function(){ /* 権限やネットワーク不調時は選択不可（手動入力もreadonly） */ });
 }
@@ -493,12 +513,15 @@ function renderTable(){
     return;
   }
   tb.innerHTML = list.map(function(r){
-    return '<tr'+(isCharter(r)?' style="background:#fff8e6"':'')+'>'
+    var past=isPastRsv(r);
+    var bg = past?'#e6e6e6':(isCharter(r)?'#fff8e6':'');
+    var nick=nickByCode(r.customerCode);
+    return '<tr'+(bg?' style="background:'+bg+'"':'')+'>'
       +'<td class="mono">'+r.id+'</td>'
       +'<td class="mono dim">'+fmtDate(r.reservationDate)+'</td>'
       +'<td class="mono dim">'+fmtTime(r.startTime)+'</td>'
       +'<td class="mono dim">'+fmtTime(r.endTime)+'</td>'
-      +'<td class="mono">'+(r.customerCode||"—")+'</td>'
+      +'<td class="mono">'+(r.customerCode||"—")+(nick?' <span style="font-family:inherit;color:#555;font-size:11px">'+escHtml(nick)+'</span>':'')+'</td>'
       +'<td style="text-align:center">'+(r.guests||"—")+'</td>'
       +'<td style="text-align:center">'+(isCharter(r)?'<span style="display:inline-block;font-size:10px;font-weight:700;color:#7a5610;background:#f5d580;border-radius:3px;padding:1px 6px">貸切</span>':'—')+'</td>'
       +'<td class="dim" style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(r.memo||"—")+'</td>'
@@ -555,8 +578,8 @@ function openModal(id){
   if(id){
     var r = reservations.find(function(x){ return x.id===id; });
     sv("rsv-date",     r ? r.reservationDate : "");
-    sv("rsv-start",    r ? r.startTime : "");
-    sv("rsv-end",      r ? r.endTime : "");
+    sv("rsv-start",    r ? (r.startTime||"").slice(0,4) : "");
+    sv("rsv-end",      r ? (r.endTime||"").slice(0,4) : "");
     sv("rsv-customer", r ? r.customerCode : "");
     sv("rsv-guests",   r ? String(r.guests) : "");
     sv("rsv-memo",     r ? r.memo||"" : "");
@@ -601,10 +624,13 @@ g("btn-save-rsv").addEventListener("click",function(){
   var guests = gv("rsv-guests");
 
   if(!date||date.length!==6)         { toast("予約日（6桁）は必須です","err"); return; }
-  if(!start||start.length!==6)       { toast("開始時間（6桁）は必須です","err"); return; }
-  if(!end||end.length!==6)           { toast("終了時間（6桁）は必須です","err"); return; }
+  if(!/^\d{4}$/.test(start))          { toast("開始時間（HHMM 4桁）は必須です","err"); return; }
+  if(!/^\d{4}$/.test(end))            { toast("終了時間（HHMM 4桁）は必須です","err"); return; }
   if(!cust||!/^\d{1,6}$/.test(cust)) { toast("顧客コード（6桁以内の数字）は必須です","err"); return; }
   if(!guests)                         { toast("人数は必須です","err"); return; }
+  // 秒は扱わないため HHMM を HHMM00 に正規化（既存の6桁データと比較整合）
+  start = start + "00";
+  end   = end   + "00";
   if(start>=end)                      { toast("終了時間は開始時間より後にしてください","err"); return; }
 
   var id = editId || genRsvId();
