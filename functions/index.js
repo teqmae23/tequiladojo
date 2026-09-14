@@ -608,6 +608,47 @@ exports.requestPasswordReset = functions.region('asia-northeast1')
     return { ok: true };
   });
 
+// ── ログイン会員の来場予約（今後の分）を取得（reservationsはスタッフ限定読取のためサーバー経由） ──
+exports.getMyReservations = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'ログインが必要です');
+    const uid = context.auth.uid;
+    let memberDoc = null;
+    try {
+      const snap = await db.collection('members').where('authUid', '==', uid).limit(1).get();
+      if (!snap.empty) memberDoc = snap.docs[0];
+    } catch (e) { /* noop */ }
+    if (!memberDoc) return { reservations: [] };
+    const m = memberDoc.data() || {};
+    // 本人を表す顧客コード候補（6桁ゼロ埋めも含める）
+    const codes = new Set();
+    const addc = (v) => { if (v == null || v === '') return; const s = String(v); codes.add(s); codes.add(s.padStart(6, '0')); };
+    addc(m.displayId); addc(m.memberId); addc(memberDoc.id);
+    // 今日(JST)以降
+    const jst = new Date(Date.now() + 9 * 3600 * 1000);
+    const todayY = String(jst.getUTCFullYear()).slice(2) + ('0' + (jst.getUTCMonth() + 1)).slice(-2) + ('0' + jst.getUTCDate()).slice(-2);
+    let rs;
+    try { rs = await db.collection('reservations').where('reservationDate', '>=', todayY).get(); }
+    catch (e) { rs = await db.collection('reservations').get(); }
+    const out = [];
+    rs.forEach((d) => {
+      const r = d.data() || {};
+      const inArr = Array.isArray(r.memberIds) && r.memberIds.some((x) => codes.has(String(x)) || codes.has(String(x).padStart(6, '0')));
+      const match = codes.has(String(r.customerCode || '')) || codes.has(String(r.memberId || '')) || inArr;
+      if (!match) return;
+      out.push({
+        id: d.id,
+        reservationDate: r.reservationDate || '',
+        startTime: r.startTime || '',
+        endTime: r.endTime || '',
+        guests: r.guests || 0,
+        charterType: r.charterType || 0,
+      });
+    });
+    out.sort((a, b) => (a.reservationDate + a.startTime).localeCompare(b.reservationDate + b.startTime));
+    return { reservations: out };
+  });
+
 // ── 店頭ステータス（Firestore + RTDB）をスタッフ権限で更新 ──────
 // RTDB側は「.write: false」にしてこの関数経由のみとする
 // RTDBはデプロイ後に作成されてもよいようURLを明示し、失敗しても
