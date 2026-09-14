@@ -267,11 +267,15 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       </div>
       <div class="fg">
         <label class="fl">人数<span class="req">*</span></label>
-        <select class="fs" id="rsv-guests">
+        <select class="fs" id="rsv-guests" onchange="renderRsvCompanions()">
           <option value="">—</option>
           <option>1</option><option>2</option><option>3</option><option>4</option>
           <option>5</option><option>6</option><option>7</option><option>8</option><option>9</option>
         </select>
+      </div>
+      <div class="fg" id="rsv-companions-wrap" style="display:none">
+        <label class="fl">同伴者の会員ID（任意・2名以上のとき） <span style="font-weight:400;color:#888;font-size:11px">全員のマイページに予約が表示されます</span></label>
+        <div id="rsv-companions"></div>
       </div>
       <div class="fg">
         <label class="fl" style="display:flex;align-items:center;gap:8px;cursor:pointer">
@@ -464,6 +468,28 @@ function updateCustomerName(){
   var m = members.find(function(x){ var c=memberCode(x); return c===code || c.padStart(6,"0")===code; });
   el.textContent = m ? ("→ "+(m.nickname||m.name||"")) : "";
 }
+// 人数2名以上のとき、同伴者の会員ID入力欄を(人数-1)個表示
+function renderRsvCompanions(prevVals){
+  var wrap=g("rsv-companions-wrap"), box=g("rsv-companions"); if(!box) return;
+  var guests=parseInt(gv("rsv-guests"))||0;
+  var n=Math.max(0, guests-1);
+  if(n<=0){ wrap.style.display="none"; box.innerHTML=""; return; }
+  wrap.style.display="";
+  var prev = prevVals || [].map.call(box.querySelectorAll(".rsv-comp"), function(i){return i.value;});
+  var html="";
+  for(var k=0;k<n;k++){
+    html+='<input class="fi mono rsv-comp" inputmode="numeric" maxlength="6" placeholder="同伴者'+(k+1)+'の会員ID（6桁・任意）" style="margin-bottom:6px" value="'+escHtml(prev[k]||"")+'">';
+  }
+  box.innerHTML=html;
+}
+// 主顧客コード＋同伴者を memberIds（6桁ゼロ埋め）にまとめる
+function collectMemberIds(primaryCode){
+  var companions=[].map.call(document.querySelectorAll("#rsv-companions .rsv-comp"), function(i){return (i.value||"").trim();}).filter(function(v){return v;});
+  for(var ci=0;ci<companions.length;ci++){ if(!/^\d{1,6}$/.test(companions[ci])) return {error:"同伴者の会員IDは数字6桁以内で入力してください"}; }
+  var ids=[]; var pushId=function(v){ if(!v) return; var s=String(v).padStart(6,"0"); if(ids.indexOf(s)<0) ids.push(s); };
+  if(primaryCode) pushId(primaryCode); companions.forEach(pushId);
+  return {ids:ids};
+}
 (function(){
   var s=g("picker-search"); if(s) s.addEventListener("input", function(){ renderPicker(this.value); });
   var x=g("mx-picker"); if(x) x.addEventListener("click", closePicker);
@@ -594,12 +620,16 @@ function openModal(id){
     sv("rsv-memo",     r ? r.memo||"" : "");
     g("rsv-charter").checked = isCharter(r);
     updateCustomerName();
+    // 同伴者: memberIds から主顧客コードを除いた分を復元
+    var comps=(r&&Array.isArray(r.memberIds))?r.memberIds.map(String).filter(function(x){ return x!==String(r.customerCode||"") && x!==String(r.customerCode||"").padStart(6,"0"); }):[];
+    renderRsvCompanions(comps);
     g("kb-rsv").innerHTML='<span class="keypart kp-nom">'+id+'</span><span class="klabel">reservationId</span>';
   } else {
     ["rsv-date","rsv-start","rsv-end","rsv-customer","rsv-memo"].forEach(function(i){ sv(i,""); });
     sv("rsv-guests","");
     g("rsv-charter").checked = false;
     updateCustomerName();
+    renderRsvCompanions([]);
     updateKeybox();
   }
   g("m-rsv").classList.add("open");
@@ -642,6 +672,11 @@ g("btn-save-rsv").addEventListener("click",function(){
   end   = end   + "00";
   if(start>=end)                      { toast("終了時間は開始時間より後にしてください","err"); return; }
 
+  // 同伴者を含む memberIds（本人＋同伴者）
+  var mi = collectMemberIds(cust);
+  if(mi.error){ toast(mi.error,"err"); return; }
+  var memberIds = mi.ids;
+
   var id = editId || genRsvId();
 
   if(!editId && reservations.some(function(r){ return r.id===id; })){
@@ -671,6 +706,7 @@ g("btn-save-rsv").addEventListener("click",function(){
     startTime:      start,
     endTime:        end,
     customerCode:   cust ? cust.padStart(6,"0") : "",
+    memberIds:      memberIds,
     guests:         parseInt(guests),
     charterType:    charter ? 1 : 0,
     memo:           gv("rsv-memo")||null,
@@ -735,6 +771,7 @@ function approveRequest(id){
     startTime:      start,
     endTime:        end,
     customerCode:   cust.padStart(6,"0"),
+    memberIds:      (Array.isArray(req.memberIds)&&req.memberIds.length)?req.memberIds.map(function(x){return String(x).padStart(6,"0");}):[cust.padStart(6,"0")],
     guests:         parseInt(req.guests)||0,
     charterType:    0,
     memo:           req.memo||null,
