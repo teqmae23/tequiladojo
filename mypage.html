@@ -113,10 +113,12 @@ select.fi{min-width:80px}
 .btn-filter-reset{padding:6px 12px;background:var(--cream2);border:1px solid var(--border2);border-radius:var(--r);font-size:12px;color:var(--ink3)}
 .btn-filter-reset:hover{color:var(--ink);border-color:var(--gold)}
 
-/* サマリーバー */
-.summary-bar{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap}
-.sum-chip{background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:8px 14px;font-size:12px;color:var(--ink3);flex:1;min-width:100px;text-align:center}
-.sum-chip strong{display:block;font-family:var(--serif);font-size:18px;color:var(--gold-d);font-weight:600}
+/* サマリーバー（スマホでも4枚1行に収める） */
+.summary-bar{display:flex;gap:6px;margin-bottom:14px;flex-wrap:nowrap}
+.sum-chip{background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:7px 4px;font-size:10px;color:var(--ink3);flex:1 1 0;min-width:0;text-align:center;line-height:1.2;word-break:break-word}
+.sum-chip span{display:block}
+.sum-chip strong{display:block;font-family:var(--serif);font-size:15px;color:var(--gold-d);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:400px){.summary-bar{gap:4px}.sum-chip{padding:7px 3px;font-size:9px}.sum-chip strong{font-size:13px}}
 
 /* 来場リスト */
 .sec-header{display:flex;align-items:center;gap:10px;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid var(--cream3)}
@@ -290,7 +292,7 @@ select.fi{min-width:80px}
         </div>
         <!-- 2行目：会員区分／来場クラス／課金区分 -->
         <div class="prof-line2">
-          <span><span data-i18n="mp_memkbn">会員区分</span>：<b id="prof-mem-kbn">本会員</b></span>
+          <span id="prof-mem-wrap"><span data-i18n="mp_memkbn">会員区分</span>：<b id="prof-mem-kbn">本会員</b></span>
           <span><span data-i18n="mp_class">来場クラス</span>：<b id="prof-class-txt" onclick="showClassInfo()" style="cursor:pointer" title="タップで説明">ブランコ</b>
             <button onclick="showClassInfo()" class="prof-q" title="来場クラスとは">?</button></span>
           <span id="prof-plan-wrap"><span data-i18n="mp_plan">課金区分</span>：<b id="prof-plan-txt">—</b></span>
@@ -354,21 +356,21 @@ select.fi{min-width:80px}
 
     <!-- 来場リスト -->
     <div class="sec-header">
-      <span class="sec-title">来場履歴</span>
+      <span class="sec-title" data-i18n="mp_visit_hist">来場履歴</span>
       <span class="sec-count" id="list-count">0件</span>
       <div id="visit-status-bar" style="margin-left:auto;min-height:24px;display:flex;align-items:center;"></div>
     </div>
     <!-- フィルター -->
     <div class="filter-bar-inner">
       <div class="filter-bar" style="margin-bottom:0">
-        <span class="filter-label">期間</span>
+        <span class="filter-label" data-i18n="mp_period">期間</span>
         <select class="fi" id="f-year" onchange="applyFilter()">
-          <option value="">すべての年</option>
+          <option value="" data-i18n="mp_all_years">すべての年</option>
         </select>
         <input type="date" class="fi" id="f-from" onchange="applyFilter()" placeholder="開始日">
         <span class="filter-label">〜</span>
         <input type="date" class="fi" id="f-to" onchange="applyFilter()">
-        <button class="btn-filter-reset" onclick="resetFilter()">リセット</button>
+        <button class="btn-filter-reset" onclick="resetFilter()" data-i18n="mp_reset">リセット</button>
       </div>
     </div>
     <div id="visit-list"><div class="loading">読み込み中...</div></div>
@@ -410,6 +412,7 @@ const fbFunctions=firebase.app().functions('asia-northeast1');
 
 // ─── 状態 ───
 let currentMember=null;   // Firestoreのmembersドキュメント
+let _mpLoaded=false;      // 来場データ読み込み完了フラグ（言語切替時の再描画ガード）
 let _mpPreviewId=null;    // 管理者プレビュー時の対象会員docID（getMemberActivity等に渡す）
 let allVisits=[];         // 当会員の全来場
 let allOrders=[];         // 当会員の全注文（全来場分）
@@ -438,9 +441,13 @@ function fmtDateFull(yymmdd){
   const y=2000+parseInt(yymmdd.slice(0,2));
   const m=parseInt(yymmdd.slice(2,4));
   const d=parseInt(yymmdd.slice(4,6));
-  const dow=['日','月','火','水','木','金','土'];
+  const lang=(window.I18N&&I18N.lang)||'ja';
+  const dows={ja:['日','月','火','水','木','金','土'],en:['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],es:['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']};
+  const dow=dows[lang]||dows.ja;
   const date=new Date(y,m-1,d);
-  return `${y}年${m}月${d}日（${dow[date.getDay()]}）`;
+  const w=dow[date.getDay()];
+  if(lang==='ja') return `${y}年${m}月${d}日（${w}）`;
+  return `${y}/${('0'+m).slice(-2)}/${('0'+d).slice(-2)} (${w})`;
 }
 function fmtTime(hhmm){
   if(!hhmm)return '';
@@ -771,6 +778,7 @@ async function initMyPage(user){
     // 5. フィルター初期化
     initFilters();
     applyFilter();
+    _mpLoaded=true;
 
   }catch(e){
     console.error(e);
@@ -949,9 +957,10 @@ function initFilters(){
     if(date.length>=2)years.add('20'+date.slice(0,2));
   });
   const sel=document.getElementById('f-year');
-  sel.innerHTML='<option value="">すべての年</option>';
+  const yu=tt('mp_u_year','年');
+  sel.innerHTML='<option value="" data-i18n="mp_all_years">'+esc(tt('mp_all_years','すべての年'))+'</option>';
   [...years].sort((a,b)=>b-a).forEach(y=>{
-    sel.innerHTML+=`<option value="${y}">${y}年</option>`;
+    sel.innerHTML+=`<option value="${y}">${y}${yu}</option>`;
   });
 }
 
@@ -982,7 +991,7 @@ function resetFilter(){
 }
 
 // 会員区分（2行目テキスト）＋認証再送ボタン
-function tt(k,f){ try{ return (window.I18N&&I18N.t)?I18N.t(k):f; }catch(e){ return f; } }
+function tt(k,f){ try{ if(window.I18N&&I18N.t){ var r=I18N.t(k); return (r===k&&f!=null)?f:r; } }catch(e){} return f; }
 function updateMemBadge(doc){
   const el=document.getElementById('prof-mem-kbn');
   const resendBtn=document.getElementById('btn-resend-verify');
@@ -995,6 +1004,9 @@ function updateMemBadge(doc){
   else if(st==='temp'||isTemp){ key='mp_v_temp'; cls='mb-temp'; }
   else if(isGuest||st==='guest'){ key='mp_v_guest'; cls='mb-guest'; }
   if(el){ el.setAttribute('data-i18n',key); el.className='kbn-badge '+cls; el.textContent=tt(key,{mp_v_active:'本会員',mp_v_pending:'認証待ち',mp_v_temp:'仮登録',mp_v_guest:'ゲスト'}[key]); }
+  // 本会員（通常会員）のときは「会員区分：本会員」を非表示に（仮登録/ゲスト/認証待ちのみ表示）
+  const wrap=document.getElementById('prof-mem-wrap');
+  if(wrap) wrap.style.display=(key==='mp_v_active')?'none':'';
 }
 // 課金区分（プラン名）＋有料会員なら名前欄を金枠に
 async function applyPlanDisplay(doc){
@@ -1007,7 +1019,13 @@ async function applyPlanDisplay(doc){
     if(el){
       // 「ブロンズ会員」→「ブロンズ」のように末尾の「会員」を省いて表示
       var nm=(plan&&plan.name)?String(plan.name).replace(/会員$/,'').trim():'無料';
-      el.textContent=nm||'無料'; el.className='kbn-badge '+(paid?'plan-paid':'plan-free');
+      nm=nm||'無料';
+      // 既知の階級名は多言語化（未知の名前はそのまま表示）
+      var planKeyMap={'無料':'mp_pl_free','ブロンズ':'mp_pl_bronze','シルバー':'mp_pl_silver','ゴールド':'mp_pl_gold','プラチナ':'mp_pl_platinum'};
+      var pk=planKeyMap[nm];
+      if(pk){ el.setAttribute('data-i18n',pk); el.textContent=tt(pk,nm); }
+      else{ el.removeAttribute('data-i18n'); el.textContent=nm; }
+      el.className='kbn-badge '+(paid?'plan-paid':'plan-free');
     }
     const bar=document.getElementById('profile-bar');
     if(bar) bar.classList.toggle('paid', paid);
@@ -1078,12 +1096,13 @@ async function resendVerifyEmail(){
 function updateClassBadge(count){
   const el=document.getElementById('prof-class-txt');
   if(!el) return;
-  let name, cls;
-  if(count>=36){        name='エクストラアネホ'; cls='class-x-anejo'; }
-  else if(count>=12){   name='アネホ'; cls='class-anejo'; }
-  else if(count>=2){    name='レポサド'; cls='class-reposado'; }
-  else{                 name='ブランコ'; cls='class-blanco'; }
-  el.textContent=name;
+  let name, cls, key;
+  if(count>=36){        name='エクストラアネホ'; cls='class-x-anejo'; key='mp_cls_xanejo'; }
+  else if(count>=12){   name='アネホ'; cls='class-anejo'; key='mp_cls_anejo'; }
+  else if(count>=2){    name='レポサド'; cls='class-reposado'; key='mp_cls_reposado'; }
+  else{                 name='ブランコ'; cls='class-blanco'; key='mp_cls_blanco'; }
+  el.setAttribute('data-i18n',key);
+  el.textContent=tt(key,name);
   el.className='kbn-badge '+cls;
   const lbl=document.getElementById('prof-class-lbl');
   if(lbl) lbl.style.display='none';
@@ -1128,8 +1147,8 @@ async function updateSummary(visits){
 
   document.getElementById('s-visits').textContent=visits.length;
   document.getElementById('s-tequila').textContent=totalTq+'ml';
-  document.getElementById('s-blind').textContent=blindCount+'回';
-  document.getElementById('list-count').textContent=visits.length+'件';
+  document.getElementById('s-blind').textContent=blindCount+tt('mp_u_times','回');
+  document.getElementById('list-count').textContent=visits.length+tt('mp_u_ken','件');
 }
 
 // ─── 来場リスト描画 ───
@@ -1163,7 +1182,7 @@ function buildVisitCard(v){
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span class="visit-date">${esc(dateLabel)}</span>
           <div class="visit-badges">
-            ${itemCount?`<span class="badge badge-items">${itemCount}品</span>`:''}
+            ${itemCount?`<span class="badge badge-items">${itemCount}${tt('mp_u_item','品')}</span>`:''}
           </div>
         </div>
         <div style="margin-top:3px;display:flex;gap:8px;align-items:center">
@@ -1752,11 +1771,11 @@ async function loadVisitStatus(memberId){
     if(active){
       var t=active.visitTime||'';
       var tStr=t.length>=4?t.slice(0,2)+':'+t.slice(2,4):'';
-      el.innerHTML='<div class="vstatus vstatus-active">🏮 来場中'+(tStr?' '+tStr+'～':'')+'</div>';
+      el.innerHTML='<div class="vstatus vstatus-active">🏮 '+esc(tt('mp_vs_active','来場中'))+(tStr?' '+tStr+'～':'')+'</div>';
       return;
     }
     if(!vs.length){
-      el.innerHTML='<div class="vstatus vstatus-none">まだ来場記録がありません</div>';
+      el.innerHTML='<div class="vstatus vstatus-none">'+esc(tt('mp_vs_none','まだ来場記録がありません'))+'</div>';
       return;
     }
     vs.sort((a,b)=>(b.visitDate||'').localeCompare(a.visitDate||''));
@@ -1768,8 +1787,8 @@ async function loadVisitStatus(memberId){
       var today=new Date();today.setHours(0,0,0,0);
       var daysAgo=Math.round((today-vDate)/(864e5));
       var mmdd=m+'/'+d;
-      var dStr=daysAgo===0?'本日':(daysAgo+'日前');
-      el.innerHTML='<div class="vstatus vstatus-last">📅 最終来場 '+dStr+' ('+mmdd+')</div>';
+      var dStr=daysAgo===0?tt('mp_vs_today','本日'):(daysAgo+tt('mp_vs_daysago','日前'));
+      el.innerHTML='<div class="vstatus vstatus-last">📅 '+esc(tt('mp_vs_last','最終来場'))+' '+dStr+' ('+mmdd+')</div>';
     }
   }catch(e){console.warn('loadVisitStatus:',e);}
 }
@@ -1783,7 +1802,15 @@ document.getElementById('blind-modal').addEventListener('click',e=>{
 </script>
 <script>
 var MYPAGE_I18N={
-  ja:{ mp_v_active:'本会員', mp_v_pending:'認証待ち', mp_v_temp:'仮登録', mp_v_guest:'ゲスト' },
+  ja:{
+    mp_v_active:'本会員', mp_v_pending:'認証待ち', mp_v_temp:'仮登録', mp_v_guest:'ゲスト',
+    mp_nr_title:'次回来場予約', mp_nr_now:'ただいま来場予定の時間です',
+    mp_nr_prefix:'次回来場予定まで あと', mp_u_day:'日', mp_u_hour:'時間', mp_u_min:'分',
+    mp_pl_free:'無料', mp_pl_bronze:'ブロンズ', mp_pl_silver:'シルバー', mp_pl_gold:'ゴールド', mp_pl_platinum:'プラチナ',
+    mp_cls_blanco:'ブランコ', mp_cls_reposado:'レポサド', mp_cls_anejo:'アネホ', mp_cls_xanejo:'エクストラアネホ',
+    mp_visit_hist:'来場履歴', mp_period:'期間', mp_all_years:'すべての年', mp_reset:'リセット',
+    mp_u_ken:'件', mp_u_times:'回', mp_u_item:'品', mp_u_year:'年',
+    mp_vs_active:'来場中', mp_vs_none:'まだ来場記録がありません', mp_vs_last:'最終来場', mp_vs_today:'本日', mp_vs_daysago:'日前' },
   en:{
     mp_logout:'Log out', mp_title:'Member Page', mp_see_news:'See news →',
     mp_resend:'📧 Resend verification', mp_edit:'✏️ Edit profile',
@@ -1793,7 +1820,12 @@ var MYPAGE_I18N={
     mp_plog_t:'🥃 Personal tequila log', mp_plog_d:'Record the tequila you drank (paid members)',
     mp_nr_title:'Next reservation', mp_nr_now:'Your reservation time is now',
     mp_nr_prefix:'Until your next visit: ', mp_u_day:'d ', mp_u_hour:'h ', mp_u_min:'m',
-    mp_v_active:'Member', mp_v_pending:'Pending', mp_v_temp:'Provisional', mp_v_guest:'Guest' },
+    mp_v_active:'Member', mp_v_pending:'Pending', mp_v_temp:'Provisional', mp_v_guest:'Guest',
+    mp_pl_free:'Free', mp_pl_bronze:'Bronze', mp_pl_silver:'Silver', mp_pl_gold:'Gold', mp_pl_platinum:'Platinum',
+    mp_cls_blanco:'Blanco', mp_cls_reposado:'Reposado', mp_cls_anejo:'Añejo', mp_cls_xanejo:'Extra Añejo',
+    mp_visit_hist:'Visit history', mp_period:'Period', mp_all_years:'All years', mp_reset:'Reset',
+    mp_u_ken:'', mp_u_times:'', mp_u_item:' items', mp_u_year:'',
+    mp_vs_active:'Checked in', mp_vs_none:'No visit records yet', mp_vs_last:'Last visit', mp_vs_today:'Today', mp_vs_daysago:'d ago' },
   es:{
     mp_logout:'Cerrar sesión', mp_title:'Página de socio', mp_see_news:'Ver noticias →',
     mp_resend:'📧 Reenviar verificación', mp_edit:'✏️ Editar perfil',
@@ -1803,9 +1835,31 @@ var MYPAGE_I18N={
     mp_plog_t:'🥃 Registro personal de tequila', mp_plog_d:'Registra el tequila que bebiste (socios de pago)',
     mp_nr_title:'Próxima reserva', mp_nr_now:'Es la hora de tu reserva',
     mp_nr_prefix:'Hasta tu próxima visita: ', mp_u_day:'d ', mp_u_hour:'h ', mp_u_min:'m',
-    mp_v_active:'Socio', mp_v_pending:'Pendiente', mp_v_temp:'Provisional', mp_v_guest:'Invitado' }
+    mp_v_active:'Socio', mp_v_pending:'Pendiente', mp_v_temp:'Provisional', mp_v_guest:'Invitado',
+    mp_pl_free:'Gratis', mp_pl_bronze:'Bronce', mp_pl_silver:'Plata', mp_pl_gold:'Oro', mp_pl_platinum:'Platino',
+    mp_cls_blanco:'Blanco', mp_cls_reposado:'Reposado', mp_cls_anejo:'Añejo', mp_cls_xanejo:'Extra Añejo',
+    mp_visit_hist:'Historial de visitas', mp_period:'Periodo', mp_all_years:'Todos los años', mp_reset:'Restablecer',
+    mp_u_ken:'', mp_u_times:'', mp_u_item:' art.', mp_u_year:'',
+    mp_vs_active:'En visita', mp_vs_none:'Aún no hay registros de visitas', mp_vs_last:'Última visita', mp_vs_today:'Hoy', mp_vs_daysago:'d atrás' }
 };
 if(window.I18N) I18N.extend(MYPAGE_I18N);
+
+// 言語切替時に、data-i18n では追従できない動的テキスト（来場リストの日付/「品」、
+// サマリーの単位、来場ステータス行、次回予約バナー）を再描画する。
+window.onI18nApplied=function(lang){
+  try{
+    if(_mpLoaded && Array.isArray(filteredVisits)){
+      renderVisitList(filteredVisits);
+      var lc=document.getElementById('list-count');
+      if(lc) lc.textContent=filteredVisits.length+tt('mp_u_ken','件');
+      var sb=document.getElementById('s-blind');
+      if(sb){ var mnum=sb.textContent.match(/\d+/); if(mnum) sb.textContent=mnum[0]+tt('mp_u_times','回'); }
+    }
+    if(currentMember) loadVisitStatus(currentMember.id||currentMember.memberId);
+    var nb=document.getElementById('next-resv-banner');
+    if(nb && nb.innerHTML.trim() && typeof renderNextReservation==='function') renderNextReservation();
+  }catch(e){}
+};
 </script>
 <script src="/access-log.js?v=20260826"></script>
 </body>
