@@ -377,6 +377,8 @@ exports.registerMember = functions.region('asia-northeast1')
     const password = (data && data.password) || '';
     const transferCode = ((data && data.transferCode) || '').trim().toUpperCase();
     const wantStatus = (data && data.status) === 'active' ? 'active' : 'pending';
+    // ページ表示言語（デフォルト日本語）。ログイン時のページ表示に使用。
+    const pageLang = (['ja', 'en', 'es'].indexOf((data && data.pageLang) || '') >= 0) ? data.pageLang : 'ja';
     if (!password || password.length < 8) {
       throw new functions.https.HttpsError('invalid-argument', 'パスワードは8文字以上にしてください');
     }
@@ -411,7 +413,7 @@ exports.registerMember = functions.region('asia-northeast1')
         const upd = {
           authUid: user.uid, email, nickname: nickname || cd.nickname || memBefore.nickname || null,
           status: 'pending', isGuest: false, registeredAt: today,
-          displayId, memberId: displayId,
+          displayId, memberId: displayId, pageLang,
         };
         const batch = db.batch();
         batch.update(memRef, upd);
@@ -438,7 +440,7 @@ exports.registerMember = functions.region('asia-northeast1')
         authUid: user.uid, realId, displayId, memberId: displayId,
         email: email || null,
         status: email ? wantStatus : 'active',
-        nickname, registeredAt: today,
+        nickname, registeredAt: today, pageLang,
         visitCount: 0, totalAmount: 0, totalTequila: 0,
       };
       const batch = db.batch();
