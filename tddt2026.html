@@ -365,6 +365,7 @@ a{color:var(--gold-d)}
 .bd-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;background:var(--gold);color:#3a2a10}
 .bd-ttl{font-size:14px;font-weight:700;color:var(--ink1);margin:2px 0 4px}
 .bd-body{font-size:13px;color:var(--ink2);line-height:1.7;white-space:pre-wrap;word-break:break-word}
+.bd-body a{color:var(--teal);word-break:break-all}
 .bd-atts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .bd-att-img{width:88px;height:88px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid var(--border)}
 .bd-att-file{font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:14px;color:var(--teal);font-weight:600}
@@ -515,10 +516,12 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
       <div class="fg" id="bd-title-fg"><label class="fl">タイトル</label><input class="fi" id="bd-title" maxlength="80" placeholder="スレッドのタイトル"></div>
       <div class="fg"><label class="fl">本文</label><textarea class="fi" id="bd-content" rows="5" placeholder="内容を入力"></textarea></div>
       <div class="fg"><label class="fl">添付ファイル（画像は自動圧縮・最大4件）</label><input class="fi" id="bd-file" type="file" multiple><div id="bd-file-list" style="font-size:11px;color:var(--ink3);margin-top:4px"></div></div>
-      <div class="fg"><label class="fl">参考リンク（最大3件）</label>
+      <div class="fg"><label class="fl">参考リンク（最大5件）</label>
         <input class="fi" id="bd-link1" placeholder="https://…" style="margin-bottom:5px">
         <input class="fi" id="bd-link2" placeholder="https://…" style="margin-bottom:5px">
-        <input class="fi" id="bd-link3" placeholder="https://…"></div>
+        <input class="fi" id="bd-link3" placeholder="https://…" style="margin-bottom:5px">
+        <input class="fi" id="bd-link4" placeholder="https://…" style="margin-bottom:5px">
+        <input class="fi" id="bd-link5" placeholder="https://…"></div>
       <div class="mnote" id="bd-note"></div>
       <div class="sv-err" id="bd-err"></div>
       <div id="bd-prog" style="font-size:12px;color:var(--ink3);margin-top:6px"></div>
@@ -535,6 +538,15 @@ var auth=firebase.auth(), db=firebase.firestore();
 var storage=(firebase.storage?firebase.storage():null);
 function g(id){return document.getElementById(id);}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+// 本文中のURLを自動リンク化（先にエスケープ→URLを<a>で包む。末尾の句読点/閉じ括弧は除外）
+function linkify(s){
+  return esc(s).replace(/(https?:\/\/[^\s<]+)/g, function(u){
+    var trail=''; var mt=u.match(/(?:&(?:amp|quot|gt|lt);|[.,!?;:)\]}、。，！？）】」』]+)+$/);
+    if(mt){ trail=mt[0]; u=u.slice(0, u.length-trail.length); }
+    if(!u) return trail;
+    return '<a href="'+u+'" target="_blank" rel="noopener">'+u+'</a>'+trail;
+  });
+}
 function qs(k){ var m=new RegExp('[?&]'+k+'=([^&]*)').exec(location.search); return m?decodeURIComponent(m[1]):''; }
 
 var eventId='wxMXGADTjQLj91bZgpDj'; // tddt2026 専用固定
@@ -2534,7 +2546,7 @@ function postNode(p, depth){
   var h='<div class="bd-post'+(pending?' pending':'')+'">'
     +'<div class="bd-hd">'+bdAvatar(au)+'<div class="bd-meta"><div class="bd-auth">'+esc(au.name)+'</div><div class="bd-time">'+esc(bdTime(p))+'</div></div>'+(pending?'<span class="bd-badge">承認待ち</span>':'')+'</div>';
   if(p.title) h+='<div class="bd-ttl">'+esc(p.title)+'</div>';
-  if(p.content) h+='<div class="bd-body">'+esc(p.content)+'</div>';
+  if(p.content) h+='<div class="bd-body">'+linkify(p.content)+'</div>';
   var atts=Array.isArray(p.attachments)?p.attachments:[];
   if(atts.length){
     h+='<div class="bd-atts">'+atts.map(function(a){
@@ -2576,7 +2588,7 @@ function openBd(parentId){
   if(parent) g('bd-reply-to').textContent='返信先: '+((parent.title||parent.content||'').slice(0,40));
   g('bd-title-fg').style.display=parentId?'none':'block';
   g('bd-title').value=''; g('bd-content').value=''; g('bd-file').value=''; g('bd-file-list').textContent='';
-  g('bd-link1').value=''; g('bd-link2').value=''; g('bd-link3').value=''; g('bd-err').textContent=''; g('bd-prog').textContent='';
+  g('bd-link1').value=''; g('bd-link2').value=''; g('bd-link3').value=''; g('bd-link4').value=''; g('bd-link5').value=''; g('bd-err').textContent=''; g('bd-prog').textContent='';
   g('bd-note').textContent=_boardCfg.approval?'※ この掲示板は管理者の承認後に公開されます。':'※ 投稿は即時公開されます。';
   g('bd-modal').classList.add('open');
 }
@@ -2589,9 +2601,9 @@ function submitPost(){
   var title=(g('bd-title').value||'').trim();
   if(!_bdReplyTo && !title){ g('bd-err').textContent='タイトルを入力してください'; return; }
   if(!content){ g('bd-err').textContent='本文を入力してください'; return; }
-  var links=[g('bd-link1').value,g('bd-link2').value,g('bd-link3').value]
+  var links=[g('bd-link1').value,g('bd-link2').value,g('bd-link3').value,g('bd-link4').value,g('bd-link5').value]
     .map(function(s){ return (s||'').trim(); })
-    .filter(function(s){ return s; }).slice(0,3);
+    .filter(function(s){ return s; }).slice(0,5);
   for(var li=0;li<links.length;li++){ if(!/^https?:\/\//i.test(links[li])){ g('bd-err').textContent='参考リンクは http(s):// で始まるURLにしてください'; return; } }
   g('bd-err').textContent=''; var btn=g('bd-submit'); btn.disabled=true;
   var pid=postCol().doc().id;
