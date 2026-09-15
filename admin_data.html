@@ -189,6 +189,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 .cal-rpax{font-size:9px;font-weight:500;color:var(--ink3);flex-shrink:0;font-family:monospace}
 .cal-rsum{font-size:10px;font-weight:600;color:#0d6b5a;margin:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cal-rsum.full{color:#8c2818}
+.cal-rwho{font-size:9px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:2px}
 .cal-litem{border:0.5px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:0}
 .cal-litem.cal-ltoday{border:3px solid #185FA5}
 .cal-lhead{display:flex;align-items:center;gap:6px;padding:6px 10px;flex-wrap:wrap}
@@ -2247,6 +2248,17 @@ function calRsvSummary(rvs, sch){
   var text='予約'+guests+'名'+(remain!=null?'（残'+Math.max(0,remain)+'席）':'');
   return {count:(rvs||[]).length, guests:guests, cap:cap, remain:remain, text:text, full:(remain!=null&&remain<=0)};
 }
+// 予約の識別表示: 会員=「ID ニックネーム」／非会員=「非会員（名前）」
+function calRsvWho(r){
+  if(!r) return '';
+  if(r.nonMember){ return '非会員'+(r.customerName?'（'+escHtml(r.customerName)+'）':''); }
+  var mid=r.memberId||r.customerCode||'';
+  var idPart=r.customerCode||r.memberId||'';
+  var nick='';
+  if(mid){ var info=getMemberInfo(mid); if(info){ nick=info.nickname||''; if(nick==='（非会員）') nick=''; } }
+  if(!nick) nick=r.memberName||r.customerName||'';
+  return (idPart?escHtml(String(idPart)):'')+(idPart&&nick?' ':'')+(nick?escHtml(nick):'')||'—';
+}
 function calDkey(y,m,d){return y+'-'+calPad(m+1)+'-'+calPad(d);}
 function calIsC23(m,d){return d===23||(m===1&&d===3);}
 function calBuildAnnivMap(y,m){
@@ -2389,7 +2401,9 @@ function calRenderMonth(){
       }
     });
   }).catch(function(){});
-  Promise.all([p1,p2]).then(function(){
+  // 予約のID→ニックネーム解決のため会員データを確保
+  var p3=(cache.members&&cache.members.length)?Promise.resolve():db.collection('members').get().then(function(snap){ cache.members=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }); }).catch(function(){});
+  Promise.all([p1,p2,p3]).then(function(){
     if(calViewMode==='cal') calRenderGrid(y,m,schMap,rsvMap,annivMap);
     else calRenderList(y,m,schMap,rsvMap,annivMap);
   });
@@ -2428,7 +2442,7 @@ function calRenderGrid(y,m,schMap,rsvMap,annivMap){
     if(rvs.length){
       var _sm=calRsvSummary(rvs,sch);
       html+='<div class="cal-rsum'+(_sm.full?' full':'')+'">'+_sm.text+'</div>';
-      rvs.slice(0,2).forEach(function(r){ html+='<div class="cal-rrow"><span class="cal-rico">予</span><span class="cal-rtime">'+calFmtT(r.startTime)+'-'+calFmtT(r.endTime)+'</span><span class="cal-rpax">'+( r.guests||'')+'名</span></div>'; });
+      rvs.slice(0,2).forEach(function(r){ html+='<div class="cal-rrow"><span class="cal-rico">予</span><span class="cal-rtime">'+calFmtT(r.startTime)+'-'+calFmtT(r.endTime)+'</span><span class="cal-rpax">'+( r.guests||'')+'名</span></div><div class="cal-rwho">'+calRsvWho(r)+'</div>'; });
       if(rvs.length>2) html+='<div style="font-size:9px;color:var(--ink3)">他'+(rvs.length-2)+'件</div>';
     }
     html+='</div>';
@@ -2481,7 +2495,7 @@ function calRenderList(y,m,schMap,rsvMap,annivMap){
       html+='<div class="cal-lbody">';
       html+='<div class="cal-rsum'+(_sm2.full?' full':'')+'">'+_sm2.text+'</div>';
       rvs.sort(function(a,b){return (a.startTime||'').localeCompare(b.startTime||'');}).forEach(function(r){
-        html+='<div class="cal-rrow"><span class="cal-rico">予</span><span class="cal-rtime">'+calFmtT(r.startTime)+'-'+calFmtT(r.endTime)+'</span><span class="cal-rpax">'+( r.guests||'')+'名</span>'+(r.memo?'<span class="cal-rtime">'+r.memo+'</span>':'')+'</div>';
+        html+='<div class="cal-rrow"><span class="cal-rico">予</span><span class="cal-rtime">'+calFmtT(r.startTime)+'-'+calFmtT(r.endTime)+'</span><span class="cal-rpax">'+( r.guests||'')+'名</span><span class="cal-rwho" style="flex:1;margin-left:6px">'+calRsvWho(r)+'</span>'+(r.memo?'<span class="cal-rtime">'+r.memo+'</span>':'')+'</div>';
       });
       html+='</div>';
     }
@@ -2629,7 +2643,7 @@ function calShowRsvPopup(rvs,anchor){
   popup.style.cssText='position:absolute;background:var(--white);border:1px solid var(--border2);border-radius:var(--r);padding:8px 12px;z-index:500;box-shadow:var(--shadow-lg);min-width:160px;font-size:12px';
   rvs.slice().sort(function(a,b){return (a.startTime||'').localeCompare(b.startTime||'');}).forEach(function(r){
     var line=document.createElement('div'); line.style.marginBottom='4px';
-    line.textContent=calFmtT(r.startTime)+'-'+calFmtT(r.endTime)+' '+( r.guests||'')+'名'+(r.customerCode?' / '+r.customerCode:(r.customerName?' / '+r.customerName+'（非会員）':''));
+    line.innerHTML=escHtml(calFmtT(r.startTime)+'-'+calFmtT(r.endTime)+' '+( r.guests||'')+'名')+' / '+calRsvWho(r);
     popup.appendChild(line);
   });
   var rect=anchor.getBoundingClientRect();
