@@ -11,6 +11,7 @@
 <script src="/auth-role.js?v=20260829"></script>
 <script>window.JOURNAL_PAGE='reservations';</script>
 <script src="/journal.js?v=20260706"></script>
+<script src="/cal-autopublish.js?v=20260915"></script>
 <script>
 var FIREBASE_CONFIG = {
   apiKey:            "AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -345,6 +346,17 @@ function toast(msg,type) {
   setTimeout(function(){el.remove();},3000);
 }
 
+// 予約変更後、該当月の公開カレンダーHTMLを自動再公開（admin_data.html と同じ仕組み）
+function autoPublishCal(yymmdd){
+  try{
+    if(!window.CalAutoPublish || !yymmdd) return;
+    CalAutoPublish.forMonth(yymmdd).then(function(r){
+      if(r && r.ok){ toast("公開カレンダーを更新しました（"+r.ym.slice(0,4)+"/"+r.ym.slice(4,6)+"）","inf"); }
+      else if(r && r.reason==='no-token'){ toast("公開カレンダーHTMLは自動更新されませんでした（この端末にGitHubトークン未設定）。営業カレンダー画面の「HTML公開」で反映してください","inf"); }
+      else if(r && r.reason==='error'){ toast("公開カレンダーの自動更新に失敗: "+(r.message||""),"err"); }
+    });
+  }catch(e){}
+}
 function fmtDate(d){ if(!d||d.length<6) return d||"—"; return d.slice(0,2)+"/"+d.slice(2,4)+"/"+d.slice(4,6); }
 function fmtTime(t){ if(!t||t.length<4) return t||"—"; return t.slice(0,2)+":"+t.slice(2,4); }
 // 顧客コードからニックネーム（会員名）を引く
@@ -625,10 +637,12 @@ document.addEventListener("click",function(e){
   if(btn.dataset.edit){ openModal(btn.dataset.edit); return; }
   if(btn.dataset.del){
     var delId=btn.dataset.del;
+    var _delRsv=reservations.find(function(r){ return r.id===delId; });
+    var _delDate=_delRsv&&_delRsv.reservationDate;
     g("confirm-msg").textContent="予約「"+delId+"」を削除しますか？";
     confirmCb=function(){
       journaledDelete("reservations",delId)
-        .then(function(){ toast("削除しました"); loadReservations(); })
+        .then(function(){ toast("削除しました"); loadReservations(); autoPublishCal(_delDate); })
         .catch(function(e){ toast("削除失敗: "+e.message,"err"); });
     };
     g("confirm-bg").classList.add("open");
@@ -751,6 +765,7 @@ g("btn-save-rsv").addEventListener("click",function(){
     toast(editId ? "予約を更新しました" : "予約を登録しました（ID: "+id+"）");
     g("m-rsv").classList.remove("open");
     loadReservations();
+    autoPublishCal(date);
   })
   .catch(function(e){ toast("保存失敗: "+e.message,"err"); });
 });
@@ -821,7 +836,7 @@ function approveRequest(id){
       approvedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   })
-  .then(function(){ toast("承認しました（予約ID: "+newId+"）"); loadReservations(); loadReservationRequests(); })
+  .then(function(){ toast("承認しました（予約ID: "+newId+"）"); loadReservations(); loadReservationRequests(); autoPublishCal(date); })
   .catch(function(e){ toast("承認失敗: "+e.message,"err"); });
 }
 function rejectRequest(id){
