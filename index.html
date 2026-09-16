@@ -187,7 +187,7 @@ body::before{
         <iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d400!2d140.1213161!3d35.6020909!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x6022853fbaeb8037%3A0xf32cd9e10774890a!2z44OG44Kt44O844Op6YGO5aC0!5e0!3m2!1sja!2sjp!4v1" width="100%" height="280" style="border:0;border-radius:8px;" allowfullscreen="" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
       </div>
       <div class="route-title" data-i18n="route_title">路線案内</div>
-      <div class="route-svg-wrap"><img src="route-map.png" data-i18n-src="route-map" style="max-width:100%;height:auto;"></div>
+      <div class="route-svg-wrap" id="route-diagram" style="overflow-x:auto"></div>
     </div>
   </div>
   <div class="footer">
@@ -897,10 +897,97 @@ var INDEX_SCHED_I18N={
 };
 if(window.I18N) I18N.extend(INDEX_SCHED_I18N);
 var _idxReady=false;
-window.onI18nApplied=function(lang){ try{ if(_idxReady) idxBuildSchedule(); }catch(e){} };
+
+/* ── 路線案内図（インラインSVG。ja=日本語版 / en・es=英語版） ── */
+function _rmEsc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+var _RM_BOX={
+  soga:{x:208,y:36,w:54,h:56,c:'jr'},
+  hon:{x:404,y:36,w:56,h:168,c:'jr'},
+  chiba:{x:204,y:168,w:60,h:152,c:'jr'},
+  kencho:{x:404,y:262,w:56,h:92,c:'blue'},
+  keisei:{x:82,y:286,w:60,h:92,c:'pink'},
+  chuo:{x:204,y:380,w:60,h:78,c:'pink'},
+  dojo:{x:556,y:36,w:58,h:422,c:'dojo'}
+};
+var _RM_PAL={jr:{f:'#fbe9d7',s:'#e8820e',t:'#5a3a12'},blue:{f:'#d3e6f5',s:'#2f7fd0',t:'#154a7a'},pink:{f:'#fbd7d7',s:'#e23b2e',t:'#8a2018'},dojo:{f:'#eef3c9',s:'#d33',t:'#b3261e'}};
+var _RM_C={jr:'#e8820e',blue:'#2f7fd0',red:'#e23b2e',green:'#2f9e5f',jrT:'#c8700a',blueT:'#2160a8',redT:'#c22a1e',greenT:'#1f7a48',dur:'#666'};
+function _rmLine(x1,y1,x2,y2,color,dash){ return '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="'+color+'" stroke-width="3"'+(dash?' stroke-dasharray="7 5"':'')+' stroke-linecap="round"/>'; }
+function _rmPath(pts,color,dash){ var d='M'+pts.map(function(p){return p[0]+' '+p[1];}).join(' L '); return '<path d="'+d+'" fill="none" stroke="'+color+'" stroke-width="3"'+(dash?' stroke-dasharray="7 5"':'')+' stroke-linejoin="round" stroke-linecap="round"/>'; }
+function _rmLbl(cx,cy,lines,color,fs){ fs=fs||9.5; lines=[].concat(lines); var lh=fs+2, startY=cy-(lines.length-1)*lh/2; var t='<text x="'+cx+'" y="'+startY+'" font-size="'+fs+'" fill="'+color+'" text-anchor="middle" dominant-baseline="middle">'; for(var i=0;i<lines.length;i++){ t+='<tspan x="'+cx+'" dy="'+(i===0?0:lh)+'">'+_rmEsc(lines[i])+'</tspan>'; } return t+'</text>'; }
+function _rmBox(key,label,lang){
+  var b=_RM_BOX[key], p=_RM_PAL[b.c];
+  var s='<rect x="'+b.x+'" y="'+b.y+'" width="'+b.w+'" height="'+b.h+'" rx="3" fill="'+p.f+'" stroke="'+p.s+'" stroke-width="2"/>';
+  var words=String(label).split(' ').filter(Boolean);
+  var isDojo=(b.c==='dojo');
+  var fs=isDojo?(lang==='ja'?16:12):(lang==='ja'?12:10);
+  var lh=isDojo?(lang==='ja'?21:13.5):(lang==='ja'?14:12);
+  var colGap=(lang==='ja')?0:16;
+  var cx=b.x+b.w/2, cy=b.y+b.h/2, n=words.length;
+  words.forEach(function(w,ci){
+    var colX=cx+(ci-(n-1)/2)*colGap, chars=Array.from(w), startY=cy-(chars.length*lh)/2+lh/2;
+    chars.forEach(function(ch,i){ s+='<text x="'+colX.toFixed(1)+'" y="'+(startY+i*lh).toFixed(1)+'" font-size="'+fs+'" fill="'+p.t+'" text-anchor="middle" dominant-baseline="central" font-weight="700">'+_rmEsc(ch)+'</text>'; });
+  });
+  return s;
+}
+function buildRouteDiagram(lang){
+  var ja=(lang==='ja');
+  var L=ja?{
+    soga:'蘇我駅',hon:'本千葉駅',chiba:'千葉駅',kencho:'県庁前駅',keisei:'京成千葉駅',chuo:'千葉中央駅',dojo:'テキーラ道場',
+    keiyo:'JR京葉線',upLine:['JR内房線（上り）','JR外房線（上り）'],min3:'約3分(1駅)',walk30:['徒歩','約30秒'],
+    sobu:['JR総武快速線','JR総武線各駅','JR総武本線'],dnLine:['JR内房線（下り）','JR外房線（下り）'],min2s:'約2分(1駅)',
+    mono:'千葉都市モノレール',min9:'約9分(3駅)',walk3:['徒歩','約3分'],keiseiLine:'京成電鉄千葉線',walk2:['徒歩','約2分'],
+    keiseiMin2:'約2分(1駅)',walk12:['徒歩','約12分']
+  }:{
+    soga:'SOGA',hon:'HON CHIBA',chiba:'CHIBA',kencho:'KENCHO MAE',keisei:'KEISEI CHIBA',chuo:'CHIBA CHUO',dojo:'TEQUILA DOJO',
+    keiyo:'JR Keiyo-Line',upLine:['JR Uchibo-Line','JR Sotobo-Line'],min3:'3 mins (1 stop)',walk30:['Walk','30 sec'],
+    sobu:['JR Sobu-Kaisoku','JR Sobu-Kakueki','JR Sobu-Honsen'],dnLine:['JR Uchibo-Line','JR Sotobo-Line'],min2s:'2 mins (1 stop)',
+    mono:'Chiba Urban Monorail',min9:'9 mins (3 stop)',walk3:['Walk','3 mins'],keiseiLine:'Keisei ER Chiba-Line',walk2:['Walk','3 mins'],
+    keiseiMin2:'2 mins (1 stop)',walk12:['Walk','12 mins']
+  };
+  var C=_RM_C;
+  var s='<svg viewBox="0 0 660 500" width="100%" style="max-width:660px;min-width:560px;height:auto;display:block;margin:0 auto" xmlns="http://www.w3.org/2000/svg" font-family="\'Noto Sans JP\',sans-serif">';
+  // ── 線路・徒歩線 ──
+  s+=_rmLine(40,64,208,64,C.jr);
+  s+=_rmLine(262,64,404,64,C.jr);
+  s+=_rmLine(40,120,404,120,C.jr);
+  s+=_rmLine(460,86,556,86,C.green,1);
+  s+=_rmLine(40,196,204,196,C.jr);
+  s+=_rmLine(264,190,404,190,C.jr);
+  s+=_rmLine(264,300,404,300,C.blue);
+  s+=_rmLine(460,308,556,308,C.green,1);
+  s+=_rmLine(40,332,82,332,C.red);
+  s+=_rmLine(142,300,204,300,C.green,1);
+  s+=_rmPath([[112,378],[112,400],[204,400]],C.red);
+  s+=_rmLine(264,416,556,416,C.green,1);
+  // ── 駅ボックス ──
+  s+=_rmBox('soga',L.soga,lang)+_rmBox('hon',L.hon,lang)+_rmBox('chiba',L.chiba,lang)+_rmBox('kencho',L.kencho,lang)+_rmBox('keisei',L.keisei,lang)+_rmBox('chuo',L.chuo,lang)+_rmBox('dojo',L.dojo,lang);
+  // ── ラベル ──
+  s+=_rmLbl(124,51,L.keiyo,C.jrT);
+  s+=_rmLbl(333,45,L.upLine,C.jrT);
+  s+=_rmLbl(333,80,L.min3,C.dur);
+  s+=_rmLbl(155,107,L.upLine,C.jrT);
+  s+=_rmLbl(508,72,L.walk30,C.greenT);
+  s+=_rmLbl(122,177,L.sobu,C.jrT);
+  s+=_rmLbl(334,172,L.dnLine,C.jrT);
+  s+=_rmLbl(334,206,L.min2s,C.dur);
+  s+=_rmLbl(334,286,L.mono,C.blueT);
+  s+=_rmLbl(334,315,L.min9,C.dur);
+  s+=_rmLbl(508,294,L.walk3,C.greenT);
+  s+=_rmLbl(60,319,L.keiseiLine,C.redT,8.5);
+  s+=_rmLbl(173,287,L.walk2,C.greenT);
+  s+=_rmLbl(158,390,L.keiseiLine,C.redT,8.5);
+  s+=_rmLbl(158,412,L.keiseiMin2,C.dur,8.5);
+  s+=_rmLbl(410,403,L.walk12,C.greenT);
+  s+='</svg>';
+  return s;
+}
+function renderRouteDiagram(){ var el=document.getElementById('route-diagram'); if(!el) return; var lang='ja'; try{ if(window.I18N&&I18N.lang) lang=I18N.lang; }catch(e){} el.innerHTML=buildRouteDiagram(lang==='ja'?'ja':'en'); }
+
+window.onI18nApplied=function(lang){ try{ if(_idxReady) idxBuildSchedule(); }catch(e){} try{ renderRouteDiagram(); }catch(e){} };
 
 window.addEventListener('DOMContentLoaded',function(){
   idxBuildSchedule();
+  renderRouteDiagram();
   loadIndexNews();
   loadStoreStatus();
   // 会員ログイン時: 未読ニュースにバッジを表示
