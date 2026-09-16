@@ -1317,7 +1317,7 @@ function _tzTimeInner(dateStr,t,lat,lng){
 function schedTimeHtml(it, leg){
   var body;
   if(leg==='dep'){ body=esc(it.time||'—')+'<span class="sc-arrow">↓</span>'; }
-  else if(leg==='arr'){ body=esc(it.toTime||it.time||'—'); }
+  else if(leg==='arr'){ body=esc((it.isMove?it.toTime:it.endTime)||it.time||'—'); }
   else body=(it.isMove && it.toTime)
     ? esc(it.time||'—')+'<span class="sc-arrow">↓</span>'+esc(it.toTime)
     : ((!it.isMove && it.endTime)
@@ -1381,32 +1381,50 @@ function _idlDayShift(it){
   if(!_idlCross(it)) return 0;
   return (it.lng>0&&it.toLng<0)?-1:((it.lng<0&&it.toLng>0)?1:0);
 }
-// 空路で日付変更線を跨ぎ「翌日着」になる移動は、到着ローカル日付を返す（分割表示の対象）。
-// それ以外（同日着・前日着）は null（従来どおり1枚のカードで表示）。
+// 'HH:MM' を分に変換
+function _hm(t){ var p=String(t||'').split(':'); return (+p[0]||0)*60+(+p[1]||0); }
+// 項目の終端（移動=到着toTime / 滞在=終了endTime）が翌日にまたがる場合の「翌日方向のずれ日数」。
+// 1) 日付変更線を西→東に跨ぐ移動（＝＋1日） 2) 終端の時刻が開始より早い（＝日付をまたぐ）場合は+1。
+// 前日方向（東→西の日付変更線など）は対象外（0を返す）。
+function _splitDayShift(it){
+  if(!it || !it.time) return 0;
+  var endT = it.isMove ? it.toTime : it.endTime;
+  if(!endT) return 0;
+  var idl=_idlDayShift(it);
+  if(idl!==0) return idl>0?1:0;           // 西行きIDL=+1、東行きIDL(前日方向)は分割しない
+  if(_hm(endT) < _hm(it.time)) return 1;   // 終端時刻が開始より早い＝日付をまたぐ
+  return 0;
+}
+// 翌日方向にまたぐ項目は、終端（到着/終了）のローカル日付を返す（分割表示の対象）。それ以外は null。
 function _idlSplitArrDate(it){
-  if(!it || !it.isMove || !it.toTime) return null;
-  if(_idlDayShift(it)!==1) return null;
+  if(_splitDayShift(it)!==1) return null;
   var arrDate=_addDays(it.date, 1);
   return (arrDate && arrDate!==(it.date||''))?arrDate:null;
 }
-// 到着のJST絶対時刻（分割した到着レグの並べ替え用）
+// 終端（到着/終了）のJST絶対時刻（分割した終端レグの並べ替え用）
 function _arrInstant(it){
-  var tz=(it.toLat!=null&&it.toLng!=null)?(_safeTz(it.toLat,it.toLng)||'Asia/Tokyo'):'Asia/Tokyo';
-  var arrDate=_addDays(it.date, _idlDayShift(it));
-  var d=_wallInstant(arrDate, it.toTime||'23:59', tz);
+  var endT = it.isMove ? it.toTime : it.endTime;
+  var lat = it.isMove ? (it.toLat!=null?it.toLat:it.lat) : it.lat;
+  var lng = it.isMove ? (it.toLng!=null?it.toLng:it.lng) : it.lng;
+  var tz=(lat!=null&&lng!=null)?(_safeTz(lat,lng)||'Asia/Tokyo'):'Asia/Tokyo';
+  var arrDate=_addDays(it.date, _splitDayShift(it));
+  var d=_wallInstant(arrDate, endT||'23:59', tz);
   return d?d.getTime():0;
 }
-// 到着レグの簡易カード（時刻＋アイコン＋タイトルに「到着」タグ。詳細・写真は出発カード側に集約）
+// 終端レグの簡易カード（時刻＋アイコン＋「到着」/「終了」タグ。詳細・写真は開始カード側に集約）
 function renderArrLeg(it){
   var ic=itemIcon(it);
+  var isMove=!!it.isMove;
+  var lat = isMove ? (it.toLat!=null?it.toLat:it.lat) : it.lat;
+  var lng = isMove ? (it.toLng!=null?it.toLng:it.lng) : it.lng;
   var meta=[];
-  var dlat=(it.toLat!=null?it.toLat:it.lat), dlng=(it.toLng!=null?it.toLng:it.lng);
-  if(!_locHidden(it) && dlat!=null && dlng!=null){
-    meta.push('<a class="sc-map" href="https://www.google.com/maps?q='+encodeURIComponent(dlat+','+dlng)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
+  if(!_locHidden(it) && lat!=null && lng!=null){
+    meta.push('<a class="sc-map" href="https://www.google.com/maps?q='+encodeURIComponent(lat+','+lng)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
   }
   var metaHtml=meta.length?'<div class="sc-meta">'+meta.join('')+'</div>':'';
+  var tag=isMove?'🛬 到着':'🏁 終了';
   return '<div class="sc-item" style="background:'+catBg(it.category)+'">'+schedTimeHtml(it,'arr')+'<span class="sc-ic">'+ic+'</span>'
-    +'<div class="sc-body"><div class="sc-ttl"><span class="sc-legtag">🛬 到着</span> '+esc(it.title||'')+'</div>'+metaHtml+'</div></div>';
+    +'<div class="sc-body"><div class="sc-ttl"><span class="sc-legtag">'+tag+'</span> '+esc(it.title||'')+'</div>'+metaHtml+'</div></div>';
 }
 var _scMarkers={}, _scMap=null, _scItemBounds={};
 function _safeTz(la,ln){ try{ return window.tzlookup?tzlookup(la,ln):null; }catch(e){ return null; } }
