@@ -186,6 +186,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .cost-settle{border-collapse:collapse;font-size:12px;min-width:100%}
 .cost-settle th,.cost-settle td{border:1px solid var(--border2);padding:4px 12px;white-space:nowrap;text-align:right}
 .cost-settle th{background:var(--cream2);font-weight:700;text-align:center}
+.cost-settle .cs-total td{background:#fff8e9;font-weight:700}
 .cost-settle .cs-plus,.cv-settle .cs-plus{color:var(--green);font-weight:700}
 .cost-settle .cs-minus,.cv-settle .cs-minus{color:var(--red);font-weight:700}
 .cs-tag{font-size:10px;background:var(--gold-d,#7a5610);color:#fff;border-radius:4px;padding:1px 5px;font-weight:700;vertical-align:middle}
@@ -2333,17 +2334,40 @@ function _depCell(s, tid){
   var txt=v<0?('−¥'+Math.abs(v).toLocaleString()):('¥'+v.toLocaleString());
   return '<td'+(v<0?' class="cs-minus"':'')+'>'+txt+'</td>';
 }
+// 費目別集計: 費目名ごとに 件数・予算合計・実費合計 を集計（出現順）
+function _costByItemAgg(its){
+  var order=[], map={};
+  (its||[]).forEach(function(it){
+    var key=(it.name&&String(it.name).trim())||'（名称未設定）';
+    if(!map[key]){ map[key]={name:key, count:0, budget:0, actual:0, hasActual:false}; order.push(key); }
+    var m=map[key]; m.count++; m.budget+=Number(it.budget||0);
+    if(it.actual!=null&&it.actual!==''){ m.actual+=Number(it.actual)||0; m.hasActual=true; }
+  });
+  return order.map(function(k){return map[k];});
+}
 function renderCostSettle(){
   var el=g('cost-settle'); if(!el) return;
   var mem=_costMembers;
   if(!mem.length||!_costItems.length){ el.innerHTML=''; return; }
   var s=_computeSettle(_costItems, mem, _costDeposits, _costDefaultPayer);
+  // 費目別集計表
+  var byItem=_costByItemAgg(_costItems);
+  var biRows=byItem.map(function(r){
+    return '<tr><td style="text-align:left">'+esc(r.name)+'</td><td>'+r.count+'</td>'
+      +'<td>¥'+r.budget.toLocaleString()+'</td>'
+      +'<td>'+(r.hasActual?('¥'+r.actual.toLocaleString()):'<span style="color:var(--ink3)">—</span>')+'</td></tr>';
+  }).join('');
+  var biFoot='<tr class="cs-total"><td style="text-align:left">合計</td><td>'+_costItems.length+'</td>'
+    +'<td>¥'+s.tb.toLocaleString()+'</td><td>¥'+s.ta.toLocaleString()+'</td></tr>';
+  var byItemHtml='<div class="cv-settle-t">費目別集計</div>'
+    +'<div class="cost-table-wrap"><table class="cost-settle"><thead><tr><th style="text-align:left">費目</th><th>件数</th><th>予算</th><th>実費</th></tr></thead><tbody>'+biRows+biFoot+'</tbody></table></div>';
   var rows=mem.map(function(m){
     return '<tr><td style="text-align:left">'+esc(m.name)+(m.tid===_costDefaultPayer?' <span class="cs-tag">主催</span>':'')+'</td>'
       +'<td>¥'+(s.paidCost[m.tid]||0).toLocaleString()+'</td>'+_depCell(s,m.tid)+'<td>¥'+(s.share[m.tid]||0).toLocaleString()+'</td>'+_netCell(s.net[m.tid]||0)+'</tr>';
   }).join('');
   var note=s.depTotal>0 ? (s.applied?('デポジット計 ¥'+s.depTotal.toLocaleString()+' はデフォルト支払者（'+esc(_payerName(_costDefaultPayer)||'—')+'）が受領済みとして差し引きに反映しています（主催のデポジット列に −¥'+s.depTotal.toLocaleString()+' として計上）。'):'⚠ デポジットを精算に反映するにはデフォルト支払者を設定してください。') : '';
-  el.innerHTML='<div class="cv-settle-t">集計・立て替え精算</div>'
+  el.innerHTML=byItemHtml
+    +'<div class="cv-settle-t" style="margin-top:14px">集計・立て替え精算</div>'
     +'<div class="cv-settle-sum">予算合計 <b>¥'+s.tb.toLocaleString()+'</b>　／　実費合計 <b>¥'+s.ta.toLocaleString()+'</b></div>'
     +'<div class="cost-table-wrap"><table class="cost-settle"><thead><tr><th>メンバー</th><th>立て替え</th><th>デポジット</th><th>負担</th><th>差し引き</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
     +'<div style="font-size:11px;color:var(--ink3);margin-top:4px">立て替え＝支払者に指定した費目の合計。デポジット＝事前徴収。差し引き＝立て替え＋デポジット−負担（デフォルト支払者は受領デポジットを控除）。＋受取／−支払。'+(note?'<br>'+note:'')+'</div>';
@@ -2465,7 +2489,18 @@ function _settleView(its, mem, myTid){
       +'<td>¥'+(s.paidCost[m.tid]||0).toLocaleString()+'</td>'+_depCell(s,m.tid)+'<td>¥'+(s.share[m.tid]||0).toLocaleString()+'</td>'+_netCell(s.net[m.tid]||0)+'</tr>';
   }).join('');
   var note=s.depTotal>0&&s.applied?('<div class="cv-settle-sum" style="margin-top:4px">デポジット計 ¥'+s.depTotal.toLocaleString()+' はデフォルト支払者（'+esc(_payerName(_costDefaultPayer)||'—')+'）が受領済みとして反映。</div>'):'';
-  return '<div class="cv-settle-t">集計・立て替え精算</div>'
+  // 費目別集計表
+  var byItem=_costByItemAgg(its);
+  var biRows=byItem.map(function(r){
+    return '<tr><td style="text-align:left">'+esc(r.name)+'</td><td>'+r.count+'</td>'
+      +'<td>¥'+r.budget.toLocaleString()+'</td>'
+      +'<td>'+(r.hasActual?('¥'+r.actual.toLocaleString()):'—')+'</td></tr>';
+  }).join('');
+  var biFoot='<tr class="cv-foot"><td style="text-align:left">合計</td><td>'+its.length+'</td><td>¥'+s.tb.toLocaleString()+'</td><td>¥'+s.ta.toLocaleString()+'</td></tr>';
+  var biHtml='<div class="cv-settle-t">費目別集計</div>'
+    +'<div class="cv-wrap"><table class="cv-table cv-settle"><thead><tr><th>費目</th><th>件数</th><th>予算</th><th>実費</th></tr></thead><tbody>'+biRows+biFoot+'</tbody></table></div>';
+  return biHtml
+    +'<div class="cv-settle-t" style="margin-top:14px">集計・立て替え精算</div>'
     +'<div class="cv-settle-sum">予算合計 <b>¥'+s.tb.toLocaleString()+'</b>　／　実費合計 <b>¥'+s.ta.toLocaleString()+'</b></div>'
     +'<div class="cv-wrap"><table class="cv-table cv-settle"><thead><tr><th>メンバー</th><th>立て替え</th><th>デポジット</th><th>負担</th><th>差し引き</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+note;
 }
