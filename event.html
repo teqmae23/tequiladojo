@@ -204,6 +204,7 @@ a{color:var(--gold-d)}
 .sc-ttl{font-size:14px;font-weight:600;color:var(--ink)}
 .sc-note{font-size:12px;color:var(--ink);line-height:1.6;margin-top:2px;white-space:pre-wrap}
 .sc-arrow{display:block;color:var(--gold-d);font-size:12px;line-height:1.1;text-align:center}
+.sc-legtag{display:inline-block;font-size:10px;font-weight:700;color:var(--gold-d);background:rgba(200,146,30,.14);border:1px solid rgba(200,146,30,.3);border-radius:10px;padding:1px 7px;margin-right:4px;vertical-align:middle}
 .hours-btn{margin-left:8px;padding:2px 10px;border:1px solid var(--teal);background:var(--white);color:var(--teal);font-size:11px;font-weight:700;border-radius:12px;cursor:pointer;font-family:inherit;white-space:nowrap}
 .ev-hours{margin:6px 0 2px}
 .sc-detail{margin-top:6px}
@@ -1313,13 +1314,16 @@ function _tzTimeInner(dateStr,t,lat,lng){
   return esc(t)+' <span class="sc-tz">('+esc(abbr)+')</span><span class="sc-time-jst">'+esc(jst)+' (JST)'+ddTxt+'</span>';
 }
 // 時刻はシンプルに表示（大きく黒字）。クリックで現地時間/JSTのポップアップ。
-function schedTimeHtml(it){
-  var body=(it.isMove && it.toTime)
+function schedTimeHtml(it, leg){
+  var body;
+  if(leg==='dep'){ body=esc(it.time||'—')+'<span class="sc-arrow">↓</span>'; }
+  else if(leg==='arr'){ body=esc(it.toTime||it.time||'—'); }
+  else body=(it.isMove && it.toTime)
     ? esc(it.time||'—')+'<span class="sc-arrow">↓</span>'+esc(it.toTime)
     : ((!it.isMove && it.endTime)
       ? esc(it.time||'—')+'<span class="sc-arrow">↓</span>'+esc(it.endTime)
       : esc(it.time||'—'));
-  var clickable=!!(it.time||it.endTime);
+  var clickable=!!(it.time||it.endTime||it.toTime);
   return '<span class="sc-time'+(clickable?' sc-time-x':'')+'"'+(clickable?' onclick="showTzPop(event,\''+esc(it.id)+'\')"':'')+'>'+body+'</span>';
 }
 // 時刻ポップアップ（現地時間＋JST）
@@ -1364,6 +1368,45 @@ function idlDivider(it){
   var sign=(it.lng>0&&it.toLng<0)?-1:((it.lng<0&&it.toLng>0)?1:0);
   var txt=sign===0?'日付変更線':('日付変更線（'+(sign>0?'＋1日':'−1日')+'）');
   return '<div class="sc-idl">🌐 '+txt+'</div>';
+}
+// 日付をn日ずらした 'YYYY-MM-DD' を返す
+function _addDays(dateStr, n){
+  var p=(dateStr||'').split('-'); if(p.length<3) return dateStr;
+  var d=new Date(Date.UTC(+p[0],+p[1]-1,+p[2])); if(isNaN(d.getTime())) return dateStr;
+  d.setUTCDate(d.getUTCDate()+n);
+  return d.getUTCFullYear()+'-'+('0'+(d.getUTCMonth()+1)).slice(-2)+'-'+('0'+d.getUTCDate()).slice(-2);
+}
+// 日付変更線による日付ずれ（西→東=+1日進む, 東→西=−1日戻る, それ以外0）
+function _idlDayShift(it){
+  if(!_idlCross(it)) return 0;
+  return (it.lng>0&&it.toLng<0)?-1:((it.lng<0&&it.toLng>0)?1:0);
+}
+// 空路で日付変更線を跨ぎ「翌日着」になる移動は、到着ローカル日付を返す（分割表示の対象）。
+// それ以外（同日着・前日着）は null（従来どおり1枚のカードで表示）。
+function _idlSplitArrDate(it){
+  if(!it || !it.isMove || !it.toTime) return null;
+  if(_idlDayShift(it)!==1) return null;
+  var arrDate=_addDays(it.date, 1);
+  return (arrDate && arrDate!==(it.date||''))?arrDate:null;
+}
+// 到着のJST絶対時刻（分割した到着レグの並べ替え用）
+function _arrInstant(it){
+  var tz=(it.toLat!=null&&it.toLng!=null)?(_safeTz(it.toLat,it.toLng)||'Asia/Tokyo'):'Asia/Tokyo';
+  var arrDate=_addDays(it.date, _idlDayShift(it));
+  var d=_wallInstant(arrDate, it.toTime||'23:59', tz);
+  return d?d.getTime():0;
+}
+// 到着レグの簡易カード（時刻＋アイコン＋タイトルに「到着」タグ。詳細・写真は出発カード側に集約）
+function renderArrLeg(it){
+  var ic=itemIcon(it);
+  var meta=[];
+  var dlat=(it.toLat!=null?it.toLat:it.lat), dlng=(it.toLng!=null?it.toLng:it.lng);
+  if(!_locHidden(it) && dlat!=null && dlng!=null){
+    meta.push('<a class="sc-map" href="https://www.google.com/maps?q='+encodeURIComponent(dlat+','+dlng)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
+  }
+  var metaHtml=meta.length?'<div class="sc-meta">'+meta.join('')+'</div>':'';
+  return '<div class="sc-item" style="background:'+catBg(it.category)+'">'+schedTimeHtml(it,'arr')+'<span class="sc-ic">'+ic+'</span>'
+    +'<div class="sc-body"><div class="sc-ttl"><span class="sc-legtag">🛬 到着</span> '+esc(it.title||'')+'</div>'+metaHtml+'</div></div>';
 }
 var _scMarkers={}, _scMap=null, _scItemBounds={};
 function _safeTz(la,ln){ try{ return window.tzlookup?tzlookup(la,ln):null; }catch(e){ return null; } }
@@ -1659,7 +1702,7 @@ function printCostView(){
   w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>費用計算表</title><style>'+_costPrintCss()+'</style></head><body>'+title+el.innerHTML+'</body></html>');
   w.document.close(); w.focus(); setTimeout(function(){ try{ w.print(); }catch(e){} }, 350);
 }
-function renderSchedItem(it){
+function renderSchedItem(it, leg){
   var ic=itemIcon(it);
   var geo=(it.lat!=null&&it.lng!=null);
   var hideLoc=_locHidden(it); // ストーカー対策: 滞在中は位置を伏せる
@@ -1683,7 +1726,7 @@ function renderSchedItem(it){
   var hasDetail=!!inner;
   var detail=hasDetail?'<div class="sc-detail" id="scd-'+did+'" style="display:none">'+inner+'</div>':'';
   var clickable=hasDetail||geo;
-  return '<div class="sc-item'+(clickable?' has-geo':'')+'" style="background:'+catBg(it.category)+'"'+(clickable?' onclick="onSchedItemClick(\''+did+'\','+(geo?'1':'0')+')"':'')+'>'+schedTimeHtml(it)+'<span class="sc-ic">'+ic+'</span>'
+  return '<div class="sc-item'+(clickable?' has-geo':'')+'" style="background:'+catBg(it.category)+'"'+(clickable?' onclick="onSchedItemClick(\''+did+'\','+(geo?'1':'0')+')"':'')+'>'+schedTimeHtml(it,leg)+'<span class="sc-ic">'+ic+'</span>'
     +'<div class="sc-body"><div class="sc-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'')+schedNamesHtml(it,true)+rosterBtnHtml(it)+(hasDetail?'<span class="sc-caret2" id="scc-'+did+'">▾</span>':'')+'</div>'
     +detail
     +'</div>'
@@ -1808,11 +1851,31 @@ function renderSchedule(items){
   h+=nowSectionHtml(visEnr);
   var hiddenCount=enr.length-visEnr.length;
   // 日付ごとにまとめ、日付クリックで開閉（既定は畳んだ状態）。並び順はJST、見出しは現地日付。
-  var groups=[], cur=null;
+  // 空路で日付変更線を跨ぎ翌日着となる移動は「出発」「到着」の2レグに分割し、到着は到着日の枠へ。
+  var legs=[], arrLegs=[];
   visEnr.forEach(function(e){
-    var it=e.it, d=it.date||'';
+    var it=e.it;
+    var arrDate=_idlSplitArrDate(it);
+    if(arrDate){
+      legs.push({it:it, ms:e.ms, leg:'dep', day:(it.date||''), src:e});
+      arrLegs.push({it:it, ms:_arrInstant(it), leg:'arr', day:arrDate, src:e});
+    } else {
+      legs.push({it:it, ms:e.ms, leg:null, day:(it.date||''), src:e});
+    }
+  });
+  // 到着レグを時系列（ms昇順）で挿入。legs は既にJST順なので、ms超過の直前に差し込む。
+  arrLegs.sort(function(a,b){ return a.ms-b.ms; });
+  arrLegs.forEach(function(a){
+    var pos=legs.length;
+    for(var k=0;k<legs.length;k++){ if(legs[k].ms>a.ms){ pos=k; break; } }
+    legs.splice(pos,0,a);
+  });
+  var groups=[], cur=null;
+  legs.forEach(function(L){
+    var it=L.it, d=L.day, e=L.src;
     if(!cur||cur.day!==d){ cur={day:d, rows:'', n:0}; groups.push(cur); }
-    cur.rows+=renderSchedItem(it); cur.n++;
+    if(L.leg==='arr'){ cur.rows+=renderArrLeg(it); cur.n++; return; }
+    cur.rows+=renderSchedItem(it, L.leg); cur.n++;
     // 移動で日付変更線を越える場合、その直後に仕切り線（±1日）
     if(_idlCross(it)) cur.rows+=idlDivider(it);
     // 移動でタイムゾーンが変わる場合、その直後に仕切り線
