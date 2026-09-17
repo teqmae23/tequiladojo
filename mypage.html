@@ -239,6 +239,12 @@ select.fi{min-width:80px}
 /* データ確認バナー */
 .debug-banner{background:#fff8e1;border:1px solid #f0c040;border-radius:var(--r);padding:10px 14px;margin-bottom:12px;font-size:12px;color:#7a5610;display:none}
 .debug-banner.show{display:block}
+/* 来場履歴の年月折りたたみ（10件超のとき） */
+.vmonth-hd{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#f1e5d2;border:1px solid rgba(120,80,40,.18);border-radius:10px;margin:10px 0 8px;cursor:pointer;font-weight:700;color:var(--ink2);user-select:none}
+.vmonth-car{color:#8a5a22;font-size:12px;flex:0 0 auto}
+.vmonth-t{font-size:14px}
+.vmonth-c{margin-left:auto;font-size:12px;font-weight:700;color:#8a5a22;background:#fff;border:1px solid rgba(120,80,40,.2);border-radius:20px;padding:2px 10px;white-space:nowrap}
+.vmonth-body{margin-bottom:6px}
 </style>
 </head>
 <body>
@@ -319,7 +325,7 @@ select.fi{min-width:80px}
           <span id="prof-mem-wrap"><span data-i18n="mp_memkbn">会員区分</span>：<b id="prof-mem-kbn">本会員</b></span>
           <span><span data-i18n="mp_class">来場クラス</span>：<b id="prof-class-txt" onclick="showClassInfo()" style="cursor:pointer" title="タップで説明">ブランコ</b>
             <button onclick="showClassInfo()" class="prof-q" title="来場クラスとは">?</button></span>
-          <span id="prof-plan-wrap"><span data-i18n="mp_plan">課金区分</span>：<b id="prof-plan-txt">—</b></span>
+          <span id="prof-plan-wrap"><span data-i18n="mp_plan">課金区分</span>：<b id="prof-plan-txt">—</b><a id="prof-plan-cta" href="/member_subscription.html" data-i18n="mp_plan_cta" style="display:none;margin-left:8px;font-size:11px;font-weight:700;color:#8a5610;background:#f7ecd3;border:1px solid rgba(200,146,30,.45);border-radius:20px;padding:2px 10px;text-decoration:none;white-space:nowrap">有料プランはこちら →</a></span>
         </div>
       </div>
     </div>
@@ -1094,6 +1100,9 @@ async function applyPlanDisplay(doc){
       else{ el.removeAttribute('data-i18n'); el.textContent=nm; }
       el.className='kbn-badge '+(paid?'plan-paid':'plan-free');
     }
+    // 無課金会員には「有料プランはこちら」リンクを表示
+    var cta=document.getElementById('prof-plan-cta');
+    if(cta) cta.style.display=paid?'none':'inline-flex';
     const bar=document.getElementById('profile-bar');
     if(bar) bar.classList.toggle('paid', paid);
   }catch(e){ /* noop */ }
@@ -1219,13 +1228,43 @@ async function updateSummary(visits){
 }
 
 // ─── 来場リスト描画 ───
+// 年月ラベル（YYMMDDの先頭YYMMから）。言語に応じて表示。
+function _ymLabel(ym){
+  var yy=ym.slice(0,2), mm=ym.slice(2,4);
+  var y=2000+(parseInt(yy,10)||0), m=(parseInt(mm,10)||1);
+  var lang=(window.I18N&&I18N.lang)||'ja';
+  if(lang==='ja') return y+'年'+m+'月';
+  var loc=(lang==='es')?'es-ES':'en-US';
+  try{ return new Intl.DateTimeFormat(loc,{year:'numeric',month:'long'}).format(new Date(y,m-1,1)); }catch(e){ return y+'-'+('0'+m).slice(-2); }
+}
+function toggleVMonth(i){
+  var b=document.getElementById('vmbody-'+i), c=document.getElementById('vmcar-'+i);
+  if(!b) return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c) c.textContent=open?'▸':'▾';
+}
 function renderVisitList(visits){
   const el=document.getElementById('visit-list');
   if(!visits.length){
     el.innerHTML='<div class="empty"><div class="empty-icon">🔍</div>'+esc(tt('mp_no_match','該当する来場記録がありません'))+'</div>';
     return;
   }
-  el.innerHTML=visits.map(v=>buildVisitCard(v)).join('');
+  // 10件以下は従来どおりフラット表示
+  if(visits.length<=10){ el.innerHTML=visits.map(v=>buildVisitCard(v)).join(''); return; }
+  // 10件超は年月でグループ化して折りたたみ（最新月だけ開く）。visitsは新しい順。
+  var groups=[], idx={};
+  visits.forEach(function(v){
+    var ds=(v.visitDate||(v.id||'').slice(0,6)||''); var ym=ds.slice(0,4)||'0000';
+    if(idx[ym]==null){ idx[ym]=groups.length; groups.push({ym:ym,items:[]}); }
+    groups[idx[ym]].items.push(v);
+  });
+  el.innerHTML=groups.map(function(g,i){
+    var open=(i===0);
+    var cards=g.items.map(function(v){return buildVisitCard(v);}).join('');
+    return '<div class="vmonth-hd" onclick="toggleVMonth('+i+')">'
+      +'<span class="vmonth-car" id="vmcar-'+i+'">'+(open?'▾':'▸')+'</span>'
+      +'<span class="vmonth-t">'+esc(_ymLabel(g.ym))+'</span>'
+      +'<span class="vmonth-c">'+g.items.length+tt('mp_u_ken','件')+'</span></div>'
+      +'<div class="vmonth-body" id="vmbody-'+i+'" style="display:'+(open?'':'none')+'">'+cards+'</div>';
+  }).join('');
 }
 
 function buildVisitCard(v){
@@ -1886,7 +1925,7 @@ var MYPAGE_I18N={
     mp_login_fail:'ログインできませんでした', mp_login_badcred:'IDまたはパスワードが正しくありません', mp_login_toomany:'しばらく時間をおいてお試しください' },
   en:{
     mp_logout:'Log out', mp_title:'My Dojo', mp_see_news:'See news →',
-    mp_subtitle:'Your records and the next step.', mp_nav_contents:'Member Contents', mp_nav_checkin:'Check in', mp_sec_records:'Records',
+    mp_subtitle:'Your records and the next step.', mp_plan_cta:'See paid plans →', mp_nav_contents:'Member Contents', mp_nav_checkin:'Check in', mp_sec_records:'Records',
     mp_scan_title:'Scan check-in QR', mp_scan_hint:'Fit the store check-in QR in the frame', mp_scan_close:'Close',
     mp_scan_starting:'Starting camera...', mp_scan_reading:'QR read. Processing...', mp_scan_manual:'Enter the check-in QR code',
     mp_ci_sending:'Sending check-in request...', mp_ci_pending:'Check-in request sent. Please wait for staff approval.',
@@ -1912,7 +1951,7 @@ var MYPAGE_I18N={
     mp_login_fail:'Could not log in', mp_login_badcred:'Incorrect ID or password', mp_login_toomany:'Please try again later' },
   es:{
     mp_logout:'Cerrar sesión', mp_title:'Mi Dojo', mp_see_news:'Ver noticias →',
-    mp_subtitle:'Tus registros y el siguiente paso.', mp_nav_contents:'Contenido de socios', mp_nav_checkin:'Registrar visita', mp_sec_records:'Registros',
+    mp_subtitle:'Tus registros y el siguiente paso.', mp_plan_cta:'Ver planes de pago →', mp_nav_contents:'Contenido de socios', mp_nav_checkin:'Registrar visita', mp_sec_records:'Registros',
     mp_scan_title:'Escanear QR de visita', mp_scan_hint:'Encuadra el QR de la tienda', mp_scan_close:'Cerrar',
     mp_scan_starting:'Iniciando cámara...', mp_scan_reading:'QR leído. Procesando...', mp_scan_manual:'Introduce el código del QR de visita',
     mp_ci_sending:'Enviando solicitud de visita...', mp_ci_pending:'Solicitud enviada. Espera la aprobación del personal.',
