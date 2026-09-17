@@ -203,27 +203,40 @@ function render(){
       +((hasSub||isPastDue)?'<button class="btn bg2" onclick="openPortal()">サブスクを管理・解約</button>':'')
     +'</div>';
 
-  // 購入可能プラン（Stripe Price ID があり有効なもの）
-  var buyable=plans.filter(function(p){
+  // 表示プラン：無料プラン(level0)＋購入可能な有料プラン(Stripe Price IDあり)
+  // ※ freePlan() は最初の level0 プランを返すので、複数ある場合の重複表示を避ける。
+  var free=MemberPlan.freePlan(plans);
+  var display=plans.filter(function(p){
     var active=(p.active===undefined||p.active===1||p.active==='1'||p.active===true);
-    return active && p.stripePriceId && Number(p.level||0)>0;
+    if(!active) return false;
+    var lvl=Number(p.level||0);
+    if(lvl>0) return !!p.stripePriceId;            // 有料：Price ID があるもの
+    return !!(free && p.id===free.id);              // 無料：代表の1件のみ
   });
-  if(!buyable.length){ g('plan-grid').innerHTML=''; g('plan-empty').style.display='block'; return; }
+  if(!display.length){ g('plan-grid').innerHTML=''; g('plan-empty').style.display='block'; return; }
   g('plan-empty').style.display='none';
-  g('plan-grid').innerHTML=buyable.map(function(p){
+  // 機能の解放は「区分」で決める（Firestoreの個別フラグに依存しない）:
+  //   無料枠 menu / map / library … 無料を含む全プランでアクティブ
+  //   有料枠 movie / seminar / ptd  … 全ての有料プラン(level>0)でアクティブ
+  var FREE_KEYS={menu:1,map:1,library:1};
+  g('plan-grid').innerHTML=display.map(function(p){
     var isCurrent=(eff&&eff.id===p.id);
+    var isPaid=Number(p.level||0)>0;
     var feats=MemberPlan.FEATURES.map(function(f){
-      var on=!!(p.features&&p.features[f.key]);
+      var on=FREE_KEYS[f.key]?true:isPaid;
       return '<li class="'+(on?'':'off')+'">'+(on?'✓':'—')+' '+f.icon+' '+esc(f.label)+'</li>';
     }).join('');
+    var btn=isCurrent
+      ? '<button class="pc-btn cur" disabled>現在のプラン</button>'
+      : (isPaid
+        ? '<button class="pc-btn" onclick="subscribe(\''+esc(p.id)+'\',this)">このプランに申し込む</button>'
+        : '<button class="pc-btn cur" disabled>登録不要でご利用いただけます</button>');
     return '<div class="pcard'+(isCurrent?' current':'')+'">'
       +(isCurrent?'<span class="pc-badge">利用中</span>':'')
       +'<div class="pc-name">'+esc(p.name)+'</div>'
-      +'<div class="pc-price">'+esc(p.priceLabel||'—')+'</div>'
+      +'<div class="pc-price">'+esc(p.priceLabel||(isPaid?'—':'無料'))+'</div>'
       +'<ul class="pc-feats">'+feats+'</ul>'
-      +(isCurrent
-        ? '<button class="pc-btn cur" disabled>現在のプラン</button>'
-        : '<button class="pc-btn" onclick="subscribe(\''+esc(p.id)+'\',this)">このプランに申し込む</button>')
+      +btn
     +'</div>';
   }).join('');
 }
