@@ -60,6 +60,20 @@ button{cursor:pointer;font-family:var(--sans)}
 .cur-name{font-family:var(--serif);font-size:22px;color:var(--gold-d);margin-top:2px}
 .cur-sub{font-size:12px;color:var(--ink3);margin-top:4px}
 .cur-actions{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap}
+/* 現在のプラン: 名前とサブスク管理ボタンを同じ行に（ボタンは右寄せ・行数削減） */
+.cur-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.cur-head .cur-actions{margin-left:auto;justify-content:flex-end}
+/* 有料会員: マイ道場と同じく派手な金枠で強調 */
+.cur.paid{
+  border:4px solid transparent;
+  background:linear-gradient(var(--white),var(--white)) padding-box,
+            linear-gradient(120deg,#fbe9a6,#c8921e,#8a5a10,#fbe9a6,#c8921e) border-box;
+  background-size:100% 100%,300% 100%;
+  box-shadow:0 0 0 1px rgba(200,146,30,.35),0 6px 22px rgba(200,146,30,.5);
+  animation:goldshimmer 4s linear infinite;
+}
+@keyframes goldshimmer{0%{background-position:0 0,0 50%}100%{background-position:0 0,300% 50%}}
+@media (prefers-reduced-motion:reduce){.cur.paid{animation:none}}
 .btn{border:none;border-radius:var(--r);padding:9px 15px;font-size:13px;font-weight:500}
 .bp{background:var(--gold-d);color:var(--cream)}
 .bg2{background:var(--cream2);color:var(--ink2);border:1px solid var(--border2)}
@@ -194,14 +208,29 @@ function render(){
           +'（未払いの請求書もその場でお支払いいただけます）。1ヶ月以上お支払いがない場合は「休会中」となります。')
       +'</div>'
     : '';
-  g('cur').innerHTML='<div class="cur-lbl">現在のプラン</div>'
-    +'<div class="cur-name">'+esc(eff?eff.name:'無料会員')+'</div>'
-    +(subInfo?'<div class="cur-sub">'+subInfo+'</div>':'')
-    +pastDueBox
-    +'<div class="cur-actions">'
-      +(isPastDue?'<button class="btn bp" onclick="openPortal()">お支払い方法を更新する</button>':'')
-      +((hasSub||isPastDue)?'<button class="btn bg2" onclick="openPortal()">サブスクを管理・解約</button>':'')
-    +'</div>';
+  // 有料会員（サブスク有効/遅延、または手動割当の有料プラン）のみ最上部に表示・強調。
+  // 無料会員は最上部に出さず、下のプラン一覧の「無料会員」カードの「利用中」で示す。
+  var isPaidMember=hasSub||isPastDue||!!(eff&&Number(eff.level||0)>0);
+  var curBox=g('cur');
+  if(!isPaidMember){
+    curBox.className='cur';
+    curBox.style.display='none';
+    curBox.innerHTML='';
+  } else {
+    curBox.style.display='block';
+    curBox.className='cur paid';
+    var curActions=(isPastDue?'<button class="btn bp" onclick="openPortal()">お支払い方法を更新する</button>':'')
+      +'<button class="btn bg2" onclick="openPortal()">サブスクを管理・解約</button>';
+    curBox.innerHTML='<div class="cur-head">'
+        +'<div>'
+          +'<div class="cur-lbl">現在の会員プラン</div>'
+          +'<div class="cur-name">'+esc(eff?eff.name:'—')+'</div>'
+          +(subInfo?'<div class="cur-sub">'+subInfo+'</div>':'')
+        +'</div>'
+        +'<div class="cur-actions">'+curActions+'</div>'
+      +'</div>'
+      +pastDueBox;
+  }
 
   // 表示プラン：無料会員(level0)＋購入可能な有料プラン(Stripe Price IDあり)
   // 無料会員のカードは「違いがわかるように」常に先頭へ表示する。
@@ -233,7 +262,7 @@ function render(){
       ? '<button class="pc-btn cur" disabled>現在のプラン</button>'
       : (isPaid
         ? '<button class="pc-btn" onclick="subscribe(\''+esc(p.id)+'\',this)">このプランに申し込む</button>'
-        : '<button class="pc-btn cur" disabled>登録不要でご利用いただけます</button>');
+        : '<button class="pc-btn cur" disabled>登録無料で利用可</button>');
     return '<div class="pcard'+(isCurrent?' current':'')+'">'
       +(isCurrent?'<span class="pc-badge">利用中</span>':'')
       +'<div class="pc-name">'+esc(p.name)+'</div>'
