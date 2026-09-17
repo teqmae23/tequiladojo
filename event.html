@@ -1130,7 +1130,7 @@ g('mp-modal').addEventListener('click',function(e){ if(e.target===g('mp-modal'))
 
 /* ════════ 参加者プロフィール（自己紹介） ════════ */
 // profiles サブコレクション（docID=authUid）。参加状況とは独立に自己紹介を保存。
-var _profiles={};
+var _profiles={}, _peTarget=null;
 function openProfiles(){ g('prof-modal').classList.add('open'); loadProfiles(); }
 function closeProfiles(){ g('prof-modal').classList.remove('open'); }
 function loadProfiles(){
@@ -1157,7 +1157,8 @@ function renderProfiles(){
     var av=icon?('<img class="pf-av" src="'+esc(icon)+'" alt="">'):('<span class="pf-av">'+esc(initials(nick))+'</span>');
     var body='<div class="pf-nm">'+esc(nick)+'</div>';
     body+= bio?('<div class="pf-bio">'+esc(bio)+'</div>'):('<div class="pf-empty">'+(me?'自己紹介はまだありません。「編集」から追加できます。':'自己紹介はまだありません。')+'</div>');
-    if(me && _isReal) body+='<div class="pf-edit"><button class="hours-btn" style="border-color:var(--gold-d);color:var(--gold-d)" onclick="openProfileEdit()">✏️ 編集</button></div>';
+    if(me && _isReal) body+='<div class="pf-edit"><button class="hours-btn" style="border-color:var(--gold-d);color:var(--gold-d)" onclick="openProfileEdit(\''+esc(p.id)+'\')">✏️ 編集</button></div>';
+    else if(_isStaff) body+='<div class="pf-edit"><button class="hours-btn" style="border-color:var(--gold-d);color:var(--gold-d)" onclick="openProfileEdit(\''+esc(p.id)+'\')">🛠 代行編集</button></div>';
     return '<div class="pf-item'+(me?' pf-me':'')+'">'+av+'<div class="pf-body">'+body+'</div></div>';
   }).join('');
   if(hosts.length){
@@ -1171,27 +1172,45 @@ function renderProfiles(){
   }
   el.innerHTML=html;
 }
-function openProfileEdit(){
-  if(!_isReal){ toast('会員ログインが必要です'); return; }
-  var pr=_profiles[_uid]||{};
-  var myBio=pr.bio;
-  if((myBio==null||myBio==='') && _myPt) myBio=_myPt.bio; // 未設定なら参加者docのbioを初期値に
-  g('pe-nick').value=(_mProfile.nickname||(_myPt&&_myPt.nickname)||_memberName||'').trim();
-  g('pe-bio').value=myBio||'';
+function openProfileEdit(pid){
+  var isProxy=!!(pid && pid!==_uid);
+  if(isProxy){ if(!_isStaff){ toast('権限がありません'); return; } }
+  else if(!_isReal){ toast('会員ログインが必要です'); return; }
+  var hd=document.querySelector('#profedit-modal .mhd span');
+  if(isProxy){
+    var p=(_participants||[]).find(function(x){return x.id===pid;})||{id:pid};
+    var pr=_profFor(p)||{};
+    _peTarget={ id:p.id, proxy:true, memberId:(p.memberId||pr.memberId||''),
+      nickname:(p.nickname||pr.nickname||'（会員）'), iconUrl:(pr.iconUrl||p.iconUrl||'') };
+    g('pe-nick').value=_peTarget.nickname;
+    g('pe-bio').value=(pr.bio||p.bio||'');
+    if(hd) hd.textContent='🛠 代行編集 — '+_peTarget.nickname;
+  } else {
+    var mypr=_profiles[_uid]||{};
+    var myBio=mypr.bio; if((myBio==null||myBio==='') && _myPt) myBio=_myPt.bio; // 未設定なら参加者docのbioを初期値に
+    _peTarget={ id:_uid, proxy:false, memberId:_memberId||'',
+      nickname:(_mProfile.nickname||(_myPt&&_myPt.nickname)||_memberName||'').trim(),
+      iconUrl:_mProfile.iconUrl||(_myPt&&_myPt.iconUrl)||'' };
+    g('pe-nick').value=_peTarget.nickname;
+    g('pe-bio').value=myBio||'';
+    if(hd) hd.textContent='✏️ 自己紹介を編集';
+  }
   g('pe-err').textContent='';
   g('profedit-modal').classList.add('open');
 }
 function closeProfileEdit(){ g('profedit-modal').classList.remove('open'); }
 function saveProfile(){
-  if(!_isReal){ g('pe-err').textContent='会員ログインが必要です'; return; }
-  var data={ authUid:_uid, memberId:_memberId||'',
-    nickname:(_mProfile.nickname||(_myPt&&_myPt.nickname)||_memberName||'').trim(),
-    iconUrl:_mProfile.iconUrl||(_myPt&&_myPt.iconUrl)||'',
+  var tgt=_peTarget||{id:_uid,proxy:false};
+  if(tgt.proxy){ if(!_isStaff){ g('pe-err').textContent='権限がありません'; return; } }
+  else if(!_isReal){ g('pe-err').textContent='会員ログインが必要です'; return; }
+  var data={ authUid:(String(tgt.id).indexOf('mid:')===0?'':tgt.id), memberId:tgt.memberId||'',
+    nickname:tgt.nickname||'', iconUrl:tgt.iconUrl||'',
     bio:(g('pe-bio').value||'').trim(),
     updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
+  if(tgt.proxy){ data.byAdmin=true; data.adminUid=_uid; }
   var btn=g('pe-save'); btn.disabled=true;
-  db.collection('events').doc(eventId).collection('profiles').doc(_uid).set(data,{merge:true})
-    .then(function(){ toast('自己紹介を保存しました'); closeProfileEdit(); loadProfiles(); })
+  db.collection('events').doc(eventId).collection('profiles').doc(tgt.id).set(data,{merge:true})
+    .then(function(){ toast(tgt.proxy?('「'+(tgt.nickname||'会員')+'」の自己紹介を保存しました'):'自己紹介を保存しました'); closeProfileEdit(); loadProfiles(); })
     .catch(function(e){ g('pe-err').textContent='保存失敗: '+e.message; })
     .finally(function(){ btn.disabled=false; });
 }
