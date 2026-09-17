@@ -2221,7 +2221,10 @@ function _taskVisibleSelf(t){
 }
 // 会員がこの項目を操作できるか（対象者本人か）
 function _taskActiveSelf(t){ return _selfInAud(t); }
+// 連携アンケートに回答済みなら、そのタスクは完了扱い（締切後も回答済みは保持されるため完了のまま）
+function _svLinkDone(t){ return !!(t && t.linkSurveyId && _myResp && _myResp[t.linkSurveyId]); }
 function _taskMyState(t){
+  if(_svLinkDone(t)) return 'done';
   var myc=_myComp(t);
   var done;
   if(_progStates(t)){ done=!!(myc && myc.progress && myc.progress===_progLastId(t)); }
@@ -2291,7 +2294,8 @@ function taskDetailHtml(t){
   var pub=(t.visibility!=='private');
   var myc=_myComp(t);
   var st=_progStates(t);
-  var done=st?!!(myc&&myc.progress&&myc.progress===_progLastId(t)):!!(myc&&myc.done);
+  var svDone=_svLinkDone(t);
+  var done=svDone||(st?!!(myc&&myc.progress&&myc.progress===_progLastId(t)):!!(myc&&myc.done));
   var over=(t.deadline&&t.deadline<today&&!done);
   var active=_taskActiveSelf(t);
   var hh='';
@@ -2303,7 +2307,12 @@ function taskDetailHtml(t){
   if(t.linkSurveyId) hh+='<div class="ck-attach">📋 <a href="javascript:void(0)" onclick="gotoSurvey(\''+esc(t.linkSurveyId)+'\')">アンケートに回答する ↗</a></div>';
   if(t.sampleUrl) hh+='<div class="ck-attach">📄 <a href="'+esc(t.sampleUrl)+'" target="_blank" rel="noopener">提出見本を見る ↗</a></div>';
   if(t.attachmentUrl) hh+='<div class="ck-attach">📎 <a href="'+esc(t.attachmentUrl)+'" target="_blank" rel="noopener">'+esc(t.attachmentName||'参考ファイル')+'</a></div>';
-  if(_isReal && active){
+  if(_isReal && active && t.linkSurveyId){
+    // 連携アンケートの回答が完了条件。回答すると自動完了、締切後も回答済みなら完了のまま。
+    hh+= svDone
+      ? '<div class="ck-sub" style="color:var(--teal);font-weight:700">✅ アンケート回答済みのため完了しています</div>'
+      : '<div class="ck-hint">上の「📋 アンケートに回答する」から回答すると、自動で完了になります。</div>';
+  } else if(_isReal && active){
     var locked=!!(myc&&(myc.approved||myc.msgApproved)); // 承認済み（ファイル/メッセージ）は変更不可
     if(locked){
       // 承認済み: 提出物・メッセージを表示のみ、操作は不可
@@ -2821,6 +2830,8 @@ function loadSurveys(eventPublished){
     }));
   }).then(function(){
     _updateSurveyBadge(); // 未回答件数を見出し右に表示
+    // アンケート回答状況が確定したら、連携タスクの完了表示を更新
+    if(g('checklist-cont') && _tasks && _tasks.length) renderChecklist();
     if(!list.length){ return; }
     var box=g('surveys');
     var actList=list.filter(function(s){ return !_svIsPast(s); });
@@ -2939,7 +2950,7 @@ function submitSurvey(sid){
     _myResp[sid]=Object.assign({},data);
     // 結果を再取得（閲覧可能なら）
     if(canSeeResults(s)){ return svCol().doc(sid).collection('responses').get().then(function(rs){ _resCache[sid]=rs.docs.map(function(d){return d.data();}); }); }
-  }).then(function(){ renderCard(sid); _updateSurveyBadge(); toast('回答を送信しました'); })
+  }).then(function(){ renderCard(sid); _updateSurveyBadge(); if(g('checklist-cont') && _tasks && _tasks.length) renderChecklist(); toast('回答を送信しました'); })
     .catch(function(e){ if(btn)btn.disabled=false; if(err) err.textContent='送信失敗: '+e.message; });
 }
 

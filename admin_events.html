@@ -285,6 +285,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .rbar-ct{min-width:44px;color:var(--ink3);flex-shrink:0}
 .agg-txt{border:1px solid var(--border);border-radius:var(--r);padding:8px 10px;font-size:13px;margin-bottom:5px;background:var(--white)}
 .agg-txt .who{font-size:10px;color:var(--ink3);margin-top:3px}
+.agg-names{margin:-2px 0 8px 0;padding:4px 8px;font-size:11px;color:var(--ink2);background:var(--cream2);border-radius:6px;line-height:1.5;overflow-wrap:anywhere}
 
 /* ===== 可読性向上・スマホ最適化（イベント管理）===== */
 .ev-name{font-size:17px}
@@ -1619,19 +1620,19 @@ function renderAgg(s, resp){
   (s.questions||[]).forEach(function(q){
     html+='<div class="agg-q"><div class="ql">'+esc(q.label)+' <span style="font-weight:400;color:var(--ink3);font-size:11px">('+esc(QTYPE[q.type]||q.type)+')</span></div>';
     if(q.type==='single'||q.type==='multi'){
-      var cnt={}; (q.options||[]).forEach(function(o){ cnt[o]=0; }); var other=0;
+      var cnt={}, who={}; (q.options||[]).forEach(function(o){ cnt[o]=0; who[o]=[]; }); var other=0, otherWho=[];
       resp.forEach(function(r){
         var a=r.answers?r.answers[q.qid]:null; if(a==null) return;
         var arr=Array.isArray(a)?a:[a];
-        arr.forEach(function(v){ if(cnt[v]!=null) cnt[v]++; else if((''+v).trim()) other++; });
+        arr.forEach(function(v){ if(cnt[v]!=null){ cnt[v]++; who[v].push(whoOf(r)); } else if((''+v).trim()){ other++; otherWho.push(whoOf(r)+'（'+(''+v).trim()+'）'); } });
       });
-      (q.options||[]).forEach(function(o){ html+=bar(o,cnt[o],total); });
-      if(other) html+=bar('その他',other,total);
+      (q.options||[]).forEach(function(o){ html+=bar(o,cnt[o],total); if(who[o].length) html+='<div class="agg-names">'+who[o].map(esc).join('、')+'</div>'; });
+      if(other){ html+=bar('その他',other,total); if(otherWho.length) html+='<div class="agg-names">'+otherWho.map(esc).join('、')+'</div>'; }
     } else if(q.type==='rating'){
-      var sum=0,n=0,dist={1:0,2:0,3:0,4:0,5:0};
-      resp.forEach(function(r){ var v=r.answers?+r.answers[q.qid]:0; if(v>=1&&v<=5){ dist[v]++; sum+=v; n++; } });
+      var sum=0,n=0,dist={1:0,2:0,3:0,4:0,5:0},distWho={1:[],2:[],3:[],4:[],5:[]};
+      resp.forEach(function(r){ var v=r.answers?+r.answers[q.qid]:0; if(v>=1&&v<=5){ dist[v]++; distWho[v].push(whoOf(r)); sum+=v; n++; } });
       html+='<div style="font-size:13px;margin-bottom:6px">平均: <b>'+(n?(sum/n).toFixed(2):'—')+'</b> ／ '+n+'件</div>';
-      for(var v=5;v>=1;v--) html+=bar('★'+v,dist[v],n||1);
+      for(var v=5;v>=1;v--){ html+=bar('★'+v,dist[v],n||1); if(distWho[v].length) html+='<div class="agg-names">'+distWho[v].map(esc).join('、')+'</div>'; }
     } else {
       var texts=resp.map(function(r){ var t=r.answers?r.answers[q.qid]:''; return {t:(t==null?'':(''+t)).trim(),who:whoOf(r)}; }).filter(function(x){return x.t;});
       if(!texts.length) html+='<div style="font-size:12px;color:var(--ink3)">回答なし</div>';
