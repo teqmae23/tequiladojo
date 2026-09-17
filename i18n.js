@@ -12,6 +12,7 @@
 
   var DICT={
     ja:{
+      td_brand:'テキーラ道場',
       switch_label:'言語', lang_ja:'日本語', lang_en:'English', lang_es:'Español',
       nav_about:'テキーラ<br>道場とは？', nav_list:'テキーラ<br>リスト',
       nav_construction:'🚧 工事中', nav_member:'会員<br>ページ',
@@ -28,6 +29,7 @@
       ss_wdays:['日','月','火','水','木','金','土']
     },
     en:{
+      td_brand:'TEQUILA DOJO',
       switch_label:'Language', lang_ja:'日本語', lang_en:'English', lang_es:'Español',
       nav_about:'What is<br>Tequila Dojo?', nav_list:'Tequila<br>List',
       nav_construction:'🚧 Coming soon', nav_member:'Member<br>Page',
@@ -37,13 +39,14 @@
       rsv_note:'* Membership is required to reserve (confirmed after staff approval).',
       access_title:'📍 Access', route_title:'Directions',
       tokusho:'Legal Notice (Specified Commercial Transactions Act)',
-      access_address:'<strong>Tequila Dojo</strong>\n        Esquire Hon-Chiba Daiichi 2F, Room 214<br>\n        1-24-1 Nagasu, Chuo-ku, Chiba City, Chiba 260-0854<br>\n        <span style="font-size:13px;color:#1a5e3a;font-weight:700;">🚶 30 sec walk from JR Hon-Chiba Sta.</span>',
+      access_address:'<strong>TEQUILA DOJO</strong>\n        Esquire Hon-Chiba Daiichi 2F, Room 214<br>\n        1-24-1 Nagasu, Chuo-ku, Chiba City, Chiba 260-0854<br>\n        <span style="font-size:13px;color:#1a5e3a;font-weight:700;">🚶 30 sec walk from JR Hon-Chiba Sta.</span>',
       ss_open:'Open', ss_closed:'Closed', ss_break:'On break', ss_checking:'Checking...',
       ss_visitors:'Guests: ', ss_people:'',
       ss_next:'Next: ', ss_next_unknown:'Next date TBD', ss_resume:' resume', ss_today:'Today',
       ss_wdays:['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
     },
     es:{
+      td_brand:'TEQUILA DOJO',
       switch_label:'Idioma', lang_ja:'日本語', lang_en:'English', lang_es:'Español',
       nav_about:'¿Qué es<br>Tequila Dojo?', nav_list:'Lista de<br>Tequila',
       nav_construction:'🚧 En construcción', nav_member:'Página de<br>socios',
@@ -53,7 +56,7 @@
       rsv_note:'* Se requiere ser socio para reservar (se confirma tras la aprobación del personal).',
       access_title:'📍 Cómo llegar', route_title:'Cómo llegar',
       tokusho:'Aviso legal (Ley de Transacciones Comerciales Especificadas)',
-      access_address:'<strong>Tequila Dojo</strong>\n        Esquire Hon-Chiba Daiichi 2F, Sala 214<br>\n        1-24-1 Nagasu, Chuo-ku, Ciudad de Chiba, Chiba 260-0854<br>\n        <span style="font-size:13px;color:#1a5e3a;font-weight:700;">🚶 A 30 seg. a pie de la estación JR Hon-Chiba</span>',
+      access_address:'<strong>TEQUILA DOJO</strong>\n        Esquire Hon-Chiba Daiichi 2F, Sala 214<br>\n        1-24-1 Nagasu, Chuo-ku, Ciudad de Chiba, Chiba 260-0854<br>\n        <span style="font-size:13px;color:#1a5e3a;font-weight:700;">🚶 A 30 seg. a pie de la estación JR Hon-Chiba</span>',
       ss_open:'Abierto', ss_closed:'Cerrado', ss_break:'En descanso', ss_checking:'Comprobando...',
       ss_visitors:'Clientes: ', ss_people:'',
       ss_next:'Próximo: ', ss_next_unknown:'Próxima fecha por confirmar', ss_resume:' reanuda', ss_today:'Hoy',
