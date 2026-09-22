@@ -25,6 +25,7 @@ var FIREBASE_CONFIG = {
 <script src="/auth-role.js?v=20260829"></script>
 <script>window.JOURNAL_PAGE='openclose';</script>
 <script src="/journal.js?v=20260706"></script>
+<script src="/cal-autopublish.js?v=20260915"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -132,10 +133,22 @@ td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle
       </label>
       <span id="oc-test-mode-note" style="font-size:11px;color:var(--ink3)">チェック時：開店してもTOPページの表示は閉店中のまま</span>
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:24px">
+    <div style="display:flex;gap:8px;margin-bottom:16px">
       <button id="btn-open-store" class="btn bp" style="flex:1;font-size:15px;padding:16px 8px">🏮 開店</button>
       <button id="btn-break-store" class="btn bs" style="flex:1;font-size:15px;padding:16px 8px">☕ 休憩</button>
       <button id="btn-close-store" class="btn bd" style="flex:1;font-size:15px;padding:16px 8px">🌙 閉店</button>
+    </div>
+
+    <!-- 会員からの予約申請（承認待ち） -->
+    <div id="oc-pending-rsv" class="card" style="display:none;padding:12px 16px;margin-bottom:12px;border:1px solid rgba(200,146,30,.45);background:#fbf4e3">
+      <div style="font-weight:700;color:var(--gold-d);margin-bottom:8px">🔔 会員からの予約申請（承認待ち <span id="oc-pending-count">0</span>件）</div>
+      <div id="oc-pending-list" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+
+    <!-- 本日の予約 -->
+    <div id="oc-today-rsv" class="card" style="display:none;padding:12px 16px;margin-bottom:24px">
+      <div style="font-size:11px;font-weight:500;color:var(--ink3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em">📅 本日の予約</div>
+      <div id="oc-today-rsv-list" style="display:flex;flex-direction:column;gap:2px"></div>
     </div>
 
     <div id="oc-layout-display" style="display:none;text-align:center;padding:28px;background:var(--cream2);border-radius:var(--r);margin-bottom:16px">
@@ -338,6 +351,8 @@ AuthRole.requireStaff(auth,
     restoreStoreState();
     loadTodayVisits();
     loadAttendance();
+    loadReservationsOC();
+    loadPendingRequestsOC();
     subscribeEnvReadout('oc-env');
   },
   function(){
@@ -723,6 +738,119 @@ function renderOcList(list){
     +'</tr>';
   }).join("");
 }
+
+// ── 予約（本日の予約・承認待ち）─────────────────────────────
+var _ocReservations=[];   // 確定予約（全件・採番と貸切判定に使用）
+var _ocRsvSeq=1;
+var _ocPending=[];
+function _rsvDate(d){ if(!d||d.length<6) return d||"—"; return d.slice(0,2)+"/"+d.slice(2,4)+"/"+d.slice(4,6); }
+function _isCharter(r){ return r&&(r.charterType===1||r.charterType==="1"); }
+function _timeOverlap(s1,e1,s2,e2){ return String(s1)<String(e2)&&String(s2)<String(e1); }
+function _rsvName(r){ return r.memberName||getMemberName(r.memberId||r.customerCode); }
+
+// 本日の確定予約（＋採番用に全件保持）
+function loadReservationsOC(){
+  db.collection("reservations").get().then(function(snap){
+    _ocReservations=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    var yy=String(new Date().getFullYear()).slice(2);
+    var maxSeq=_ocReservations.reduce(function(m,r){
+      var id=String(r.id||"");
+      if(id.slice(0,2)===yy){ return Math.max(m, parseInt(id.slice(2))||0); }
+      return m;
+    },0);
+    _ocRsvSeq=maxSeq+1;
+    renderTodayReservations();
+  }).catch(function(e){ var w=g("oc-today-rsv"); if(w) w.style.display="none"; });
+}
+function renderTodayReservations(){
+  var wrap=g("oc-today-rsv"), list=g("oc-today-rsv-list"); if(!wrap||!list) return;
+  var today=todayStr6();
+  var rows=_ocReservations.filter(function(r){return r.reservationDate===today;});
+  rows.sort(function(a,b){return String(a.startTime||"").localeCompare(String(b.startTime||""));});
+  if(!rows.length){ wrap.style.display="none"; return; }
+  wrap.style.display="block";
+  list.innerHTML=rows.map(function(r){
+    var ch=_isCharter(r)?' <span style="font-size:10px;font-weight:700;color:var(--red);background:var(--red-l);padding:1px 6px;border-radius:3px">貸切</span>':'';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)">'
+      +'<span class="mono" style="font-size:12px;color:var(--ink2);min-width:104px">'+fmtHHMM(r.startTime)+'〜'+fmtHHMM(r.endTime)+'</span>'
+      +'<span style="flex:1;font-size:13px">'+esc(_rsvName(r))+ch+'</span>'
+      +'<span style="font-size:12px;color:var(--ink3)">'+(r.guests||"—")+'名</span>'
+    +'</div>';
+  }).join("");
+}
+
+// 承認待ちの予約申請
+function loadPendingRequestsOC(){
+  db.collection("reservationRequests").where("status","==","pending").get().then(function(snap){
+    _ocPending=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    _ocPending.sort(function(a,b){return String(a.reservationDate||"").localeCompare(String(b.reservationDate||""));});
+    renderPendingRequests();
+  }).catch(function(e){ var c=g("oc-pending-rsv"); if(c) c.style.display="none"; });
+}
+function renderPendingRequests(){
+  var wrap=g("oc-pending-rsv"), list=g("oc-pending-list"), cnt=g("oc-pending-count"); if(!wrap||!list) return;
+  if(!_ocPending.length){ wrap.style.display="none"; return; }
+  wrap.style.display="block";
+  if(cnt) cnt.textContent=_ocPending.length;
+  list.innerHTML=_ocPending.map(function(r){
+    var meta=_rsvDate(r.reservationDate)+"　"+fmtHHMM(r.startTime)+"〜"+fmtHHMM(r.endTime)+"　"+(r.guests||"?")+"名"+(r.memo?("　"+esc(r.memo)):"");
+    return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;border:1px solid rgba(160,130,100,.3);border-radius:8px;background:#fff">'
+      +'<div style="flex:1;min-width:160px"><div style="font-weight:600">'+esc(r.memberName||"（会員）")+'（'+esc(r.memberId||"")+'）</div>'
+      +'<div style="font-size:12px;opacity:.85">'+meta+'</div></div>'
+      +'<button class="btn bp sm" data-oc-approve="'+esc(r.id)+'">承認</button>'
+      +'<button class="btn bd sm" data-oc-reject="'+esc(r.id)+'">却下</button></div>';
+  }).join("");
+}
+// 承認（reservations.html の approveRequest と同等の処理）
+function approveReservationOC(id){
+  var req=_ocPending.find(function(x){return x.id===id;}); if(!req) return;
+  var date=req.reservationDate,start=req.startTime,end=req.endTime;
+  var conflict=_ocReservations.find(function(r){
+    if(r.reservationDate!==date) return false;
+    if(!_timeOverlap(start,end,r.startTime,r.endTime)) return false;
+    return _isCharter(r);
+  });
+  if(conflict){ toast("その時間帯は貸切予約("+conflict.id+")のため承認できません","err"); return; }
+  var yy=String(new Date().getFullYear()).slice(2);
+  var newId=yy+String(_ocRsvSeq).padStart(4,"0");
+  while(_ocReservations.some(function(r){return r.id===newId;})){ _ocRsvSeq++; newId=yy+String(_ocRsvSeq).padStart(4,"0"); }
+  _ocRsvSeq++;
+  var cust=(String(req.memberId||"").replace(/\D/g,"")||"0").slice(-6).padStart(6,"0");
+  journaledSet("reservations",newId,{
+    reservationId:newId, reservationDate:date, startTime:start, endTime:end,
+    customerCode:cust,
+    memberIds:(Array.isArray(req.memberIds)&&req.memberIds.length)?req.memberIds.map(function(x){return String(x).padStart(6,"0");}):[cust],
+    guests:parseInt(req.guests)||0, charterType:0, memo:req.memo||null,
+    memberId:req.memberId||null, memberName:req.memberName||null,
+    fromRequestId:req.id, createdAt:firebase.firestore.FieldValue.serverTimestamp()
+  },{merge:true})
+  .then(function(){
+    return db.collection("reservationRequests").doc(id).update({
+      status:"approved", reservationId:newId, approvedAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+  })
+  .then(function(){
+    toast("承認しました（予約ID: "+newId+"）");
+    try{ if(window.CalAutoPublish&&date) CalAutoPublish.forMonth(date); }catch(e){}
+    loadReservationsOC(); loadPendingRequestsOC();
+  })
+  .catch(function(e){ toast("承認失敗: "+e.message,"err"); });
+}
+function rejectReservationOC(id){
+  if(!confirm("この予約申請を却下（見送り）しますか？")) return;
+  db.collection("reservationRequests").doc(id).update({
+    status:"rejected", rejectedAt:firebase.firestore.FieldValue.serverTimestamp()
+  }).then(function(){ toast("却下しました"); loadPendingRequestsOC(); })
+    .catch(function(e){ toast("却下失敗: "+e.message,"err"); });
+}
+(function(){
+  var pl=g("oc-pending-list"); if(!pl) return;
+  pl.addEventListener("click",function(e){
+    var t=e.target; if(!t||!t.getAttribute) return;
+    var a=t.getAttribute("data-oc-approve"), rj=t.getAttribute("data-oc-reject");
+    if(a) approveReservationOC(a); else if(rj) rejectReservationOC(rj);
+  });
+})();
 
 // 出勤リストでチェックした未出勤スタッフを attendance に出勤登録（開店と同時）。
 async function checkInSelectedStaff(today, openTime){
