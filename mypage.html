@@ -98,10 +98,13 @@ input,select{font-family:var(--sans)}
 @keyframes goldshimmer{0%{background-position:0 0,0 50%}100%{background-position:0 0,300% 50%}}
 @media (prefers-reduced-motion:reduce){.profile-bar.paid{animation:none}}
 /* 次回来場予約バナー */
-.next-resv{background:linear-gradient(135deg,#0d3d2e,#1a6640);color:#fff;border-radius:12px;padding:12px 16px;margin-bottom:14px;box-shadow:0 2px 8px rgba(0,0,0,.18)}
-.next-resv .nr-ttl{font-size:12px;font-weight:700;letter-spacing:.06em;opacity:.85}
-.next-resv .nr-date{font-size:16px;font-weight:800;margin-top:3px;letter-spacing:.03em}
+.next-resv{background:linear-gradient(135deg,#0d3d2e,#1a6640);color:#fff;border-radius:12px;padding:14px 16px;margin-bottom:14px;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+.next-resv.pending{background:linear-gradient(135deg,#7a5610,#c8921e)}
+.next-resv .nr-ttl{font-size:13px;font-weight:800;letter-spacing:.04em}
+.next-resv .nr-msg{font-size:12px;opacity:.95;margin-top:4px;line-height:1.55}
+.next-resv .nr-date{font-size:16px;font-weight:800;margin-top:8px;letter-spacing:.03em}
 .next-resv .nr-cd{font-size:13px;font-weight:700;margin-top:6px;background:rgba(255,255,255,.15);border-radius:8px;padding:5px 10px;display:inline-block;font-variant-numeric:tabular-nums}
+.next-resv .nr-note{font-size:11px;opacity:.95;margin-top:10px;line-height:1.6;background:rgba(255,255,255,.14);border-radius:8px;padding:8px 10px}
 /* 会員区分バッジ */
 .mem-badge{display:inline-block;padding:2px 9px;border-radius:10px;font-size:10px;font-weight:600;letter-spacing:.06em}
 .mb-active{background:#e0f5e0;color:#1a6e1a;border:1px solid #7adf7a}
@@ -1127,22 +1130,40 @@ function _resvDateStr(ymd){
 function _resvTimeStr(hms){ if(!hms||hms.length<4) return hms||''; return hms.slice(0,2)+':'+hms.slice(2,4); }
 async function renderNextReservation(){
   var box=document.getElementById('next-resv-banner'); if(!box) return;
-  var list=[];
+  var items=[];
+  // 承認済（確定予約：スタッフ限定のためサーバー関数経由）
   try{
     var res=await fbFunctions.httpsCallable('getMyReservations')({});
-    list=(res&&res.data&&res.data.reservations)||[];
-  }catch(e){ box.innerHTML=''; return; }
+    ((res&&res.data&&res.data.reservations)||[]).forEach(function(r){ items.push({r:r,type:'approved'}); });
+  }catch(e){}
+  // 承認待ち（自分の申請）
+  try{
+    var uid=firebase.auth().currentUser&&firebase.auth().currentUser.uid;
+    if(uid){
+      var ps=await db.collection('reservationRequests').where('authUid','==',uid).get();
+      ps.forEach(function(d){ var r=Object.assign({id:d.id},d.data()); if((r.status||'pending')==='pending') items.push({r:r,type:'pending'}); });
+    }
+  }catch(e){}
   var now=Date.now();
-  var upcoming=list.map(function(r){ return {r:r, s:_resvMs(r.reservationDate,r.startTime), e:_resvMs(r.reservationDate,r.endTime)}; })
+  var upcoming=items.map(function(x){ return {r:x.r,type:x.type,s:_resvMs(x.r.reservationDate,x.r.startTime),e:_resvMs(x.r.reservationDate,x.r.endTime)}; })
     .filter(function(x){ return x.e && x.e>=now; })
     .sort(function(a,b){ return a.s-b.s; });
   if(_nextResvTimer){ clearInterval(_nextResvTimer); _nextResvTimer=null; }
   if(!upcoming.length){ box.innerHTML=''; return; }
   var nx=upcoming[0];
+  var pend=(nx.type==='pending');
   var dstr=_resvDateStr(nx.r.reservationDate)+'　'+_resvTimeStr(nx.r.startTime)+'〜'+_resvTimeStr(nx.r.endTime);
-  box.innerHTML='<div class="next-resv"><div class="nr-ttl">📅 '+esc(tt('mp_nr_title','次回来場予約'))+'</div>'
+  var ttl=pend?tt('mp_resv_pending_ttl','予約承認待ち'):tt('mp_resv_approved_ttl','予約承認済');
+  var msg=pend?tt('mp_resv_pending_msg','ご予約ありがとうございます。担当者が確認するまで今少しお待ち下さい。')
+              :tt('mp_resv_approved_msg','ご予約ありがとうございます。下記日時でご予約を承りました。');
+  var foodNote=pend?'':'<div class="nr-note">'+esc(tt('mp_resv_food_note','※フードのご用意がほぼありませんので、来場前にお食事を済ませて頂くか、お食事・つまみを持ち込んで頂いても大丈夫です（持込料無料）。'))+'</div>';
+  box.innerHTML='<div class="next-resv'+(pend?' pending':'')+'">'
+    +'<div class="nr-ttl">'+(pend?'⏳':'✅')+' ['+esc(ttl)+']</div>'
+    +'<div class="nr-msg">'+esc(msg)+'</div>'
     +'<div class="nr-date">'+esc(dstr)+'</div>'
-    +'<div class="nr-cd" id="nr-countdown"></div></div>';
+    +'<div class="nr-cd" id="nr-countdown"></div>'
+    +foodNote
+  +'</div>';
   var tick=function(){
     var cd=document.getElementById('nr-countdown');
     if(!cd){ if(_nextResvTimer){clearInterval(_nextResvTimer);_nextResvTimer=null;} return; }
@@ -1936,6 +1957,9 @@ var MYPAGE_I18N={
     mp_plog_t:'🥃 Personal tequila log', mp_plog_d:'Record the tequila you drank (paid members)',
     mp_nr_title:'Next reservation', mp_nr_now:'Your reservation time is now',
     mp_nr_prefix:'Until your next visit: ', mp_u_day:'d ', mp_u_hour:'h ', mp_u_min:'m',
+    mp_resv_pending_ttl:'Reservation pending', mp_resv_pending_msg:'Thank you for your reservation. Please wait a moment while our staff confirms it.',
+    mp_resv_approved_ttl:'Reservation confirmed', mp_resv_approved_msg:'Thank you. Your reservation is confirmed for the date and time below.',
+    mp_resv_food_note:'* We serve almost no food. Please eat before arriving, or feel free to bring your own food/snacks (no corkage fee).',
     mp_v_active:'Member', mp_v_pending:'Pending', mp_v_temp:'Provisional', mp_v_guest:'Guest',
     mp_pl_free:'Free', mp_pl_bronze:'Bronze', mp_pl_silver:'Silver', mp_pl_gold:'Gold', mp_pl_platinum:'Platinum',
     mp_cls_blanco:'Blanco', mp_cls_reposado:'Reposado', mp_cls_anejo:'Añejo', mp_cls_xanejo:'Extra Añejo',
@@ -1962,6 +1986,9 @@ var MYPAGE_I18N={
     mp_plog_t:'🥃 Registro personal de tequila', mp_plog_d:'Registra el tequila que bebiste (socios de pago)',
     mp_nr_title:'Próxima reserva', mp_nr_now:'Es la hora de tu reserva',
     mp_nr_prefix:'Hasta tu próxima visita: ', mp_u_day:'d ', mp_u_hour:'h ', mp_u_min:'m',
+    mp_resv_pending_ttl:'Reserva pendiente', mp_resv_pending_msg:'Gracias por tu reserva. Espera un momento mientras el personal la confirma.',
+    mp_resv_approved_ttl:'Reserva confirmada', mp_resv_approved_msg:'Gracias. Tu reserva está confirmada para la fecha y hora indicadas.',
+    mp_resv_food_note:'* Apenas ofrecemos comida. Cena antes de venir o trae tu propia comida/aperitivos (sin cargo por descorche).',
     mp_v_active:'Socio', mp_v_pending:'Pendiente', mp_v_temp:'Provisional', mp_v_guest:'Invitado',
     mp_pl_free:'Gratis', mp_pl_bronze:'Bronce', mp_pl_silver:'Plata', mp_pl_gold:'Oro', mp_pl_platinum:'Platino',
     mp_cls_blanco:'Blanco', mp_cls_reposado:'Reposado', mp_cls_anejo:'Añejo', mp_cls_xanejo:'Extra Añejo',

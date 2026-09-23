@@ -649,6 +649,77 @@ exports.getMyReservations = functions.region('asia-northeast1')
     return { reservations: out };
   });
 
+// ── 会員が自分の予約申請をキャンセル（理由つき）──────────────────
+// 承認済み（reservationId付き）の場合は確定予約(reservations)も削除する。
+exports.cancelMyReservation = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'ログインが必要です');
+    const uid = context.auth.uid;
+    const reqId = String((data && data.requestId) || '');
+    const reason = String((data && data.reason) || '').slice(0, 500);
+    if (!reqId) throw new functions.https.HttpsError('invalid-argument', 'requestId が必要です');
+    const ref = db.collection('reservationRequests').doc(reqId);
+    const snap = await ref.get();
+    if (!snap.exists) throw new functions.https.HttpsError('not-found', '予約が見つかりません');
+    const r = snap.data() || {};
+    if (r.authUid !== uid) throw new functions.https.HttpsError('permission-denied', 'この予約を操作する権限がありません');
+    if (r.status === 'cancelled') return { ok: true };
+    // 承認済みの確定予約を削除
+    if (r.reservationId) {
+      try { await db.collection('reservations').doc(String(r.reservationId)).delete(); } catch (e) { /* noop */ }
+    }
+    await ref.update({
+      status: 'cancelled',
+      cancelReason: reason || null,
+      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { ok: true };
+  });
+
+// ── 会員が自分の予約申請を変更（承認済みは未承認に戻す）──────────
+exports.updateMyReservation = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'ログインが必要です');
+    const uid = context.auth.uid;
+    const reqId = String((data && data.requestId) || '');
+    if (!reqId) throw new functions.https.HttpsError('invalid-argument', 'requestId が必要です');
+    const ymd = String((data && data.reservationDate) || '');
+    const start = String((data && data.startTime) || '');
+    const end = String((data && data.endTime) || '');
+    const guests = parseInt((data && data.guests), 10) || 0;
+    const memo = (data && data.memo != null && String(data.memo) !== '') ? String(data.memo).slice(0, 1000) : null;
+    const memberIds = Array.isArray(data && data.memberIds) ? data.memberIds.map((x) => String(x)).slice(0, 50) : [];
+    const guestNames = Array.isArray(data && data.guestNames) ? data.guestNames.map((x) => String(x).slice(0, 40)).slice(0, 50) : [];
+    if (!/^\d{6}$/.test(ymd)) throw new functions.https.HttpsError('invalid-argument', '日付が不正です');
+    if (!/^\d{6}$/.test(start) || !/^\d{6}$/.test(end)) throw new functions.https.HttpsError('invalid-argument', '時間が不正です');
+    if (start >= end) throw new functions.https.HttpsError('invalid-argument', '終了時間は開始時間より後にしてください');
+    if (guests < 1 || guests > 50) throw new functions.https.HttpsError('invalid-argument', '人数が不正です');
+    const ref = db.collection('reservationRequests').doc(reqId);
+    const snap = await ref.get();
+    if (!snap.exists) throw new functions.https.HttpsError('not-found', '予約が見つかりません');
+    const r = snap.data() || {};
+    if (r.authUid !== uid) throw new functions.https.HttpsError('permission-denied', 'この予約を操作する権限がありません');
+    if (r.status === 'cancelled' || r.status === 'rejected') throw new functions.https.HttpsError('failed-precondition', 'この予約は変更できません');
+    // 承認済みだった場合、確定予約を取り消して未承認へ戻す
+    if (r.reservationId) {
+      try { await db.collection('reservations').doc(String(r.reservationId)).delete(); } catch (e) { /* noop */ }
+    }
+    await ref.update({
+      reservationDate: ymd,
+      startTime: start,
+      endTime: end,
+      guests: guests,
+      memo: memo,
+      memberIds: memberIds,
+      guestNames: guestNames,
+      status: 'pending',
+      reservationId: admin.firestore.FieldValue.delete(),
+      approvedAt: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { ok: true, status: 'pending' };
+  });
+
 // ── 予約サマリー（個人情報を含まない集計）──────────────────────
 // 日付ごとの「予約人数合計・予約件数・時間帯(from-to)」だけを返す。
 // 氏名・顧客コード等は返さないため、公開ページ/会員ページから利用可能（認証不要）。

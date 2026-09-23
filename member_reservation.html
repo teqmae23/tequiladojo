@@ -65,6 +65,21 @@ input,select,textarea{font-family:var(--sans)}
 .b-rejected{background:var(--red-l);color:var(--red)}
 .cancel{font-size:11px;color:var(--red);background:none;border:1px solid rgba(140,40,24,.3);border-radius:4px;padding:3px 9px;margin-top:8px}
 .empty{font-size:13px;color:var(--ink3);text-align:center;padding:18px}
+.next-resv{background:linear-gradient(135deg,#0d3d2e,#1a6640);color:#fff;border-radius:12px;padding:14px 16px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+.next-resv.pending{background:linear-gradient(135deg,#7a5610,#c8921e)}
+.next-resv .nr-ttl{font-size:14px;font-weight:800;letter-spacing:.04em}
+.next-resv .nr-msg{font-size:12px;opacity:.95;margin-top:4px;line-height:1.55}
+.next-resv .nr-date{font-size:17px;font-weight:800;margin-top:8px}
+.next-resv .nr-cd{font-size:13px;font-weight:700;margin-top:6px;background:rgba(255,255,255,.15);border-radius:8px;padding:5px 10px;display:inline-block;font-variant-numeric:tabular-nums}
+.next-resv .nr-note{font-size:11px;opacity:.95;margin-top:10px;line-height:1.6;background:rgba(255,255,255,.14);border-radius:8px;padding:8px 10px}
+.b-cancelled{background:#eee;color:#888}
+.req-actions{display:flex;gap:8px;margin-top:10px}
+.mini{font-size:12px;color:var(--ink2);background:var(--cream2);border:1px solid var(--border2);border-radius:6px;padding:6px 12px;cursor:pointer}
+.mini.danger{color:var(--red);border-color:rgba(140,40,24,.3);background:var(--red-l)}
+.cancel-box{margin-top:10px}
+.cancel-reason{width:100%;padding:8px 10px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream);color:var(--ink);outline:none;resize:vertical}
+.edit-banner{font-size:12px;color:var(--gold-d);background:#fff3d6;border:1px solid rgba(200,146,30,.4);border-radius:var(--r);padding:8px 10px;margin-bottom:12px;line-height:1.5}
+.submit-cancel{width:100%;margin-top:8px;padding:12px;background:var(--cream2);color:var(--ink2);border:1px solid var(--border2);border-radius:var(--r);font-size:14px;font-weight:600}
 .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:var(--ink);color:var(--white);font-size:13px;padding:10px 18px;border-radius:20px;opacity:0;transition:opacity .2s;z-index:900;pointer-events:none;max-width:90%;text-align:center}
 .toast.show{opacity:1}
 </style>
@@ -111,8 +126,11 @@ input,select,textarea{font-family:var(--sans)}
     </div>
   </div>
 
+  <div id="mr-status"></div>
+
   <div class="card">
     <h2 data-i18n="mr_apply_h">予約を申請する</h2>
+    <div id="mr-edit-banner" class="edit-banner" style="display:none"></div>
     <div class="fg">
       <label data-i18n="mr_date">ご希望日</label>
       <input id="r-date" type="date">
@@ -127,15 +145,16 @@ input,select,textarea{font-family:var(--sans)}
       <select id="r-guests"></select>
     </div>
     <div class="fg" id="r-companions-wrap" style="display:none">
-      <label data-i18n="mr_companions">同伴者の会員ID（任意）</label>
+      <label data-i18n="mr_companions">同伴者（任意）</label>
       <div id="r-companions"></div>
-      <div class="note" style="margin-top:4px" data-i18n="mr_companions_note">同伴する会員のID（6桁）を入力すると、その方のマイ道場にも予約が表示されます。会員でない方は空欄でOKです。</div>
+      <div class="note" style="margin-top:4px" data-i18n="mr_companions_note">会員の方は会員番号、会員でない方はニックネームを入力してください（未記入でもOK）。会員番号を入れると、その方のマイ道場にも予約が表示されます。</div>
     </div>
     <div class="fg">
       <label data-i18n="mr_memo">ご要望・備考（任意）</label>
       <textarea id="r-memo" rows="2" placeholder="アレルギー・記念日など" data-i18n-ph="mr_ph_memo"></textarea>
     </div>
     <button class="submit" id="r-submit" data-i18n="mr_submit">この内容で予約を申請</button>
+    <button class="submit-cancel" id="mr-edit-cancel" style="display:none" data-i18n="mr_edit_cancel">変更をやめる</button>
     <div class="note" data-i18n="mr_submit_note">※ 申請後、スタッフの承認をもって予約が確定します。確定・変更はご連絡いたします。</div>
   </div>
 
@@ -276,7 +295,7 @@ function renderCompanions(){
   var prev=[].map.call(box.querySelectorAll('.companion-id'), function(i){return i.value;});
   var html='';
   for(var k=0;k<n;k++){
-    html+='<input class="companion-id" inputmode="numeric" maxlength="6" placeholder="'+esc(tt('mr_companion_ph','同伴者')+(k+1)+tt('mr_companion_ph2','の会員ID（6桁・任意）'))+'" style="margin-bottom:6px" value="'+(prev[k]||'')+'">';
+    html+='<input class="companion-id" maxlength="40" placeholder="'+esc(tt('mr_companion_ph','同伴者')+(k+1)+tt('mr_companion_ph2','：会員番号 または ニックネーム（任意）'))+'" style="margin-bottom:6px" value="'+esc(prev[k]||'')+'">';
   }
   box.innerHTML=html;
 }
@@ -317,7 +336,39 @@ function dayBlocked(){
   return bt===4||bt===5||bt===8||bt===7;
 }
 
-// ── 申請送信 ────────────────────────────────────────────────
+// ── 申請送信 / 変更保存 ─────────────────────────────────────
+var _editReqId=null;          // 変更対象の申請ID（null=新規申請）
+var _editWasApproved=false;   // 変更対象が承認済みだったか
+function cancelEditMode(){
+  _editReqId=null; _editWasApproved=false;
+  g('r-submit').textContent=tt('mr_submit','この内容で予約を申請');
+  var ec=g('mr-edit-cancel'); if(ec) ec.style.display='none';
+  var eb=g('mr-edit-banner'); if(eb) eb.style.display='none';
+  g('r-memo').value='';
+}
+function beginEdit(req){
+  _editReqId=req.id;
+  _editWasApproved=((req.status||'')==='approved');
+  // 日付・時間・人数・備考・同伴者をフォームへ反映
+  var y='20'+String(req.reservationDate||'').slice(0,2), mo=String(req.reservationDate||'').slice(2,4), d=String(req.reservationDate||'').slice(4,6);
+  if(y&&mo&&d) g('r-date').value=y+'-'+mo+'-'+d;
+  g('r-start').value=fmtT(req.startTime); g('r-end').value=fmtT(req.endTime);
+  g('r-memo').value=req.memo||'';
+  onDateChange();
+  var guests=parseInt(req.guests)||1; g('r-guests').value=String(guests);
+  // 同伴者（本人以外のmemberIds＋guestNames）を復元
+  var selfId=String(currentMember.memberId||currentMember.displayId||currentMember.id||'');
+  var comp=[];
+  (req.memberIds||[]).forEach(function(m){ if(String(m)!==selfId) comp.push(String(m)); });
+  (req.guestNames||[]).forEach(function(nm){ comp.push(String(nm)); });
+  renderCompanions();
+  var inputs=document.querySelectorAll('#r-companions .companion-id');
+  for(var i=0;i<inputs.length;i++){ inputs[i].value=comp[i]||''; }
+  g('r-submit').textContent=tt('mr_save_change','変更を保存');
+  var ec=g('mr-edit-cancel'); if(ec) ec.style.display='';
+  var eb=g('mr-edit-banner'); if(eb){ eb.style.display=''; eb.textContent=_editWasApproved?tt('mr_edit_approved_note','※ 承認済みの予約を変更すると、再度「承認待ち」に戻ります。'):tt('mr_edit_note','予約内容を変更しています。'); }
+  window.scrollTo({top:0,behavior:'smooth'});
+}
 g('r-submit').addEventListener('click',async function(){
   if(!currentMember){ toast(tt('mr_need_login','ログインが必要です')); return; }
   var dateStr=g('r-date').value;
@@ -335,68 +386,151 @@ g('r-submit').addEventListener('click',async function(){
   var cap=(currentSchedule&&currentSchedule.capacity!=null)?parseInt(currentSchedule.capacity)||6:6;
   if(guests>cap){ toast(tt('mr_over_cap_a','人数が席数（')+cap+tt('mr_over_cap_b','名）を超えています')); return; }
 
-  // 同伴者の会員ID（数字6桁以内）。本人＋同伴者を memberIds にまとめる
+  // 同伴者：会員番号（数字6桁以内）→memberIds、それ以外→guestNames（ニックネーム）
   var companions=[].map.call(document.querySelectorAll('#r-companions .companion-id'), function(i){ return (i.value||'').trim(); }).filter(function(v){ return v; });
-  for(var ci=0; ci<companions.length; ci++){ if(!/^\d{1,6}$/.test(companions[ci])){ toast(tt('mr_bad_companion','同伴者の会員IDは数字6桁以内で入力してください')); return; } }
-  var memberIds=[]; var pushId=function(v){ if(!v) return; var s=String(v); if(memberIds.indexOf(s)<0) memberIds.push(s); };
-  pushId(String(currentMember.memberId||currentMember.displayId||currentMember.id||'')); companions.forEach(pushId);
+  var memberIds=[]; var guestNames=[];
+  var pushId=function(v){ if(!v) return; var s=String(v); if(memberIds.indexOf(s)<0) memberIds.push(s); };
+  pushId(String(currentMember.memberId||currentMember.displayId||currentMember.id||''));
+  companions.forEach(function(c){ if(/^\d{1,6}$/.test(c)) pushId(c); else guestNames.push(c.slice(0,40)); });
 
   var btn=g('r-submit'); btn.disabled=true; btn.textContent=tt('mr_sending','送信中...');
   try{
-    await db.collection('reservationRequests').add({
-      authUid: auth.currentUser.uid,
-      memberId: String(currentMember.memberId||currentMember.id||''),
-      memberName: String(currentMember.nickname||currentMember.name||''),
-      reservationDate: ymd,
-      startTime: start,
-      endTime: end,
-      guests: guests,
-      memberIds: memberIds,
-      memo: memo||null,
-      status: 'pending',
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    toast(tt('mr_applied','予約を申請しました。承認をお待ちください。'));
-    g('r-memo').value='';
+    if(_editReqId){
+      // 変更保存（サーバー関数。承認済みは未承認へ戻す）
+      await fbFunctions.httpsCallable('updateMyReservation')({
+        requestId:_editReqId, reservationDate:ymd, startTime:start, endTime:end,
+        guests:guests, memo:memo||null, memberIds:memberIds, guestNames:guestNames
+      });
+      toast(tt('mr_changed','予約内容を変更しました。承認をお待ちください。'));
+      cancelEditMode();
+    }else{
+      await db.collection('reservationRequests').add({
+        authUid: auth.currentUser.uid,
+        memberId: String(currentMember.memberId||currentMember.id||''),
+        memberName: String(currentMember.nickname||currentMember.name||''),
+        reservationDate: ymd,
+        startTime: start,
+        endTime: end,
+        guests: guests,
+        memberIds: memberIds,
+        guestNames: guestNames,
+        memo: memo||null,
+        status: 'pending',
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      toast(tt('mr_applied','予約を申請しました。承認をお待ちください。'));
+      g('r-memo').value='';
+    }
     loadMyRequests();
   }catch(e){
     toast(tt('mr_send_fail','送信に失敗しました: ')+(e.message||e.code||''));
   }
-  btn.disabled=false; btn.textContent=tt('mr_submit','この内容で予約を申請');
+  btn.disabled=false; if(!_editReqId) btn.textContent=tt('mr_submit','この内容で予約を申請'); else btn.textContent=tt('mr_save_change','変更を保存');
 });
+if(g('mr-edit-cancel')) g('mr-edit-cancel').addEventListener('click',function(){ cancelEditMode(); loadMyRequests(); });
+
+// ── 予約状況バナー（承認待ち／承認済＋カウントダウン）──────────
+function _resvMs(ymd,hms){
+  if(!ymd||ymd.length<6) return 0;
+  var y=2000+(parseInt(ymd.slice(0,2),10)||0), mo=(parseInt(ymd.slice(2,4),10)||1)-1, d=parseInt(ymd.slice(4,6),10)||1;
+  var hh=hms?(parseInt(hms.slice(0,2),10)||0):0, mi=hms?(parseInt(hms.slice(2,4),10)||0):0, ss=hms?(parseInt(hms.slice(4,6),10)||0):0;
+  return new Date(y,mo,d,hh,mi,ss).getTime();
+}
+var _mrStatusTimer=null;
+function renderStatusBanner(rows){
+  var box=g('mr-status'); if(!box) return;
+  if(_mrStatusTimer){ clearInterval(_mrStatusTimer); _mrStatusTimer=null; }
+  var now=Date.now();
+  var up=rows.filter(function(r){ var st=r.status||'pending'; return st==='pending'||st==='approved'; })
+    .map(function(r){ return {r:r, type:(r.status==='approved'?'approved':'pending'), s:_resvMs(r.reservationDate,r.startTime), e:_resvMs(r.reservationDate,r.endTime)}; })
+    .filter(function(x){ return x.e && x.e>=now; })
+    .sort(function(a,b){ return a.s-b.s; });
+  if(!up.length){ box.innerHTML=''; return; }
+  var nx=up[0], pend=(nx.type==='pending');
+  var dstr=fmtDateJP(nx.r.reservationDate)+'　'+fmtT(nx.r.startTime)+'〜'+fmtT(nx.r.endTime);
+  var ttl=pend?tt('mr_resv_pending_ttl','予約承認待ち'):tt('mr_resv_approved_ttl','予約承認済');
+  var msg=pend?tt('mr_resv_pending_msg','ご予約ありがとうございます。担当者が確認するまで今少しお待ち下さい。')
+              :tt('mr_resv_approved_msg','ご予約ありがとうございます。下記日時でご予約を承りました。');
+  var food=pend?'':'<div class="nr-note">'+esc(tt('mr_resv_food_note','※フードのご用意がほぼありませんので、来場前にお食事を済ませて頂くか、お食事・つまみを持ち込んで頂いても大丈夫です（持込料無料）。'))+'</div>';
+  box.innerHTML='<div class="next-resv'+(pend?' pending':'')+'">'
+    +'<div class="nr-ttl">'+(pend?'⏳':'✅')+' ['+esc(ttl)+']</div>'
+    +'<div class="nr-msg">'+esc(msg)+'</div>'
+    +'<div class="nr-date">'+esc(dstr)+'</div>'
+    +'<div class="nr-cd" id="mr-nr-cd"></div>'+food+'</div>';
+  var tick=function(){
+    var cd=g('mr-nr-cd'); if(!cd){ if(_mrStatusTimer){clearInterval(_mrStatusTimer);_mrStatusTimer=null;} return; }
+    var diff=nx.s-Date.now();
+    if(diff<=0){ cd.textContent=(Date.now()<nx.e)?tt('mr_nr_now','ただいま来場予定の時間です'):''; return; }
+    var d=Math.floor(diff/86400000), h=Math.floor(diff%86400000/3600000), m=Math.floor(diff%3600000/60000);
+    cd.textContent=tt('mr_nr_prefix','来場予定まで あと')+d+tt('mr_u_day','日')+h+tt('mr_u_hour','時間')+m+tt('mr_u_min','分');
+  };
+  tick(); _mrStatusTimer=setInterval(tick,60000);
+}
 
 // ── 自分の申請一覧 ──────────────────────────────────────────
+var _myReqs=[];
+function _companionLabel(r){
+  var selfId=String(currentMember&&(currentMember.memberId||currentMember.displayId||currentMember.id)||'');
+  var comp=[];
+  (r.memberIds||[]).forEach(function(m){ if(String(m)!==selfId) comp.push(String(m)); });
+  (r.guestNames||[]).forEach(function(nm){ comp.push(String(nm)); });
+  return comp;
+}
 function loadMyRequests(){
   var el=g('req-list');
   db.collection('reservationRequests').where('authUid','==',auth.currentUser.uid).get()
     .then(function(snap){
       var rows=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
       rows.sort(function(a,b){ return String(b.reservationDate||'').localeCompare(String(a.reservationDate||'')); });
+      _myReqs=rows;
+      renderStatusBanner(rows);
       if(!rows.length){ el.innerHTML='<div class="empty">'+esc(tt('mr_no_requests','まだ予約申請はありません'))+'</div>'; return; }
       el.innerHTML=rows.map(function(r){
         var st=r.status||'pending';
         var badge=st==='approved'?'<span class="badge b-approved">'+esc(tt('mr_st_approved','確定'))+'</span>'
                  :st==='rejected'?'<span class="badge b-rejected">'+esc(tt('mr_st_rejected','見送り'))+'</span>'
+                 :st==='cancelled'?'<span class="badge b-cancelled">'+esc(tt('mr_st_cancelled','取消済'))+'</span>'
                  :'<span class="badge b-pending">'+esc(tt('mr_st_pending','承認待ち'))+'</span>';
-        var cancel=(st==='pending')?'<div><button class="cancel" data-cancel="'+esc(r.id)+'">'+esc(tt('mr_cancel','申請を取り消す'))+'</button></div>':'';
+        var actionable=(st==='pending'||st==='approved');
+        var comp=_companionLabel(r);
+        var compStr=comp.length?('<div class="rmeta">'+esc(tt('mr_companions_label','同伴者'))+'：'+esc(comp.join('、'))+'</div>'):'';
+        var reasonShown=(st==='cancelled'&&r.cancelReason)?'<div class="rmeta" style="color:var(--red)">'+esc(tt('mr_cancel_reason_label','取消理由'))+'：'+esc(r.cancelReason)+'</div>':'';
+        var btns=actionable
+          ? '<div class="req-actions">'
+            +'<button class="mini" data-edit="'+esc(r.id)+'">'+esc(tt('mr_change','変更'))+'</button>'
+            +'<button class="mini danger" data-cancel="'+esc(r.id)+'">'+esc(tt('mr_cancel','キャンセル'))+'</button></div>'
+            +'<div class="cancel-box" id="cbox-'+esc(r.id)+'" style="display:none">'
+            +'<textarea class="cancel-reason" id="creason-'+esc(r.id)+'" rows="2" placeholder="'+esc(tt('mr_cancel_reason_ph','キャンセル理由（任意・記入自由）'))+'"></textarea>'
+            +'<div style="display:flex;gap:6px;margin-top:6px">'
+            +'<button class="mini danger" data-docancel="'+esc(r.id)+'">'+esc(tt('mr_cancel_confirm','キャンセルを確定'))+'</button>'
+            +'<button class="mini" data-cancelno="'+esc(r.id)+'">'+esc(tt('mr_cancel_back','戻る'))+'</button></div></div>'
+          : '';
         return '<div class="req-item">'
           +'<div style="display:flex;justify-content:space-between;align-items:center">'
           +'<span class="rdate">'+fmtDateJP(r.reservationDate)+'</span>'+badge+'</div>'
           +'<div class="rmeta">'+fmtT(r.startTime)+'〜'+fmtT(r.endTime)+' ／ '+(r.guests||'?')+tt('mr_people','名')+(r.memo?'　'+esc(r.memo):'')+'</div>'
-          +cancel+'</div>';
+          +compStr+reasonShown+btns+'</div>';
       }).join('');
     })
     .catch(function(e){ el.innerHTML='<div class="empty">'+esc(tt('mr_load_fail','読み込みに失敗しました'))+'</div>'; });
 }
 
 g('req-list').addEventListener('click',function(e){
-  var b=e.target.closest('[data-cancel]'); if(!b) return;
-  var id=b.getAttribute('data-cancel');
-  if(!confirm(tt('mr_confirm_cancel','この予約申請を取り消しますか？'))) return;
-  db.collection('reservationRequests').doc(id).delete()
-    .then(function(){ toast(tt('mr_cancelled','申請を取り消しました')); loadMyRequests(); })
-    .catch(function(){ toast(tt('mr_cancel_fail','取り消しに失敗しました')); });
+  var t=e.target; if(!t||!t.getAttribute) return;
+  var edit=t.getAttribute('data-edit'), cancel=t.getAttribute('data-cancel'),
+      docancel=t.getAttribute('data-docancel'), cancelno=t.getAttribute('data-cancelno');
+  if(edit){ var r=_myReqs.find(function(x){return x.id===edit;}); if(r) beginEdit(r); return; }
+  if(cancel){ var box=g('cbox-'+cancel); if(box) box.style.display=(box.style.display==='none'?'':'none'); return; }
+  if(cancelno){ var b2=g('cbox-'+cancelno); if(b2) b2.style.display='none'; return; }
+  if(docancel){ doCancel(docancel); return; }
 });
+function doCancel(id){
+  var reasonEl=g('creason-'+id); var reason=reasonEl?(reasonEl.value||'').trim():'';
+  if(!confirm(tt('mr_confirm_cancel','この予約をキャンセルしますか？'))) return;
+  fbFunctions.httpsCallable('cancelMyReservation')({requestId:id, reason:reason})
+    .then(function(){ toast(tt('mr_cancelled','予約をキャンセルしました')); if(_editReqId===id) cancelEditMode(); loadMyRequests(); })
+    .catch(function(e){ toast(tt('mr_cancel_fail','キャンセルに失敗しました: ')+(e.message||e.code||'')); });
+}
 
 // ─── 多言語対応（en/es。ja は原文/フォールバック） ───
 var MR_I18N={
@@ -404,36 +538,52 @@ var MR_I18N={
     mr_lsub:'Reservation (members)', mr_idlabel:'Member ID or email', mr_ph_id:'Member ID', mr_pw:'Password', mr_ph_pw:'Password', mr_login:'Log in', mr_to_mypage:'🏯 To My Dojo', mr_to_top:'🏠 To TOP',
     mr_title:'Reservation', mr_mypage:'🏯 My Dojo', mr_top:'🏠 TOP', mr_logout:'Log out',
     mr_apply_h:'Request a reservation', mr_date:'Preferred date', mr_start:'Start', mr_end:'End', mr_guests:'Guests',
-    mr_companions:'Companion member IDs (optional)', mr_companions_note:'Enter a companion’s member ID (6 digits) and the reservation will also appear on their member page. Leave blank for non-members.',
+    mr_companions:'Companions (optional)', mr_companions_note:'Members: enter their member number. Non-members: enter a nickname. (Optional. A member number also shows the reservation on their My Dojo.)',
     mr_memo:'Requests / notes (optional)', mr_ph_memo:'Allergies, anniversary, etc.', mr_submit:'Submit this reservation request',
     mr_submit_note:'* After submission, a reservation is confirmed once staff approve it. We will contact you about confirmations and changes.',
     mr_list_h:'Pending / confirmed reservations', mr_loading:'Loading...',
     mr_bt_0:'Night only', mr_bt_1:'Day & night', mr_bt_2:'Day only', mr_bt_3:'Reservation only', mr_bt_4:'Closed', mr_bt_5:'Closed', mr_bt_6:'Event', mr_bt_7:'Private', mr_bt_8:'Temp. closed',
     mr_need_idpw:'Enter ID and password', mr_logging_in:'Logging in...', mr_login_failed:'Could not log in', mr_login_wrong:'ID or password is incorrect', mr_login_busy:'Please try again later', mr_member_notfound:'Could not verify member info. Please log in again from the member page.',
-    mr_honorific:'', mr_companion_ph:'Companion ', mr_companion_ph2:'’s member ID (6 digits, optional)',
+    mr_honorific:'', mr_companion_ph:'Companion ', mr_companion_ph2:': member number or nickname (optional)',
     mr_av_closed:'Closed on this day, reservations not accepted (', mr_av_close_paren:')', mr_av_charter:'Private event this day; regular reservations are not accepted.',
     mr_av_seats:'Seats (capacity) ', mr_people:'', mr_av_sep:'  /  ', mr_av_open:'Open', mr_av_sep2:'  |  ', mr_rsv:'Reserved ', mr_left:'', mr_seat:' left', mr_av_tail:'. You can submit a request.',
     mr_need_login:'Login required', mr_need_date:'Please select a date', mr_need_time:'Please enter the time', mr_need_endafter:'End time must be after start time', mr_need_guests:'Please select the number of guests', mr_day_blocked:'Reservations are not accepted this day', mr_over_cap_a:'Guests exceed seats (', mr_over_cap_b:')',
     mr_bad_companion:'Companion member ID must be up to 6 digits', mr_sending:'Sending...', mr_applied:'Reservation requested. Please await approval.', mr_send_fail:'Failed to send: ',
-    mr_no_requests:'No reservation requests yet', mr_st_approved:'Confirmed', mr_st_rejected:'Declined', mr_st_pending:'Pending', mr_cancel:'Cancel request', mr_load_fail:'Failed to load',
+    mr_no_requests:'No reservation requests yet', mr_st_approved:'Confirmed', mr_st_rejected:'Declined', mr_st_pending:'Pending', mr_st_cancelled:'Cancelled', mr_cancel:'Cancel', mr_load_fail:'Failed to load',
+    mr_list_h:'Your reservations', mr_change:'Change', mr_companions_label:'Companions',
+    mr_cancel_reason_ph:'Reason for cancellation (optional, free text)', mr_cancel_confirm:'Confirm cancellation', mr_cancel_back:'Back',
+    mr_confirm_cancel:'Cancel this reservation?', mr_cancelled:'Reservation cancelled', mr_cancel_fail:'Could not cancel: ', mr_cancel_reason_label:'Reason',
+    mr_save_change:'Save changes', mr_edit_cancel:'Discard changes', mr_edit_note:'Editing your reservation.', mr_edit_approved_note:'* Changing a confirmed reservation will set it back to "Pending".', mr_changed:'Reservation updated. Please wait for approval.',
+    mr_resv_pending_ttl:'Reservation pending', mr_resv_pending_msg:'Thank you for your reservation. Please wait a moment while our staff confirms it.',
+    mr_resv_approved_ttl:'Reservation confirmed', mr_resv_approved_msg:'Thank you. Your reservation is confirmed for the date and time below.',
+    mr_resv_food_note:'* We serve almost no food. Please eat before arriving, or feel free to bring your own food/snacks (no corkage fee).',
+    mr_nr_prefix:'Until your visit: ', mr_nr_now:'Your reservation time is now', mr_u_day:'d ', mr_u_hour:'h ', mr_u_min:'m',
     mr_confirm_cancel:'Cancel this reservation request?', mr_cancelled:'Request cancelled', mr_cancel_fail:'Failed to cancel'
   },
   es:{
     mr_lsub:'Reserva de visita (socios)', mr_idlabel:'ID de socio o correo', mr_ph_id:'ID de socio', mr_pw:'Contraseña', mr_ph_pw:'Contraseña', mr_login:'Entrar', mr_to_mypage:'🏯 A Mi Dojo', mr_to_top:'🏠 Al INICIO',
     mr_title:'Reserva de visita', mr_mypage:'🏯 Mi Dojo', mr_top:'🏠 INICIO', mr_logout:'Cerrar sesión',
     mr_apply_h:'Solicitar una reserva', mr_date:'Fecha deseada', mr_start:'Inicio', mr_end:'Fin', mr_guests:'Personas',
-    mr_companions:'ID de socio de acompañantes (opcional)', mr_companions_note:'Escribe el ID de socio (6 dígitos) de un acompañante y la reserva también aparecerá en su página. Déjalo en blanco para no socios.',
+    mr_companions:'Acompañantes (opcional)', mr_companions_note:'Socios: escribe su número de socio. No socios: escribe un apodo. (Opcional. Un número de socio también muestra la reserva en su Mi Dojo.)',
     mr_memo:'Peticiones / notas (opcional)', mr_ph_memo:'Alergias, aniversario, etc.', mr_submit:'Enviar esta solicitud de reserva',
     mr_submit_note:'* Tras el envío, la reserva se confirma cuando el personal la aprueba. Te contactaremos sobre confirmaciones y cambios.',
     mr_list_h:'Reservas pendientes / confirmadas', mr_loading:'Cargando...',
     mr_bt_0:'Solo noche', mr_bt_1:'Día y noche', mr_bt_2:'Solo día', mr_bt_3:'Solo reserva', mr_bt_4:'Cerrado', mr_bt_5:'Cerrado', mr_bt_6:'Evento', mr_bt_7:'Privado', mr_bt_8:'Cierre temporal',
     mr_need_idpw:'Escribe ID y contraseña', mr_logging_in:'Entrando...', mr_login_failed:'No se pudo iniciar sesión', mr_login_wrong:'ID o contraseña incorrectos', mr_login_busy:'Inténtalo más tarde', mr_member_notfound:'No se pudo verificar la información. Inicia sesión de nuevo desde la página de socio.',
-    mr_honorific:'', mr_companion_ph:'Acompañante ', mr_companion_ph2:': ID de socio (6 dígitos, opcional)',
+    mr_honorific:'', mr_companion_ph:'Acompañante ', mr_companion_ph2:': número de socio o apodo (opcional)',
     mr_av_closed:'Cerrado este día, no se aceptan reservas (', mr_av_close_paren:')', mr_av_charter:'Evento privado este día; no se aceptan reservas normales.',
     mr_av_seats:'Asientos (capacidad) ', mr_people:'', mr_av_sep:'  /  ', mr_av_open:'Abierto', mr_av_sep2:'  |  ', mr_rsv:'Reservados ', mr_left:'', mr_seat:' libres', mr_av_tail:'. Puedes enviar una solicitud.',
     mr_need_login:'Inicia sesión', mr_need_date:'Selecciona una fecha', mr_need_time:'Introduce la hora', mr_need_endafter:'La hora de fin debe ser posterior al inicio', mr_need_guests:'Selecciona el número de personas', mr_day_blocked:'No se aceptan reservas este día', mr_over_cap_a:'Las personas superan los asientos (', mr_over_cap_b:')',
     mr_bad_companion:'El ID de socio del acompañante debe tener hasta 6 dígitos', mr_sending:'Enviando...', mr_applied:'Reserva solicitada. Espera la aprobación.', mr_send_fail:'Error al enviar: ',
-    mr_no_requests:'Aún no hay solicitudes de reserva', mr_st_approved:'Confirmada', mr_st_rejected:'Rechazada', mr_st_pending:'Pendiente', mr_cancel:'Cancelar solicitud', mr_load_fail:'Error al cargar',
+    mr_no_requests:'Aún no hay solicitudes de reserva', mr_st_approved:'Confirmada', mr_st_rejected:'Rechazada', mr_st_pending:'Pendiente', mr_st_cancelled:'Cancelada', mr_cancel:'Cancelar', mr_load_fail:'Error al cargar',
+    mr_list_h:'Tus reservas', mr_change:'Cambiar', mr_companions_label:'Acompañantes',
+    mr_cancel_reason_ph:'Motivo de la cancelación (opcional, texto libre)', mr_cancel_confirm:'Confirmar cancelación', mr_cancel_back:'Volver',
+    mr_confirm_cancel:'¿Cancelar esta reserva?', mr_cancelled:'Reserva cancelada', mr_cancel_fail:'No se pudo cancelar: ', mr_cancel_reason_label:'Motivo',
+    mr_save_change:'Guardar cambios', mr_edit_cancel:'Descartar cambios', mr_edit_note:'Editando tu reserva.', mr_edit_approved_note:'* Al cambiar una reserva confirmada, volverá a "Pendiente".', mr_changed:'Reserva actualizada. Espera la aprobación.',
+    mr_resv_pending_ttl:'Reserva pendiente', mr_resv_pending_msg:'Gracias por tu reserva. Espera un momento mientras el personal la confirma.',
+    mr_resv_approved_ttl:'Reserva confirmada', mr_resv_approved_msg:'Gracias. Tu reserva está confirmada para la fecha y hora indicadas.',
+    mr_resv_food_note:'* Apenas ofrecemos comida. Cena antes de venir o trae tu propia comida/aperitivos (sin cargo por descorche).',
+    mr_nr_prefix:'Hasta tu visita: ', mr_nr_now:'Es la hora de tu reserva', mr_u_day:'d ', mr_u_hour:'h ', mr_u_min:'m',
     mr_confirm_cancel:'¿Cancelar esta solicitud de reserva?', mr_cancelled:'Solicitud cancelada', mr_cancel_fail:'Error al cancelar'
   }
 };
