@@ -1908,33 +1908,19 @@ function renderSchedule(items){
     for(var k=0;k<legs.length;k++){ if(legs[k].ms>a.ms){ pos=k; break; } }
     legs.splice(pos,0,a);
   });
-  // 現地日付ごとに1グループへまとめ（見出しの日付順はJST時系列＝初出順）。
-  var groupMap={}, groupOrder=[];
+  var groups=[], cur=null;
   legs.forEach(function(L){
-    if(!groupMap[L.day]){ groupMap[L.day]={day:L.day, items:[], rows:'', n:0}; groupOrder.push(L.day); }
-    groupMap[L.day].items.push(L);
-  });
-  // 各日の中は「現地の開始時刻」順に並べる（時差のある項目が混在しても見た目の時刻順）。
-  function _legLocalMin(L){
-    var it=L.it;
-    if(L.leg==='arr') return _hm((it.isMove?it.toTime:it.endTime)||it.time);
-    return _hm(it.time);
-  }
-  var groups=groupOrder.map(function(d){ return groupMap[d]; });
-  groups.forEach(function(cur){
-    cur.items.sort(function(a,b){ var d=_legLocalMin(a)-_legLocalMin(b); if(d) return d; return (a.src.ms-b.src.ms); });
-    cur.items.forEach(function(L){
-      var it=L.it, e=L.src;
-      if(L.leg==='arr'){ cur.rows+=renderArrLeg(it); cur.n++; return; }
-      cur.rows+=renderSchedItem(it, L.leg); cur.n++;
-      // 移動で日付変更線を越える場合、その直後に仕切り線（±1日）
-      if(_idlCross(it)) cur.rows+=idlDivider(it);
-      // 移動でタイムゾーンが変わる場合、その直後に仕切り線
-      if(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null){
-        var tzO=_itemTz(it.lat,it.lng), tzD=_itemTz(it.toLat,it.toLng);
-        if(tzO && tzD && tzO!==tzD) cur.rows+=tzDivider(tzO, tzD, e.ms);
-      }
-    });
+    var it=L.it, d=L.day, e=L.src;
+    if(!cur||cur.day!==d){ cur={day:d, rows:'', n:0}; groups.push(cur); }
+    if(L.leg==='arr'){ cur.rows+=renderArrLeg(it); cur.n++; return; }
+    cur.rows+=renderSchedItem(it, L.leg); cur.n++;
+    // 移動で日付変更線を越える場合、その直後に仕切り線（±1日）
+    if(_idlCross(it)) cur.rows+=idlDivider(it);
+    // 移動でタイムゾーンが変わる場合、その直後に仕切り線
+    if(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null){
+      var tzO=_itemTz(it.lat,it.lng), tzD=_itemTz(it.toLat,it.toLng);
+      if(tzO && tzD && tzO!==tzD) cur.rows+=tzDivider(tzO, tzD, e.ms);
+    }
   });
   h+=groups.map(function(gp,idx){
     return '<div class="sc-day sc-day-toggle" onclick="toggleSchedDay('+idx+')"><span class="sc-day-caret" id="sc-day-caret-'+idx+'">▸</span> '+esc(fmtDate(gp.day))+' '+wday(gp.day)+' <span class="sc-day-count">（'+gp.n+'件）</span></div>'
