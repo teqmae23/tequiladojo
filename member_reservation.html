@@ -319,14 +319,19 @@ function onDateChange(){
     if(doc.exists){ var d=doc.data(); currentSchedule=d; if(d.capacity!=null) cap=parseInt(d.capacity)||6; if(d.businessType!=null) bt=parseInt(d.businessType); }
     fillGuestOptions(cap);
     av.style.display='';
-    if(bt===4||bt===5||bt===8){ av.className='avail ng'; av.textContent=tt('mr_av_closed','この日は休業日のため予約を承れません（')+btLabel(bt)+tt('mr_av_close_paren','）'); }
-    else if(bt===7){ av.className='avail ng'; av.textContent=tt('mr_av_charter','この日は貸切営業のため、通常予約は承れません。'); }
+    var rw=_resvWindow(currentSchedule);   // 予約受付枠（あれば優先）
+    if(bt===7){ av.className='avail ng'; av.textContent=tt('mr_av_charter','この日は貸切営業のため、通常予約は承れません。'); }
+    else if((bt===4||bt===5||bt===8)&&!rw.on){ av.className='avail ng'; av.textContent=tt('mr_av_closed','この日は休業日のため予約を承れません（')+btLabel(bt)+tt('mr_av_close_paren','）'); }
     else {
       av.className='avail ok';
-      var hours=(currentSchedule&&currentSchedule.openTime&&currentSchedule.closeTime)
-        ? (tt('mr_av_hours','営業時間 ')+fmtT(currentSchedule.openTime)+'〜'+fmtT(currentSchedule.closeTime)+tt('mr_av_sep','　／　'))
-        : '';
-      var base=hours+tt('mr_av_seats','席数（定員）')+cap+tt('mr_people','名')+tt('mr_av_sep','　／　')+(bt!=null?btLabel(bt):tt('mr_av_open','営業予定'));
+      // 受付枠があればそれを優先表示、無ければ営業時間
+      var head=rw.on
+        ? (tt('mr_av_rsvwin','予約受付 ')+fmtT(rw.start)+'〜'+fmtT(rw.end)+tt('mr_av_sep','　／　'))
+        : ((currentSchedule&&currentSchedule.openTime&&currentSchedule.closeTime)
+            ? (tt('mr_av_hours','営業時間 ')+fmtT(currentSchedule.openTime)+'〜'+fmtT(currentSchedule.closeTime)+tt('mr_av_sep','　／　'))
+            : '');
+      var base=head+tt('mr_av_seats','席数（定員）')+cap+tt('mr_people','名')+tt('mr_av_sep','　／　')
+        +(rw.on?tt('mr_av_rsvonly','予約受付日'):(bt!=null?btLabel(bt):tt('mr_av_open','営業予定')));
       var reserved=rsum?(rsum.guests||0):0;
       if(reserved>0){
         var remain=Math.max(0,cap-reserved);
@@ -339,23 +344,34 @@ function onDateChange(){
     checkHoursWarn();
   }).catch(function(){ fillGuestOptions(6); });
 }
-// ご希望時間が当日の営業時間を超える場合に警告
+// 予約受付枠 {on,start,end}（HHMMSS）。未設定は on:false
+function _resvWindow(sch){
+  if(sch&&sch.reservable&&sch.reservableStart&&sch.reservableEnd) return {on:true,start:String(sch.reservableStart),end:String(sch.reservableEnd)};
+  return {on:false,start:null,end:null};
+}
+// ご希望時間が当日の受付枠（無ければ営業時間）を超える場合に警告
 function checkHoursWarn(){
   var w=g('r-hours-warn'); if(!w) return;
   var sch=currentSchedule;
-  if(!sch||dayBlocked()||!sch.openTime||!sch.closeTime){ w.style.display='none'; return; }
-  var open=String(sch.openTime).slice(0,4), close=String(sch.closeTime).slice(0,4);
+  if(!sch||dayBlocked()){ w.style.display='none'; return; }
+  var rw=_resvWindow(sch), open, close, label;
+  if(rw.on){ open=rw.start.slice(0,4); close=rw.end.slice(0,4); label=tt('mr_win_rsv','予約受付時間'); }
+  else if(sch.openTime&&sch.closeTime){ open=String(sch.openTime).slice(0,4); close=String(sch.closeTime).slice(0,4); label=tt('mr_win_biz','営業時間'); }
+  else { w.style.display='none'; return; }
   var s=(g('r-start').value||'').replace(':',''), e=(g('r-end').value||'').replace(':','');
   if(s.length<4||e.length<4){ w.style.display='none'; return; }
   if(s<open||e>close){
-    w.textContent=tt('mr_hours_warn_a','ご希望時間が営業時間外です。当日の営業時間は ')+fmtT(open)+'〜'+fmtT(close)+tt('mr_hours_warn_b','。時間内でご指定ください。');
+    w.textContent=tt('mr_hours_warn_a','ご希望時間が')+label+tt('mr_hours_warn_mid','外です。当日の')+label+tt('mr_hours_warn_is','は ')+fmtT(open)+'〜'+fmtT(close)+tt('mr_hours_warn_b','。時間内でご指定ください。');
     w.style.display='';
   } else { w.style.display='none'; }
 }
 function dayBlocked(){
   if(!currentSchedule) return false; // 予定未登録日は申請可（スタッフ判断）
   var bt=currentSchedule.businessType!=null?parseInt(currentSchedule.businessType):null;
-  return bt===4||bt===5||bt===8||bt===7;
+  if(bt===7) return true;                       // 貸切日は不可
+  var rw=_resvWindow(currentSchedule);
+  if((bt===4||bt===5||bt===8)&&!rw.on) return true;  // 休業系は受付枠が無ければ不可
+  return false;
 }
 
 // ── 申請送信 / 変更保存 ─────────────────────────────────────
@@ -572,7 +588,8 @@ var MR_I18N={
     mr_honorific:'', mr_companion_ph:'Companion ', mr_companion_ph2:': member number or nickname (optional)',
     mr_av_closed:'Closed on this day, reservations not accepted (', mr_av_close_paren:')', mr_av_charter:'Private event this day; regular reservations are not accepted.',
     mr_av_seats:'Seats (capacity) ', mr_people:'', mr_av_sep:'  /  ', mr_av_open:'Open', mr_av_sep2:'  |  ', mr_rsv:'Reserved ', mr_left:'', mr_seat:' left', mr_av_tail:'. You can submit a request.',
-    mr_av_hours:'Hours ', mr_hours_warn_a:'Your requested time is outside business hours. Hours this day: ', mr_hours_warn_b:'. Please choose a time within hours.',
+    mr_av_hours:'Hours ', mr_av_rsvwin:'Reservations ', mr_av_rsvonly:'Reservation day', mr_win_rsv:'reservation hours', mr_win_biz:'business hours',
+    mr_hours_warn_a:'Your requested time is outside the ', mr_hours_warn_mid:'. The ', mr_hours_warn_is:' this day is ', mr_hours_warn_b:'. Please choose a time within it.',
     mr_need_login:'Login required', mr_need_date:'Please select a date', mr_need_time:'Please enter the time', mr_need_endafter:'End time must be after start time', mr_need_guests:'Please select the number of guests', mr_day_blocked:'Reservations are not accepted this day', mr_over_cap_a:'Guests exceed seats (', mr_over_cap_b:')',
     mr_bad_companion:'Companion member ID must be up to 6 digits', mr_sending:'Sending...', mr_applied:'Reservation requested. Please await approval.', mr_send_fail:'Failed to send: ',
     mr_no_requests:'No reservation requests yet', mr_st_approved:'Confirmed', mr_st_rejected:'Declined', mr_st_pending:'Pending', mr_st_cancelled:'Cancelled', mr_cancel:'Cancel', mr_load_fail:'Failed to load',
@@ -599,7 +616,8 @@ var MR_I18N={
     mr_honorific:'', mr_companion_ph:'Acompañante ', mr_companion_ph2:': número de socio o apodo (opcional)',
     mr_av_closed:'Cerrado este día, no se aceptan reservas (', mr_av_close_paren:')', mr_av_charter:'Evento privado este día; no se aceptan reservas normales.',
     mr_av_seats:'Asientos (capacidad) ', mr_people:'', mr_av_sep:'  /  ', mr_av_open:'Abierto', mr_av_sep2:'  |  ', mr_rsv:'Reservados ', mr_left:'', mr_seat:' libres', mr_av_tail:'. Puedes enviar una solicitud.',
-    mr_av_hours:'Horario ', mr_hours_warn_a:'La hora solicitada está fuera del horario. Horario de ese día: ', mr_hours_warn_b:'. Elige una hora dentro del horario.',
+    mr_av_hours:'Horario ', mr_av_rsvwin:'Reservas ', mr_av_rsvonly:'Día de reservas', mr_win_rsv:'horario de reservas', mr_win_biz:'horario',
+    mr_hours_warn_a:'La hora solicitada está fuera del ', mr_hours_warn_mid:'. El ', mr_hours_warn_is:' de ese día es ', mr_hours_warn_b:'. Elige una hora dentro de él.',
     mr_need_login:'Inicia sesión', mr_need_date:'Selecciona una fecha', mr_need_time:'Introduce la hora', mr_need_endafter:'La hora de fin debe ser posterior al inicio', mr_need_guests:'Selecciona el número de personas', mr_day_blocked:'No se aceptan reservas este día', mr_over_cap_a:'Las personas superan los asientos (', mr_over_cap_b:')',
     mr_bad_companion:'El ID de socio del acompañante debe tener hasta 6 dígitos', mr_sending:'Enviando...', mr_applied:'Reserva solicitada. Espera la aprobación.', mr_send_fail:'Error al enviar: ',
     mr_no_requests:'Aún no hay solicitudes de reserva', mr_st_approved:'Confirmada', mr_st_rejected:'Rechazada', mr_st_pending:'Pendiente', mr_st_cancelled:'Cancelada', mr_cancel:'Cancelar', mr_load_fail:'Error al cargar',

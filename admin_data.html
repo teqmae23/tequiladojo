@@ -861,6 +861,18 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <div class="fg" id="sch-seats-fg"><label class="fl">席数（定員） <span class="db-field">capacity</span></label>
         <select class="fs" id="sch-seats"></select>
       </div>
+      <div class="fg" id="sch-rsv-fg" style="border-top:1px dashed var(--border2);padding-top:10px">
+        <label class="fl" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="sch-reservable" onchange="calRsvToggle()" style="width:15px;height:15px"> 予約受付枠を設ける（定休日・営業時間外でも予約可）
+        </label>
+        <div id="sch-rsv-time" style="display:none;margin-top:6px">
+          <div class="frow">
+            <div class="fg"><label class="fl">受付開始（HHMM） <span class="db-field">reservableStart</span></label><input class="fi mono" id="sch-rsv-start" maxlength="4" placeholder="1300"></div>
+            <div class="fg"><label class="fl">受付終了（HHMM） <span class="db-field">reservableEnd</span></label><input class="fi mono" id="sch-rsv-end" maxlength="4" placeholder="1700"></div>
+          </div>
+          <div style="font-size:11px;color:var(--ink3)">この時間帯は会員が予約申請できます（承認で確定）。定休日でも設定できます。</div>
+        </div>
+      </div>
       <div class="fg"><label class="fl">メモ</label><input class="fi" id="sch-memo" placeholder="特記事項..."></div>
     </div>
     <div class="mfoot"><button class="btn bd" id="btn-clear-schedule" style="margin-right:auto">🗑 予定をクリア</button><button class="btn bg2" data-close="m-schedule">キャンセル</button><button class="btn bp" id="btn-save-schedule">保存</button></div>
@@ -2524,9 +2536,14 @@ function calShowScheduleModal(y,m,d){
       sv('sch-type',String(data.businessType||0));
       sv('sch-open',data.openTime||''); sv('sch-close',data.closeTime||'');
       sv('sch-memo',data.memo||'');
+      var rchk=g('sch-reservable'); if(rchk) rchk.checked=!!data.reservable;
+      sv('sch-rsv-start',data.reservableStart||''); sv('sch-rsv-end',data.reservableEnd||'');
     } else {
       sv('sch-type','0'); sv('sch-open',''); sv('sch-close',''); sv('sch-memo','');
+      var rchk0=g('sch-reservable'); if(rchk0) rchk0.checked=false;
+      sv('sch-rsv-start',''); sv('sch-rsv-end','');
     }
+    calRsvToggle();
     var _capVal=(doc.exists&&doc.data().capacity!=null)?doc.data().capacity:6;
     calEnsureLayouts(function(){ calFillSeatOptions(_capVal); });
     calSchTypeChange(g('sch-type'));
@@ -2567,11 +2584,20 @@ function calSchTypeChange(sel){
     if(defaults[v]){ openEl.value=defaults[v][0]; closeEl.value=defaults[v][1]; }
   }
 }
+function calRsvToggle(){
+  var chk=g('sch-reservable'); var box=g('sch-rsv-time');
+  if(box) box.style.display=(chk&&chk.checked)?'':'none';
+}
 function saveSchRow(key,container,cb){
   var typeVal=gv('sch-type');
   var data={scheduleId:key,businessType:parseInt(typeVal),memo:gv('sch-memo')||null};
   if(typeVal!=='4'&&typeVal!=='5'&&typeVal!=='8'){ data.openTime=gv('sch-open')||null; data.closeTime=gv('sch-close')||null; data.capacity=parseInt(gv('sch-seats'))||6; }
   else { data.openTime=null; data.closeTime=null; data.capacity=null; }
+  // 予約受付枠（営業種別に関わらず保存。定休日でも設定可）
+  var resv=!!(g('sch-reservable')&&g('sch-reservable').checked);
+  data.reservable=resv||null;
+  data.reservableStart=resv?(gv('sch-rsv-start')||null):null;
+  data.reservableEnd=resv?(gv('sch-rsv-end')||null):null;
   journaledSet('schedules',key,data,{merge:true}).then(function(){ if(cb)cb(); }).catch(function(e){ toast('保存失敗: '+e.message,'err'); });
 }
 g('btn-save-schedule').addEventListener('click',function(){
