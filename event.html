@@ -1463,15 +1463,19 @@ function _schedInstant(it){
   var tz=(la!=null&&ln!=null)?_safeTz(la,ln):null;
   return _wallInstant(it.date, it.time||'23:59', tz||'Asia/Tokyo');
 }
-// JST絶対時刻で並べ替え（時差のある行程も実際の時系列で並ぶ）
+// 並べ替え方針: 見出し(現地日付)ごとにまとめ、同じ日付の中は「画面に表示される現地時刻」の昇順。
+// ＝ 座標→タイムゾーン解決の成否に一切依存しないため、座標データの不備で並び順が崩れない。
+// ms(絶対時刻)は日付をまたぐ判定や公開タイミング等の計算用に保持するが、同日内の並びには使わない。
 // 終了時刻（滞在終了 or 移動の到着）が無い項目を先に（同じ開始時刻なら「10:30-」を「10:30-12:30」より上に）
 function _endMark(it){ var e=(it&&it.endTime&&it.endTime.trim())||(it&&it.isMove&&it.toTime&&it.toTime.trim()); return e?1:0; }
 function _sortByJst(items){
-  return items.map(function(it,i){ var d=_schedInstant(it); return {it:it, ms:d?d.getTime():0, ck:(it.date||'')+' '+(it.time||'99:99'), em:_endMark(it), seq:it.seq||0, i:i}; })
+  return items.map(function(it,i){ var d=_schedInstant(it);
+      var dk=(it.date&&/^\d{4}-\d{2}-\d{2}$/.test(it.date))?it.date:'9999-12-31';
+      return {it:it, ms:d?d.getTime():0, dk:dk, wm:(it.time?_hm(it.time):1439), em:_endMark(it), seq:it.seq||0, i:i}; })
     .sort(function(a,b){
-      // 同じ日付＋開始時刻なら ms（時差）を無視し、終了なし→終了あり→登録順で確定
-      if(a.ck===b.ck) return (a.em-b.em)||(a.seq-b.seq)||(a.i-b.i);
-      return (a.ms-b.ms)||(a.em-b.em)||(a.seq-b.seq)||(a.i-b.i);
+      // 現地日付が違えば日付昇順。同じ日付内は現地時刻(HH:MM)の昇順→終了なし優先→登録順。
+      if(a.dk!==b.dk) return a.dk<b.dk?-1:1;
+      return (a.wm-b.wm)||(a.em-b.em)||(a.seq-b.seq)||(a.i-b.i);
     });
 }
 function _idlCross(it){ if(!it.isMove) return false; var la=_effLat(it),ln=_effLng(it),tla=_effToLat(it),tln=_effToLng(it); return !!(la!=null&&ln!=null&&tla!=null&&tln!=null&&Math.abs(tln-ln)>180); }
@@ -1901,23 +1905,22 @@ function renderSchedule(items){
   var hiddenCount=enr.length-visEnr.length;
   // 日付ごとにまとめ、日付クリックで開閉（既定は畳んだ状態）。並び順はJST、見出しは現地日付。
   // 空路で日付変更線を跨ぎ翌日着となる移動は「出発」「到着」の2レグに分割し、到着は到着日の枠へ。
-  var legs=[], arrLegs=[];
-  visEnr.forEach(function(e){
+  var legs=[];
+  visEnr.forEach(function(e,oi){
     var it=e.it;
     var arrDate=_idlSplitArrDate(it);
     if(arrDate){
-      legs.push({it:it, ms:e.ms, leg:'dep', day:(it.date||''), src:e});
-      arrLegs.push({it:it, ms:_arrInstant(it), leg:'arr', day:arrDate, src:e});
+      legs.push({it:it, ms:e.ms, leg:'dep', day:(it.date||''), wm:(it.time?_hm(it.time):1439), oi:oi, src:e});
+      legs.push({it:it, ms:_arrInstant(it), leg:'arr', day:arrDate, wm:(it.toTime?_hm(it.toTime):(it.endTime?_hm(it.endTime):0)), oi:oi, src:e});
     } else {
-      legs.push({it:it, ms:e.ms, leg:null, day:(it.date||''), src:e});
+      legs.push({it:it, ms:e.ms, leg:null, day:(it.date||''), wm:(it.time?_hm(it.time):1439), oi:oi, src:e});
     }
   });
-  // 到着レグを時系列（ms昇順）で挿入。legs は既にJST順なので、ms超過の直前に差し込む。
-  arrLegs.sort(function(a,b){ return a.ms-b.ms; });
-  arrLegs.forEach(function(a){
-    var pos=legs.length;
-    for(var k=0;k<legs.length;k++){ if(legs[k].ms>a.ms){ pos=k; break; } }
-    legs.splice(pos,0,a);
+  // 現地日付ごと・同日内は現地時刻(HH:MM)昇順で安定ソート（座標/時差に依存しない表示順）
+  legs.sort(function(a,b){
+    var ad=a.day||'9999-12-31', bd=b.day||'9999-12-31';
+    if(ad!==bd) return ad<bd?-1:1;
+    return (a.wm-b.wm)||(a.oi-b.oi);
   });
   var groups=[], cur=null;
   legs.forEach(function(L){
