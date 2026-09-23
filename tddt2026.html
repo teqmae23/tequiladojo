@@ -1267,15 +1267,6 @@ function loadSchedule(){
 }
 // 緯度・経度を数値に正規化（文字列や余分な空白でも安全に）
 function _geoNum(v){ if(v==null) return null; var n=parseFloat(String(v).trim()); return isFinite(n)?n:null; }
-// 保存済み lat/lng が空でも mapUrl に埋まった座標からTZ判定を救済する。ピン(!3d!4d)→q/ll/destination→@→/lat,lng の順。
-function _urlLatLng(url){ if(!url) return null; url=String(url);
-  var m=url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)||url.match(/[?&](?:q|ll|destination)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/)||url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)||url.match(/\/(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/);
-  return m?{lat:parseFloat(m[1]),lng:parseFloat(m[2])}:null; }
-// 項目の実効座標。denormalize済み lat/lng を最優先、無ければ mapUrl から救済。
-function _effLat(it){ var v=_geoNum(it&&it.lat); if(v!=null) return v; var c=it?_urlLatLng(it.mapUrl):null; return c?c.lat:null; }
-function _effLng(it){ var v=_geoNum(it&&it.lng); if(v!=null) return v; var c=it?_urlLatLng(it.mapUrl):null; return c?c.lng:null; }
-function _effToLat(it){ var v=_geoNum(it&&it.toLat); if(v!=null) return v; var c=it?_urlLatLng(it.toMapUrl):null; return c?c.lat:null; }
-function _effToLng(it){ var v=_geoNum(it&&it.toLng); if(v!=null) return v; var c=it?_urlLatLng(it.toMapUrl):null; return c?c.lng:null; }
 // Google Maps リンク。表示方法(mapMode)で切替:
 //  name … 名称で検索（実在の場所。名称・情報が正しく出る。座標があれば近辺を中心表示）
 //  coord … 座標を固定（名称は付けず、純粋な座標クエリで確実にその地点へピン）
@@ -1371,12 +1362,12 @@ function showTzPop(ev, id){
   var it=(_schedItems||[]).find(function(x){return x.id===id;}); if(!it) return;
   var lines=[];
   if(it.isMove && it.toTime){
-    lines.push(_tzDetailLine('出発', it.date, it.time, _effLat(it), _effLng(it)));
-    lines.push(_tzDetailLine('到着', it.date, it.toTime, (_effToLat(it)!=null?_effToLat(it):_effLat(it)), (_effToLng(it)!=null?_effToLng(it):_effLng(it))));
+    lines.push(_tzDetailLine('出発', it.date, it.time, it.lat, it.lng));
+    lines.push(_tzDetailLine('到着', it.date, it.toTime, (it.toLat!=null?it.toLat:it.lat), (it.toLng!=null?it.toLng:it.lng)));
   } else if(!it.isMove && it.endTime){
-    lines.push(_tzDetailLine('開始', it.date, it.time, _effLat(it), _effLng(it)));
-    lines.push(_tzDetailLine('終了', it.date, it.endTime, _effLat(it), _effLng(it)));
-  } else { lines.push(_tzDetailLine('', it.date, it.time, _effLat(it), _effLng(it))); }
+    lines.push(_tzDetailLine('開始', it.date, it.time, it.lat, it.lng));
+    lines.push(_tzDetailLine('終了', it.date, it.endTime, it.lat, it.lng));
+  } else { lines.push(_tzDetailLine('', it.date, it.time, it.lat, it.lng)); }
   lines=lines.filter(Boolean); if(!lines.length) return;
   var pop=g('sc-tzpop'); if(!pop){ pop=document.createElement('div'); pop.id='sc-tzpop'; document.body.appendChild(pop); }
   pop.innerHTML=lines.join('<br>'); pop.style.display='block';
@@ -1391,7 +1382,7 @@ function _itemTz(lat,lng){ if(window.tzlookup){ var la=_geoNum(lat),ln=_geoNum(l
 function _tzChip(tz, ms){ var inst=new Date(ms||Date.now()); var abbr=_tzAbbr(inst,tz); var rel=Math.round((_tzOffMin(inst,tz)-_tzOffMin(inst,'Asia/Tokyo'))/60); return esc(abbr)+'（JST'+(rel>=0?'+':'')+rel+'）'; }
 function tzDivider(tzA,tzB,ms){ return '<div class="sc-tzdiv">'+_tzChip(tzA,ms)+' → '+_tzChip(tzB,ms)+'</div>'; }
 // 日付変更線（IDL）: 移動で経度差が180°超のとき横断とみなす。
-function _idlCross(it){ if(!it.isMove) return false; var la=_effLat(it),ln=_effLng(it),tla=_effToLat(it),tln=_effToLng(it); return !!(la!=null&&ln!=null&&tla!=null&&tln!=null&&Math.abs(tln-ln)>180); }
+function _idlCross(it){ return !!(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null && Math.abs(it.toLng-it.lng)>180); }
 // 東(経度>0)→西(<0)は太平洋を東進＝日付が戻る(−1日)、西→東は日付が進む(+1日)。
 function idlDivider(it){
   var sign=(it.lng>0&&it.toLng<0)?-1:((it.lng<0&&it.toLng>0)?1:0);
@@ -1408,8 +1399,7 @@ function _addDays(dateStr, n){
 // 日付変更線による日付ずれ（西→東=+1日進む, 東→西=−1日戻る, それ以外0）
 function _idlDayShift(it){
   if(!_idlCross(it)) return 0;
-  var ln=_effLng(it), tln=_effToLng(it);
-  return (ln>0&&tln<0)?-1:((ln<0&&tln>0)?1:0);
+  return (it.lng>0&&it.toLng<0)?-1:((it.lng<0&&it.toLng>0)?1:0);
 }
 // 'HH:MM' を分に変換
 function _hm(t){ var p=String(t||'').split(':'); return (+p[0]||0)*60+(+p[1]||0); }
@@ -1434,8 +1424,8 @@ function _idlSplitArrDate(it){
 // 終端（到着/終了）のJST絶対時刻（分割した終端レグの並べ替え用）
 function _arrInstant(it){
   var endT = it.isMove ? it.toTime : it.endTime;
-  var lat = it.isMove ? (_effToLat(it)!=null?_effToLat(it):_effLat(it)) : _effLat(it);
-  var lng = it.isMove ? (_effToLng(it)!=null?_effToLng(it):_effLng(it)) : _effLng(it);
+  var lat = it.isMove ? (it.toLat!=null?it.toLat:it.lat) : it.lat;
+  var lng = it.isMove ? (it.toLng!=null?it.toLng:it.lng) : it.lng;
   var tz=(lat!=null&&lng!=null)?(_safeTz(lat,lng)||'Asia/Tokyo'):'Asia/Tokyo';
   var arrDate=_addDays(it.date, _splitDayShift(it));
   var d=_wallInstant(arrDate, endT||'23:59', tz);
@@ -1459,32 +1449,27 @@ function renderArrLeg(it){
 var _scMarkers={}, _scMap=null, _scItemBounds={};
 function _safeTz(la,ln){ try{ if(!window.tzlookup) return null; la=_geoNum(la); ln=_geoNum(ln); if(la==null||ln==null) return null; return tzlookup(la,ln); }catch(e){ return null; } }
 function _schedInstant(it){
-  var la=_effLat(it), ln=_effLng(it);
-  var tz=(la!=null&&ln!=null)?_safeTz(la,ln):null;
+  var tz=(it.lat!=null&&it.lng!=null)?_safeTz(it.lat,it.lng):null;
   return _wallInstant(it.date, it.time||'23:59', tz||'Asia/Tokyo');
 }
-// 並べ替え方針: 見出し(現地日付)ごとにまとめ、同じ日付の中は「画面に表示される現地時刻」の昇順。
-// ＝ 座標→タイムゾーン解決の成否に一切依存しないため、座標データの不備で並び順が崩れない。
-// ms(絶対時刻)は日付をまたぐ判定や公開タイミング等の計算用に保持するが、同日内の並びには使わない。
+// JST絶対時刻で並べ替え（時差のある行程も実際の時系列で並ぶ）
 // 終了時刻（滞在終了 or 移動の到着）が無い項目を先に（同じ開始時刻なら「10:30-」を「10:30-12:30」より上に）
 function _endMark(it){ var e=(it&&it.endTime&&it.endTime.trim())||(it&&it.isMove&&it.toTime&&it.toTime.trim()); return e?1:0; }
 function _sortByJst(items){
-  return items.map(function(it,i){ var d=_schedInstant(it);
-      var dk=(it.date&&/^\d{4}-\d{2}-\d{2}$/.test(it.date))?it.date:'9999-12-31';
-      return {it:it, ms:d?d.getTime():0, dk:dk, wm:(it.time?_hm(it.time):1439), em:_endMark(it), seq:it.seq||0, i:i}; })
+  return items.map(function(it,i){ var d=_schedInstant(it); return {it:it, ms:d?d.getTime():0, ck:(it.date||'')+' '+(it.time||'99:99'), em:_endMark(it), seq:it.seq||0, i:i}; })
     .sort(function(a,b){
-      // 現地日付が違えば日付昇順。同じ日付内は現地時刻(HH:MM)の昇順→終了なし優先→登録順。
-      if(a.dk!==b.dk) return a.dk<b.dk?-1:1;
-      return (a.wm-b.wm)||(a.em-b.em)||(a.seq-b.seq)||(a.i-b.i);
+      // 同じ日付＋開始時刻なら ms（時差）を無視し、終了なし→終了あり→登録順で確定
+      if(a.ck===b.ck) return (a.em-b.em)||(a.seq-b.seq)||(a.i-b.i);
+      return (a.ms-b.ms)||(a.em-b.em)||(a.seq-b.seq)||(a.i-b.i);
     });
 }
-function _idlCross(it){ if(!it.isMove) return false; var la=_effLat(it),ln=_effLng(it),tla=_effToLat(it),tln=_effToLng(it); return !!(la!=null&&ln!=null&&tla!=null&&tln!=null&&Math.abs(tln-ln)>180); }
+function _idlCross(it){ return !!(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null && Math.abs(it.toLng-it.lng)>180); }
 /* ── ストーカー対策: 位置情報の公開タイミング（restricted閲覧者向け） ── */
 var _revealMap={};
 function _isLodging(it){ return !!it.overnight || it.category==='hotel' || it.category==='checkin'; }
 function _checkoutMs(it, b){
   // 明示チェックアウト日時があれば優先
-  if(it.checkoutDate){ var la=_effLat(it),ln=_effLng(it); var tz=(la!=null&&ln!=null)?(_safeTz(la,ln)||'Asia/Tokyo'):'Asia/Tokyo'; var c=_wallInstant(it.checkoutDate, it.checkoutTime||'11:00', tz); if(c) return c.getTime(); }
+  if(it.checkoutDate){ var tz=(it.lat!=null&&it.lng!=null)?(_safeTz(it.lat,it.lng)||'Asia/Tokyo'):'Asia/Tokyo'; var c=_wallInstant(it.checkoutDate, it.checkoutTime||'11:00', tz); if(c) return c.getTime(); }
   // 無指定はイベント終了境界まで伏せる（ホテルは荷物滞在のため安全側）
   if(b&&b.endMs!=null) return b.endMs;
   var si=_schedInstant(it); return si?si.getTime()+2*86400000:(Date.now()+3.15e10);
@@ -1496,7 +1481,7 @@ function _computeReveals(enr){
     var it=enr[i].it;
     if(_isLodging(it)){ map[it.id]=_checkoutMs(it,b); continue; }
     // 滞在終了(endTime)が入力されていればそれを完了時刻に採用。
-    if(it.endTime){ var la=_effLat(it),ln=_effLng(it); var tz=(la!=null&&ln!=null)?(_safeTz(la,ln)||'Asia/Tokyo'):'Asia/Tokyo'; var e=_wallInstant(it.date, it.endTime, tz); if(e){ map[it.id]=e.getTime(); continue; } }
+    if(it.endTime){ var tz=(it.lat!=null&&it.lng!=null)?(_safeTz(it.lat,it.lng)||'Asia/Tokyo'):'Asia/Tokyo'; var e=_wallInstant(it.date, it.endTime, tz); if(e){ map[it.id]=e.getTime(); continue; } }
     // 次の項目が始まったら（＝その場を離れたら）完了扱い。最後の項目は+3h。
     map[it.id]=(i+1<enr.length)?enr[i+1].ms:(enr[i].ms+3*3600000);
   }
@@ -1905,22 +1890,23 @@ function renderSchedule(items){
   var hiddenCount=enr.length-visEnr.length;
   // 日付ごとにまとめ、日付クリックで開閉（既定は畳んだ状態）。並び順はJST、見出しは現地日付。
   // 空路で日付変更線を跨ぎ翌日着となる移動は「出発」「到着」の2レグに分割し、到着は到着日の枠へ。
-  var legs=[];
-  visEnr.forEach(function(e,oi){
+  var legs=[], arrLegs=[];
+  visEnr.forEach(function(e){
     var it=e.it;
     var arrDate=_idlSplitArrDate(it);
     if(arrDate){
-      legs.push({it:it, ms:e.ms, leg:'dep', day:(it.date||''), wm:(it.time?_hm(it.time):1439), oi:oi, src:e});
-      legs.push({it:it, ms:_arrInstant(it), leg:'arr', day:arrDate, wm:(it.toTime?_hm(it.toTime):(it.endTime?_hm(it.endTime):0)), oi:oi, src:e});
+      legs.push({it:it, ms:e.ms, leg:'dep', day:(it.date||''), src:e});
+      arrLegs.push({it:it, ms:_arrInstant(it), leg:'arr', day:arrDate, src:e});
     } else {
-      legs.push({it:it, ms:e.ms, leg:null, day:(it.date||''), wm:(it.time?_hm(it.time):1439), oi:oi, src:e});
+      legs.push({it:it, ms:e.ms, leg:null, day:(it.date||''), src:e});
     }
   });
-  // 現地日付ごと・同日内は現地時刻(HH:MM)昇順で安定ソート（座標/時差に依存しない表示順）
-  legs.sort(function(a,b){
-    var ad=a.day||'9999-12-31', bd=b.day||'9999-12-31';
-    if(ad!==bd) return ad<bd?-1:1;
-    return (a.wm-b.wm)||(a.oi-b.oi);
+  // 到着レグを時系列（ms昇順）で挿入。legs は既にJST順なので、ms超過の直前に差し込む。
+  arrLegs.sort(function(a,b){ return a.ms-b.ms; });
+  arrLegs.forEach(function(a){
+    var pos=legs.length;
+    for(var k=0;k<legs.length;k++){ if(legs[k].ms>a.ms){ pos=k; break; } }
+    legs.splice(pos,0,a);
   });
   var groups=[], cur=null;
   legs.forEach(function(L){
@@ -1932,7 +1918,7 @@ function renderSchedule(items){
     if(_idlCross(it)) cur.rows+=idlDivider(it);
     // 移動でタイムゾーンが変わる場合、その直後に仕切り線
     if(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null){
-      var tzO=_itemTz(_effLat(it),_effLng(it)), tzD=_itemTz(_effToLat(it),_effToLng(it));
+      var tzO=_itemTz(it.lat,it.lng), tzD=_itemTz(it.toLat,it.toLng);
       if(tzO && tzD && tzO!==tzD) cur.rows+=tzDivider(tzO, tzD, e.ms);
     }
   });
