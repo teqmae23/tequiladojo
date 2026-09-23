@@ -1745,7 +1745,7 @@ function delCat(id){ if(!confirm('この種別を削除しますか？（この�
 // JST絶対時刻（会員側event.htmlと同じ考え方）で並べ替え・日付変更線判定
 function _tzOffMin(inst,tz){ var m={}; new Intl.DateTimeFormat('en-US',{timeZone:tz,hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(inst).forEach(function(p){m[p.type]=p.value;}); if(m.hour==='24')m.hour='00'; return Math.round((Date.UTC(+m.year,+m.month-1,+m.day,+m.hour,+m.minute,+m.second)-inst.getTime())/60000); }
 function _wallInstant(dateStr,timeStr,tz){ var dp=(dateStr||'').split('-'),tp=(timeStr||'00:00').split(':'); if(dp.length<3)return null; var g=Date.UTC(+dp[0],+dp[1]-1,+dp[2],(+tp[0]||0),(+tp[1]||0)); return new Date(g-_tzOffMin(new Date(g),tz)*60000); }
-function _safeTz(la,ln){ try{ return window.tzlookup?tzlookup(la,ln):null; }catch(e){ return null; } }
+function _safeTz(la,ln){ try{ if(!window.tzlookup) return null; var a=parseFloat(la),b=parseFloat(ln); if(!isFinite(a)||!isFinite(b)) return null; return tzlookup(a,b); }catch(e){ return null; } }
 function _schedInstant(it){ var tz=(it.lat!=null&&it.lng!=null)?_safeTz(it.lat,it.lng):null; return _wallInstant(it.date, it.time||'23:59', tz||'Asia/Tokyo'); }
 // 終了時刻（滞在終了 or 移動の到着）が無い項目を先に（同じ開始時刻なら「10:30-」を「10:30-12:30」より上に）
 function _endMark(it){ var e=(it&&it.endTime&&it.endTime.trim())||(it&&it.isMove&&it.toTime&&it.toTime.trim()); return e?1:0; }
@@ -1761,11 +1761,13 @@ function _idlCross(it){ return !!(it.isMove && it.lat!=null && it.lng!=null && i
 function schCol(eid){ return db.collection('events').doc(eid).collection('scheduleItems'); }
 function parseLatLng(url){
   if(!url) return null;
-  var m=url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)
+  // 実際のピン(!3d緯度!4d経度)を最優先。@は「地図の中心（ビューポート）」で、
+  // 広域ズームのURLだと海上（例: GMT-12）になり誤ったタイムゾーンになるため後回し。
+  var m=url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)
     || url.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/)
-    || url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)
     || url.match(/[?&]ll=(-?\d+\.\d+),(-?\d+\.\d+)/)
     || url.match(/[?&]destination=(-?\d+\.\d+),(-?\d+\.\d+)/)
+    || url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)
     || url.match(/\/(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/);
   return m?{lat:parseFloat(m[1]),lng:parseFloat(m[2])}:null;
 }
@@ -1779,7 +1781,8 @@ function onMapUrl(urlId,latId,lngId,nameId){
   var url=g(urlId).value;
   var c=parseLatLng(url);
   if(c){ g(latId).value=c.lat; g(lngId).value=c.lng; }
-  if(nameId&&g(nameId)&&!(g(nameId).value||'').trim()){
+  // URLを入れ直したら名称も新しいURLから取得して更新（URLから地点名が取れる場合のみ上書き）。
+  if(nameId&&g(nameId)){
     var nm=placeNameFromUrl(url);
     if(nm) g(nameId).value=nm;
   }
