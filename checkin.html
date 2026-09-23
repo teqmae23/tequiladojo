@@ -645,7 +645,7 @@ AuthRole.requireStaff(auth,
     var app=g('app'); app.style.display='flex';
     var d=new Date(); var wdays=['日','月','火','水','木','金','土'];
     g('today-date').textContent='本日: 20'+todayStr6().slice(0,2)+'年'+todayStr6().slice(2,4)+'月'+todayStr6().slice(4,6)+'日（'+wdays[d.getDay()]+'）';
-    loadAll();
+    loadAll().then(maybePrefillReservation);
     subscribeCheckinRequests();
     subscribeEnvReadout('ci-env');
   },
@@ -669,7 +669,7 @@ g('btn-logout').addEventListener('click',function(){ auth.signOut(); });
 // ── データ読み込み ──────────────────────────────────────────────
 function loadAll(){
   // 現セッションのopenTime以降のvisitのみ対象
-  Promise.all([
+  return Promise.all([
     // membersを正とする（publicProfilesは参照しない）
     db.collection('members').get().then(function(snap){
       cache.members=snap.docs.map(function(d){
@@ -1924,6 +1924,35 @@ g('btn-checkin').addEventListener('click',async function(){
 });
 
 
+
+// 開店閉店画面の予約「来店」ボタンから ?rsv=<予約ID> で遷移してきた場合、
+// 予約の会員・同伴者(ニックネーム)を来場登録フォームにプリセットして開く。
+async function maybePrefillReservation(){
+  var rid=null;
+  try{ rid=new URLSearchParams(location.search).get('rsv'); }catch(e){}
+  if(!rid) return;
+  if(!storeIsOpenNow()){ toast('閉店中のため来店登録できません','err'); return; }
+  var doc=null;
+  try{ doc=await db.collection('reservations').doc(rid).get(); }catch(e){}
+  if(!doc||!doc.exists){ toast('予約が見つかりません','err'); return; }
+  var r=doc.data()||{};
+  var memberIds=(Array.isArray(r.memberIds)?r.memberIds:[]).map(String).filter(Boolean);
+  var guestNames=(Array.isArray(r.guestNames)?r.guestNames:[]).map(String).filter(Boolean);
+  var today=todayStr6();
+  _nextSeq=await calcNextSeq(today);
+  _checkinGroup={ id: await calcNextGroupId(today), total:1, current:1 };
+  g('kb-date').textContent=today; g('kb-seq').textContent=pad(_nextSeq,2); g('kb-group-id').textContent=_checkinGroup.id;
+  sv('ci-time',nowHHMM());
+  var cm=Math.min(memberIds.length,16), cg=Math.min(guestNames.length,5);
+  sv('ci-count-member',String(cm)); sv('ci-count-new','0'); sv('ci-count-guest',String(cg));
+  var pr=g('ci-progress'); if(pr) pr.style.display='none';
+  onCountChange();
+  for(var i=0;i<cm;i++){ var el=document.getElementById('ci-member-'+i); if(el){ el.value=memberIds[i]; if(typeof onMemberInput==='function') onMemberInput(i); } }
+  for(var j=0;j<cg;j++){ var ge=document.getElementById('ci-guest-'+j); if(ge){ ge.value=guestNames[j]; if(typeof onGuestInput==='function') onGuestInput(j); } }
+  openM('m-checkin');
+  toast('予約から来店情報をセットしました。内容を確認して登録してください','inf');
+  if(guestNames.length>5) toast('ゲスト会員は5名まで自動セットしました。残りは手動で追加してください','err');
+}
 
 g('m-checkin-close').addEventListener('click',function(){ confirmClose('m-checkin'); });
 g('m-checkin-cancel').addEventListener('click',function(){ confirmClose('m-checkin'); });
