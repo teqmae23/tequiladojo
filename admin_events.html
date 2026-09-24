@@ -9,6 +9,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <script src="/tz-lookup.js"></script>
+<script src="/sched-groups.js?v=20260925"></script>
 <script>
 var FIREBASE_CONFIG={
   apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -132,6 +133,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .se-day-toggle{user-select:none;display:flex;align-items:center;gap:6px}
 .se-day-hd{flex:1;min-width:0;cursor:pointer;display:flex;align-items:center;gap:6px}
 .se-day-add{flex:0 0 auto;padding:2px 9px;font-size:11px}
+body.sg-any-open #sch-mgr-modal .modal{max-width:1100px !important}
 .se-caret{font-size:10px;color:var(--ink3);width:12px;display:inline-block}
 .se-cost-sub{font-size:10px;color:var(--ink3);font-weight:400}
 .pl-item{display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:var(--r);padding:8px 11px;margin-bottom:6px;background:var(--white)}
@@ -717,6 +719,18 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
         </div>
       </div>
       <div style="font-size:11px;color:var(--ink3);margin:-4px 0 8px">💡 費用は「💰 費用計算」で管理します（対応スケジュールに紐づけると、参加者ごとの負担額がこの項目に表示されます）。</div>
+      <div class="row2">
+        <div class="fg"><label class="fl">班</label><select class="fi" id="se-group"><option value="1">1班（本隊）</option><option value="2">2班</option><option value="3">3班</option></select></div>
+        <div class="fg"><label class="fl">班の離脱・合流</label><select class="fi" id="se-gop" onchange="onSeGop()"><option value="">なし</option><option value="split">✂ 離脱（参加者を別の班へ）</option><option value="merge">🔗 合流（班をまとめる）</option></select></div>
+      </div>
+      <div id="se-gop-box" style="display:none;border:1px solid var(--border);border-radius:var(--r);padding:8px 10px;margin:-2px 0 10px">
+        <div class="row2">
+          <div class="fg"><label class="fl" id="se-gfrom-lbl">離脱元の班</label><select class="fi" id="se-gfrom" onchange="syncSeGroup()"><option value="1">1班</option><option value="2">2班</option><option value="3">3班</option></select></div>
+          <div class="fg"><label class="fl" id="se-gto-lbl">移動先の班</label><select class="fi" id="se-gto" onchange="syncSeGroup()"><option value="1">1班</option><option value="2">2班</option><option value="3">3班</option></select></div>
+        </div>
+        <div class="fg" id="se-gmem-wrap"><label class="fl">移動する参加者</label><div id="se-gmem-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r)"></div></div>
+        <div id="se-gop-hint" style="font-size:11px;color:var(--ink3)"></div>
+      </div>
       <div class="fg"><label class="fl">イベント（タイトル） <span style="color:var(--red)">*</span></label><input class="fi" id="se-title" placeholder="例: SF Tequila Shop訪問"></div>
       <div class="fg"><label class="fl">備考</label><textarea class="fi" id="se-note" style="min-height:56px"></textarea></div>
       <div class="fg"><label class="fl">リンクURL（任意）</label><input class="fi" id="se-link" placeholder="https://... （予約サイト・詳細ページ等）"></div>
@@ -1844,6 +1858,42 @@ function renderSeNames(){
   });
 }
 
+// 班の離脱・合流（最大3班）
+var _seGrpSel={};
+function onSeGop(){
+  var op=g('se-gop').value;
+  g('se-gop-box').style.display=op?'block':'none';
+  g('se-group').disabled=!!op;
+  if(op && g('se-gfrom').value===g('se-gto').value){
+    if(op==='merge'){ g('se-gfrom').value='2'; g('se-gto').value='1'; }
+    else { g('se-gfrom').value='1'; g('se-gto').value='2'; }
+  }
+  g('se-gfrom-lbl').textContent=(op==='merge')?'合流する班（この班はここで終了）':'離脱元の班';
+  g('se-gto-lbl').textContent=(op==='merge')?'合流先の班':'移動先の班';
+  g('se-gmem-wrap').style.display=(op==='split')?'block':'none';
+  g('se-gop-hint').textContent=(op==='split')
+    ? '選択した参加者がこの時刻から移動先の班に移ります。この項目は離脱元の班に表示され、移動先の班にも「移動」として表示されます。'
+    : ((op==='merge')?'合流する班の全員がこの時刻から合流先の班に移り、合流する班のスケジュールはここで終了します。':'');
+  if(op==='split') renderSeGrpMembers();
+  syncSeGroup();
+}
+function syncSeGroup(){
+  var op=g('se-gop').value;
+  if(op==='split') g('se-group').value=g('se-gfrom').value;
+  else if(op==='merge') g('se-group').value=g('se-gto').value;
+}
+function renderSeGrpMembers(){
+  var box=g('se-gmem-list'); if(!box) return;
+  if(!_schRoster.length){ box.innerHTML='<div class="ec">対象にできる参加者がいません。</div>'; return; }
+  box.innerHTML=_schRoster.map(function(p){
+    var on=!!_seGrpSel[p.tid];
+    return '<label class="mp-pick-row'+(on?' on':'')+'"><input type="checkbox" data-tid="'+esc(p.tid)+'" data-nm="'+esc(p.name||p.memberId||'')+'"'+(on?' checked':'')+'>'
+      +'<span class="mp-pick-nm">'+esc(p.name||p.memberId||'（会員）')+'</span><span class="mp-pick-id">'+esc(p.memberId||'')+'</span></label>';
+  }).join('');
+  Array.prototype.forEach.call(box.querySelectorAll('input[data-tid]'),function(cb){
+    cb.addEventListener('change',function(){ var id=cb.getAttribute('data-tid'); if(cb.checked)_seGrpSel[id]=cb.getAttribute('data-nm')||id; else delete _seGrpSel[id]; cb.parentNode.classList.toggle('on',cb.checked); });
+  });
+}
 // 部屋割り（イベントアイテム）建物 > 部屋 > ベッド > 参加者
 var _buildings=[], _useBuildings=false, _roomHotel='', _photoBi=-1, _photoRi=-1;
 function _newBed(){ return {bed:'', persons:[{id:'',name:''}]}; }
@@ -2589,36 +2639,43 @@ function renderSchedItemRow(it){
       : '<span class="se-t">'+esc(it.time||'—')+(it.isMove?'<span class="se-move-arrow">↓</span>':'')+'</span>');
   return '<div class="se-item'+(it.overnight?' ov':'')+'" onclick="openSchedEd(\''+esc(it.id)+'\')" style="cursor:pointer;background:'+catBg(it.category)+'">'
     +timeHtml+'<span class="se-ic">'+ic+'</span>'
-    +'<div class="se-main"><div class="se-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'（無題）')+'</div>'+noteHtml+(markers.length?'<div class="se-sub">'+markers.join('　')+'</div>':'')+'</div>'
+    +'<div class="se-main"><div class="se-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'（無題）')+SchedGroups.badge(it,esc)+'</div>'+noteHtml+(markers.length?'<div class="se-sub">'+markers.join('　')+'</div>':'')+'</div>'
     +costHtml+'</div>';
 }
 var _schExpandedDays={}; // 展開中の日付を記憶（追加・編集後も維持）
 function toggleDay(idx, date){ var b=g('se-day-body-'+idx), c=g('se-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▶':'▼'; _schExpandedDays[date]=!open; }
-function openSchedForDay(date){ _schExpandedDays[date]=true; openSchedEd(null, date); }
+function openSchedForDay(date, grp){ _schExpandedDays[date]=true; openSchedEd(null, date, grp); }
 function renderSchedList(){
   if(!_schItems.length){ g('sch-list').innerHTML='<div class="ec">スケジュール項目がありません。「＋ 項目追加」から登録してください。</div>'; g('sch-total').textContent=''; return; }
   var total=0; _schItems.forEach(function(it){ total+=itemYen(it); });
   var enr=_sortByJst(_schItems); // 並び順はJST絶対時刻、見出しは現地日付
+  var useG=SchedGroups.used(_schItems); // 班（2班・3班）を使っている場合のみ右端バー表示
+  var act=useG?SchedGroups.activeByDay(enr.map(function(e){ return {it:e.it, day:e.it.date||''}; })):{};
   var groups=[], cur=null;
   enr.forEach(function(e){
     var it=e.it, d=it.date||'';
-    if(!cur||cur.day!==d){ cur={day:d, rows:'', n:0}; groups.push(cur); }
-    cur.rows+=renderSchedItemRow(it); cur.n++;
-    if(_idlCross(it)) cur.rows+='<div class="se-idl">🌐 日付変更線</div>';
+    if(!cur||cur.day!==d){ cur={day:d, rows:'', cols:{1:'',2:'',3:''}, n:0}; groups.push(cur); }
+    var row=renderSchedItemRow(it)+(_idlCross(it)?'<div class="se-idl">🌐 日付変更線</div>':'');
+    cur.n++;
+    if(!useG){ cur.rows+=row; return; }
+    SchedGroups.cols(it).forEach(function(c){
+      cur.cols[c.g]+=c.mirror?SchedGroups.mirrorHtml(it, esc, ' onclick="openSchedEd(\''+esc(it.id)+'\')" style="cursor:pointer"'):row;
+    });
   });
   g('sch-list').innerHTML=groups.map(function(gp,idx){
     var exp=!!_schExpandedDays[gp.day];
+    var body=useG?SchedGroups.wrapHtml(gp.cols, act[gp.day]||{}, {paneHead:function(n){ return n===1?'':'<button class="btn bs sm se-day-add" onclick="event.stopPropagation();openSchedForDay(\''+esc(gp.day)+'\','+n+')">＋ '+n+'班に追加</button>'; }}):gp.rows;
     return '<div class="se-day se-day-toggle">'
       +'<span class="se-day-hd" onclick="toggleDay('+idx+',\''+esc(gp.day)+'\')"><span class="se-caret" id="se-caret-'+idx+'">'+(exp?'▼':'▶')+'</span> '+esc(gp.day||'日付未設定')+' <span style="font-weight:400;color:var(--ink3);font-size:11px">（'+gp.n+'件）</span></span>'
       +'<button class="btn bs sm se-day-add" onclick="openSchedForDay(\''+esc(gp.day)+'\')">＋ 追加</button></div>'
-      +'<div class="se-day-body" id="se-day-body-'+idx+'" style="display:'+(exp?'':'none')+'">'+gp.rows+'</div>';
+      +'<div class="se-day-body" id="se-day-body-'+idx+'" style="display:'+(exp?'':'none')+'">'+body+'</div>';
   }).join('');
   g('sch-total').textContent='計 '+_schItems.length+'項目 / 概算 ¥'+Math.round(total).toLocaleString();
 }
 
 function catOptions(sel){ g('se-cat').innerHTML=_cats.map(function(c){ return '<option value="'+esc(c.id)+'"'+(sel===c.id?' selected':'')+'>'+esc((c.icon?c.icon+' ':'')+(c.name||''))+'</option>'; }).join(''); }
 function toggleMove(){ g('se-move-box').style.display=g('se-move').checked?'block':'none'; }
-function openSchedEd(id, presetDate){
+function openSchedEd(id, presetDate, presetGroup){
   _schEditId=id;
   var it=id?_schItems.find(function(x){return x.id===id;}):null;
   var ev=events.find(function(x){return x.id===_schEventId;});
@@ -2658,6 +2715,14 @@ function openSchedEd(id, presetDate){
   g('se-nametext').value=(it&&it.nameLabel)||'';
   _seNameSel={}; if(it&&Array.isArray(it.nameParticipants)) it.nameParticipants.forEach(function(x){ if(x&&x.id) _seNameSel[x.id]=x.name||x.id; });
   onSeShowNames();
+  // 班
+  var _gop=SchedGroups.op(it);
+  g('se-gop').value=_gop;
+  g('se-gfrom').value=String(_gop?SchedGroups.num(it.groupFrom):1);
+  g('se-gto').value=String(_gop?SchedGroups.num(it.groupTo):1);
+  g('se-group').value=String(it?SchedGroups.owner(it):(SchedGroups.num(presetGroup)||1));
+  _seGrpSel={}; if(it&&_gop==='split'&&Array.isArray(it.groupMembers)) it.groupMembers.forEach(function(x){ if(x&&x.id) _seGrpSel[x.id]=x.name||x.id; });
+  onSeGop();
   // 部屋割り
   g('se-rooming').checked=!!(it&&it.roomingEnabled);
   _roomHotel=(it&&it.hotelName)||'';
@@ -2674,6 +2739,11 @@ function saveSched(){
   var date=g('se-date').value, title=(g('se-title').value||'').trim();
   if(!date){ g('se-err').textContent='日付を入力してください'; return; }
   if(!title){ g('se-err').textContent='イベント（タイトル）を入力してください'; return; }
+  var gop=g('se-gop').value||'', gFrom=SchedGroups.num(g('se-gfrom').value), gTo=SchedGroups.num(g('se-gto').value);
+  var gMembers=(gop==='split')?Object.keys(_seGrpSel).map(function(id){ return {id:id, name:_seGrpSel[id]||id}; }):[];
+  if(gop && (!gFrom||!gTo||gFrom===gTo)){ g('se-err').textContent='離脱・合流は異なる班を選択してください'; return; }
+  if(gop==='split' && !gMembers.length){ g('se-err').textContent='移動する参加者を選択してください'; return; }
+  var gOwn=(gop==='split')?gFrom:((gop==='merge')?gTo:(SchedGroups.num(g('se-group').value)||1));
   var costRaw=(g('se-cost').value||'').trim(), costCur=g('se-cost-cur').value||'JPY', costAmt=costAmountNum(costRaw);
   var data={
     date:date, time:g('se-time').value||'', endTime:g('se-endtime').value||'', category:g('se-cat').value||'other',
@@ -2694,6 +2764,7 @@ function saveSched(){
     useBuildings:(g('se-rooming').checked?!!_useBuildings:false),
     buildings:(g('se-rooming').checked?_cleanBuildings():[]),
     rooms:[],
+    group:gOwn, groupOp:gop, groupFrom:(gop?gFrom:null), groupTo:(gop?gTo:null), groupMembers:gMembers,
     updatedAt:firebase.firestore.FieldValue.serverTimestamp()
   };
   var btn=g('se-save'); btn.disabled=true;
