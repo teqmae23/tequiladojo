@@ -2006,34 +2006,56 @@ function _nameClsDigit(nm){
 g("btn-fix-classid").addEventListener("click",function(){
   var btn=this; if(btn.disabled) return; btn.disabled=true; var _t=btn.textContent; btn.textContent='↻ 確認中…';
   db.collection("bottleData").get().then(function(snap){
-    var fix=[], conflict=[], badid=[], okcnt=0, absent=0;
+    // 3ソース(名称／classIdフィールド／bottleIdフィールドのクラス桁)を突合。
+    // 製品の実クラスは「名称」を正とする（Pueblo Viejo Reposado は必ずレポサド）。
+    // classId のクラス桁(2桁目)が名称と食い違う＝破損 → 名称基準の正しいclassIdに修正。
+    // bottleId のクラス桁も名称と食い違う場合は「bottleIdも要再生成」として併記（別対応）。
+    function cidDigitOf(v){ if(v==null||v==='') return ''; var c=String(v); return c.length>=2?c.charAt(1):c; }
+    var fix=[], bidBad=[], noName=[], okcnt=0;
     snap.forEach(function(d){
       var r=d.data()||{}; var id=String(d.id||'');
-      var nm=r.bottleEsBase||r.bottleEs||r.bottleJa||r.name||id;
+      var nm=r.bottleEsBase||r.bottleEs||r.bottleJa||r.name||'';
       var cur=(r.classId!=null&&r.classId!=='')?String(r.classId):'';
-      var bid=(id.length===12)?id:String(r.bottleId||'');
-      if(bid.length!==12){ if(cur) badid.push({id:id,name:nm,cur:cur}); return; }
-      var correct=bid.slice(7,9), cd=correct.charAt(1);
-      if('12345'.indexOf(cd)<0){ if(cur) conflict.push({id:id,name:nm,cur:cur,correct:correct,note:'bottleIdのクラス桁が不正'}); return; }
-      if(!cur){ absent++; return; }          // classId未設定はID由来で正しく動くため対象外
-      if(cur===correct){ okcnt++; return; }
-      var nd=_nameClsDigit(nm);
-      if(nd && nd!==cd){ conflict.push({id:id,name:nm,cur:cur,correct:correct,note:'名称('+(_MK_DIGIT_CLASS[nd]||nd)+')とbottleId('+(_MK_DIGIT_CLASS[cd]||cd)+')が不一致'}); return; }
-      fix.push({id:id,name:nm,cur:cur,correct:correct});
+      var bidField=String(r.bottleId||'');
+      var bid=(bidField.length===12)?bidField:((id.length===12)?id:'');
+      var nd=_nameClsDigit(nm);                 // 名称由来クラス桁（真値）
+      var cidD=cidDigitOf(cur);                  // classId由来クラス桁
+      var bidD=(bid.length>=9)?bid.charAt(8):''; // bottleId由来クラス桁
+      if(!nd){ if(cur||nm) noName.push({id:id,name:nm||'(名称なし)',cur:cur,bidD:bidD}); return; } // 名称でクラス判定不能→対象外
+      // 正しいclassId: カテゴリ桁(classId[0]→bottleId[7]→'0')を保持し、クラス桁を名称由来に。
+      var cat = (cur.length>=2?cur.charAt(0):(bid.length>=8?bid.charAt(7):'0'));
+      var correct = cat + nd;
+      var bidNote = (bidD && bidD!==nd) ? ('bottleId桁='+(_MK_DIGIT_CLASS[bidD]||bidD)+'≠名称') : '';
+      if(bidNote) bidBad.push({id:id,name:nm,cur:cur,bidField:bidField,correct:correct,note:bidNote});
+      if(cidD===nd){ okcnt++; return; }          // classIdのクラス桁は正しい
+      fix.push({id:id,name:nm,cur:cur,bidField:bidField,correct:correct,bidNote:bidNote});
     });
+    // 詳細レポートを別ウィンドウに表示（画面キャプチャ用・調査根拠）
+    try{
+      var w=window.open('','_blank');
+      if(w){
+        var esc2=function(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');};
+        var rows=fix.map(function(x){ return '<tr><td>'+esc2(x.name)+'</td><td class=mono>'+esc2(x.id)+'</td><td class=mono>'+esc2(x.bidField||'—')+'</td><td class=mono>'+esc2(x.cur||'(空)')+'</td><td class=mono style="color:#1a6e58;font-weight:700">'+esc2(x.correct)+'</td><td style="color:#b03020">'+esc2(x.bidNote||'')+'</td></tr>'; }).join('');
+        w.document.write('<!doctype html><meta charset=utf-8><title>classId不整合レポート</title><style>body{font-family:sans-serif;font-size:12px;padding:12px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:3px 6px;text-align:left}th{background:#eee}.mono{font-family:monospace}h2{font-size:15px}</style>'
+          +'<h2>bottleData classId 不整合レポート</h2>'
+          +'<p>総数 '+snap.size+' ／ classId破損(名称と不一致) '+fix.length+' ／ うちbottleIdも不一致 '+bidBad.length+' ／ 名称判定不能 '+noName.length+' ／ 正常 '+okcnt+'</p>'
+          +'<p>正しいclassId = カテゴリ桁 + 名称由来のクラス桁。緑=修正値。赤=bottleIdのクラス桁も名称と食い違う（bottleIdの再生成が別途必要）。</p>'
+          +'<table><tr><th>名称</th><th>doc ID</th><th>bottleIdフィールド</th><th>現classId</th><th>→正しい</th><th>備考</th></tr>'+rows+'</table>');
+        w.document.close();
+      }
+    }catch(e){}
     var lines=[];
-    lines.push('bottleData 総数: '+snap.size+'件 ／ 正常: '+okcnt+'件 ／ classId未設定: '+absent+'件');
-    lines.push('自動修復候補(classId破損): '+fix.length+'件');
-    fix.slice(0,40).forEach(function(x){ lines.push('  '+x.name+'  ['+x.id+']  '+(x.cur||'(空)')+' → '+x.correct); });
-    if(fix.length>40) lines.push('  …ほか'+(fix.length-40)+'件');
-    if(conflict.length){ lines.push(''); lines.push('⚠ 要手動確認: '+conflict.length+'件'); conflict.slice(0,20).forEach(function(x){ lines.push('  '+x.name+' ['+x.id+'] cur='+(x.cur||'空')+' ／ '+x.note); }); if(conflict.length>20) lines.push('  …ほか'+(conflict.length-20)+'件'); }
-    if(badid.length){ lines.push(''); lines.push('⚠ ID不正(12桁でない)でclassId設定あり: '+badid.length+'件 — 手動確認'); }
-    if(!fix.length){ alert(lines.join('\n')+'\n\n自動修復対象はありません。'); btn.disabled=false; btn.textContent=_t; return; }
-    lines.push(''); lines.push(fix.length+'件の classId を修復しますか？（bottleId から算出した正しい値に更新。名称と食い違うものは対象外）');
+    lines.push('bottleData 総数: '+snap.size+' ／ 正常: '+okcnt+' ／ 名称判定不能(対象外): '+noName.length);
+    lines.push('classId破損(名称とクラス桁不一致): '+fix.length+' 件');
+    lines.push('　うち bottleId のクラス桁も名称と不一致: '+bidBad.length+' 件（classIdは直すが bottleId 再生成は別途）');
+    fix.slice(0,25).forEach(function(x){ lines.push('  '+x.name+'  '+(x.cur||'(空)')+' → '+x.correct+(x.bidNote?'  ['+x.bidNote+']':'')); });
+    if(fix.length>25) lines.push('  …ほか'+(fix.length-25)+'件（詳細は別ウィンドウの表）');
+    if(!fix.length){ alert(lines.join('\n')+'\n\n修復対象はありません。'); btn.disabled=false; btn.textContent=_t; return; }
+    lines.push(''); lines.push(fix.length+'件の classId を名称基準の正しい値に修復しますか？（別ウィンドウの表を確認してから実行）');
     if(!confirm(lines.join('\n'))){ btn.disabled=false; btn.textContent=_t; return; }
     var i=0;
     (function run(){
-      if(i>=fix.length){ toast('classId 修復完了: '+fix.length+'件'+(conflict.length?'（要手動: '+conflict.length+'件）':''),'ok'); btn.disabled=false; btn.textContent=_t; if(typeof loadBdata==='function') loadBdata(); return; }
+      if(i>=fix.length){ toast('classId 修復完了: '+fix.length+'件'+(bidBad.length?'（bottleId要再生成: '+bidBad.length+'件）':''),'ok'); btn.disabled=false; btn.textContent=_t; if(typeof loadBdata==='function') loadBdata(); return; }
       var b=db.batch();
       fix.slice(i,i+400).forEach(function(x){ b.set(db.collection("bottleData").doc(x.id),{classId:x.correct},{merge:true}); });
       i+=400;
