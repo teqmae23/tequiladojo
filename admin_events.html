@@ -646,6 +646,30 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
   </div>
 </div>
 
+<!-- セミナー配信管理モーダル -->
+<div class="mbg" id="sem-mgr-modal">
+  <div class="modal" style="max-width:560px">
+    <div class="mhd"><span id="sem-mgr-title">セミナー配信</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeSeminarMgr()">✕</button></div>
+    <div class="mbd">
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">PDFをQRコードで参加者に配信し、ページ送りを全員の画面に同期できます。参加者はQR/URLを開くだけ（配信者＝スタッフ/共同管理者がページを操作）。</div>
+      <div class="fg"><label class="fl">タイトル <span style="color:var(--red)">*</span></label><input class="fi" id="sem-title" placeholder="例: テキーラ入門セミナー"></div>
+      <div class="fg"><label class="fl">PDFファイル <span style="color:var(--red)">*</span></label><input class="fi" id="sem-file" type="file" accept="application/pdf,.pdf"></div>
+      <div class="fg"><label class="fl">公開範囲</label>
+        <select class="fi" id="sem-access">
+          <option value="members">会員限定（ログイン必須）</option>
+          <option value="public">公開（QRを知っていれば誰でも／非会員可）</option>
+        </select>
+      </div>
+      <button class="btn bp sm" id="sem-up" onclick="addSeminar()">＋ 追加</button>
+      <div class="err" id="sem-err"></div>
+      <div id="sem-prog" style="font-size:12px;color:var(--ink3);margin-top:6px"></div>
+      <hr class="fsep" style="margin:14px 0;border:none;border-top:1px solid var(--border)">
+      <div id="sem-list"><div class="ec">読み込み中…</div></div>
+    </div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeSeminarMgr()">閉じる</button></div>
+  </div>
+</div>
+
 <!-- タスクリスト管理モーダル -->
 <div class="mbg" id="tk-mgr-modal">
   <div class="modal" style="max-width:600px">
@@ -1054,6 +1078,7 @@ function render(){
       +'<button class="btn bs sm" onclick="openDocMgr(\''+esc(ev.id)+'\')">📁 ドキュメント</button>'
       +'<button class="btn bs sm" onclick="openSurveyMgr(\''+esc(ev.id)+'\')">📋 アンケート</button>'
       +'<button class="btn bs sm" onclick="openHostMgr(\''+esc(ev.id)+'\')">🧑‍🤝‍🧑 現地ホスト</button>'
+      +'<button class="btn bs sm" onclick="openSeminarMgr(\''+esc(ev.id)+'\')">🎦 セミナー配信</button>'
       +'<a class="btn bs sm" style="text-decoration:none" href="/event.html?id='+encodeURIComponent(ev.id)+'" target="_blank">TOPを見る</a></div></div>'
       +'<div class="ev-meta">📅 '+esc(fmtRange(ev.startDate,ev.endDate))+(ev.location?'　📍 '+esc(ev.location):'')+'　👥 参加者 '+np+'名</div>'
       +(ev.description?'<div class="ev-meta" style="color:var(--ink2)">'+esc((ev.description||'').slice(0,80))+((ev.description||'').length>80?'…':'')+'</div>':'')
@@ -3374,6 +3399,74 @@ function delTask(){
 
 /* ════════ ドキュメント保管庫（⑤） ════════ */
 var _docEventId=null, _docs=[], _docTasks=[], _docRoster=[], _docTaskExp={}, _docMsgs={};
+// ── セミナー配信（QR＋ページ同期） ──
+var _semEventId=null, _seminars=[];
+function semCol(eid){ return db.collection('events').doc(eid).collection('seminars'); }
+function openSeminarMgr(eventId){
+  _semEventId=eventId;
+  var ev=events.find(function(x){return x.id===eventId;});
+  g('sem-mgr-title').textContent='🎦 セミナー配信 — '+(ev?ev.name:'');
+  g('sem-title').value=''; g('sem-file').value=''; g('sem-access').value='members'; g('sem-err').textContent=''; g('sem-prog').textContent='';
+  g('sem-list').innerHTML='<div class="ec">読み込み中…</div>';
+  g('sem-mgr-modal').classList.add('open');
+  loadSeminars();
+}
+function closeSeminarMgr(){ g('sem-mgr-modal').classList.remove('open'); }
+function loadSeminars(){
+  semCol(_semEventId).get().then(function(snap){
+    _seminars=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    _seminars.sort(function(a,b){ return (b.createdAt&&b.createdAt.seconds||0)-(a.createdAt&&a.createdAt.seconds||0); });
+    renderSeminars();
+  }).catch(function(e){ g('sem-list').innerHTML='<div class="ec">読込失敗: '+esc(e.message)+'</div>'; });
+}
+function _semJoinUrl(sid){ return location.origin+'/seminar.html?e='+encodeURIComponent(_semEventId)+'&s='+encodeURIComponent(sid); }
+function renderSeminars(){
+  if(!_seminars.length){ g('sem-list').innerHTML='<div class="ec">セミナーはまだありません。</div>'; return; }
+  g('sem-list').innerHTML=_seminars.map(function(s){
+    var acc=(s.access==='public')?'<span class="doc-sub">公開</span>':'<span class="doc-sub">会員限定</span>';
+    return '<div class="doc-item"><div class="doc-main"><div class="doc-ttl">'+esc(s.title||'（無題）')+'</div><div class="doc-sub">'+esc(s.fileName||'')+'　'+acc+'</div></div>'
+      +'<a class="btn bp sm" style="text-decoration:none" href="'+esc(_semJoinUrl(s.id))+'&present=1" target="_blank">▶ 配信</a>'
+      +'<button class="btn bs sm" onclick="copySemUrl(\''+esc(s.id)+'\')">🔗 参加URL</button>'
+      +'<button class="rm" title="削除" onclick="delSeminar(\''+esc(s.id)+'\')">×</button></div>';
+  }).join('');
+}
+function copySemUrl(sid){
+  var u=_semJoinUrl(sid);
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(u).then(function(){ toast('参加者URLをコピーしました'); }).catch(function(){ prompt('コピーしてください', u); }); }
+  else prompt('コピーしてください', u);
+}
+function addSeminar(){
+  var title=(g('sem-title').value||'').trim();
+  var file=(g('sem-file').files&&g('sem-file').files[0])||null;
+  var access=g('sem-access').value||'members';
+  if(!title){ g('sem-err').textContent='タイトルを入力してください'; return; }
+  if(!file){ g('sem-err').textContent='PDFファイルを選択してください'; return; }
+  if(!/pdf$/i.test(file.name) && file.type!=='application/pdf'){ g('sem-err').textContent='PDFファイルを選択してください'; return; }
+  if(!storage){ g('sem-err').textContent='この環境ではアップロードを利用できません'; return; }
+  if(file.size>30*1024*1024){ g('sem-err').textContent='ファイルは30MB以内にしてください'; return; }
+  g('sem-err').textContent=''; var btn=g('sem-up'); btn.disabled=true; g('sem-prog').textContent='アップロード中…';
+  var pid=semCol(_semEventId).doc().id;
+  var path='event_docs/'+_semEventId+'/seminar_'+pid+'.pdf';
+  var ref=storage.ref(path);
+  ref.put(file,{contentType:'application/pdf'}).then(function(){ return ref.getDownloadURL(); })
+    .then(function(url){
+      return semCol(_semEventId).doc(pid).set({
+        title:title, pdfUrl:url, storagePath:path, fileName:file.name, access:access,
+        currentPage:1, live:true, createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
+    })
+    .then(function(){ toast('セミナーを追加しました'); g('sem-title').value=''; g('sem-file').value=''; g('sem-prog').textContent=''; loadSeminars(); })
+    .catch(function(e){ g('sem-err').textContent='追加失敗: '+e.message; })
+    .finally(function(){ btn.disabled=false; });
+}
+function delSeminar(id){
+  if(!confirm('このセミナーを削除しますか？')) return;
+  var s=_seminars.find(function(x){return x.id===id;});
+  semCol(_semEventId).doc(id).delete().then(function(){
+    if(s&&s.storagePath&&storage){ storage.ref(s.storagePath).delete().catch(function(){}); }
+    toast('削除しました'); loadSeminars();
+  }).catch(function(e){ toast('削除失敗: '+e.message,'err'); });
+}
 function docCol(eid){ return db.collection('events').doc(eid).collection('documents'); }
 function openDocMgr(eventId){
   _docEventId=eventId; _docTaskExp={};
