@@ -2410,60 +2410,34 @@ exports.getBankRatesLive = functions.region('asia-northeast1')
     // GPA: 確定済み(購入レート=売)。ready=true
     const gG = await grab(['https://gpa-exchange-onlinestore.jp/rate', 'https://www.gpa-net.co.jp/ja/passenger-service/rate/']);
     { const rates = parseGPA(gG.text); sources.gpa = { rates: rates, ready: true, diag: gG.diag, picked: gG.picked }; if (!Object.keys(rates).length) sources.gpa.sample = sampleOf(gG.text); }
-    // プレスティア: 公開ページ(exchange_list.html)のレート配信元を特定する探索(第3弾)。
-    // rates_common.js より判明: 静的XML群(/common/xml/*.xml)と PMPLRates.do が候補。
-    // exchange_list.js / exchange.js の全文でデータ源を確定し、XML群の中身と、
-    // Cookie付き(ブラウザ相当)での PMPLRates.do 再試行を確認する。
-    async function probePrestia() {
-      const BUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
-      const out = { scripts: {}, xml: [], endpointProbes: [] };
-      // 1) 一覧ページを取得して Set-Cookie を確保（Akamai突破の可能性）
-      let cookie = '';
-      try {
-        const resp = await fetch('https://www.smbctb.co.jp/about_interest_rate/exchange_list.html', { headers: { 'User-Agent': BUA }, redirect: 'follow' });
-        await resp.text();
-        cookie = (resp.headers.get('set-cookie') || '').split(/,(?=[^;]+=)/).map(function (c) { return c.split(';')[0].trim(); }).filter(Boolean).join('; ');
-        out.cookieLen = cookie.length;
-      } catch (e) { out.cookieErr = String((e && e.message) || e); }
-      // 2) データ源を確定させる小さなJS3本の全文
-      const jsFiles = [
-        'https://www.smbctb.co.jp/assets/js/exchange_list.js',
-        'https://www.smbctb.co.jp/assets/js/exchange.js',
-        'https://www.smbctb.co.jp/assets/js/file_loader.js'
-      ];
-      for (const j of jsFiles) {
-        try {
-          const resp = await fetch(j, { headers: { 'User-Agent': BUA } });
-          const t = await resp.text();
-          out.scripts[j.split('/').pop()] = t.slice(0, 3000);
-        } catch (e) { out.scripts[j.split('/').pop()] = 'ERR ' + String((e && e.message) || e); }
-      }
-      // 3) rates_common.js の xmlFile マップにある静的XML群の中身
-      const xmlNames = ['FX_INT.xml', 'FCY_INTTD.xml', 'YEN_TDINT_ESA.xml', 'FCY_ENJOY_PLUS.xml', 'MM_INT.xml', 'FCY_INTTD_FIFTY.xml', 'FCY_INTTD_HUNDRED.xml', 'FIRST_GAIKA_INT.xml', 'STEPUP_INTTD.xml'];
-      for (const n of xmlNames) {
-        const u = 'https://www.smbctb.co.jp/common/xml/' + n;
-        try {
-          const resp = await fetch(u, { headers: { 'User-Agent': BUA, 'Referer': 'https://www.smbctb.co.jp/about_interest_rate/exchange_list.html' } });
-          const t = await resp.text();
-          out.xml.push({ name: n, status: resp.status, len: t.length, hasDecimal: /\d+\.\d{2,}/.test(t), usd: /米ドル|アメリカ|USD/.test(t), tts: /TTS|売り|お売り|お買い|買い/.test(t), head: t.slice(0, 500) });
-        } catch (e) { out.xml.push({ name: n, error: String((e && e.message) || e) }); }
-      }
-      // 4) PMPLRates.do を Cookie付き・ブラウザ相当ヘッダで再試行（GET/POST）
-      const doUrl = 'https://www.smbctb.co.jp/JPGCB/NPA/acq/rates/PMPLRates.do';
-      for (const method of ['GET', 'POST']) {
-        try {
-          const h = { 'User-Agent': BUA, 'Accept': 'text/xml, application/xml, text/html, */*', 'X-Requested-With': 'XMLHttpRequest', 'Referer': 'https://www.smbctb.co.jp/about_interest_rate/exchange_list.html' };
-          if (cookie) h['Cookie'] = cookie;
-          const resp = await fetch(doUrl, { method: method, headers: h });
-          const t = await resp.text();
-          out.endpointProbes.push({ method: method, status: resp.status, ctype: resp.headers.get('content-type') || '', len: t.length, hasDecimal: /\d+\.\d{2,}/.test(t), usd: /米ドル|アメリカ|USD/.test(t), head: t.slice(0, 700) });
-          if (resp.status === 200 && t.length > 40) break;
-        } catch (e) { out.endpointProbes.push({ method: method, error: String((e && e.message) || e) }); }
-      }
-      return out;
+    // プレスティア(SMBC信託): 公開XML FX_INT.xml がTTS/仲値/TTBを保持（サーバー描画・静的・Akamai非対象）。
+    // 構造: <ratetable id="foreignexchange1"> の各 <row> に「通貨名 (CODE)」「TTS」「仲値」「TTB」。
+    // TTS=売(お客さまが外貨を買う=s) / TTB=買(お客さまが外貨を売る=b)。MUFGと同じ s/b 規約。
+    function parsePrestiaFX(xml) {
+      const r = {}; if (!xml) return r;
+      codes.forEach(function (code) {
+        // 「(CODE)</col>」の後に続く3つの数値(TTS・仲値・TTB)を取得
+        const re = new RegExp('\\(' + code + '\\)\\s*<\\/col>\\s*<col[^>]*>\\s*([\\d.]+|--)\\s*<\\/col>\\s*<col[^>]*>\\s*([\\d.]+|--)\\s*<\\/col>\\s*<col[^>]*>\\s*([\\d.]+|--)\\s*<\\/col>', 'i');
+        const m = re.exec(xml);
+        if (m) {
+          const s = (m[1] === '--') ? null : parseFloat(m[1]);
+          const b = (m[3] === '--') ? null : parseFloat(m[3]);
+          if (s != null || b != null) r[code] = { s: s, b: b };
+        }
+      });
+      return r;
     }
-    let prestiaProbe = null;
-    try { prestiaProbe = await probePrestia(); } catch (e) { prestiaProbe = { error: String((e && e.message) || e) }; }
-    sources.prestia = { rates: {}, ready: false, jsRendered: false, probe: prestiaProbe };
+    { // プレスティア: FX_INT.xml から実レート抽出。ready=true で会員表示に採用
+      let xml = '', status = 0, err = null;
+      try {
+        const rp = await fetch('https://www.smbctb.co.jp/common/xml/FX_INT.xml', { headers: { 'User-Agent': UA, 'Referer': 'https://www.smbctb.co.jp/about_interest_rate/exchange_list.html' } });
+        status = rp.status; xml = await rp.text();
+      } catch (e) { err = String((e && e.message) || e); }
+      const rates = parsePrestiaFX(xml);
+      // 更新時刻(caption「現在 : 2026/09/25 15:00」)を抽出
+      let asof = null; const cm = /<caption>\s*現在\s*:\s*([^<]+?)\s*<\/caption>/.exec(xml); if (cm) asof = cm[1];
+      sources.prestia = { rates: rates, ready: true, source: 'FX_INT.xml', asof: asof, diag: { status: status, len: (xml || '').length, found: Object.keys(rates).length, error: err } };
+      if (!Object.keys(rates).length) { sources.prestia.ready = false; sources.prestia.sample = sampleOf((xml || '').replace(/<[^>]+>/g, ' ').replace(/[\s　]+/g, ' ')); }
+    }
     return { asof: new Date().toISOString().slice(0, 10), sources: sources };
   });
