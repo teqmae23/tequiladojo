@@ -2410,74 +2410,55 @@ exports.getBankRatesLive = functions.region('asia-northeast1')
     // GPA: 確定済み(購入レート=売)。ready=true
     const gG = await grab(['https://gpa-exchange-onlinestore.jp/rate', 'https://www.gpa-net.co.jp/ja/passenger-service/rate/']);
     { const rates = parseGPA(gG.text); sources.gpa = { rates: rates, ready: true, diag: gG.diag, picked: gG.picked }; if (!Object.keys(rates).length) sources.gpa.sample = sampleOf(gG.text); }
-    // プレスティア: ページは数値をJSで描画。実データの配信元(JSON/CSV/txt等)を突き止めるため探索する。
-    // ページHTMLから <script src> とデータURL候補を抽出→各スクリプトを走査→候補データURLの中身の先頭を確認。
+    // プレスティア: 公開ページ(exchange_list.html)のレート配信元を特定する探索(第3弾)。
+    // rates_common.js より判明: 静的XML群(/common/xml/*.xml)と PMPLRates.do が候補。
+    // exchange_list.js / exchange.js の全文でデータ源を確定し、XML群の中身と、
+    // Cookie付き(ブラウザ相当)での PMPLRates.do 再試行を確認する。
     async function probePrestia() {
-      const pages = [
-        'https://www.smbctb.co.jp/rates/exchange_rate.html',
-        'https://www.smbctb.co.jp/about_interest_rate/exchange_list.html',
-        'https://www.smbctb.co.jp/about_interest_rate/exchange.html'
+      const BUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+      const out = { scripts: {}, xml: [], endpointProbes: [] };
+      // 1) 一覧ページを取得して Set-Cookie を確保（Akamai突破の可能性）
+      let cookie = '';
+      try {
+        const resp = await fetch('https://www.smbctb.co.jp/about_interest_rate/exchange_list.html', { headers: { 'User-Agent': BUA }, redirect: 'follow' });
+        await resp.text();
+        cookie = (resp.headers.get('set-cookie') || '').split(/,(?=[^;]+=)/).map(function (c) { return c.split(';')[0].trim(); }).filter(Boolean).join('; ');
+        out.cookieLen = cookie.length;
+      } catch (e) { out.cookieErr = String((e && e.message) || e); }
+      // 2) データ源を確定させる小さなJS3本の全文
+      const jsFiles = [
+        'https://www.smbctb.co.jp/assets/js/exchange_list.js',
+        'https://www.smbctb.co.jp/assets/js/exchange.js',
+        'https://www.smbctb.co.jp/assets/js/file_loader.js'
       ];
-      const out = { pages: [], scriptsScanned: [], dataProbes: [] };
-      const scriptUrls = new Set();
-      const dataCand = new Set();
-      for (const u of pages) {
+      for (const j of jsFiles) {
         try {
-          const resp = await fetch(u, { headers: { 'User-Agent': UA }, redirect: 'follow' });
-          const body = await resp.text();
-          const base = new URL(resp.url || u);
-          const rec = { url: u, finalUrl: resp.url || u, status: resp.status, len: body.length, scripts: [], dataUrls: [] };
-          let m; const reS = /<script[^>]+src=["']([^"']+)["']/gi;
-          while ((m = reS.exec(body))) { try { const abs = new URL(m[1], base).href; rec.scripts.push(abs); scriptUrls.add(abs); } catch (e) {} }
-          const reD = /["'`]([^"'`\s]+?\.(?:json|csv|txt|xml)(?:\?[^"'`\s]*)?)["'`]/gi;
-          while ((m = reD.exec(body))) { try { const abs = new URL(m[1], base).href; rec.dataUrls.push(abs); dataCand.add(abs); } catch (e) {} }
-          rec.scripts = Array.from(new Set(rec.scripts)).slice(0, 30);
-          rec.dataUrls = Array.from(new Set(rec.dataUrls)).slice(0, 30);
-          out.pages.push(rec);
-        } catch (e) { out.pages.push({ url: u, error: String((e && e.message) || e) }); }
-      }
-      out.ratesCommonJs = null;
-      const doCand = new Set(['https://www.smbctb.co.jp/JPGCB/NPA/acq/rates/PMPLRates.do']);
-      let scanned = 0;
-      for (const su of scriptUrls) {
-        if (scanned >= 8) break;
-        if (!/smbctb\.co\.jp/.test(su)) continue;
-        scanned++;
-        try {
-          const resp = await fetch(su, { headers: { 'User-Agent': UA } });
-          const js = await resp.text();
-          const hits = new Set();
-          const re = /["'`]([^"'`\s]*(?:\.json|\.csv|\.txt|\.do|\/api\/|kawase|exchange_?rate|fxrate|rate_list|rates?\.|PMPL)[^"'`\s]*)["'`]/gi;
-          let m, c = 0;
-          while ((m = re.exec(js)) && c < 60) { hits.add(m[1]); c++; }
-          hits.forEach(function (h) {
-            if (/\.(json|csv|txt)(\?|$)/i.test(h)) { try { dataCand.add(new URL(h, su).href); } catch (e) {} }
-            if (/\.do(\?|$)/i.test(h) || /PMPL/i.test(h)) { try { doCand.add(new URL(h, su).href); } catch (e) {} }
-          });
-          // rates_common.js は配信元の組み立てを含むので全文を返す
-          if (/rates_common\.js$/.test(su)) out.ratesCommonJs = js.slice(0, 4500);
-          out.scriptsScanned.push({ url: su, len: js.length, hits: Array.from(hits).slice(0, 60) });
-        } catch (e) { out.scriptsScanned.push({ url: su, error: String((e && e.message) || e) }); }
-      }
-      const cand = Array.from(dataCand).slice(0, 12);
-      for (const d of cand) {
-        try {
-          const abs = /^https?:/.test(d) ? d : new URL(d, 'https://www.smbctb.co.jp/').href;
-          const resp = await fetch(abs, { headers: { 'User-Agent': UA } });
+          const resp = await fetch(j, { headers: { 'User-Agent': BUA } });
           const t = await resp.text();
-          out.dataProbes.push({ url: abs, status: resp.status, len: t.length, hasDecimal: /\d+\.\d{2,}/.test(t), usd: /USD|米ドル|ドル/.test(t), head: t.slice(0, 400) });
-        } catch (e) { out.dataProbes.push({ url: d, error: String((e && e.message) || e) }); }
+          out.scripts[j.split('/').pop()] = t.slice(0, 3000);
+        } catch (e) { out.scripts[j.split('/').pop()] = 'ERR ' + String((e && e.message) || e); }
       }
-      out.endpointProbes = [];
-      for (const d of Array.from(doCand).slice(0, 8)) {
-        for (const method of ['GET', 'POST']) {
-          try {
-            const resp = await fetch(d, { method: method, headers: { 'User-Agent': UA, 'Accept': 'application/json, text/plain, */*', 'X-Requested-With': 'XMLHttpRequest', 'Referer': 'https://www.smbctb.co.jp/about_interest_rate/exchange_list.html' } });
-            const t = await resp.text();
-            out.endpointProbes.push({ url: d, method: method, status: resp.status, ctype: resp.headers.get('content-type') || '', len: t.length, hasDecimal: /\d+\.\d{2,}/.test(t), usd: /USD|米ドル|ドル/.test(t), head: t.slice(0, 700) });
-            if (resp.status === 200 && t.length > 20) break; // GETで取れたらPOSTは省略
-          } catch (e) { out.endpointProbes.push({ url: d, method: method, error: String((e && e.message) || e) }); }
-        }
+      // 3) rates_common.js の xmlFile マップにある静的XML群の中身
+      const xmlNames = ['FX_INT.xml', 'FCY_INTTD.xml', 'YEN_TDINT_ESA.xml', 'FCY_ENJOY_PLUS.xml', 'MM_INT.xml', 'FCY_INTTD_FIFTY.xml', 'FCY_INTTD_HUNDRED.xml', 'FIRST_GAIKA_INT.xml', 'STEPUP_INTTD.xml'];
+      for (const n of xmlNames) {
+        const u = 'https://www.smbctb.co.jp/common/xml/' + n;
+        try {
+          const resp = await fetch(u, { headers: { 'User-Agent': BUA, 'Referer': 'https://www.smbctb.co.jp/about_interest_rate/exchange_list.html' } });
+          const t = await resp.text();
+          out.xml.push({ name: n, status: resp.status, len: t.length, hasDecimal: /\d+\.\d{2,}/.test(t), usd: /米ドル|アメリカ|USD/.test(t), tts: /TTS|売り|お売り|お買い|買い/.test(t), head: t.slice(0, 500) });
+        } catch (e) { out.xml.push({ name: n, error: String((e && e.message) || e) }); }
+      }
+      // 4) PMPLRates.do を Cookie付き・ブラウザ相当ヘッダで再試行（GET/POST）
+      const doUrl = 'https://www.smbctb.co.jp/JPGCB/NPA/acq/rates/PMPLRates.do';
+      for (const method of ['GET', 'POST']) {
+        try {
+          const h = { 'User-Agent': BUA, 'Accept': 'text/xml, application/xml, text/html, */*', 'X-Requested-With': 'XMLHttpRequest', 'Referer': 'https://www.smbctb.co.jp/about_interest_rate/exchange_list.html' };
+          if (cookie) h['Cookie'] = cookie;
+          const resp = await fetch(doUrl, { method: method, headers: h });
+          const t = await resp.text();
+          out.endpointProbes.push({ method: method, status: resp.status, ctype: resp.headers.get('content-type') || '', len: t.length, hasDecimal: /\d+\.\d{2,}/.test(t), usd: /米ドル|アメリカ|USD/.test(t), head: t.slice(0, 700) });
+          if (resp.status === 200 && t.length > 40) break;
+        } catch (e) { out.endpointProbes.push({ method: method, error: String((e && e.message) || e) }); }
       }
       return out;
     }
