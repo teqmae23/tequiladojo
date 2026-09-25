@@ -101,6 +101,15 @@ a{color:var(--gold-d)}
 .wx-d-tp .lo{color:#2563eb}
 .wx-d-pop{font-size:10px;color:var(--ink3)}
 .wx-note{font-size:11px;color:var(--ink3)}
+.pdfv-bg{display:none;position:fixed;inset:0;z-index:9000;background:rgba(20,16,12,.9)}
+.pdfv-bg.open{display:flex;flex-direction:column}
+.pdfv-box{display:flex;flex-direction:column;width:100%;height:100%;max-width:900px;margin:0 auto}
+.pdfv-hd{display:flex;align-items:center;gap:8px;padding:10px 14px;color:#fff;flex:0 0 auto}
+.pdfv-ttl{font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pdfv-x{margin-left:auto;background:transparent;border:1px solid rgba(255,255,255,.5);color:#fff;border-radius:8px;padding:4px 12px;font-size:14px;cursor:pointer}
+.pdfv-pages{flex:1 1 auto;overflow:auto;padding:8px 8px 40px;display:flex;flex-direction:column;align-items:center;gap:10px;-webkit-user-select:none;user-select:none}
+.pdfv-canvas{background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.4);border-radius:2px;pointer-events:none}
+.pdfv-msg{color:#eee;font-size:13px;padding:30px;text-align:center}
 .clk-title{font-size:12px;font-weight:700;color:var(--ink3);margin-bottom:6px}
 .clk-note{font-size:10px;font-weight:400;color:var(--ink3)}
 .clk-row{display:flex;flex-wrap:wrap;gap:6px}
@@ -2784,11 +2793,65 @@ function renderDocuments(docs){
   var h='<div class="card"><div class="sec">📁 ドキュメント</div>';
   h+=docs.map(function(d){
     var meta=[]; if(d.fileName) meta.push(esc(d.fileName)); if(d.note) meta.push(esc(d.note));
-    return '<div class="doc-item"><span class="doc-ic">'+docIcon(d)+'</span><div class="doc-main"><div class="doc-ttl">'+esc(d.title||d.fileName||'')+'</div>'+(meta.length?'<div class="doc-sub">'+meta.join('　')+'</div>':'')+'</div>'+(d.url?'<a class="doc-open" href="'+esc(d.url)+'" target="_blank" rel="noopener">開く ↗</a>':'')+'</div>';
+    var isPdf=/\.pdf$/i.test(d.fileName||'') || /\.pdf(\?|$)/i.test(d.url||'');
+    var openEl='';
+    if(d.url){
+      if(d.viewOnly && isPdf){
+        meta.push('🔒閲覧のみ');
+        openEl='<button class="doc-open" data-pdfurl="'+esc(d.url)+'" data-pdftitle="'+esc(d.title||d.fileName||'資料')+'" onclick="openPdfViewer(this.getAttribute(\'data-pdfurl\'),this.getAttribute(\'data-pdftitle\'))">閲覧 👁</button>';
+      } else {
+        openEl='<a class="doc-open" href="'+esc(d.url)+'" target="_blank" rel="noopener">開く ↗</a>';
+      }
+    }
+    return '<div class="doc-item"><span class="doc-ic">'+docIcon(d)+'</span><div class="doc-main"><div class="doc-ttl">'+esc(d.title||d.fileName||'')+'</div>'+(meta.length?'<div class="doc-sub">'+meta.join('　')+'</div>':'')+'</div>'+openEl+'</div>';
   }).join('');
   h+='</div>';
   el.innerHTML=h;
 }
+/* ── 閲覧のみPDFビューア（PDF.jsでDL/印刷ボタン無しで描画・右クリック抑止） ──
+   ※ 完全な保存防止は不可（表示できる時点でデータは端末にある）。カジュアルなDL抑止用。 */
+var _pdfjsLoading=null;
+function _loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve();
+  if(_pdfjsLoading) return _pdfjsLoading;
+  _pdfjsLoading=new Promise(function(res,rej){
+    var s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload=function(){ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; }catch(e){} res(); };
+    s.onerror=function(){ rej(new Error('pdfjs load failed')); };
+    document.head.appendChild(s);
+  });
+  return _pdfjsLoading;
+}
+function openPdfViewer(url, title){
+  var m=g('pdfv-modal'); if(!m||!url) return;
+  g('pdfv-title').textContent=title||'資料';
+  var pages=g('pdfv-pages'); pages.innerHTML='<div class="pdfv-msg">読み込み中…</div>';
+  m.classList.add('open'); document.body.style.overflow='hidden';
+  _loadPdfJs().then(function(){
+    return window.pdfjsLib.getDocument({url:url}).promise;
+  }).then(function(pdf){
+    pages.innerHTML='';
+    var n=pdf.numPages;
+    var renderPage=function(i){
+      return pdf.getPage(i).then(function(page){
+        var vp=page.getViewport({scale:1});
+        var avail=(pages.clientWidth||pages.offsetWidth||360)-4;
+        var scale=Math.min(2.5, Math.max(0.5, avail/vp.width));
+        var dpr=Math.min(2, window.devicePixelRatio||1);
+        var v2=page.getViewport({scale:scale});
+        var canvas=document.createElement('canvas'); canvas.className='pdfv-canvas';
+        canvas.width=Math.floor(v2.width*dpr); canvas.height=Math.floor(v2.height*dpr);
+        canvas.style.width='100%'; canvas.style.maxWidth=Math.floor(v2.width)+'px';
+        pages.appendChild(canvas);
+        var ctx=canvas.getContext('2d');
+        return page.render({canvasContext:ctx, viewport:v2, transform:dpr!==1?[dpr,0,0,dpr,0,0]:null}).promise;
+      }).then(function(){ if(i<n) return renderPage(i+1); });
+    };
+    return renderPage(1);
+  }).catch(function(){ pages.innerHTML='<div class="pdfv-msg">資料を表示できませんでした。</div>'; });
+}
+function closePdfViewer(){ var m=g('pdfv-modal'); if(m){ m.classList.remove('open'); g('pdfv-pages').innerHTML=''; document.body.style.overflow=''; } }
 
 /* ════════ ツリー掲示板（⑥） ════════ */
 var _boardCfg={}, _posts=[], _bdReplyTo=null, _bdEditId=null;
@@ -3206,6 +3269,7 @@ function toast(m){ var d=document.createElement('div'); d.textContent=m; d.style
     <div class="mbd"><div id="cost-view-body"></div></div>
   </div>
 </div>
+<div class="pdfv-bg" id="pdfv-modal" oncontextmenu="return false"><div class="pdfv-box"><div class="pdfv-hd"><span class="pdfv-ttl" id="pdfv-title"></span><button class="pdfv-x" onclick="closePdfViewer()">✕</button></div><div class="pdfv-pages" id="pdfv-pages"></div></div></div>
 <script src="/access-log.js?v=20260826"></script>
 </body>
 </html>
