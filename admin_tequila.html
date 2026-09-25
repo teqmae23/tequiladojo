@@ -2030,37 +2030,38 @@ g("btn-fix-classid").addEventListener("click",function(){
       if(cidD===nd){ okcnt++; return; }          // classIdのクラス桁は正しい
       fix.push({id:id,name:nm,cur:cur,bidField:bidField,correct:correct,bidNote:bidNote});
     });
-    // 詳細レポートを別ウィンドウに表示（画面キャプチャ用・調査根拠）
-    try{
-      var w=window.open('','_blank');
-      if(w){
-        var esc2=function(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');};
-        var rows=fix.map(function(x){ return '<tr><td>'+esc2(x.name)+'</td><td class=mono>'+esc2(x.id)+'</td><td class=mono>'+esc2(x.bidField||'—')+'</td><td class=mono>'+esc2(x.cur||'(空)')+'</td><td class=mono style="color:#1a6e58;font-weight:700">'+esc2(x.correct)+'</td><td style="color:#b03020">'+esc2(x.bidNote||'')+'</td></tr>'; }).join('');
-        w.document.write('<!doctype html><meta charset=utf-8><title>classId不整合レポート</title><style>body{font-family:sans-serif;font-size:12px;padding:12px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:3px 6px;text-align:left}th{background:#eee}.mono{font-family:monospace}h2{font-size:15px}</style>'
-          +'<h2>bottleData classId 不整合レポート</h2>'
-          +'<p>総数 '+snap.size+' ／ classId破損(名称と不一致) '+fix.length+' ／ うちbottleIdも不一致 '+bidBad.length+' ／ 名称判定不能 '+noName.length+' ／ 正常 '+okcnt+'</p>'
-          +'<p>正しいclassId = カテゴリ桁 + 名称由来のクラス桁。緑=修正値。赤=bottleIdのクラス桁も名称と食い違う（bottleIdの再生成が別途必要）。</p>'
-          +'<table><tr><th>名称</th><th>doc ID</th><th>bottleIdフィールド</th><th>現classId</th><th>→正しい</th><th>備考</th></tr>'+rows+'</table>');
-        w.document.close();
-      }
-    }catch(e){}
-    var lines=[];
-    lines.push('bottleData 総数: '+snap.size+' ／ 正常: '+okcnt+' ／ 名称判定不能(対象外): '+noName.length);
-    lines.push('classId破損(名称とクラス桁不一致): '+fix.length+' 件');
-    lines.push('　うち bottleId のクラス桁も名称と不一致: '+bidBad.length+' 件（classIdは直すが bottleId 再生成は別途）');
-    fix.slice(0,25).forEach(function(x){ lines.push('  '+x.name+'  '+(x.cur||'(空)')+' → '+x.correct+(x.bidNote?'  ['+x.bidNote+']':'')); });
-    if(fix.length>25) lines.push('  …ほか'+(fix.length-25)+'件（詳細は別ウィンドウの表）');
-    if(!fix.length){ alert(lines.join('\n')+'\n\n修復対象はありません。'); btn.disabled=false; btn.textContent=_t; return; }
-    lines.push(''); lines.push(fix.length+'件の classId を名称基準の正しい値に修復しますか？（別ウィンドウの表を確認してから実行）');
-    if(!confirm(lines.join('\n'))){ btn.disabled=false; btn.textContent=_t; return; }
-    var i=0;
-    (function run(){
-      if(i>=fix.length){ toast('classId 修復完了: '+fix.length+'件'+(bidBad.length?'（bottleId要再生成: '+bidBad.length+'件）':''),'ok'); btn.disabled=false; btn.textContent=_t; if(typeof loadBdata==='function') loadBdata(); return; }
-      var b=db.batch();
-      fix.slice(i,i+400).forEach(function(x){ b.set(db.collection("bottleData").doc(x.id),{classId:x.correct},{merge:true}); });
-      i+=400;
-      b.commit().then(run).catch(function(e){ toast('修復失敗: '+e.message,'err'); btn.disabled=false; btn.textContent=_t; });
-    })();
+    btn.disabled=false; btn.textContent=_t;
+    var oldov=g('_cidrep'); if(oldov) oldov.remove();
+    if(!fix.length){ toast('classId破損は見つかりませんでした（正常:'+okcnt+'／名称判定不能:'+noName.length+'）','inf'); return; }
+    // 同一ページ内オーバーレイでレポート＋実行ボタンを表示
+    // （モバイルでは window.open で新規タブに移ると元ページの confirm が出ないため）
+    var esc2=function(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');};
+    var td='border:1px solid #ccc;padding:3px 6px;text-align:left';
+    var rows=fix.map(function(x){ return '<tr><td style="'+td+'">'+esc2(x.name)+'</td><td style="'+td+';font-family:monospace">'+esc2(x.id)+'</td><td style="'+td+';font-family:monospace">'+esc2(x.bidField||'—')+'</td><td style="'+td+';font-family:monospace">'+esc2(x.cur||'(空)')+'</td><td style="'+td+';font-family:monospace;color:#1a6e58;font-weight:700">'+esc2(x.correct)+'</td><td style="'+td+';color:#b03020;font-size:11px">'+esc2(x.bidNote||'')+'</td></tr>'; }).join('');
+    var ov=document.createElement('div'); ov.id='_cidrep';
+    ov.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:10px';
+    ov.innerHTML='<div style="background:#fff;border-radius:10px;max-width:760px;width:100%;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">'
+      +'<div style="padding:12px 14px;border-bottom:1px solid #ddd"><b style="font-size:15px">classId 不整合レポート</b>'
+      +'<div style="font-size:12px;color:#555;margin-top:4px">総数 '+snap.size+' ／ classId破損 '+fix.length+' ／ うちbottleIdも不一致 '+bidBad.length+' ／ 名称判定不能 '+noName.length+' ／ 正常 '+okcnt+'</div>'
+      +'<div style="font-size:11px;color:#777;margin-top:2px">緑=修正値（カテゴリ桁＋名称由来のクラス桁）。赤=bottleId桁も名称と不一致（bottleId再生成は別途）。</div></div>'
+      +'<div style="overflow:auto;flex:1"><table style="border-collapse:collapse;width:100%;font-size:12px"><tr style="background:#eee"><th style="'+td+'">名称</th><th style="'+td+'">doc ID</th><th style="'+td+'">bottleId</th><th style="'+td+'">現</th><th style="'+td+'">→正</th><th style="'+td+'">備考</th></tr>'+rows+'</table></div>'
+      +'<div style="padding:12px 14px;border-top:1px solid #ddd;display:flex;gap:10px;justify-content:flex-end">'
+      +'<button id="_cidClose" style="padding:9px 16px;border:1px solid #ccc;background:#f5f5f5;border-radius:8px;font-size:14px">閉じる</button>'
+      +'<button id="_cidExec" style="padding:9px 18px;border:none;background:#1a6e58;color:#fff;border-radius:8px;font-size:14px;font-weight:700">この内容で修正（'+fix.length+'件）</button>'
+      +'</div></div>';
+    document.body.appendChild(ov);
+    g('_cidClose').onclick=function(){ ov.remove(); };
+    g('_cidExec').onclick=function(){
+      var eb=this; eb.disabled=true; eb.textContent='修正中…';
+      var i=0;
+      (function run(){
+        if(i>=fix.length){ ov.remove(); toast('classId 修復完了: '+fix.length+'件'+(bidBad.length?'（bottleId要再生成: '+bidBad.length+'件）':''),'ok'); if(typeof loadBdata==='function') loadBdata(); return; }
+        var b=db.batch();
+        fix.slice(i,i+400).forEach(function(x){ b.set(db.collection("bottleData").doc(x.id),{classId:x.correct},{merge:true}); });
+        i+=400;
+        b.commit().then(run).catch(function(e){ toast('修復失敗: '+e.message,'err'); eb.disabled=false; eb.textContent='この内容で修正（'+fix.length+'件）'; });
+      })();
+    };
   }).catch(function(e){ toast('読込失敗: '+e.message,'err'); btn.disabled=false; btn.textContent=_t; });
 });
 
