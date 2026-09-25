@@ -2279,3 +2279,51 @@ exports.publishCalendar = functions.region('asia-northeast1')
     }
     return { ok: true, files: results };
   });
+
+// ── 三菱UFJ 窓口為替相場(TTS/TTB)をサーバー側で取得（スタッフのみ） ──
+// 管理画面「窓口レート」の実レート自動入力用。ページHTMLを取得し通貨コード毎に TTS/TTB を抽出。
+// 通貨コード(USD/MXN等)・数値はASCIIのため、ページの文字コードに依存せず抽出できる。
+// 三菱UFJは平日11時頃に当日レートを公開（それ以前は前営業日分が表示される）。
+exports.getBankRatesMUFG = functions.region('asia-northeast1')
+  .runWith({ timeoutSeconds: 30, memory: '256MB' })
+  .https.onCall(async (data, context) => {
+    // 権限: owner/staff（Custom Claims か staffRoles フォールバック）
+    let role = (context.auth && context.auth.token && context.auth.token.role) || '';
+    if (role !== 'owner' && role !== 'staff') {
+      try {
+        const uid = context.auth && context.auth.uid;
+        if (uid) { const d = await db.collection('staffRoles').doc(uid).get(); role = d.exists ? (d.data().role || '') : ''; }
+      } catch (e) {}
+    }
+    if (role !== 'owner' && role !== 'staff') {
+      throw new functions.https.HttpsError('permission-denied', 'スタッフ権限が必要です');
+    }
+    const url = 'https://www.bk.mufg.jp/ippan/kinri/list_j/kinri/kawase.html';
+    let html = '';
+    try {
+      const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; tequiladojo-rate-fetcher)' } });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      html = await resp.text();
+    } catch (e) {
+      throw new functions.https.HttpsError('unavailable', 'ページ取得に失敗: ' + ((e && e.message) || e));
+    }
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/[\s　]+/g, ' ');
+    const wanted = (data && Array.isArray(data.codes) && data.codes.length)
+      ? data.codes.map(function (c) { return String(c).toUpperCase(); })
+      : ['USD','EUR','MXN','GBP','AUD','CAD','CHF','CNY','HKD','KRW','SGD','THB','NZD','ZAR','SEK','NOK','DKK'];
+    const rates = {};
+    wanted.forEach(function (code) {
+      if (!/^[A-Z]{3}$/.test(code)) return;
+      const m = new RegExp('\\b' + code + '\\b\\s+(unquoted|\\d+(?:\\.\\d+)?)\\s+(unquoted|\\d+(?:\\.\\d+)?)').exec(text);
+      if (m) {
+        rates[code] = {
+          s: (m[1] === 'unquoted' ? null : parseFloat(m[1])),
+          b: (m[2] === 'unquoted' ? null : parseFloat(m[2]))
+        };
+      }
+    });
+    const found = Object.keys(rates).length;
+    const res = { source: 'mufg', asof: new Date().toISOString().slice(0, 10), rates: rates, found: found };
+    if (!found) res.sample = text.slice(0, 1200); // 抽出0件のときは調整用にHTMLテキスト断片を返す
+    return res;
+  });
