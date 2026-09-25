@@ -372,6 +372,14 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       <div class="fg"><label class="fl">開催場所</label><input class="fi" id="f-loc" placeholder="例: テキーラ道場 本店"></div>
       <div class="fg"><label class="fl">詳細</label><textarea class="fi" id="f-desc" placeholder="イベントの説明・内容など"></textarea></div>
       <div class="fg"><label class="fl">イベントTOPページ（短縮URL・任意）</label><input class="fi" id="f-top" placeholder="例: tddt2026 → tequiladojo.com/tddt2026 で開ける（空欄可 / https://… も可）"></div>
+      <div class="fg"><label class="fl">開催地域</label>
+        <div style="display:flex;gap:18px;align-items:center;margin-bottom:2px">
+          <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="f-region" value="国外" checked onchange="onRegionToggle()"> 🌏 国外</label>
+          <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="f-region" value="国内" onchange="onRegionToggle()"> 🗾 国内</label>
+        </div>
+        <div style="font-size:11px;color:var(--ink3)">国外: 現地時間・為替を表示 ／ 国内: 天気（現在＋イベント期間の予報）を表示</div>
+      </div>
+      <div id="f-overseas-block">
       <div class="fg"><label class="fl">現地時間（世界時計）</label>
         <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">日本時間(JST)は常に表示されます。追加で最大5都市を選べます（詳細と参加者の間に表示）。</div>
         <div class="row2"><select class="fi" id="f-clock1"></select><select class="fi" id="f-clock2"></select></div>
@@ -389,6 +397,14 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
         <div style="font-size:10.5px;color:var(--ink3);margin:-2px 0 6px">※三菱UFJ・GPAは公開中の実レートを自動取得（GPAは購入レート＝売のみ）。プレスティアはページがJS描画のため自動取得できず仲値概算を入力（手動調整可）。三菱UFJは平日11時頃に当日分公開。</div>
         <div id="f-bankrates-diag" style="display:none;white-space:pre-wrap;word-break:break-all;font-size:10px;background:#2b2b2b;color:#e0e0e0;border-radius:6px;padding:6px;margin-bottom:6px;max-height:180px;overflow:auto"></div>
         <div id="f-bankrates"></div>
+      </div>
+      </div><!-- /f-overseas-block -->
+      <div id="f-domestic-block" style="display:none">
+        <div class="fg"><label class="fl">天気を表示する都市（最大3・国内）</label>
+          <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">選んだ都市の「現在の天気」と「イベント期間の予報」を会員ページに表示します（Open-Meteo・無料）。予報は本日〜約16日先まで対応。</div>
+          <div class="row2"><select class="fi" id="f-wxcity1"></select><select class="fi" id="f-wxcity2"></select></div>
+          <div class="row2" style="margin-top:6px"><select class="fi" id="f-wxcity3"></select><div></div></div>
+        </div>
       </div>
       <div class="fg">
         <label class="fl">参加者（招待）</label>
@@ -1208,6 +1224,16 @@ function loadRegCount(id){
 
 // ── 世界時計・為替レート 設定 ──
 var FX_CCYS=['JPY','USD','EUR','MXN','GBP','AUD','CAD','CHF','CNY','HKD','KRW','SGD','THB','NZD','BRL','ZAR'];
+// 国内(天気)用の主要都市
+var JP_CITIES=[
+  {city:'札幌', lat:43.06, lon:141.35},{city:'仙台', lat:38.27, lon:140.87},{city:'東京', lat:35.68, lon:139.69},
+  {city:'横浜', lat:35.44, lon:139.64},{city:'千葉', lat:35.61, lon:140.12},{city:'さいたま', lat:35.86, lon:139.65},
+  {city:'名古屋', lat:35.18, lon:136.91},{city:'金沢', lat:36.56, lon:136.66},{city:'京都', lat:35.01, lon:135.77},
+  {city:'大阪', lat:34.69, lon:135.50},{city:'神戸', lat:34.69, lon:135.20},{city:'広島', lat:34.39, lon:132.46},
+  {city:'高松', lat:34.34, lon:134.05},{city:'福岡', lat:33.59, lon:130.40},{city:'鹿児島', lat:31.60, lon:130.56},
+  {city:'那覇', lat:26.21, lon:127.68},{city:'日光', lat:36.72, lon:139.70},{city:'箱根', lat:35.23, lon:139.11},
+  {city:'軽井沢', lat:36.35, lon:138.60},{city:'河口湖(富士)', lat:35.50, lon:138.75}
+];
 var WORLD_CITIES=[
   {city:'東京', tz:'Asia/Tokyo', lat:35.68, lon:139.69},{city:'サンフランシスコ', tz:'America/Los_Angeles', lat:37.77, lon:-122.42},{city:'ロサンゼルス', tz:'America/Los_Angeles', lat:34.05, lon:-118.24},
   {city:'メキシコシティ', tz:'America/Mexico_City', lat:19.43, lon:-99.13},{city:'グアダラハラ', tz:'America/Mexico_City', lat:20.67, lon:-103.35},
@@ -1220,8 +1246,16 @@ var WORLD_CITIES=[
 function _fillEventLists(ev){
   var clkOpts='<option value="">（なし）</option>'+WORLD_CITIES.map(function(c){ return '<option value="'+esc(c.tz)+'" data-city="'+esc(c.city)+'" data-lat="'+c.lat+'" data-lon="'+c.lon+'">'+esc(c.city)+'</option>'; }).join('');
   var ccyOpts='<option value="">（なし）</option>'+FX_CCYS.map(function(c){ return '<option value="'+c+'">'+c+'</option>'; }).join('');
+  var wxOpts='<option value="">（なし）</option>'+JP_CITIES.map(function(c){ return '<option value="'+esc(c.city)+'" data-lat="'+c.lat+'" data-lon="'+c.lon+'">'+esc(c.city)+'</option>'; }).join('');
   ['f-clock1','f-clock2','f-clock3','f-clock4','f-clock5'].forEach(function(id){ g(id).innerHTML=clkOpts; });
   ['f-fx1-base','f-fx1-quote','f-fx2-base','f-fx2-quote'].forEach(function(id){ g(id).innerHTML=ccyOpts; });
+  ['f-wxcity1','f-wxcity2','f-wxcity3'].forEach(function(id){ g(id).innerHTML=wxOpts; });
+  // 開催地域（国内/国外）。未設定は従来どおり国外扱い。
+  var region=(ev&&ev.region==='国内')?'国内':'国外';
+  Array.prototype.forEach.call(document.getElementsByName('f-region'),function(rb){ rb.checked=(rb.value===region); });
+  var wxc=(ev&&Array.isArray(ev.weatherCities))?ev.weatherCities:[];
+  ['f-wxcity1','f-wxcity2','f-wxcity3'].forEach(function(id,i){ g(id).value=(wxc[i]&&wxc[i].city)||''; });
+  onRegionToggle();
   var clocks=(ev&&Array.isArray(ev.worldClocks))?ev.worldClocks:[];
   ['f-clock1','f-clock2','f-clock3','f-clock4','f-clock5'].forEach(function(id,i){
     var c=clocks[i]; if(!c) { g(id).value=''; return; }
@@ -1236,6 +1270,22 @@ function _fillEventLists(ev){
   _bankRatesEdit=(ev&&ev.bankRates)?JSON.parse(JSON.stringify(ev.bankRates)):{};
   if(g('f-bankrates-asof')) g('f-bankrates-asof').value=(ev&&ev.bankRatesAsOf)||'';
   renderBankRateInputs();
+}
+function _curRegion(){ var r='国外'; Array.prototype.forEach.call(document.getElementsByName('f-region'),function(rb){ if(rb.checked) r=rb.value; }); return r; }
+function onRegionToggle(){
+  var dom=(_curRegion()==='国内');
+  if(g('f-overseas-block')) g('f-overseas-block').style.display=dom?'none':'';
+  if(g('f-domestic-block')) g('f-domestic-block').style.display=dom?'':'none';
+}
+function _readWeatherCities(){
+  var out=[];
+  ['f-wxcity1','f-wxcity2','f-wxcity3'].forEach(function(id){
+    var sel=g(id); if(!sel||!sel.value) return;
+    var opt=sel.options[sel.selectedIndex];
+    var la=opt&&parseFloat(opt.getAttribute('data-lat')), lo=opt&&parseFloat(opt.getAttribute('data-lon'));
+    out.push({ city:sel.value, lat:(isNaN(la)?null:la), lon:(isNaN(lo)?null:lo) });
+  });
+  return out;
 }
 function _readWorldClocks(){
   var out=[];
@@ -1500,7 +1550,9 @@ function saveEvent(){
     name:name, startDate:start, endDate:end,
     schedule:schedule, location:(g('f-loc').value||'').trim(),
     description:(g('f-desc').value||'').trim(), topPageUrl:(g('f-top').value||'').trim(),
+    region:_curRegion(),
     worldClocks:_readWorldClocks(), fxPairs:_readFxPairs(),
+    weatherCities:_readWeatherCities(),
     bankRates:_readBankRates(), bankRatesAsOf:(g('f-bankrates-asof').value||''),
     published:!!g('f-pub').checked, participantIds:_participants.slice(),
     coAdminIds:_coAdmins.filter(function(id){ return _participants.indexOf(id)>=0; }),

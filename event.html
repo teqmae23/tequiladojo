@@ -85,6 +85,22 @@ a{color:var(--gold-d)}
 .ov-div{border:none;border-top:1px solid var(--border);margin:10px 0}
 .intl-title{font-size:15px;font-weight:700;color:var(--ink);margin:2px 0 8px}
 .fx-clocks{margin:2px 0 8px}
+.wx-dom{margin:2px 0 8px}
+.wx-city{background:var(--cream);border:1px solid var(--border);border-radius:12px;padding:8px 10px;margin-bottom:8px}
+.wx-nm{font-size:13px;font-weight:700;color:var(--ink2);margin-bottom:3px}
+.wx-cur{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.wx-cur .wx-ic{font-size:20px}
+.wx-cur .wx-tp{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}
+.wx-cur .wx-sub{font-size:11px;color:var(--ink3)}
+.wx-days{display:flex;flex-wrap:wrap;gap:6px}
+.wx-day{flex:0 0 auto;min-width:54px;text-align:center;background:var(--cream2,rgba(0,0,0,.02));border:1px solid var(--border);border-radius:9px;padding:5px 6px}
+.wx-d-dt{font-size:10px;color:var(--ink3)}
+.wx-d-ic{font-size:18px;line-height:1.2}
+.wx-d-tp{font-size:11px;font-variant-numeric:tabular-nums}
+.wx-d-tp .hi{font-weight:700;color:#c2410c}
+.wx-d-tp .lo{color:#2563eb}
+.wx-d-pop{font-size:10px;color:var(--ink3)}
+.wx-note{font-size:11px;color:var(--ink3)}
 .clk-title{font-size:12px;font-weight:700;color:var(--ink3);margin-bottom:6px}
 .clk-note{font-size:10px;font-weight:400;color:var(--ink3)}
 .clk-row{display:flex;flex-wrap:wrap;gap:6px}
@@ -745,6 +761,10 @@ function toggleHours(){ var b=g('ev-hours'),btn=g('hours-btn'); if(!b)return; va
 var _clkTimer=null, _fxTimer=null;
 function initIntlWidgets(){
   var ev=_ev||{};
+  if(ev.region==='国内'){
+    if((Array.isArray(ev.weatherCities)?ev.weatherCities:[]).length) renderDomesticWx();
+    return;
+  }
   var clocks=(Array.isArray(ev.worldClocks)?ev.worldClocks:[]);
   var fx=(Array.isArray(ev.fxPairs)?ev.fxPairs.filter(function(p){return p&&p.base&&p.quote;}):[]);
   if(!clocks.length && !fx.length) return;
@@ -754,6 +774,67 @@ function initIntlWidgets(){
   _clkTimer=setInterval(_tickClocks, 30000);        // 現地時間: 30秒ごと
   if(_fxTimer) clearInterval(_fxTimer);
   _fxTimer=setInterval(loadFxCharts, 300000);        // 為替: 5分ごと
+}
+// ── 国内イベント: 天気（現在＋イベント期間の予報）Open-Meteo ──
+// WMO weather_code → アイコン/ラベル
+function _wmo(code){
+  var c=+code;
+  if(c===0) return {i:'☀️',t:'快晴'};
+  if(c===1||c===2) return {i:'🌤',t:'晴れ時々くもり'};
+  if(c===3) return {i:'☁️',t:'くもり'};
+  if(c===45||c===48) return {i:'🌫',t:'霧'};
+  if(c>=51&&c<=57) return {i:'🌦',t:'霧雨'};
+  if(c>=61&&c<=67) return {i:'🌧',t:'雨'};
+  if(c>=71&&c<=77) return {i:'🌨',t:'雪'};
+  if(c>=80&&c<=82) return {i:'🌧',t:'にわか雨'};
+  if(c>=85&&c<=86) return {i:'🌨',t:'にわか雪'};
+  if(c>=95) return {i:'⛈',t:'雷雨'};
+  return {i:'🌡',t:'—'};
+}
+function _ymd(d){ return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
+function renderDomesticWx(){
+  var box=g('wx-domestic'); if(!box) return;
+  var ev=_ev||{};
+  var cities=(Array.isArray(ev.weatherCities)?ev.weatherCities:[]).filter(function(c){return c&&c.city;}).slice(0,3);
+  if(!cities.length){ box.innerHTML=''; return; }
+  // 予報対応範囲: 本日〜16日先。イベント期間をこの範囲にクランプ。
+  var today=new Date(); today.setHours(0,0,0,0);
+  var maxD=new Date(today.getTime()+15*86400000);
+  var evS=ev.startDate?new Date(ev.startDate+'T00:00:00'):today;
+  var evE=ev.endDate?new Date(ev.endDate+'T00:00:00'):evS;
+  var start=(evS<today)?today:evS; if(start>maxD) start=null;
+  var end=(evE>maxD)?maxD:evE; if(end&&start&&end<start) end=start;
+  box.innerHTML='<div class="clk-note" style="margin-bottom:6px">現在の天気とイベント期間の予報（Open-Meteo）</div>'
+    +cities.map(function(c,i){ return '<div class="wx-city" id="wx-c-'+i+'"><div class="wx-nm">'+esc(c.city)+'</div><div class="wx-cur" id="wx-cur-'+i+'">読み込み中…</div><div class="wx-days" id="wx-days-'+i+'"></div></div>'; }).join('');
+  cities.forEach(function(c,i){
+    var lat=c.lat, lon=c.lon;
+    if(lat==null||lon==null){ var gg=CITY_GEO[c.city]; if(gg){ lat=gg[0]; lon=gg[1]; } }
+    if(lat==null||lon==null){ var cur=g('wx-cur-'+i); if(cur) cur.textContent='座標不明'; return; }
+    var url='https://api.open-meteo.com/v1/forecast?latitude='+encodeURIComponent(lat)+'&longitude='+encodeURIComponent(lon)
+      +'&current=temperature_2m,relative_humidity_2m,weather_code'
+      +'&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max'
+      +'&timezone=Asia%2FTokyo';
+    if(start) url+='&start_date='+_ymd(start)+'&end_date='+_ymd(end||start);
+    fetch(url).then(function(r){return r.json();}).then(function(d){
+      var cur=g('wx-cur-'+i);
+      if(cur){
+        if(d.current){ var w=_wmo(d.current.weather_code); cur.innerHTML='<span class="wx-ic">'+w.i+'</span><span class="wx-tp">'+Math.round(d.current.temperature_2m)+'°</span><span class="wx-sub">'+esc(w.t)+' ・ 💧'+(d.current.relative_humidity_2m!=null?d.current.relative_humidity_2m+'%':'—')+'</span>'; }
+        else cur.textContent='現在の天気を取得できませんでした';
+      }
+      var days=g('wx-days-'+i); if(!days) return;
+      if(!start){ days.innerHTML='<div class="wx-note">イベントまで16日以上のため期間予報は未取得（近づくと表示）。</div>'; return; }
+      if(d.daily&&d.daily.time&&d.daily.time.length){
+        days.innerHTML=d.daily.time.map(function(t,idx){
+          var w=_wmo(d.daily.weather_code[idx]);
+          var hi=d.daily.temperature_2m_max[idx], lo=d.daily.temperature_2m_min[idx];
+          var pop=d.daily.precipitation_probability_max?d.daily.precipitation_probability_max[idx]:null;
+          var dt=new Date(t+'T00:00:00');
+          var md=(dt.getMonth()+1)+'/'+dt.getDate();
+          return '<div class="wx-day"><div class="wx-d-dt">'+md+'</div><div class="wx-d-ic">'+w.i+'</div><div class="wx-d-tp"><span class="hi">'+(hi!=null?Math.round(hi)+'°':'—')+'</span>/<span class="lo">'+(lo!=null?Math.round(lo)+'°':'—')+'</span></div><div class="wx-d-pop">'+(pop!=null?'💧'+pop+'%':'')+'</div></div>';
+        }).join('');
+      } else days.innerHTML='<div class="wx-note">期間予報を取得できませんでした。</div>';
+    }).catch(function(){ var cur=g('wx-cur-'+i); if(cur) cur.textContent='天気を取得できませんでした'; });
+  });
 }
 function renderClocks(){
   var el=g('fx-clocks'); if(!el) return;
@@ -891,9 +972,14 @@ function overviewHtml(ev, period){
   secs.push('<div class="kv kv-big"><div class="k">期間</div><div class="v">'+esc(period)+(sched.length?' <button class="hours-btn" id="hours-btn" onclick="toggleHours()">各日の開催時間 ▾</button>':'')+'</div></div>'+hoursBlock);
   if(ev.location) secs.push('<div class="kv kv-big"><div class="k">場所</div><div class="v">'+esc(ev.location)+'</div></div>');
   if(ev.description) secs.push('<div class="kv kv-big"><div class="k">詳細</div><div class="v" style="font-weight:400;white-space:pre-wrap;line-height:1.7">'+esc(ev.description)+'</div></div>');
-  var _clocks=(Array.isArray(ev.worldClocks)?ev.worldClocks:[]);
-  var _fx=(Array.isArray(ev.fxPairs)?ev.fxPairs.filter(function(p){return p&&p.base&&p.quote;}):[]);
-  if(_clocks.length || _fx.length) secs.push('<div class="intl-title">現地情報</div><div id="fx-clocks" class="fx-clocks"></div><div id="fx-charts" class="fx-charts"></div>');
+  if(ev.region==='国内'){
+    var _wxc=(Array.isArray(ev.weatherCities)?ev.weatherCities:[]);
+    if(_wxc.length) secs.push('<div class="intl-title">天気</div><div id="wx-domestic" class="wx-dom"></div>');
+  } else {
+    var _clocks=(Array.isArray(ev.worldClocks)?ev.worldClocks:[]);
+    var _fx=(Array.isArray(ev.fxPairs)?ev.fxPairs.filter(function(p){return p&&p.base&&p.quote;}):[]);
+    if(_clocks.length || _fx.length) secs.push('<div class="intl-title">現地情報</div><div id="fx-clocks" class="fx-clocks"></div><div id="fx-charts" class="fx-charts"></div>');
+  }
   var h='<div class="card"><div class="sec">開催概要</div>';
   h+=secs.join('<hr class="ov-div">');
   h+='<hr class="ov-div">';
