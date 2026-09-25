@@ -2298,22 +2298,31 @@ exports.getBankRatesMUFG = functions.region('asia-northeast1')
     if (role !== 'owner' && role !== 'staff') {
       throw new functions.https.HttpsError('permission-denied', 'スタッフ権限が必要です');
     }
-    const url = 'https://www.bk.mufg.jp/ippan/kinri/list_j/kinri/kawase.html';
-    let html = '';
-    try {
-      const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; tequiladojo-rate-fetcher)' } });
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      html = await resp.text();
-    } catch (e) {
-      throw new functions.https.HttpsError('unavailable', 'ページ取得に失敗: ' + ((e && e.message) || e));
+    // 候補URLを順に取得し、USDの為替表が見つかったページを採用（レイアウト差異に備える）
+    const urls = [
+      'https://www.bk.mufg.jp/ippan/kinri/list_j/kinri/kawase.html',
+      'https://www.bk.mufg.jp/ippan/rate/real.html',
+      'https://www.bk.mufg.jp/ippan/gaitame/index.html'
+    ];
+    const diag = [];
+    let text = '';
+    for (const u of urls) {
+      try {
+        const resp = await fetch(u, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; tequiladojo-rate-fetcher)' }, redirect: 'follow' });
+        const body = await resp.text();
+        const t = body.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/[\s　]+/g, ' ');
+        const ui = t.indexOf('USD');
+        diag.push({ url: u, status: resp.status, len: body.length, usdCtx: ui >= 0 ? t.slice(ui, ui + 90) : null });
+        if (ui >= 0 && /USD\s+(?:unquoted|\d)/.test(t)) { text = t; break; }
+        if (!text && ui >= 0) text = t; // 次善候補として保持
+      } catch (e) { diag.push({ url: u, error: String((e && e.message) || e) }); }
     }
-    const text = html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/[\s　]+/g, ' ');
     const wanted = (data && Array.isArray(data.codes) && data.codes.length)
       ? data.codes.map(function (c) { return String(c).toUpperCase(); })
       : ['USD','EUR','MXN','GBP','AUD','CAD','CHF','CNY','HKD','KRW','SGD','THB','NZD','ZAR','SEK','NOK','DKK'];
     const rates = {};
     wanted.forEach(function (code) {
-      if (!/^[A-Z]{3}$/.test(code)) return;
+      if (!/^[A-Z]{3}$/.test(code) || !text) return;
       const m = new RegExp('\\b' + code + '\\b\\s+(unquoted|\\d+(?:\\.\\d+)?)\\s+(unquoted|\\d+(?:\\.\\d+)?)').exec(text);
       if (m) {
         rates[code] = {
@@ -2323,7 +2332,7 @@ exports.getBankRatesMUFG = functions.region('asia-northeast1')
       }
     });
     const found = Object.keys(rates).length;
-    const res = { source: 'mufg', asof: new Date().toISOString().slice(0, 10), rates: rates, found: found };
-    if (!found) res.sample = text.slice(0, 1200); // 抽出0件のときは調整用にHTMLテキスト断片を返す
+    const res = { source: 'mufg', asof: new Date().toISOString().slice(0, 10), rates: rates, found: found, diag: diag };
+    if (!found) res.sample = (text || '').slice(0, 1500); // 抽出0件のときは調整用にHTMLテキスト断片を返す
     return res;
   });
