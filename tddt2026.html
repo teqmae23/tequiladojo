@@ -1912,7 +1912,7 @@ function renderSchedule(items){
   // restricted閲覧者には hideUntilDone のアイテムを完了まで非表示
   var visEnr=enr.filter(function(e){ return !_itemHidden(e.it); });
   _nowMapItem=null;
-  var h='<div class="card"><div class="sec-row"><div class="sec">🗓 スケジュール</div>'+(_isReal?'<button class="ph-btn" onclick="openPh()">📷 写真を追加</button>':'')+'</div>';
+  var h='<div class="card"><div class="sec-row"><div class="sec">🗓 スケジュール</div>'+(_isStaff?'<a class="ph-btn" style="text-decoration:none" href="/admin_events.html?sched='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛠 管理ページで編集</a>':'')+(_isReal?'<button class="ph-btn" onclick="openPh()">📷 写真を追加</button>':'')+'</div>';
   h+=debugTimeBar();
   var useG=SchedGroups.used(items); // 班（2班・3班）を使っている場合のみ右端バー表示
   var myG=useG?_viewerGroup(enr):1;
@@ -1938,32 +1938,44 @@ function renderSchedule(items){
     for(var k=0;k<legs.length;k++){ if(legs[k].ms>a.ms){ pos=k; break; } }
     legs.splice(pos,0,a);
   });
-  var act=useG?SchedGroups.activeByDay(legs.map(function(L){ return {it:L.it, day:L.day, markOnly:(L.leg==='arr')}; })):{};
-  var groups=[], cur=null;
-  legs.forEach(function(L){
-    var it=L.it, d=L.day, e=L.src, row;
-    if(!cur||cur.day!==d){ cur={day:d, rows:'', cols:{1:'',2:'',3:''}, n:0}; groups.push(cur); }
-    if(L.leg==='arr'){ row=renderArrLeg(it); }
-    else {
-      row=renderSchedItem(it, L.leg);
-      // 移動で日付変更線を越える場合、その直後に仕切り線（±1日）
-      if(_idlCross(it)) row+=idlDivider(it);
-      // 移動でタイムゾーンが変わる場合、その直後に仕切り線
-      if(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null){
-        var tzO=_itemTz(it.lat,it.lng), tzD=_itemTz(it.toLat,it.toLng);
-        if(tzO && tzD && tzO!==tzD) row+=tzDivider(tzO, tzD, e.ms);
-      }
+  // 1レグ分の行HTML（開始/到着＋区切り線）
+  function _legRow(L){
+    var it=L.it, e=L.src, row;
+    if(L.leg==='arr') return renderArrLeg(it);
+    row=renderSchedItem(it, L.leg);
+    if(_idlCross(it)) row+=idlDivider(it);
+    if(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null){
+      var tzO=_itemTz(it.lat,it.lng), tzD=_itemTz(it.toLat,it.toLng);
+      if(tzO && tzD && tzO!==tzD) row+=tzDivider(tzO, tzD, e.ms);
     }
-    cur.n++;
-    if(!useG){ cur.rows+=row; return; }
-    SchedGroups.cols(it).forEach(function(c){
-      if(c.mirror){ if(L.leg!=='arr') cur.cols[c.g]+=SchedGroups.mirrorHtml(it, esc, ''); }
-      else cur.cols[c.g]+=row;
+    return row;
+  }
+  // 別班併存の時間帯だけをサイドバー付き複数列に、単独班の時間帯は従来の1列に。日付見出しは日ごと。
+  var sections=[], sec=null;
+  if(!useG){
+    legs.forEach(function(L){
+      if(!sec||sec.day!==L.day){ sec={day:L.day, html:'', n:0}; sections.push(sec); }
+      sec.html+=_legRow(L); sec.n++;
     });
-  });
-  h+=groups.map(function(gp,idx){
+  } else {
+    SchedGroups.segment(legs.map(function(L){ return {it:L.it, day:L.day, markOnly:(L.leg==='arr'), L:L}; })).forEach(function(b){
+      if(!sec||sec.day!==b.day){ sec={day:b.day, html:'', n:0}; sections.push(sec); }
+      sec.n+=b.items.length;
+      if(!b.multi){ b.items.forEach(function(x){ sec.html+=_legRow(x.L); }); return; }
+      var colsH={1:'',2:'',3:''};
+      b.items.forEach(function(x){
+        var L=x.L, it=L.it, row=_legRow(L);
+        SchedGroups.cols(it).forEach(function(c){
+          if(c.mirror){ if(L.leg!=='arr') colsH[c.g]+=SchedGroups.mirrorHtml(it, esc, ''); }
+          else colsH[c.g]+=row;
+        });
+      });
+      sec.html+=SchedGroups.wrapHtml(colsH, b.active);
+    });
+  }
+  h+=sections.map(function(gp,idx){
     return '<div class="sc-day sc-day-toggle" onclick="toggleSchedDay('+idx+')"><span class="sc-day-caret" id="sc-day-caret-'+idx+'">▸</span> '+esc(fmtDate(gp.day))+' '+wday(gp.day)+' <span class="sc-day-count">（'+gp.n+'件）</span></div>'
-      +'<div class="sc-day-body" id="sc-day-body-'+idx+'" style="display:none">'+(useG?SchedGroups.wrapHtml(gp.cols, act[gp.day]||{}):gp.rows)+'</div>';
+      +'<div class="sc-day-body" id="sc-day-body-'+idx+'" style="display:none">'+gp.html+'</div>';
   }).join('');
   if(hiddenCount>0) h+='<div class="sc-hiddennote">🙈 未完了の非公開アイテムが '+hiddenCount+' 件あります（完了後に表示されます）。</div>';
   h+='</div>';
