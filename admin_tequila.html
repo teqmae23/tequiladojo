@@ -317,6 +317,7 @@ html.embed .mbg{background:transparent!important}
       <div class="phead"><div><div class="ptitle">ボトルマスタ <span class="pcnt" id="pcnt-bottles">—</span></div><div class="pdesc">bottleId 12桁 = brandId7 + classId2 + 連番3 ／ ABV・生産区分・色素濾過・添加物</div></div>
         <div style="display:flex;gap:8px">
           <button class="btn bs" id="btn-migrate-bottles" style="font-size:11px;color:var(--ink3)">⚙ ID・連番を修正</button>
+          <button class="btn bs" id="btn-fix-classid" style="font-size:11px;color:var(--ink3)">⚙ classId修復(注文)</button>
           <button class="btn bp" id="btn-open-bottle">＋ ボトル登録</button>
         </div>
       </div>
@@ -1987,6 +1988,58 @@ g("btn-migrate-bottles").addEventListener("click",function(){
   batch.commit()
     .then(function(){ toast("修正完了：ID移行 "+canFix.length+"件／連番修復 "+seqFix.length+"件"+(cannotFix.length?"（スキップ:"+cannotFix.length+"件）":""),cannotFix.length?"inf":"ok"); loadCol("bottles"); })
     .catch(function(e){ toast("修正失敗: "+e.message,"err"); });
+});
+
+// ── bottleData の classId 不整合チェック＆修復（注文画面のクラス絞り込み用） ──
+// bottleData の doc ID は12桁 bottleId。正しい classId = id.slice(7,9)（8〜9桁目=カテゴリ+クラス）。
+// classId フィールドが破損している銘柄(例: 一部の Pueblo Viejo)を検出し、bottleId から算出した
+// 正しい値に修復する。銘柄名とも突合し、名称と食い違う/桁不正など曖昧なものは報告のみ（自動修正しない）。
+function _nameClsDigit(nm){
+  nm=String(nm||'').toLowerCase();
+  if(/extra\s*a[nñ]ejo|エクストラ|エキストラ/.test(nm)) return '5';
+  if(/a[nñ]ejo|アネホ|アニェホ/.test(nm)) return '4';
+  if(/reposado|レポサ/.test(nm)) return '3';
+  if(/joven|gold|オロ|\boro\b|ゴールド/.test(nm)) return '2';
+  if(/blanco|plata|silver|ブランコ|プラタ|シルバー/.test(nm)) return '1';
+  return '';
+}
+g("btn-fix-classid").addEventListener("click",function(){
+  var btn=this; if(btn.disabled) return; btn.disabled=true; var _t=btn.textContent; btn.textContent='↻ 確認中…';
+  db.collection("bottleData").get().then(function(snap){
+    var fix=[], conflict=[], badid=[], okcnt=0, absent=0;
+    snap.forEach(function(d){
+      var r=d.data()||{}; var id=String(d.id||'');
+      var nm=r.bottleEsBase||r.bottleEs||r.bottleJa||r.name||id;
+      var cur=(r.classId!=null&&r.classId!=='')?String(r.classId):'';
+      var bid=(id.length===12)?id:String(r.bottleId||'');
+      if(bid.length!==12){ if(cur) badid.push({id:id,name:nm,cur:cur}); return; }
+      var correct=bid.slice(7,9), cd=correct.charAt(1);
+      if('12345'.indexOf(cd)<0){ if(cur) conflict.push({id:id,name:nm,cur:cur,correct:correct,note:'bottleIdのクラス桁が不正'}); return; }
+      if(!cur){ absent++; return; }          // classId未設定はID由来で正しく動くため対象外
+      if(cur===correct){ okcnt++; return; }
+      var nd=_nameClsDigit(nm);
+      if(nd && nd!==cd){ conflict.push({id:id,name:nm,cur:cur,correct:correct,note:'名称('+(_MK_DIGIT_CLASS[nd]||nd)+')とbottleId('+(_MK_DIGIT_CLASS[cd]||cd)+')が不一致'}); return; }
+      fix.push({id:id,name:nm,cur:cur,correct:correct});
+    });
+    var lines=[];
+    lines.push('bottleData 総数: '+snap.size+'件 ／ 正常: '+okcnt+'件 ／ classId未設定: '+absent+'件');
+    lines.push('自動修復候補(classId破損): '+fix.length+'件');
+    fix.slice(0,40).forEach(function(x){ lines.push('  '+x.name+'  ['+x.id+']  '+(x.cur||'(空)')+' → '+x.correct); });
+    if(fix.length>40) lines.push('  …ほか'+(fix.length-40)+'件');
+    if(conflict.length){ lines.push(''); lines.push('⚠ 要手動確認: '+conflict.length+'件'); conflict.slice(0,20).forEach(function(x){ lines.push('  '+x.name+' ['+x.id+'] cur='+(x.cur||'空')+' ／ '+x.note); }); if(conflict.length>20) lines.push('  …ほか'+(conflict.length-20)+'件'); }
+    if(badid.length){ lines.push(''); lines.push('⚠ ID不正(12桁でない)でclassId設定あり: '+badid.length+'件 — 手動確認'); }
+    if(!fix.length){ alert(lines.join('\n')+'\n\n自動修復対象はありません。'); btn.disabled=false; btn.textContent=_t; return; }
+    lines.push(''); lines.push(fix.length+'件の classId を修復しますか？（bottleId から算出した正しい値に更新。名称と食い違うものは対象外）');
+    if(!confirm(lines.join('\n'))){ btn.disabled=false; btn.textContent=_t; return; }
+    var i=0;
+    (function run(){
+      if(i>=fix.length){ toast('classId 修復完了: '+fix.length+'件'+(conflict.length?'（要手動: '+conflict.length+'件）':''),'ok'); btn.disabled=false; btn.textContent=_t; if(typeof loadBdata==='function') loadBdata(); return; }
+      var b=db.batch();
+      fix.slice(i,i+400).forEach(function(x){ b.set(db.collection("bottleData").doc(x.id),{classId:x.correct},{merge:true}); });
+      i+=400;
+      b.commit().then(run).catch(function(e){ toast('修復失敗: '+e.message,'err'); btn.disabled=false; btn.textContent=_t; });
+    })();
+  }).catch(function(e){ toast('読込失敗: '+e.message,'err'); btn.disabled=false; btn.textContent=_t; });
 });
 
 // ── ボトルデータ ───────────────────────────────────────────────
