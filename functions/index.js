@@ -2436,6 +2436,8 @@ exports.getBankRatesLive = functions.region('asia-northeast1')
           out.pages.push(rec);
         } catch (e) { out.pages.push({ url: u, error: String((e && e.message) || e) }); }
       }
+      out.ratesCommonJs = null;
+      const doCand = new Set(['https://www.smbctb.co.jp/JPGCB/NPA/acq/rates/PMPLRates.do']);
       let scanned = 0;
       for (const su of scriptUrls) {
         if (scanned >= 8) break;
@@ -2445,10 +2447,15 @@ exports.getBankRatesLive = functions.region('asia-northeast1')
           const resp = await fetch(su, { headers: { 'User-Agent': UA } });
           const js = await resp.text();
           const hits = new Set();
-          const re = /["'`]([^"'`\s]*(?:\.json|\.csv|\.txt|\/api\/|kawase|exchange_?rate|fxrate|rate_list|rates?\.)[^"'`\s]*)["'`]/gi;
+          const re = /["'`]([^"'`\s]*(?:\.json|\.csv|\.txt|\.do|\/api\/|kawase|exchange_?rate|fxrate|rate_list|rates?\.|PMPL)[^"'`\s]*)["'`]/gi;
           let m, c = 0;
           while ((m = re.exec(js)) && c < 60) { hits.add(m[1]); c++; }
-          hits.forEach(function (h) { if (/\.(json|csv|txt)(\?|$)/i.test(h)) { try { dataCand.add(new URL(h, su).href); } catch (e) {} } });
+          hits.forEach(function (h) {
+            if (/\.(json|csv|txt)(\?|$)/i.test(h)) { try { dataCand.add(new URL(h, su).href); } catch (e) {} }
+            if (/\.do(\?|$)/i.test(h) || /PMPL/i.test(h)) { try { doCand.add(new URL(h, su).href); } catch (e) {} }
+          });
+          // rates_common.js は配信元の組み立てを含むので全文を返す
+          if (/rates_common\.js$/.test(su)) out.ratesCommonJs = js.slice(0, 4500);
           out.scriptsScanned.push({ url: su, len: js.length, hits: Array.from(hits).slice(0, 60) });
         } catch (e) { out.scriptsScanned.push({ url: su, error: String((e && e.message) || e) }); }
       }
@@ -2460,6 +2467,17 @@ exports.getBankRatesLive = functions.region('asia-northeast1')
           const t = await resp.text();
           out.dataProbes.push({ url: abs, status: resp.status, len: t.length, hasDecimal: /\d+\.\d{2,}/.test(t), usd: /USD|米ドル|ドル/.test(t), head: t.slice(0, 400) });
         } catch (e) { out.dataProbes.push({ url: d, error: String((e && e.message) || e) }); }
+      }
+      out.endpointProbes = [];
+      for (const d of Array.from(doCand).slice(0, 8)) {
+        for (const method of ['GET', 'POST']) {
+          try {
+            const resp = await fetch(d, { method: method, headers: { 'User-Agent': UA, 'Accept': 'application/json, text/plain, */*', 'X-Requested-With': 'XMLHttpRequest', 'Referer': 'https://www.smbctb.co.jp/about_interest_rate/exchange_list.html' } });
+            const t = await resp.text();
+            out.endpointProbes.push({ url: d, method: method, status: resp.status, ctype: resp.headers.get('content-type') || '', len: t.length, hasDecimal: /\d+\.\d{2,}/.test(t), usd: /USD|米ドル|ドル/.test(t), head: t.slice(0, 700) });
+            if (resp.status === 200 && t.length > 20) break; // GETで取れたらPOSTは省略
+          } catch (e) { out.endpointProbes.push({ url: d, method: method, error: String((e && e.message) || e) }); }
+        }
       }
       return out;
     }
