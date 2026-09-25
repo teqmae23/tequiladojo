@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>セミナー — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:"G-KMS18946JQ"
+};
+</script>
+<style>
+:root{--bg:#141210;--panel:#1e1b18;--ink:#f4efe7;--ink3:#b8aE9c;--gold:#d8b56b;--gold-d:#b8934a;--line:rgba(255,255,255,.14)}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;-webkit-user-select:none;user-select:none;overflow:hidden}
+#screen{height:100%;display:flex;flex-direction:column}
+.msg{margin:auto;text-align:center;color:var(--ink3);font-size:14px;padding:24px;line-height:1.8}
+.msg a{color:var(--gold);font-weight:700}
+.sem-hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--line)}
+.sem-ttl{font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sem-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(216,181,107,.16);color:var(--gold);white-space:nowrap}
+.sem-live{font-size:10px;font-weight:700;color:#e26a6a;white-space:nowrap;margin-left:auto}
+.sem-live .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#e26a6a;margin-right:3px;vertical-align:middle;animation:blink 1.4s infinite}
+@keyframes blink{50%{opacity:.3}}
+.stage{flex:1 1 auto;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;padding:8px}
+#sem-canvas{max-width:100%;max-height:100%;background:#fff;box-shadow:0 4px 24px rgba(0,0,0,.5);border-radius:2px;pointer-events:none}
+.stage-msg{position:absolute;color:var(--ink3);font-size:13px}
+.ctl{flex:0 0 auto;display:flex;align-items:center;gap:10px;justify-content:center;padding:10px 14px;border-top:1px solid var(--line);background:var(--panel)}
+.ctl button{background:var(--gold);color:#241c0e;border:none;border-radius:10px;font-size:16px;font-weight:800;padding:10px 20px;cursor:pointer;min-width:64px}
+.ctl button:disabled{opacity:.4;cursor:default}
+.ctl .pg{font-size:14px;font-variant-numeric:tabular-nums;min-width:74px;text-align:center;font-weight:700}
+.foot{flex:0 0 auto;text-align:center;font-size:11px;color:var(--ink3);padding:7px}
+.pbar{flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:center;padding:8px 14px;border-top:1px solid var(--line);background:var(--panel)}
+.pbtn{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer}
+.qrwrap{position:fixed;inset:0;background:rgba(0,0,0,.82);display:none;align-items:center;justify-content:center;z-index:50}
+.qrwrap.open{display:flex}
+.qrcard{background:#fff;color:#241c0e;border-radius:14px;padding:20px;text-align:center;max-width:88vw}
+.qrcard h3{margin:0 0 10px;font-size:15px}
+#qrbox{display:flex;justify-content:center;margin:0 auto 10px}
+#qrbox img,#qrbox canvas{display:block}
+.qrurl{font-size:11px;word-break:break-all;color:#6b5b3a;margin-bottom:12px}
+.qrcard button{background:var(--gold-d);color:#fff;border:none;border-radius:9px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;margin:0 4px}
+</style>
+</head>
+<body>
+<div id="screen"><div class="msg">読み込み中…</div></div>
+<div class="qrwrap" id="qrwrap"><div class="qrcard"><h3>参加者用QR / URL</h3><div id="qrbox"></div><div class="qrurl" id="qrurl"></div><button onclick="copyJoin()">URLをコピー</button><button onclick="closeQr()" style="background:#8a7a55">閉じる</button></div></div>
+
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+var Q=new URLSearchParams(location.search);
+var EID=Q.get('e')||'', SID=Q.get('s')||'', PRESENT=Q.get('present')==='1';
+var _sem=null, _pdf=null, _numPages=0, _page=0, _presenter=false, _unsub=null, _rendering=false, _pendingPage=null;
+
+function showMsg(html){ g('screen').innerHTML='<div class="msg">'+html+'</div>'; }
+if(!EID||!SID){ showMsg('セミナーが指定されていません。'); }
+
+// pdf.js 遅延ロード
+var _pdfjsP=null;
+function loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve();
+  if(_pdfjsP) return _pdfjsP;
+  _pdfjsP=new Promise(function(res,rej){
+    var s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload=function(){ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; }catch(e){} res(); };
+    s.onerror=function(){ rej(new Error('pdfjs')); };
+    document.head.appendChild(s);
+  });
+  return _pdfjsP;
+}
+function loadQrJs(){
+  if(window.QRCode) return Promise.resolve();
+  return new Promise(function(res,rej){
+    var s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+    s.onload=function(){ res(); }; s.onerror=function(){ rej(new Error('qr')); };
+    document.head.appendChild(s);
+  });
+}
+
+// スタッフ/共同管理者か判定（配信者モード可否）
+async function resolvePresenter(user){
+  if(!user) return false;
+  try{ var r=await user.getIdTokenResult(); if(r.claims&&(r.claims.role==='owner'||r.claims.role==='staff')) return true; }catch(e){}
+  try{ var d=await db.collection('staffRoles').doc(user.uid).get(); if(d.exists&&(d.data().role==='owner'||d.data().role==='staff')) return true; }catch(e){}
+  try{ var ev=await db.collection('events').doc(EID).get(); if(ev.exists){ var u=ev.data().coAdminUids; if(Array.isArray(u)&&u.indexOf(user.uid)>=0) return true; } }catch(e){}
+  return false;
+}
+
+auth.onAuthStateChanged(function(user){
+  if(!EID||!SID) return;
+  start(user);
+});
+
+async function start(user){
+  var canPresent=false;
+  if(PRESENT){ canPresent=await resolvePresenter(user); }
+  // セミナーdoc取得（access判定はルール側。読めなければ権限/ログイン案内）
+  var ref=db.collection('events').doc(EID).collection('seminars').doc(SID);
+  var snap;
+  try{ snap=await ref.get(); }
+  catch(e){
+    if(!user) showMsg('この配信は会員限定です。<br><br><a href="/member.html">▶ 会員ログイン</a>');
+    else showMsg('この配信の閲覧権限がありません。');
+    return;
+  }
+  if(!snap.exists){ showMsg('配信が見つかりません。'); return; }
+  _sem=snap.data();
+  if(!_sem.pdfUrl){ showMsg('資料が設定されていません。'); return; }
+  _presenter=canPresent;
+  buildUI();
+  loadPdfJs().then(function(){
+    return window.pdfjsLib.getDocument({url:_sem.pdfUrl}).promise;
+  }).then(function(pdf){
+    _pdf=pdf; _numPages=pdf.numPages;
+    if(_presenter){
+      _page=Math.min(Math.max(1,_sem.currentPage||1),_numPages);
+      renderPage(_page); updateCtl();
+    } else {
+      // 参加者は配信中ページに同期
+      subscribe();
+    }
+    if(_presenter) subscribe(); // 配信者も他端末の変更に追従
+  }).catch(function(){
+    var st=g('sem-stage'); if(st) st.innerHTML='<div class="stage-msg">資料を表示できませんでした。</div>';
+  });
+}
+
+function subscribe(){
+  if(_unsub) return;
+  var ref=db.collection('events').doc(EID).collection('seminars').doc(SID);
+  _unsub=ref.onSnapshot(function(d){
+    if(!d.exists) return; var data=d.data()||{}; _sem=data;
+    var p=Math.min(Math.max(1,data.currentPage||1),_numPages||1);
+    updateLive(data.live!==false);
+    if(_presenter){
+      // 配信者は自分の操作を優先。ライブ表示のみ更新。
+      return;
+    }
+    if(p!==_page){ _page=p; renderPage(p); }
+    updateFoot();
+  }, function(){});
+}
+
+function buildUI(){
+  var badge=(_sem.access==='public')?'<span class="sem-badge">公開</span>':'<span class="sem-badge">会員限定</span>';
+  var live='<span class="sem-live" id="sem-live"><span class="dot"></span>LIVE</span>';
+  var hd='<div class="sem-hd"><span class="sem-ttl">'+esc(_sem.title||'セミナー')+'</span>'+badge+live+'</div>';
+  var stage='<div class="stage" id="sem-stage"><canvas id="sem-canvas"></canvas></div>';
+  var bottom;
+  if(_presenter){
+    bottom='<div class="ctl"><button id="btn-prev" onclick="prevPage()">◀</button><span class="pg" id="sem-pg">- / -</span><button id="btn-next" onclick="nextPage()">▶</button></div>'
+      +'<div class="pbar"><button class="pbtn" onclick="openQr()">📱 参加者QR/URL</button><button class="pbtn" onclick="copyJoin()">🔗 URLコピー</button><span style="font-size:11px;color:var(--ink3)">配信者モード（あなたの操作が全員に同期）</span></div>';
+  } else {
+    bottom='<div class="foot" id="sem-foot">配信に同期中…</div>';
+  }
+  g('screen').innerHTML=hd+stage+bottom;
+}
+
+function renderPage(p){
+  if(!_pdf) return;
+  if(_rendering){ _pendingPage=p; return; }
+  _rendering=true;
+  _pdf.getPage(p).then(function(page){
+    var stage=g('sem-stage'), canvas=g('sem-canvas');
+    if(!stage||!canvas){ _rendering=false; return; }
+    var vp=page.getViewport({scale:1});
+    var availW=stage.clientWidth-16, availH=stage.clientHeight-16;
+    var scale=Math.max(0.2, Math.min(availW/vp.width, availH/vp.height));
+    var dpr=Math.min(2, window.devicePixelRatio||1);
+    var v2=page.getViewport({scale:scale});
+    canvas.width=Math.floor(v2.width*dpr); canvas.height=Math.floor(v2.height*dpr);
+    canvas.style.width=Math.floor(v2.width)+'px'; canvas.style.height=Math.floor(v2.height)+'px';
+    var ctx=canvas.getContext('2d');
+    return page.render({canvasContext:ctx, viewport:v2, transform:dpr!==1?[dpr,0,0,dpr,0,0]:null}).promise;
+  }).then(function(){
+    _rendering=false;
+    if(_pendingPage!=null){ var np=_pendingPage; _pendingPage=null; if(np!==p) renderPage(np); }
+  }).catch(function(){ _rendering=false; });
+}
+
+// 配信者操作
+function setPage(p){
+  p=Math.min(Math.max(1,p),_numPages||1);
+  _page=p; renderPage(p); updateCtl();
+  db.collection('events').doc(EID).collection('seminars').doc(SID)
+    .set({currentPage:p, live:true, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).catch(function(){});
+}
+function prevPage(){ setPage(_page-1); }
+function nextPage(){ setPage(_page+1); }
+function updateCtl(){
+  var pg=g('sem-pg'); if(pg) pg.textContent=_page+' / '+(_numPages||'-');
+  var pb=g('btn-prev'), nb=g('btn-next');
+  if(pb) pb.disabled=(_page<=1); if(nb) nb.disabled=(_page>=_numPages);
+}
+function updateFoot(){ var f=g('sem-foot'); if(f) f.textContent='配信に同期中 — ページ '+_page+' / '+(_numPages||'-'); }
+function updateLive(on){ var l=g('sem-live'); if(l) l.style.display=on?'':'none'; }
+
+// キーボード（配信者PC）
+document.addEventListener('keydown',function(e){
+  if(!_presenter) return;
+  if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){ e.preventDefault(); nextPage(); }
+  else if(e.key==='ArrowLeft'||e.key==='PageUp'){ e.preventDefault(); prevPage(); }
+});
+window.addEventListener('resize',function(){ if(_pdf) renderPage(_page); });
+
+// QR / URL
+function joinUrl(){ return location.origin+'/seminar.html?e='+encodeURIComponent(EID)+'&s='+encodeURIComponent(SID); }
+function openQr(){
+  var w=g('qrwrap'); g('qrurl').textContent=joinUrl();
+  loadQrJs().then(function(){
+    var box=g('qrbox'); box.innerHTML='';
+    try{ new QRCode(box,{text:joinUrl(),width:200,height:200,correctLevel:QRCode.CorrectLevel.M}); }
+    catch(e){ box.textContent='QRを生成できませんでした'; }
+  }).catch(function(){ g('qrbox').textContent='QRを生成できませんでした'; });
+  w.classList.add('open');
+}
+function closeQr(){ g('qrwrap').classList.remove('open'); }
+function copyJoin(){
+  var u=joinUrl();
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(u).then(function(){ alert('参加者URLをコピーしました'); }).catch(function(){ prompt('コピーしてください', u); }); }
+  else prompt('コピーしてください', u);
+}
+</script>
+</body>
+</html>
