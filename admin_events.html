@@ -8,6 +8,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <script src="/tz-lookup.js"></script>
 <script src="/sched-groups.js?v=20260925"></script>
 <script>
@@ -384,8 +385,8 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       </div>
       <div class="fg"><label class="fl">窓口レート（手入力・参考）— GPA / 三菱UFJ / プレスティア</label>
         <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">チャートの通貨ごとに、各社の売(TTS・円→外貨)／買(TTB・外貨→円)を円/1通貨で入力。会員ページの各チャート下に「参考」として表示されます（空欄は非表示）。</div>
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap"><span style="font-size:11px;color:var(--ink3)">基準日</span><input class="fi" id="f-bankrates-asof" type="date" style="max-width:150px"><button type="button" class="btn bs sm" id="f-bankrates-fetch" onclick="fetchBankRates()">🔄 仲値から概算取得</button></div>
-        <div style="font-size:10.5px;color:var(--ink3);margin:-2px 0 6px">※ボタンは現在の仲値を取得し、各社の目安スプレッド（GPA広め/銀行狭め）で売買を自動入力します。実レートに合わせて調整可。</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap"><span style="font-size:11px;color:var(--ink3)">基準日</span><input class="fi" id="f-bankrates-asof" type="date" style="max-width:150px"><button type="button" class="btn bs sm" id="f-bankrates-fetch" onclick="fetchBankRates()">🔄 レート取得</button></div>
+        <div style="font-size:10.5px;color:var(--ink3);margin:-2px 0 6px">※三菱UFJは公開中の実レート(TTS/TTB)を自動取得。GPA・プレスティアは実ページ未対応のため仲値＋概算スプレッドを入力（実レートに合わせて調整可）。三菱UFJは平日11時頃に当日分を公開。</div>
         <div id="f-bankrates"></div>
       </div>
       <div class="fg">
@@ -1246,20 +1247,22 @@ function fetchBankRates(){
   var curs=_bankCurs(); if(!curs.length){ toast('チャートの通貨を先に選んでください'); return; }
   _snapshotBankInputs();
   var btn=g('f-bankrates-fetch'); if(btn){ btn.disabled=true; btn.textContent='取得中…'; }
-  Promise.all(curs.map(_fetchMidJPY)).then(function(mids){
-    var ok=0;
+  // 三菱UFJ=実レート(Cloud Function)、GPA/プレスティア=仲値＋概算スプレッド（実ページ未対応）
+  var mufgP;
+  try{ mufgP=firebase.app().functions('asia-northeast1').httpsCallable('getBankRatesMUFG')({codes:curs}).then(function(r){return r.data;}).catch(function(){return null;}); }
+  catch(e){ mufgP=Promise.resolve(null); }
+  Promise.all([mufgP, Promise.all(curs.map(_fetchMidJPY))]).then(function(arr){
+    var mufg=arr[0], mids=arr[1], mr=(mufg&&mufg.rates)||{}, real=0;
     curs.forEach(function(cur,idx){
-      var mid=mids[idx]; if(mid==null) return; ok++;
       _bankRatesEdit[cur]=_bankRatesEdit[cur]||{};
-      BANK_SRCS.forEach(function(s){
-        var sp=BANK_SPREAD[s[0]]||0.02;
-        _bankRatesEdit[cur][s[0]]={ s:+(mid*(1+sp)).toFixed(4), b:+(mid*(1-sp)).toFixed(4) };
-      });
+      if(mr[cur]&&(mr[cur].s!=null||mr[cur].b!=null)){ _bankRatesEdit[cur].mufg={s:mr[cur].s,b:mr[cur].b}; real++; }
+      var mid=mids[idx];
+      if(mid!=null){ ['gpa','prestia'].forEach(function(k){ var sp=BANK_SPREAD[k]||0.02; _bankRatesEdit[cur][k]={s:+(mid*(1+sp)).toFixed(4), b:+(mid*(1-sp)).toFixed(4)}; }); }
     });
-    if(g('f-bankrates-asof')) g('f-bankrates-asof').value=new Date().toISOString().slice(0,10);
+    if(g('f-bankrates-asof')) g('f-bankrates-asof').value=(mufg&&mufg.asof)||new Date().toISOString().slice(0,10);
     renderBankRateInputs(true); // 直前にセットした値を空欄で上書きしないよう snapshot をスキップ
-    toast(ok?('仲値から概算を入力しました（'+ok+'通貨）。必要に応じ調整してください'):'仲値を取得できませんでした', ok?'':'err');
-  }).catch(function(){ toast('取得に失敗しました','err'); }).then(function(){ if(btn){ btn.disabled=false; btn.textContent='🔄 仲値から概算取得'; } });
+    toast('三菱UFJ実レート'+real+'通貨／GPA・プレスティアは仲値概算を入力しました。必要に応じ調整してください');
+  }).catch(function(){ toast('取得に失敗しました','err'); }).then(function(){ if(btn){ btn.disabled=false; btn.textContent='🔄 レート取得'; } });
 }
 function _readBankRates(){
   _snapshotBankInputs();
