@@ -379,8 +379,13 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       </div>
       <div class="fg"><label class="fl">為替レートチャート（最大2組・過去2か月〜現在／5分ごと更新）</label>
         <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">2つの通貨を選ぶとチャートを表示します。空欄なら非表示。</div>
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><select class="fi" id="f-fx1-base" style="flex:1"></select><span>→</span><select class="fi" id="f-fx1-quote" style="flex:1"></select></div>
-        <div style="display:flex;align-items:center;gap:6px"><select class="fi" id="f-fx2-base" style="flex:1"></select><span>→</span><select class="fi" id="f-fx2-quote" style="flex:1"></select></div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><select class="fi" id="f-fx1-base" style="flex:1" onchange="renderBankRateInputs()"></select><span>→</span><select class="fi" id="f-fx1-quote" style="flex:1"></select></div>
+        <div style="display:flex;align-items:center;gap:6px"><select class="fi" id="f-fx2-base" style="flex:1" onchange="renderBankRateInputs()"></select><span>→</span><select class="fi" id="f-fx2-quote" style="flex:1"></select></div>
+      </div>
+      <div class="fg"><label class="fl">窓口レート（手入力・参考）— GPA / 三菱UFJ / プレスティア</label>
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">チャートの通貨ごとに、各社の売(TTS・円→外貨)／買(TTB・外貨→円)を円/1通貨で入力。会員ページの各チャート下に「参考」として表示されます（空欄は非表示）。</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><span style="font-size:11px;color:var(--ink3)">基準日</span><input class="fi" id="f-bankrates-asof" type="date" style="max-width:170px"></div>
+        <div id="f-bankrates"></div>
       </div>
       <div class="fg">
         <label class="fl">参加者（招待）</label>
@@ -1161,6 +1166,9 @@ function _fillEventLists(ev){
   var fx=(ev&&Array.isArray(ev.fxPairs))?ev.fxPairs:[];
   g('f-fx1-base').value=(fx[0]&&fx[0].base)||''; g('f-fx1-quote').value=(fx[0]&&fx[0].quote)||'';
   g('f-fx2-base').value=(fx[1]&&fx[1].base)||''; g('f-fx2-quote').value=(fx[1]&&fx[1].quote)||'';
+  _bankRatesEdit=(ev&&ev.bankRates)?JSON.parse(JSON.stringify(ev.bankRates)):{};
+  if(g('f-bankrates-asof')) g('f-bankrates-asof').value=(ev&&ev.bankRatesAsOf)||'';
+  renderBankRateInputs();
 }
 function _readWorldClocks(){
   var out=[];
@@ -1176,6 +1184,45 @@ function _readFxPairs(){
   var out=[];
   if(g('f-fx1-base').value && g('f-fx1-quote').value) out.push({base:g('f-fx1-base').value, quote:g('f-fx1-quote').value});
   if(g('f-fx2-base').value && g('f-fx2-quote').value) out.push({base:g('f-fx2-base').value, quote:g('f-fx2-quote').value});
+  return out;
+}
+// 窓口レート（GPA/三菱UFJ/プレスティア）の手入力欄。チャートの基準通貨ごとに 売(TTS)/買(TTB) を入力。
+var BANK_SRCS=[['gpa','GPA'],['mufg','三菱UFJ'],['prestia','プレスティア']];
+var _bankRatesEdit={};
+function _bankCurs(){ var out=[]; ['f-fx1-base','f-fx2-base'].forEach(function(id){ var v=g(id)&&g(id).value; if(v&&v!=='JPY'&&out.indexOf(v)<0) out.push(v); }); return out; }
+function _snapshotBankInputs(){
+  Array.prototype.forEach.call(document.querySelectorAll('#f-bankrates input[data-cur]'),function(inp){
+    var cur=inp.getAttribute('data-cur'), src=inp.getAttribute('data-src'), sb=inp.getAttribute('data-sb');
+    _bankRatesEdit[cur]=_bankRatesEdit[cur]||{}; _bankRatesEdit[cur][src]=_bankRatesEdit[cur][src]||{}; _bankRatesEdit[cur][src][sb]=inp.value;
+  });
+}
+function renderBankRateInputs(){
+  _snapshotBankInputs();
+  var box=g('f-bankrates'); if(!box) return;
+  var curs=_bankCurs();
+  if(!curs.length){ box.innerHTML='<div style="font-size:11px;color:var(--ink3)">チャートの通貨（左側の基準通貨）を選ぶと入力欄が表示されます。</div>'; return; }
+  box.innerHTML=curs.map(function(cur){
+    var rows=BANK_SRCS.map(function(s){
+      var d=((_bankRatesEdit[cur]||{})[s[0]])||{};
+      return '<div style="display:flex;align-items:center;gap:6px;margin:3px 0"><span style="flex:0 0 82px;font-size:12px">'+esc(s[1])+'</span>'
+        +'<input class="fi" type="number" step="0.0001" placeholder="売(TTS)" data-cur="'+esc(cur)+'" data-src="'+s[0]+'" data-sb="s" value="'+esc(d.s!=null?String(d.s):'')+'" style="flex:1;min-width:0">'
+        +'<input class="fi" type="number" step="0.0001" placeholder="買(TTB)" data-cur="'+esc(cur)+'" data-src="'+s[0]+'" data-sb="b" value="'+esc(d.b!=null?String(d.b):'')+'" style="flex:1;min-width:0"></div>';
+    }).join('');
+    return '<div style="border:1px solid var(--border);border-radius:8px;padding:6px 8px;margin-bottom:6px"><div style="font-weight:700;font-size:12px;margin-bottom:2px">'+esc(cur)+' <span style="font-weight:400;color:var(--ink3);font-size:11px">円/1'+esc(cur)+'</span></div>'+rows+'</div>';
+  }).join('');
+}
+function _readBankRates(){
+  _snapshotBankInputs();
+  var out={};
+  _bankCurs().forEach(function(cur){
+    var srcObj={}, any=false;
+    BANK_SRCS.forEach(function(s){
+      var d=((_bankRatesEdit[cur]||{})[s[0]])||{};
+      var sv=numOrNull(d.s), bv=numOrNull(d.b);
+      if(sv!=null||bv!=null){ srcObj[s[0]]={s:sv, b:bv}; any=true; }
+    });
+    if(any) out[cur]=srcObj;
+  });
   return out;
 }
 // ── モーダル ──
@@ -1345,6 +1392,7 @@ function saveEvent(){
     schedule:schedule, location:(g('f-loc').value||'').trim(),
     description:(g('f-desc').value||'').trim(), topPageUrl:(g('f-top').value||'').trim(),
     worldClocks:_readWorldClocks(), fxPairs:_readFxPairs(),
+    bankRates:_readBankRates(), bankRatesAsOf:(g('f-bankrates-asof').value||''),
     published:!!g('f-pub').checked, participantIds:_participants.slice(),
     participantsPublic:participantsPublic,
     eventType:g('f-evtype').value||'closed',

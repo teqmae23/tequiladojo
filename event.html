@@ -105,6 +105,13 @@ a{color:var(--gold-d)}
 .fx-unit{font-size:11px;color:var(--ink3)}
 .fx-chg{font-size:12px;font-weight:700;margin-left:4px}
 .fx-axis{display:flex;justify-content:space-between;gap:6px;font-size:10px;color:var(--ink3);margin-top:2px}
+.br-box{margin-top:6px;border-top:1px dashed var(--border);padding-top:5px}
+.br-hd{font-size:10.5px;color:var(--ink3);font-weight:700;margin-bottom:3px;display:flex;flex-wrap:wrap;gap:4px;align-items:baseline}
+.br-asof{font-weight:400}
+.br-unit{margin-left:auto;font-weight:400}
+.br-row{display:flex;gap:8px;font-size:11px;font-variant-numeric:tabular-nums;padding:1px 0}
+.br-nm{flex:0 0 68px;color:var(--ink2)}
+.br-v{flex:0 0 auto}
 .msg{padding:40px 20px;text-align:center;color:var(--ink3);font-size:14px}
 .msg a{font-weight:600}
 .pill{display:inline-block;font-size:10px;font-weight:700;padding:2px 9px;border-radius:10px;background:var(--cream3);color:var(--ink3);margin-left:8px;vertical-align:middle}
@@ -820,15 +827,28 @@ function _fetchFx(base, quote, i){
     'https://api.frankfurter.app/'+range+'?from='+encodeURIComponent(base)+'&to='+encodeURIComponent(quote)
   ];
   var tryUrl=function(k){
-    if(k>=urls.length){ var b0=g('fx-body-'+i); if(b0) b0.innerHTML='<div style="font-size:12px;color:var(--ink3)">レートを取得できませんでした</div>'; return; }
+    if(k>=urls.length){ var b0=g('fx-body-'+i); if(b0) b0.innerHTML='<div style="font-size:12px;color:var(--ink3)">レートを取得できませんでした</div>'+_bankRatesHtml(base); return; }
     fetch(urls[k]).then(function(r){ if(!r.ok) throw new Error('http '+r.status); return r.json(); }).then(function(d){
       var rates=(d&&d.rates)||{};
       var series=Object.keys(rates).sort().map(function(kk){ return {date:kk, rate:(rates[kk]&&rates[kk][quote])}; }).filter(function(s){ return s.rate!=null; });
       if(!series.length) throw new Error('empty');
-      var body=g('fx-body-'+i); if(body) body.innerHTML=_fxChartSvg(base, quote, series);
+      var body=g('fx-body-'+i); if(body) body.innerHTML=_fxChartSvg(base, quote, series)+_bankRatesHtml(base);
     }).catch(function(){ tryUrl(k+1); });
   };
   tryUrl(0);
+}
+// 窓口レート（管理画面で手入力した GPA/三菱UFJ/プレスティアの売買）をチャート下に参考表示
+function _bankRatesHtml(cur){
+  var ev=_ev||{}; var br=(ev.bankRates||{})[cur]; if(!br) return '';
+  var srcs=[['gpa','GPA'],['mufg','三菱UFJ'],['prestia','プレスティア']];
+  var fmt=function(v){ return (v!=null&&v!=='')?(+v).toFixed(2):'—'; };
+  var rows=srcs.map(function(x){
+    var r=br[x[0]]; if(!r||(r.s==null&&r.b==null)) return '';
+    return '<div class="br-row"><span class="br-nm">'+esc(x[1])+'</span><span class="br-v">売 '+fmt(r.s)+'</span><span class="br-v">買 '+fmt(r.b)+'</span></div>';
+  }).filter(Boolean).join('');
+  if(!rows) return '';
+  var asof=ev.bankRatesAsOf?('（'+esc(ev.bankRatesAsOf)+'時点・参考）'):'（参考）';
+  return '<div class="br-box"><div class="br-hd">🏦 窓口レート <span class="br-asof">'+asof+'</span><span class="br-unit">円/1'+esc(cur)+'</span></div>'+rows+'</div>';
 }
 function _fxChartSvg(base, quote, series){
   if(!series.length) return '<div style="font-size:12px;color:var(--ink3)">レートを取得できませんでした</div>';
