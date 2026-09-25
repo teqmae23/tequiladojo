@@ -84,6 +84,49 @@ var AuthRole = (function() {
     });
   }
 
+  // スタッフ、または指定イベントの共同管理者（会員）を許可する。
+  // - 未ログイン → ログイン画面
+  // - owner/staff → onStaff(user, role)（通常のフル管理モード）
+  // - 上記以外で、events/{eventId}.coAdminUids に自分のuidが含まれる会員 → onCoAdmin(user, eventId)
+  //   （会員専用アドレスでもサインアウトしない。共同管理者は当該イベントのみ編集可能）
+  // - それ以外 → onDenied(msg)（既定は権限なし表示）
+  // 注: 共同管理者の判定には events/{eventId} の読取が必要。firestore.rules の
+  //     isEventCoAdmin(eid) により、coAdminUids に含まれる会員は当該イベントを読める。
+  function requireStaffOrCoAdmin(auth, eventId, onStaff, onCoAdmin, onDenied){
+    var deny = onDenied || function(msg){ showDenied(msg || 'アクセス権限がありません'); };
+    auth.onAuthStateChanged(async function(user){
+      if(!user){
+        showScreens();
+        showLoginScreen();
+        return;
+      }
+      var role = null;
+      try { role = await getRole(user); } catch(e){}
+      if(role === 'owner' || role === 'staff'){
+        showScreens();
+        if(onStaff) onStaff(user, role);
+        return;
+      }
+      // 共同管理者判定（eventId 必須）
+      if(eventId){
+        try {
+          var db = firebase.firestore();
+          var evDoc = await db.collection('events').doc(eventId).get();
+          if(evDoc.exists){
+            var uids = evDoc.data().coAdminUids;
+            if(Array.isArray(uids) && uids.indexOf(user.uid) >= 0){
+              showScreens();
+              if(onCoAdmin) onCoAdmin(user, eventId);
+              return;
+            }
+          }
+        } catch(e){}
+      }
+      showScreens();
+      deny('このイベントの管理権限がありません');
+    });
+  }
+
   function requireOwner(auth, onAllowed, onSignedOut){
     auth.onAuthStateChanged(async function(user){
       if(!user){
@@ -291,7 +334,8 @@ var AuthRole = (function() {
     }catch(e){ return []; }
   }
 
-  return { requireStaff: requireStaff, requireOwner: requireOwner, requireMember: requireMember,
+  return { requireStaff: requireStaff, requireStaffOrCoAdmin: requireStaffOrCoAdmin,
+           requireOwner: requireOwner, requireMember: requireMember,
            getActiveSession: getActiveSession, businessDate: businessDate,
            nowBusinessTime: nowBusinessTime, formatBusinessTime: formatBusinessTime,
            formatBusinessTime24: formatBusinessTime24,
