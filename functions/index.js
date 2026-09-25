@@ -2439,32 +2439,5 @@ exports.getBankRatesLive = functions.region('asia-northeast1')
       sources.prestia = { rates: rates, ready: true, source: 'FX_INT.xml', asof: asof, diag: { status: status, len: (xml || '').length, found: Object.keys(rates).length, error: err } };
       if (!Object.keys(rates).length) { sources.prestia.ready = false; sources.prestia.sample = sampleOf((xml || '').replace(/<[^>]+>/g, ' ').replace(/[\s　]+/g, ' ')); }
     }
-    // 千葉銀行: 取得可否を探索（公示相場ページ。取得元・形式を確定してから実装する）
-    async function probeChiba() {
-      const BUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
-      const urls = [
-        'https://net.chibabank.co.jp/rate/rate_r.html',
-        'https://net.chibabank.co.jp/cgi-bin/rate-update/de.cgi/rate_c.html',
-        'https://www.chibabank.co.jp/kojin/saving/foreign/'
-      ];
-      const out = { pages: [] };
-      const scriptUrls = new Set();
-      for (const u of urls) {
-        try {
-          const resp = await fetch(u, { headers: { 'User-Agent': BUA }, redirect: 'follow' });
-          const body = await resp.text();
-          const t = body.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/[\s　]+/g, ' ');
-          const li = t.search(/米ドル|USD|ドル/);
-          const scripts = [];
-          let m; const reS = /<script[^>]+src=["']([^"']+)["']/gi;
-          while ((m = reS.exec(body)) && scripts.length < 20) { try { const abs = new URL(m[1], resp.url || u).href; scripts.push(abs); scriptUrls.add(abs); } catch (e) {} }
-          out.pages.push({ url: u, finalUrl: resp.url || u, status: resp.status, len: body.length, hasDecimal: /\d+\.\d{2,}/.test(t), usd: li >= 0, ctype: resp.headers.get('content-type') || '', scripts: scripts, sample: li >= 0 ? t.slice(Math.max(0, li - 60), li + 900) : t.slice(0, 700) });
-        } catch (e) { out.pages.push({ url: u, error: String((e && e.message) || e) }); }
-      }
-      return out;
-    }
-    let chibaProbe = null;
-    try { chibaProbe = await probeChiba(); } catch (e) { chibaProbe = { error: String((e && e.message) || e) }; }
-    sources.chiba = { rates: {}, ready: false, probe: chibaProbe };
     return { asof: new Date().toISOString().slice(0, 10), sources: sources };
   });
