@@ -400,6 +400,11 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
         <div class="presults" id="p-results"></div>
         <div style="font-size:11px;color:var(--ink3);margin-top:6px">※ ①管理者招待。②③は下記「参加設定」で許可すると受け付けます。<span id="p-reg-count"></span></div>
       </div>
+      <div class="fg">
+        <label class="fl">🛠 共同管理者（このイベントを編集できる会員）</label>
+        <div id="f-coadmins"></div>
+        <div style="font-size:11px;color:var(--ink3);margin-top:4px">参加者の中から選択。チェックした会員は会員イベントページの「🛠 管理ページで編集」から、このイベントの<b>スケジュールと当該イベント登録の場所のみ</b>編集できます（他イベント・会員情報には触れません）。</div>
+      </div>
       <div class="fg" style="border-top:1px solid var(--border);padding-top:12px">
         <label class="fl">🙋 参加設定（会員からの参加受付）</label>
         <label class="reqlbl"><input type="checkbox" id="f-joinself"> ② 会員がイベントページから参加登録できる</label>
@@ -945,7 +950,7 @@ function g(id){return document.getElementById(id);}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function toast(m,t){var d=document.createElement('div');d.className='toast'+(t?' '+t:'');d.textContent=m;document.body.appendChild(d);setTimeout(function(){d.remove();},2800);}
 
-var events=[], members=[], _editId=null, _participants=[];
+var events=[], members=[], _editId=null, _participants=[], _coAdmins=[];
 
 AuthRole.requireStaff(auth, function(){ g('login-screen').style.display='none'; g('app').style.display='block'; init(); },
   function(){ g('login-screen').style.display='flex'; g('app').style.display='none'; });
@@ -1037,6 +1042,20 @@ function renderChips(){
     ? _participants.map(function(id){ return '<span class="chip">'+esc(memberName(id))+'<b data-rm="'+esc(id)+'">×</b></span>'; }).join('')
     : '<span style="font-size:12px;color:var(--ink3)">未登録</span>';
   Array.prototype.forEach.call(g('p-chips').querySelectorAll('b[data-rm]'),function(b){ b.addEventListener('click',function(){ _participants=_participants.filter(function(x){return x!==this.getAttribute('data-rm');}.bind(this)); renderChips(); }); });
+  renderCoAdmins();
+}
+// 共同管理者ピッカー: 参加者の中からチェックで選択（＝そのイベントを編集できる会員）
+function renderCoAdmins(){
+  var box=g('f-coadmins'); if(!box) return;
+  _coAdmins=_coAdmins.filter(function(id){ return _participants.indexOf(id)>=0; }); // 参加者から外れたら共同管理者からも外す
+  if(!_participants.length){ box.innerHTML='<div style="font-size:11px;color:var(--ink3)">先に参加者を追加すると、その中から共同管理者を選べます。</div>'; return; }
+  box.innerHTML=_participants.map(function(id){
+    var on=_coAdmins.indexOf(id)>=0;
+    return '<label class="mp-pick-row'+(on?' on':'')+'" style="display:inline-flex;width:auto;margin:2px 6px 2px 0"><input type="checkbox" data-caid="'+esc(id)+'"'+(on?' checked':'')+'><span class="mp-pick-nm">'+esc(memberName(id))+'</span></label>';
+  }).join('');
+  Array.prototype.forEach.call(box.querySelectorAll('input[data-caid]'),function(cb){
+    cb.addEventListener('change',function(){ var id=cb.getAttribute('data-caid'); if(cb.checked){ if(_coAdmins.indexOf(id)<0)_coAdmins.push(id); } else { _coAdmins=_coAdmins.filter(function(x){return x!==id;}); } cb.parentNode.classList.toggle('on',cb.checked); });
+  });
 }
 function renderPSearch(){
   var q=(g('p-search').value||'').trim().toLowerCase();
@@ -1315,6 +1334,7 @@ function openEvent(id){
   g('f-delayfree').value=(ev&&ev.viewDelayFreeH!=null)?ev.viewDelayFreeH:24;
   g('f-delaypaid').value=(ev&&ev.viewDelayPaidH!=null)?ev.viewDelayPaidH:3;
   _participants=(ev&&Array.isArray(ev.participantIds))?ev.participantIds.slice():[];
+  _coAdmins=(ev&&Array.isArray(ev.coAdminIds))?ev.coAdminIds.slice():[];
   _schedMap={}; if(ev&&Array.isArray(ev.schedule)) ev.schedule.forEach(function(s){ if(s&&s.date)_schedMap[s.date]={open:s.open||'',close:s.close||'',allDay:!!s.allDay}; });
   _containers=normalizeContainers(ev&&ev.containers);
   g('p-search').value=''; g('p-results').style.display='none';
@@ -1454,6 +1474,8 @@ function saveEvent(){
     worldClocks:_readWorldClocks(), fxPairs:_readFxPairs(),
     bankRates:_readBankRates(), bankRatesAsOf:(g('f-bankrates-asof').value||''),
     published:!!g('f-pub').checked, participantIds:_participants.slice(),
+    coAdminIds:_coAdmins.filter(function(id){ return _participants.indexOf(id)>=0; }),
+    coAdminUids:_coAdmins.filter(function(id){ return _participants.indexOf(id)>=0; }).map(function(id){ var m=members.find(function(x){return x.id===id;}); return m&&m.authUid; }).filter(Boolean),
     participantsPublic:participantsPublic,
     eventType:g('f-evtype').value||'closed',
     joinSelfEnabled:!!g('f-joinself').checked,
