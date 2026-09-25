@@ -108,6 +108,7 @@ a{color:var(--gold-d)}
 .clk-city{font-size:10px;color:var(--ink3);white-space:nowrap}
 .clk-time{font-size:13px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;letter-spacing:-.2px}
 .clk-wx{font-size:9px;color:var(--ink3);white-space:nowrap;margin-top:1px}
+.clk-now{color:var(--ink2);font-weight:700}
 .fx-charts{margin-top:4px}
 .fx-title{font-size:12px;font-weight:700;color:var(--ink3);margin:2px 0 6px}
 .fx-cards{display:flex;flex-wrap:wrap;gap:10px}
@@ -840,7 +841,7 @@ function renderClocks(){
   var el=g('fx-clocks'); if(!el) return;
   var ev=_ev||{};
   var list=[{city:'東京(JST)', tz:'Asia/Tokyo', lat:35.68, lon:139.69}].concat((Array.isArray(ev.worldClocks)?ev.worldClocks:[]).slice(0,5));
-  el.innerHTML='<div class="clk-title">🕐 現地時間 <span class="clk-note">（前日の最高気温/最低気温/平均湿度）</span></div><div class="clk-row">'
+  el.innerHTML='<div class="clk-title">🕐 現地時間 <span class="clk-note">（現在の天気＋前日の最高/最低/平均湿度）</span></div><div class="clk-row">'
     + list.map(function(c,i){ return '<div class="clk"><div class="clk-city">'+esc(c.city||c.tz)+'</div><div class="clk-time" id="clk-t-'+i+'" data-tz="'+esc(c.tz)+'">--:--</div><div class="clk-wx" id="clk-wx-'+i+'"></div></div>'; }).join('')
     + '</div>';
   _tickClocks();
@@ -862,7 +863,7 @@ function _loadClockWx(list){
     if(lat==null||lon==null) return;
     var tz=c.tz||'auto';
     var url='https://api.open-meteo.com/v1/forecast?latitude='+encodeURIComponent(lat)+'&longitude='+encodeURIComponent(lon)
-      +'&daily=temperature_2m_max,temperature_2m_min&hourly=relative_humidity_2m&past_days=2&forecast_days=1&timezone=auto';
+      +'&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&hourly=relative_humidity_2m&past_days=2&forecast_days=1&timezone=auto';
     fetch(url).then(function(r){ return r.json(); }).then(function(d){
       var y=new Date(Date.now()-86400000);
       var ymd=new Intl.DateTimeFormat('en-CA',{timeZone:tz, year:'numeric', month:'2-digit', day:'2-digit'}).format(y);
@@ -874,9 +875,11 @@ function _loadClockWx(list){
         d.hourly.time.forEach(function(t,idx){ if(String(t).slice(0,10)===ymd){ var v=d.hourly.relative_humidity_2m[idx]; if(v!=null){ sum+=v; n++; } } });
         if(n) hum=Math.round(sum/n);
       }
+      var nowHtml='';
+      if(d.current&&d.current.temperature_2m!=null){ var w=_wmo(d.current.weather_code); nowHtml='<span class="clk-now" title="現在の天気">'+w.i+Math.round(d.current.temperature_2m)+'°</span> '; }
       var el=g('clk-wx-'+i); if(!el) return;
-      if(hi==null&&lo==null&&hum==null){ el.textContent=''; return; }
-      el.innerHTML='<span title="前日の最高／最低気温">🌡'+(hi!=null?Math.round(hi):'—')+'°/'+(lo!=null?Math.round(lo):'—')+'°</span> <span title="前日の平均湿度">💧'+(hum!=null?hum+'%':'—')+'</span>';
+      if(!nowHtml&&hi==null&&lo==null&&hum==null){ el.textContent=''; return; }
+      el.innerHTML=nowHtml+'<span title="前日の最高／最低気温">🌡'+(hi!=null?Math.round(hi):'—')+'°/'+(lo!=null?Math.round(lo):'—')+'°</span> <span title="前日の平均湿度">💧'+(hum!=null?hum+'%':'—')+'</span>';
     }).catch(function(){ var el=g('clk-wx-'+i); if(el) el.textContent=''; });
   });
 }

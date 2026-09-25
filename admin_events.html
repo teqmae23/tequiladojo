@@ -982,7 +982,8 @@ var _inited=false;
 function init(){ if(_inited){ load(); return; } _inited=true; loadMembers(); load(); g('p-search').addEventListener('input',renderPSearch); }
 
 // 共同管理者向け初期化: 対象イベント1件のみ読み込み、スケジュール管理を直接開く。
-// members コレクションは共同管理者には読めない（自分のdocのみ）ため読み込まない。
+// members コレクションは共同管理者には読めない（自分のdocのみ）ため、会員名は
+// イベントdocの participantsPublic から解決する（下記参照）。
 // events 全体クエリも権限で失敗するため、対象イベントの1件だけを取得する。
 function initCoAdmin(eid){
   if(_inited) return; _inited=true;
@@ -991,7 +992,13 @@ function initCoAdmin(eid){
   _injectCoAdminCss();
   db.collection('events').doc(eid).get().then(function(d){
     if(!d.exists){ document.body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#666">イベントが見つかりません</div>'; return; }
-    events=[Object.assign({id:d.id},d.data())];
+    var ev=Object.assign({id:d.id},d.data());
+    events=[ev];
+    // 会員名の解決: members は共同管理者には読めないため、イベントdocの participantsPublic
+    //（{uid,memberId,nickname,iconUrl}）を members 相当に流し込み、memberName/loadDocRoster で名前が出るようにする。
+    members=(Array.isArray(ev.participantsPublic)?ev.participantsPublic:[]).map(function(p){
+      return { id:(p.uid||p.memberId), memberId:p.memberId, displayId:p.memberId, authUid:p.uid||'', nickname:(p.nickname||p.memberId), name:(p.nickname||p.memberId), iconUrl:p.iconUrl||'' };
+    });
     openSchedMgr(eid);
   }).catch(function(e){ toast('読込失敗: '+((e&&e.message)||e)); });
 }
