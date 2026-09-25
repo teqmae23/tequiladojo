@@ -2298,23 +2298,24 @@ exports.getBankRatesMUFG = functions.region('asia-northeast1')
     if (role !== 'owner' && role !== 'staff') {
       throw new functions.https.HttpsError('permission-denied', 'スタッフ権限が必要です');
     }
-    // 候補URLを順に取得し、USDの為替表が見つかったページを採用（レイアウト差異に備える）
+    // bk.mufg.jp は数値をJSで描画するため静的HTMLは「----」。実数値が入るサーバー描画の
+    // MURC(三菱UFJリサーチ&コンサルティング)を優先し、数値(小数)を含むページを採用する。
     const urls = [
-      'https://www.bk.mufg.jp/ippan/kinri/list_j/kinri/kawase.html',
-      'https://www.bk.mufg.jp/ippan/rate/real.html',
-      'https://www.bk.mufg.jp/ippan/gaitame/index.html'
+      'https://www.murc-kawasesouba.jp/fx/index.php',
+      'https://www.murc-kawasesouba.jp/fx/',
+      'https://www.bk.mufg.jp/ippan/kinri/list_j/kinri/kawase.html'
     ];
     const diag = [];
-    let text = '';
+    let text = '', picked = '';
     for (const u of urls) {
       try {
         const resp = await fetch(u, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; tequiladojo-rate-fetcher)' }, redirect: 'follow' });
         const body = await resp.text();
         const t = body.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/[\s　]+/g, ' ');
-        const ui = t.indexOf('USD');
-        diag.push({ url: u, status: resp.status, len: body.length, usdCtx: ui >= 0 ? t.slice(ui, ui + 90) : null });
-        if (ui >= 0 && /USD\s+(?:unquoted|\d)/.test(t)) { text = t; break; }
-        if (!text && ui >= 0) text = t; // 次善候補として保持
+        const hasDec = /\d+\.\d{2}\b/.test(t);
+        const li = t.search(/米ドル|USD/);
+        diag.push({ url: u, status: resp.status, len: body.length, hasDecimal: hasDec, ctx: li >= 0 ? t.slice(li, li + 140) : null });
+        if (!text && hasDec && li >= 0) { text = t; picked = u; break; } // 数値のあるページを採用
       } catch (e) { diag.push({ url: u, error: String((e && e.message) || e) }); }
     }
     const wanted = (data && Array.isArray(data.codes) && data.codes.length)
@@ -2332,7 +2333,11 @@ exports.getBankRatesMUFG = functions.region('asia-northeast1')
       }
     });
     const found = Object.keys(rates).length;
-    const res = { source: 'mufg', asof: new Date().toISOString().slice(0, 10), rates: rates, found: found, diag: diag };
-    if (!found) res.sample = (text || '').slice(0, 1500); // 抽出0件のときは調整用にHTMLテキスト断片を返す
+    const res = { source: 'mufg', asof: new Date().toISOString().slice(0, 10), rates: rates, found: found, diag: diag, picked: picked };
+    if (!found) {
+      // レイアウト確認用に、採用ページ(数値あり)の「米ドル」周辺を広めに返す
+      const li = text.search(/米ドル|USD/);
+      res.sample = li >= 0 ? text.slice(Math.max(0, li - 40), li + 2400) : (text || '').slice(0, 2400);
+    }
     return res;
   });
