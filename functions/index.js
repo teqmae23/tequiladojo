@@ -2394,11 +2394,14 @@ exports.getBankRatesLive = functions.region('asia-northeast1')
       return r;
     }
     const sources = {};
+    // 三菱UFJ(MURC): 確定済みパーサ。ready=true で会員表示に採用
     const gM = await grab(['https://www.murc-kawasesouba.jp/fx/index.php', 'https://www.murc-kawasesouba.jp/fx/']);
-    { const rates = parseMURC(gM.text); sources.mufg = { rates: rates, diag: gM.diag, picked: gM.picked }; if (!Object.keys(rates).length) sources.mufg.sample = sampleOf(gM.text); }
+    { const rates = parseMURC(gM.text); sources.mufg = { rates: rates, ready: true, diag: gM.diag, picked: gM.picked }; if (!Object.keys(rates).length) sources.mufg.sample = sampleOf(gM.text); }
+    // GPA: レイアウト確定用に常にサンプルを返す（ready=false＝会員表示は仲値概算にフォールバック）
     const gG = await grab(['https://gpa-exchange-onlinestore.jp/rate', 'https://www.gpa-net.co.jp/ja/passenger-service/rate/']);
-    { const rates = parseGeneric(gG.text); sources.gpa = { rates: rates, diag: gG.diag, picked: gG.picked }; if (!Object.keys(rates).length) sources.gpa.sample = sampleOf(gG.text); }
+    { sources.gpa = { rates: parseGeneric(gG.text), ready: false, diag: gG.diag, picked: gG.picked, sample: sampleOf(gG.text) }; }
+    // プレスティア: ページは数値をJSで描画（hasDecimal=false）＝HTML取得では数字が無い。ready=false
     const gP = await grab(['https://www.smbctb.co.jp/about_interest_rate/exchange_list.html', 'https://www.smbctb.co.jp/about_interest_rate/exchange.html']);
-    { const rates = parseGeneric(gP.text); sources.prestia = { rates: rates, diag: gP.diag, picked: gP.picked }; if (!Object.keys(rates).length) sources.prestia.sample = sampleOf(gP.text); }
+    { sources.prestia = { rates: {}, ready: false, diag: gP.diag, picked: gP.picked, sample: sampleOf(gP.text) }; }
     return { asof: new Date().toISOString().slice(0, 10), sources: sources };
   });
