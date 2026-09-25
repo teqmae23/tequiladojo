@@ -706,7 +706,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
   <div class="modal" style="max-width:640px">
     <div class="mhd"><span id="sch-mgr-title">スケジュール</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeSchedMgr()">✕</button></div>
     <div class="mbd">
-      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm" onclick="openCatMgr()">🏷 種別管理</button><span class="cnt" id="sch-total"></span></div>
+      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm ca-only-hide" onclick="openCatMgr()">🏷 種別管理</button><span class="cnt" id="sch-total"></span></div>
       <div id="sch-list"><div class="ec">読み込み中…</div></div>
     </div>
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeSchedMgr()">閉じる</button></div>
@@ -841,7 +841,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       <div id="pl-filter"></div>
       <div id="pl-list"><div class="ec">読み込み中…</div></div>
     </div>
-    <div class="mft"><button class="btn bs" onclick="openPlaceCatMgr()">🏷 分類編集</button><div style="flex:1"></div><button class="btn bs" onclick="closePlaceMgr()">閉じる</button></div>
+    <div class="mft"><button class="btn bs ca-only-hide" onclick="openPlaceCatMgr()">🏷 分類編集</button><div style="flex:1"></div><button class="btn bs" onclick="closePlaceMgr()">閉じる</button></div>
   </div>
 </div>
 
@@ -951,15 +951,44 @@ function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'
 function toast(m,t){var d=document.createElement('div');d.className='toast'+(t?' '+t:'');d.textContent=m;document.body.appendChild(d);setTimeout(function(){d.remove();},2800);}
 
 var events=[], members=[], _editId=null, _participants=[], _coAdmins=[];
+// 共同管理者モード（会員が当該イベントのみ編集可能）。URLの ?sched=/?ev= が対象イベント。
+var _coAdminMode=false, _coAdminEventId='';
+function _urlEventId(){ try{ var q=new URLSearchParams(location.search); return q.get('sched')||q.get('ev')||''; }catch(e){ return ''; } }
 
-AuthRole.requireStaff(auth, function(){ g('login-screen').style.display='none'; g('app').style.display='block'; init(); },
-  function(){ g('login-screen').style.display='flex'; g('app').style.display='none'; });
+AuthRole.requireStaffOrCoAdmin(auth, _urlEventId(),
+  function(){ g('login-screen').style.display='none'; g('app').style.display='block'; init(); },
+  function(user, eid){ g('login-screen').style.display='none'; g('app').style.display='block'; initCoAdmin(eid); });
 g('lbtn').addEventListener('click',function(){ auth.signInWithEmailAndPassword((g('lemail').value||'').trim(), g('lpass').value).catch(function(e){ g('lerr').textContent=e.message; }); });
 g('lpass').addEventListener('keydown',function(e){ if(e.key==='Enter') g('lbtn').click(); });
 g('btn-logout').addEventListener('click',function(){ auth.signOut(); });
 
 var _inited=false;
 function init(){ if(_inited){ load(); return; } _inited=true; loadMembers(); load(); g('p-search').addEventListener('input',renderPSearch); }
+
+// 共同管理者向け初期化: 対象イベント1件のみ読み込み、スケジュール管理を直接開く。
+// members コレクションは共同管理者には読めない（自分のdocのみ）ため読み込まない。
+// events 全体クエリも権限で失敗するため、対象イベントの1件だけを取得する。
+function initCoAdmin(eid){
+  if(_inited) return; _inited=true;
+  _coAdminMode=true; _coAdminEventId=eid;
+  document.body.classList.add('coadmin');
+  _injectCoAdminCss();
+  db.collection('events').doc(eid).get().then(function(d){
+    if(!d.exists){ document.body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#666">イベントが見つかりません</div>'; return; }
+    events=[Object.assign({id:d.id},d.data())];
+    openSchedMgr(eid);
+  }).catch(function(e){ toast('読込失敗: '+((e&&e.message)||e)); });
+}
+function _injectCoAdminCss(){
+  if(g('coadmin-css')) return;
+  var s=document.createElement('style'); s.id='coadmin-css';
+  s.textContent=
+    'body.coadmin #app > .wrap{display:none!important;}'
+   +'body.coadmin #app .hdr-nav[href="/tdhome.html"]{display:none!important;}'
+   +'body.coadmin .ca-only-hide{display:none!important;}'
+   +'body.coadmin .plf-ev{display:none!important;}';
+  document.head.appendChild(s);
+}
 
 function load(){
   g('list').innerHTML='<div class="ec">読み込み中…</div>';
@@ -1305,7 +1334,7 @@ function _readBankRates(){
   return out;
 }
 // ── モーダル ──
-function openEvent(id){
+function openEvent(id){ if(_coAdminMode) return;
   _editId=id; g('ev-err').textContent='';
   var ev=id?events.find(function(x){return x.id===id;}):null;
   _fillEventLists(ev);
@@ -1870,7 +1899,7 @@ function buildIconPicker(){
 }
 function markSelIcon(){ var box=g('cat-icon-picker'); if(!box) return; var cur=(g('cat-f-icon').value||'').trim(); Array.prototype.forEach.call(box.querySelectorAll('.ic-opt'),function(b){ b.classList.toggle('sel', b.textContent===cur); }); }
 function pickCatIcon(e){ g('cat-f-icon').value=e; markSelIcon(); }
-function openCatMgr(){ g('cat-mgr-modal').classList.add('open'); catFormReset(); g('cat-list').innerHTML='<div class="ec">読み込み中…</div>'; ensureCatsSeeded().then(renderCatMgr); }
+function openCatMgr(){ if(_coAdminMode) return; g('cat-mgr-modal').classList.add('open'); catFormReset(); g('cat-list').innerHTML='<div class="ec">読み込み中…</div>'; ensureCatsSeeded().then(renderCatMgr); }
 function closeCatMgr(){ g('cat-mgr-modal').classList.remove('open'); }
 function ensureCatsSeeded(){
   return catCol().get().then(function(s){
@@ -2366,7 +2395,7 @@ function _placeFilterBarHtml(){
 function renderPlaceFilterBars(){ ['se-place-filter','pl-filter'].forEach(function(id){ if(g(id)) g(id).innerHTML=_placeFilterBarHtml(); }); }
 function _placeMgrOpen(){ return g('pl-mgr-modal') && g('pl-mgr-modal').classList.contains('open'); }
 function setPlaceCat(k){ _placeCatFilter=k; renderPlaceFilterBars(); fillPlacePickers(); if(_placeMgrOpen()) renderPlaceList(); }
-function setPlaceEvent(v){ _placeEventFilter=v; renderPlaceFilterBars(); fillPlacePickers(); if(_placeMgrOpen()) renderPlaceList(); }
+function setPlaceEvent(v){ if(_coAdminMode) v=_coAdminEventId; _placeEventFilter=v; renderPlaceFilterBars(); fillPlacePickers(); if(_placeMgrOpen()) renderPlaceList(); }
 function fillPlacePickers(){ renderPlaceFilterBars(); if(g('se-place-pick')) g('se-place-pick').innerHTML=placeOptions(); if(g('se-toplace-pick')) g('se-toplace-pick').innerHTML=placeOptions(); }
 function applyPlace(pid, nameId, latId, lngId, mapId, modeId){
   if(!pid) return;
@@ -2420,7 +2449,7 @@ function editPlace(pid){
 }
 function delPlace(pid){ if(!confirm('この場所を削除しますか？')) return; db.collection('places').doc(pid).delete().then(function(){ toast('削除しました'); renderPlaceMgr(); }).catch(function(e){ toast('削除失敗: '+e.message); }); }
 // 場所分類の編集（名前・並び順・追加・削除）
-function openPlaceCatMgr(){ g('plcat-mgr-modal').classList.add('open'); g('plcat-list').innerHTML='<div class="ec">読み込み中…</div>'; loadPlaceCats().then(renderPlaceCatMgr); }
+function openPlaceCatMgr(){ if(_coAdminMode) return; g('plcat-mgr-modal').classList.add('open'); g('plcat-list').innerHTML='<div class="ec">読み込み中…</div>'; loadPlaceCats().then(renderPlaceCatMgr); }
 function closePlaceCatMgr(){ g('plcat-mgr-modal').classList.remove('open'); renderPlaceFilterBars(); fillPlacePickers(); if(_placeMgrOpen()) renderPlaceList(); }
 function renderPlaceCatMgr(){
   var box=g('plcat-list'); if(!box) return;
@@ -2860,8 +2889,8 @@ function openSchedMgr(eventId){
   loadPlaces(); loadFx();
   loadCats().then(loadSchedItems);
 }
-function closeSchedMgr(){ g('sch-mgr-modal').classList.remove('open'); }
-g('sch-mgr-modal').addEventListener('click',function(e){ if(e.target===g('sch-mgr-modal')) closeSchedMgr(); });
+function closeSchedMgr(){ if(_coAdminMode){ location.href='/event.html?id='+encodeURIComponent(_coAdminEventId); return; } g('sch-mgr-modal').classList.remove('open'); }
+g('sch-mgr-modal').addEventListener('click',function(e){ if(e.target===g('sch-mgr-modal')){ if(_coAdminMode) return; closeSchedMgr(); } });
 
 function schSortKey(it){ return (it.date||'')+' '+(it.time||'99:99')+' '+_endMark(it)+' '+('00'+(it.seq||0)).slice(-3); }
 function loadSchedItems(){
