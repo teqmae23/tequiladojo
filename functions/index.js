@@ -2410,8 +2410,61 @@ exports.getBankRatesLive = functions.region('asia-northeast1')
     // GPA: 確定済み(購入レート=売)。ready=true
     const gG = await grab(['https://gpa-exchange-onlinestore.jp/rate', 'https://www.gpa-net.co.jp/ja/passenger-service/rate/']);
     { const rates = parseGPA(gG.text); sources.gpa = { rates: rates, ready: true, diag: gG.diag, picked: gG.picked }; if (!Object.keys(rates).length) sources.gpa.sample = sampleOf(gG.text); }
-    // プレスティア: ページは数値をJSで描画（hasDecimal=false）＝HTML取得では数字が無い。取得不可(jsRendered)
-    const gP = await grab(['https://www.smbctb.co.jp/about_interest_rate/exchange_list.html', 'https://www.smbctb.co.jp/about_interest_rate/exchange.html']);
-    { sources.prestia = { rates: {}, ready: false, jsRendered: true, diag: gP.diag, picked: gP.picked }; }
+    // プレスティア: ページは数値をJSで描画。実データの配信元(JSON/CSV/txt等)を突き止めるため探索する。
+    // ページHTMLから <script src> とデータURL候補を抽出→各スクリプトを走査→候補データURLの中身の先頭を確認。
+    async function probePrestia() {
+      const pages = [
+        'https://www.smbctb.co.jp/rates/exchange_rate.html',
+        'https://www.smbctb.co.jp/about_interest_rate/exchange_list.html',
+        'https://www.smbctb.co.jp/about_interest_rate/exchange.html'
+      ];
+      const out = { pages: [], scriptsScanned: [], dataProbes: [] };
+      const scriptUrls = new Set();
+      const dataCand = new Set();
+      for (const u of pages) {
+        try {
+          const resp = await fetch(u, { headers: { 'User-Agent': UA }, redirect: 'follow' });
+          const body = await resp.text();
+          const base = new URL(resp.url || u);
+          const rec = { url: u, finalUrl: resp.url || u, status: resp.status, len: body.length, scripts: [], dataUrls: [] };
+          let m; const reS = /<script[^>]+src=["']([^"']+)["']/gi;
+          while ((m = reS.exec(body))) { try { const abs = new URL(m[1], base).href; rec.scripts.push(abs); scriptUrls.add(abs); } catch (e) {} }
+          const reD = /["'`]([^"'`\s]+?\.(?:json|csv|txt|xml)(?:\?[^"'`\s]*)?)["'`]/gi;
+          while ((m = reD.exec(body))) { try { const abs = new URL(m[1], base).href; rec.dataUrls.push(abs); dataCand.add(abs); } catch (e) {} }
+          rec.scripts = Array.from(new Set(rec.scripts)).slice(0, 30);
+          rec.dataUrls = Array.from(new Set(rec.dataUrls)).slice(0, 30);
+          out.pages.push(rec);
+        } catch (e) { out.pages.push({ url: u, error: String((e && e.message) || e) }); }
+      }
+      let scanned = 0;
+      for (const su of scriptUrls) {
+        if (scanned >= 8) break;
+        if (!/smbctb\.co\.jp/.test(su)) continue;
+        scanned++;
+        try {
+          const resp = await fetch(su, { headers: { 'User-Agent': UA } });
+          const js = await resp.text();
+          const hits = new Set();
+          const re = /["'`]([^"'`\s]*(?:\.json|\.csv|\.txt|\/api\/|kawase|exchange_?rate|fxrate|rate_list|rates?\.)[^"'`\s]*)["'`]/gi;
+          let m, c = 0;
+          while ((m = re.exec(js)) && c < 60) { hits.add(m[1]); c++; }
+          hits.forEach(function (h) { if (/\.(json|csv|txt)(\?|$)/i.test(h)) { try { dataCand.add(new URL(h, su).href); } catch (e) {} } });
+          out.scriptsScanned.push({ url: su, len: js.length, hits: Array.from(hits).slice(0, 60) });
+        } catch (e) { out.scriptsScanned.push({ url: su, error: String((e && e.message) || e) }); }
+      }
+      const cand = Array.from(dataCand).slice(0, 12);
+      for (const d of cand) {
+        try {
+          const abs = /^https?:/.test(d) ? d : new URL(d, 'https://www.smbctb.co.jp/').href;
+          const resp = await fetch(abs, { headers: { 'User-Agent': UA } });
+          const t = await resp.text();
+          out.dataProbes.push({ url: abs, status: resp.status, len: t.length, hasDecimal: /\d+\.\d{2,}/.test(t), usd: /USD|米ドル|ドル/.test(t), head: t.slice(0, 400) });
+        } catch (e) { out.dataProbes.push({ url: d, error: String((e && e.message) || e) }); }
+      }
+      return out;
+    }
+    let prestiaProbe = null;
+    try { prestiaProbe = await probePrestia(); } catch (e) { prestiaProbe = { error: String((e && e.message) || e) }; }
+    sources.prestia = { rates: {}, ready: false, jsRendered: false, probe: prestiaProbe };
     return { asof: new Date().toISOString().slice(0, 10), sources: sources };
   });
