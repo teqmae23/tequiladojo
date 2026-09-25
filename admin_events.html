@@ -1248,23 +1248,27 @@ function fetchBankRates(){
   var curs=_bankCurs(); if(!curs.length){ toast('チャートの通貨を先に選んでください'); return; }
   _snapshotBankInputs();
   var btn=g('f-bankrates-fetch'); if(btn){ btn.disabled=true; btn.textContent='取得中…'; }
-  // 三菱UFJ=実レート(Cloud Function)、GPA/プレスティア=仲値＋概算スプレッド（実ページ未対応）
-  var mufgP;
-  try{ mufgP=firebase.app().functions('asia-northeast1').httpsCallable('getBankRatesMUFG')({codes:curs}).then(function(r){return r.data;}).catch(function(){return null;}); }
-  catch(e){ mufgP=Promise.resolve(null); }
-  Promise.all([mufgP, Promise.all(curs.map(_fetchMidJPY))]).then(function(arr){
-    var mufg=arr[0], mids=arr[1], mr=(mufg&&mufg.rates)||{}, real=0;
+  // 3社(三菱UFJ/GPA/プレスティア)の実レートをサーバー側で取得。取れない社は仲値＋概算で補完。
+  var liveP;
+  try{ liveP=firebase.app().functions('asia-northeast1').httpsCallable('getBankRatesLive')({codes:curs}).then(function(r){return r.data;}).catch(function(){return null;}); }
+  catch(e){ liveP=Promise.resolve(null); }
+  Promise.all([liveP, Promise.all(curs.map(_fetchMidJPY))]).then(function(arr){
+    var live=arr[0], mids=arr[1], srcs=(live&&live.sources)||{}, cnt={mufg:0,gpa:0,prestia:0};
     curs.forEach(function(cur,idx){
       _bankRatesEdit[cur]=_bankRatesEdit[cur]||{};
-      if(mr[cur]&&(mr[cur].s!=null||mr[cur].b!=null)){ _bankRatesEdit[cur].mufg={s:mr[cur].s,b:mr[cur].b}; real++; }
-      var mid=mids[idx];
-      if(mid!=null){ ['gpa','prestia'].forEach(function(k){ var sp=BANK_SPREAD[k]||0.02; _bankRatesEdit[cur][k]={s:+(mid*(1+sp)).toFixed(4), b:+(mid*(1-sp)).toFixed(4)}; }); }
+      ['mufg','gpa','prestia'].forEach(function(k){
+        var r=srcs[k]&&srcs[k].rates&&srcs[k].rates[cur];
+        if(r&&(r.s!=null||r.b!=null)){ _bankRatesEdit[cur][k]={s:r.s,b:r.b}; cnt[k]++; }
+        else { var mid=mids[idx]; if(mid!=null){ var sp=BANK_SPREAD[k]||0.02; _bankRatesEdit[cur][k]={s:+(mid*(1+sp)).toFixed(4), b:+(mid*(1-sp)).toFixed(4)}; } }
+      });
     });
-    if(g('f-bankrates-asof')) g('f-bankrates-asof').value=(mufg&&mufg.asof)||new Date().toISOString().slice(0,10);
+    if(g('f-bankrates-asof')) g('f-bankrates-asof').value=(live&&live.asof)||new Date().toISOString().slice(0,10);
     renderBankRateInputs(true); // 直前にセットした値を空欄で上書きしないよう snapshot をスキップ
+    var diagObj={};
+    ['mufg','gpa','prestia'].forEach(function(k){ if(!cnt[k] && srcs[k]) diagObj[k]={diag:srcs[k].diag, picked:srcs[k].picked, sample:srcs[k].sample}; });
     var dg=g('f-bankrates-diag');
-    if(dg){ if(!real && mufg){ dg.style.display='block'; dg.textContent='三菱UFJ抽出0件の診断:\n'+JSON.stringify({diag:mufg.diag, sample:mufg.sample},null,1); } else { dg.style.display='none'; dg.textContent=''; } }
-    toast('三菱UFJ実レート'+real+'通貨／GPA・プレスティアは仲値概算を入力しました。必要に応じ調整してください');
+    if(dg){ if(Object.keys(diagObj).length){ dg.style.display='block'; dg.textContent='実レート未取得の社の診断:\n'+JSON.stringify(diagObj,null,1); } else { dg.style.display='none'; dg.textContent=''; } }
+    toast('実レート取得: 三菱UFJ'+cnt.mufg+'／GPA'+cnt.gpa+'／プレスティア'+cnt.prestia+'通貨（未取得は仲値概算）');
   }).catch(function(){ toast('取得に失敗しました','err'); }).then(function(){ if(btn){ btn.disabled=false; btn.textContent='🔄 レート取得'; } });
 }
 function _readBankRates(){

@@ -2341,3 +2341,64 @@ exports.getBankRatesMUFG = functions.region('asia-northeast1')
     }
     return res;
   });
+
+// ── 為替の実レートを3社まとめて取得（三菱UFJ=MURC / GPA / プレスティア）スタッフのみ ──
+// 各社の公開ページをサーバー側で取得し、通貨ごとに売買を抽出。抽出できない社は診断情報を返す。
+exports.getBankRatesLive = functions.region('asia-northeast1')
+  .runWith({ timeoutSeconds: 60, memory: '256MB' })
+  .https.onCall(async (data, context) => {
+    let role = (context.auth && context.auth.token && context.auth.token.role) || '';
+    if (role !== 'owner' && role !== 'staff') {
+      try { const uid = context.auth && context.auth.uid; if (uid) { const d = await db.collection('staffRoles').doc(uid).get(); role = d.exists ? (d.data().role || '') : ''; } } catch (e) {}
+    }
+    if (role !== 'owner' && role !== 'staff') throw new functions.https.HttpsError('permission-denied', 'スタッフ権限が必要です');
+
+    const UA = 'Mozilla/5.0 (compatible; tequiladojo-rate-fetcher)';
+    const codes = (data && Array.isArray(data.codes) && data.codes.length)
+      ? data.codes.map(function (c) { return String(c).toUpperCase(); }) : ['USD', 'MXN', 'EUR'];
+    const JP = { USD:'米ドル', EUR:'ユーロ', MXN:'メキシコ', GBP:'英ポンド', AUD:'豪ドル', CAD:'カナダ', CHF:'スイス', CNY:'中国', HKD:'香港', KRW:'ウォン', SGD:'シンガポール', THB:'バーツ', NZD:'ニュージーランド', ZAR:'ランド' };
+
+    async function grab(urls) {
+      const diag = []; let text = '', picked = '';
+      for (const u of urls) {
+        try {
+          const resp = await fetch(u, { headers: { 'User-Agent': UA }, redirect: 'follow' });
+          const body = await resp.text();
+          const t = body.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/[\s　]+/g, ' ');
+          const hasDec = /\d+\.\d{2}\b/.test(t);
+          const li = t.search(/米ドル|USD/);
+          diag.push({ url: u, status: resp.status, len: body.length, hasDecimal: hasDec, ctx: li >= 0 ? t.slice(li, li + 160) : null });
+          if (!text && hasDec) { text = t; picked = u; break; }
+        } catch (e) { diag.push({ url: u, error: String((e && e.message) || e) }); }
+      }
+      return { text: text, picked: picked, diag: diag };
+    }
+    function sampleOf(text) { if (!text) return ''; const li = text.search(/米ドル|USD|ドル/); return li >= 0 ? text.slice(Math.max(0, li - 60), li + 2400) : text.slice(0, 2400); }
+    // MUFG(MURC): code の直後に TTS TTB が並ぶ
+    function parseMURC(text) {
+      const r = {}; if (!text) return r;
+      codes.forEach(function (code) {
+        const m = new RegExp('\\b' + code + '\\b\\s+(unquoted|\\d+(?:\\.\\d+)?)\\s+(unquoted|\\d+(?:\\.\\d+)?)').exec(text);
+        if (m) r[code] = { s: (m[1] === 'unquoted' ? null : parseFloat(m[1])), b: (m[2] === 'unquoted' ? null : parseFloat(m[2])) };
+      });
+      return r;
+    }
+    // 汎用: コード or 和名の直後の最初の2つの小数を s,b とみなす（GPA/プレスティア暫定）
+    function parseGeneric(text) {
+      const r = {}; if (!text) return r;
+      codes.forEach(function (code) {
+        let m = new RegExp('\\b' + code + '\\b[^0-9]{0,24}?(\\d+(?:\\.\\d+)?)[^0-9]{1,16}?(\\d+(?:\\.\\d+)?)').exec(text);
+        if (!m && JP[code]) m = new RegExp(JP[code] + '[^0-9]{0,48}?(\\d+(?:\\.\\d+)?)[^0-9]{1,16}?(\\d+(?:\\.\\d+)?)').exec(text);
+        if (m) r[code] = { s: parseFloat(m[1]), b: parseFloat(m[2]) };
+      });
+      return r;
+    }
+    const sources = {};
+    const gM = await grab(['https://www.murc-kawasesouba.jp/fx/index.php', 'https://www.murc-kawasesouba.jp/fx/']);
+    { const rates = parseMURC(gM.text); sources.mufg = { rates: rates, diag: gM.diag, picked: gM.picked }; if (!Object.keys(rates).length) sources.mufg.sample = sampleOf(gM.text); }
+    const gG = await grab(['https://gpa-exchange-onlinestore.jp/rate', 'https://www.gpa-net.co.jp/ja/passenger-service/rate/']);
+    { const rates = parseGeneric(gG.text); sources.gpa = { rates: rates, diag: gG.diag, picked: gG.picked }; if (!Object.keys(rates).length) sources.gpa.sample = sampleOf(gG.text); }
+    const gP = await grab(['https://www.smbctb.co.jp/about_interest_rate/exchange_list.html', 'https://www.smbctb.co.jp/about_interest_rate/exchange.html']);
+    { const rates = parseGeneric(gP.text); sources.prestia = { rates: rates, diag: gP.diag, picked: gP.picked }; if (!Object.keys(rates).length) sources.prestia.sample = sampleOf(gP.text); }
+    return { asof: new Date().toISOString().slice(0, 10), sources: sources };
+  });
