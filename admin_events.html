@@ -133,7 +133,12 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .se-day-toggle{user-select:none;display:flex;align-items:center;gap:6px}
 .se-day-hd{flex:1;min-width:0;cursor:pointer;display:flex;align-items:center;gap:6px}
 .se-day-add{flex:0 0 auto;padding:2px 9px;font-size:11px}
-body.sg-any-open #sch-mgr-modal .modal{max-width:1100px !important}
+.plf-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:2px 0 8px}
+.plf-tabs{display:flex;gap:4px;flex-wrap:wrap;flex:1 1 auto;min-width:0}
+.plf-tab{font-size:11px;padding:3px 9px;border:1px solid var(--border);border-radius:14px;background:var(--white);color:var(--ink3);cursor:pointer;font-family:inherit}
+.plf-tab.on{background:#7a5610;color:#fff;border-color:#7a5610}
+.plf-ev{font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--white);flex:0 0 auto;max-width:48%}
+.plf-catsel{font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:6px;background:var(--white);flex:0 0 auto;margin:0 4px}
 .se-caret{font-size:10px;color:var(--ink3);width:12px;display:inline-block}
 .se-cost-sub{font-size:10px;color:var(--ink3);font-weight:400}
 .pl-item{display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:var(--r);padding:8px 11px;margin-bottom:6px;background:var(--white)}
@@ -745,7 +750,7 @@ body.sg-any-open #sch-mgr-modal .modal{max-width:1100px !important}
         </div>
         <input type="file" id="se-photo-input" accept="image/*" style="display:none" onchange="seItemPhotoUpload(this)">
       </div>
-      <div class="fg"><label class="fl">登録済みの場所から選択</label><select class="fi" id="se-place-pick" onchange="applyPlace(this.value,'se-place','se-lat','se-lng','se-map','se-mapmode')"><option value="">（新規入力）</option></select></div>
+      <div class="fg"><label class="fl">登録済みの場所から選択</label><div id="se-place-filter"></div><select class="fi" id="se-place-pick" onchange="applyPlace(this.value,'se-place','se-lat','se-lng','se-map','se-mapmode')"><option value="">（新規入力）</option></select></div>
       <div class="fg"><label class="fl">Google Map URL（場所）</label><input class="fi" id="se-map" placeholder="https://www.google.com/maps/... （@緯度,経度を含むURL）" oninput="onMapUrl('se-map','se-lat','se-lng','se-place')"></div>
       <div class="row2">
         <div class="fg"><label class="fl">緯度</label><input class="fi" id="se-lat" placeholder="自動取得/手入力"></div>
@@ -819,7 +824,8 @@ body.sg-any-open #sch-mgr-modal .modal{max-width:1100px !important}
   <div class="modal">
     <div class="mhd"><span>📍 場所管理</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closePlaceMgr()">✕</button></div>
     <div class="mbd">
-      <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">スケジュール項目に地点を登録すると自動でここに保存され、次回から選択できます。</div>
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:8px">スケジュール項目に地点を登録すると自動でここに保存され、分類（蒸留所・レストラン等）は登録元の種別から自動振り分けされます。分類は各行のセレクトで手動変更できます。</div>
+      <div id="pl-filter"></div>
       <div id="pl-list"><div class="ec">読み込み中…</div></div>
     </div>
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closePlaceMgr()">閉じる</button></div>
@@ -2178,9 +2184,46 @@ function _cleanBuildings(){
 }
 /* ── 場所ライブラリ（登録済みの地点を再利用） ── */
 var _places=[];
+var PLACE_CATS=[{k:'distillery',n:'蒸留所'},{k:'restaurant',n:'レストラン'},{k:'bar',n:'BAR'},{k:'transit',n:'空港・駅'},{k:'activity',n:'アクティビティ'}];
+function placeCatName(k){ var c=PLACE_CATS.find(function(x){return x.k===k;}); return c?c.n:'未分類'; }
+// 登録元の予定項目の種別・タイトルから場所分類を自動推定（外れは手動振り分けで修正）
+function autoPlaceCat(catId, title){
+  var c=(_cats||[]).find(function(x){return x.id===catId;});
+  var n=((((c&&c.name)||'')+' '+(title||''))).toLowerCase();
+  if(/蒸留|distiller|酒造|tequila|テキーラ|mezcal|メスカル|ディスティ/.test(n)) return 'distillery';
+  if(/レストラン|食事|昼食|ランチ|夕食|ディナー|朝食|restaurant|dining|グルメ|カフェ|cafe/.test(n)) return 'restaurant';
+  if(/bar|バー|酒場|パブ|pub|カンティーナ|cantina/.test(n)) return 'bar';
+  if(/空港|駅|移動|airport|station|flight|フライト|transfer|バス|train|電車|交通/.test(n)) return 'transit';
+  return 'activity';
+}
+// 抽出フィルタ（場所選択・場所管理で共通）。既定: 分類=全て / イベント=現在のイベント名
+var _placeCatFilter='', _placeEventFilter=null;
+function _ensurePlaceFilterDefault(){ if(_placeEventFilter===null) _placeEventFilter=_schEventId||'__all__'; }
+function _placeMatch(p){
+  if(_placeEventFilter && _placeEventFilter!=='__all__' && p.eventId!==_placeEventFilter) return false;
+  if(_placeCatFilter && (p.category||'')!==_placeCatFilter) return false;
+  return true;
+}
 function loadPlaces(){ return db.collection('places').get().then(function(s){ _places=s.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }); _places.sort(function(a,b){ return String(a.name||'').localeCompare(String(b.name||'')); }); fillPlacePickers(); }).catch(function(){ _places=[]; }); }
-function placeOptions(){ return '<option value="">（新規入力 / 保存対象）</option>'+_places.map(function(p){ return '<option value="'+esc(p.id)+'">'+esc(p.name||'（無題）')+'</option>'; }).join(''); }
-function fillPlacePickers(){ if(g('se-place-pick')) g('se-place-pick').innerHTML=placeOptions(); if(g('se-toplace-pick')) g('se-toplace-pick').innerHTML=placeOptions(); }
+function placeOptions(){
+  _ensurePlaceFilterDefault();
+  var list=_places.filter(_placeMatch);
+  return '<option value="">（新規入力 / 保存対象）</option>'+list.map(function(p){ return '<option value="'+esc(p.id)+'">'+esc((p.category?('['+placeCatName(p.category)+'] '):'')+(p.name||'（無題）'))+'</option>'; }).join('');
+}
+// 分類タブ＋イベント選択のフィルタバー（場所選択・場所管理で共通）
+function _placeFilterBarHtml(){
+  _ensurePlaceFilterDefault();
+  var tabs='<button type="button" class="plf-tab'+(_placeCatFilter===''?' on':'')+'" onclick="setPlaceCat(\'\')">全て</button>'
+    +PLACE_CATS.map(function(c){ return '<button type="button" class="plf-tab'+(_placeCatFilter===c.k?' on':'')+'" onclick="setPlaceCat(\''+c.k+'\')">'+esc(c.n)+'</button>'; }).join('');
+  var evOpts='<option value="__all__"'+(_placeEventFilter==='__all__'?' selected':'')+'>全件</option>'
+    +(events||[]).map(function(ev){ return '<option value="'+esc(ev.id)+'"'+(_placeEventFilter===ev.id?' selected':'')+'>'+esc(ev.name||ev.id)+'</option>'; }).join('');
+  return '<div class="plf-row"><div class="plf-tabs">'+tabs+'</div><select class="plf-ev" onchange="setPlaceEvent(this.value)">'+evOpts+'</select></div>';
+}
+function renderPlaceFilterBars(){ ['se-place-filter','pl-filter'].forEach(function(id){ if(g(id)) g(id).innerHTML=_placeFilterBarHtml(); }); }
+function _placeMgrOpen(){ return g('pl-mgr-modal') && g('pl-mgr-modal').classList.contains('open'); }
+function setPlaceCat(k){ _placeCatFilter=k; renderPlaceFilterBars(); fillPlacePickers(); if(_placeMgrOpen()) renderPlaceList(); }
+function setPlaceEvent(v){ _placeEventFilter=v; renderPlaceFilterBars(); fillPlacePickers(); if(_placeMgrOpen()) renderPlaceList(); }
+function fillPlacePickers(){ renderPlaceFilterBars(); if(g('se-place-pick')) g('se-place-pick').innerHTML=placeOptions(); if(g('se-toplace-pick')) g('se-toplace-pick').innerHTML=placeOptions(); }
 function applyPlace(pid, nameId, latId, lngId, mapId, modeId){
   if(!pid) return;
   var p=_places.find(function(x){return x.id===pid;}); if(!p) return;
@@ -2190,24 +2233,36 @@ function applyPlace(pid, nameId, latId, lngId, mapId, modeId){
   if(g(mapId)) g(mapId).value=p.mapUrl||'';
   if(modeId&&g(modeId)) g(modeId).value=(p.mapMode==='name')?'name':'coord';
 }
-function savePlaceIfNew(name, lat, lng, mapUrl, mapMode){
+function savePlaceIfNew(name, lat, lng, mapUrl, mapMode, schedCatId, title){
   name=(name||'').trim(); if(!name || lat==null || lng==null) return Promise.resolve();
-  var exists=_places.find(function(p){ return (p.name||'').trim()===name || (p.lat!=null&&p.lng!=null&&Math.abs(p.lat-lat)<0.0005&&Math.abs(p.lng-lng)<0.0005); });
+  // 同一イベント内で同名/近接座標が既にあれば追加しない（イベント単位で登録）
+  var exists=_places.find(function(p){ return p.eventId===_schEventId && ((p.name||'').trim()===name || (p.lat!=null&&p.lng!=null&&Math.abs(p.lat-lat)<0.0005&&Math.abs(p.lng-lng)<0.0005)); });
   if(exists) return Promise.resolve();
-  return db.collection('places').add({ name:name, lat:lat, lng:lng, mapUrl:(mapUrl||'').trim(), mapMode:(mapMode==='name'?'name':'coord'), createdAt:firebase.firestore.FieldValue.serverTimestamp() }).then(function(){ return loadPlaces(); }).catch(function(){});
+  return db.collection('places').add({ name:name, lat:lat, lng:lng, mapUrl:(mapUrl||'').trim(), mapMode:(mapMode==='name'?'name':'coord'), eventId:_schEventId, category:autoPlaceCat(schedCatId, title||name), createdAt:firebase.firestore.FieldValue.serverTimestamp() }).then(function(){ return loadPlaces(); }).catch(function(){});
 }
 // 場所管理
-function openPlaceMgr(){ g('pl-mgr-modal').classList.add('open'); renderPlaceMgr(); }
+function _evName(id){ var ev=(events||[]).find(function(x){return x.id===id;}); return ev?(ev.name||id):(id?'(不明なイベント)':'(イベント未設定)'); }
+function openPlaceMgr(){ g('pl-mgr-modal').classList.add('open'); _ensurePlaceFilterDefault(); renderPlaceFilterBars(); loadPlaces().then(renderPlaceList); }
 function closePlaceMgr(){ g('pl-mgr-modal').classList.remove('open'); }
-function renderPlaceMgr(){
-  loadPlaces().then(function(){
-    var box=g('pl-list');
-    box.innerHTML=_places.length?_places.map(function(p){
-      return '<div class="pl-item"><div class="nm">'+esc(p.name||'（無題）')+'<div class="co">'+esc((p.lat!=null?p.lat:'?')+', '+(p.lng!=null?p.lng:'?'))+'</div></div>'
-        +'<button class="btn bs sm" onclick="editPlace(\''+esc(p.id)+'\')">編集</button>'
-        +'<button class="rm" title="削除" onclick="delPlace(\''+esc(p.id)+'\')">×</button></div>';
-    }).join(''):'<div class="ec">登録済みの場所はありません。スケジュール項目に地点を登録すると自動で追加されます。</div>';
-  });
+function renderPlaceMgr(){ loadPlaces().then(renderPlaceList); }
+function renderPlaceList(){
+  _ensurePlaceFilterDefault();
+  var box=g('pl-list'); if(!box) return;
+  var list=_places.filter(_placeMatch);
+  box.innerHTML=list.length?list.map(function(p){
+    var catSel='<select class="plf-catsel" title="分類を変更" onchange="setPlaceCategory(\''+esc(p.id)+'\',this.value)">'
+      +'<option value=""'+(!p.category?' selected':'')+'>未分類</option>'
+      +PLACE_CATS.map(function(c){ return '<option value="'+c.k+'"'+(p.category===c.k?' selected':'')+'>'+esc(c.n)+'</option>'; }).join('')+'</select>';
+    return '<div class="pl-item"><div class="nm">'+esc(p.name||'（無題）')+'<div class="co">'+esc((p.lat!=null?p.lat:'?')+', '+(p.lng!=null?p.lng:'?'))+' ・ '+esc(_evName(p.eventId))+'</div></div>'
+      +catSel
+      +'<button class="btn bs sm" onclick="editPlace(\''+esc(p.id)+'\')">編集</button>'
+      +'<button class="rm" title="削除" onclick="delPlace(\''+esc(p.id)+'\')">×</button></div>';
+  }).join(''):'<div class="ec">該当する場所はありません（分類タブ・イベント選択の絞り込みを確認してください）。</div>';
+}
+function setPlaceCategory(pid, cat){
+  db.collection('places').doc(pid).set({ category:cat||'', updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
+    .then(function(){ var p=_places.find(function(x){return x.id===pid;}); if(p) p.category=cat||''; toast('分類を変更しました'); if(g('se-place-pick')){ g('se-place-pick').innerHTML=placeOptions(); } if(g('se-toplace-pick')){ g('se-toplace-pick').innerHTML=placeOptions(); } renderPlaceList(); })
+    .catch(function(e){ toast('変更失敗: '+e.message,'err'); });
 }
 function editPlace(pid){
   var p=_places.find(function(x){return x.id===pid;}); if(!p) return;
@@ -2625,6 +2680,7 @@ function printCostView(){
 var _schRoster=[];
 function openSchedMgr(eventId){
   _schEventId=eventId;
+  _placeEventFilter=eventId||'__all__'; _placeCatFilter=''; // 場所フィルタの既定は現在のイベント
   var ev=events.find(function(x){return x.id===eventId;});
   g('sch-mgr-title').textContent='🗓 スケジュール — '+(ev?ev.name:'');
   g('sch-list').innerHTML='<div class="ec">読み込み中…</div>';
@@ -2694,7 +2750,7 @@ function renderSchedList(){
           colsH[c.g]+=c.mirror?SchedGroups.mirrorHtml(it, esc, ' onclick="openSchedEd(\''+esc(it.id)+'\')" style="cursor:pointer"'):row;
         });
       });
-      sec.html+=SchedGroups.wrapHtml(colsH, b.active, {paneHead:function(n){ return n===1?'':'<button class="btn bs sm se-day-add" onclick="event.stopPropagation();openSchedForDay(\''+esc(b.day)+'\','+n+')">＋ '+n+'班に追加</button>'; }});
+      sec.html+=SchedGroups.wrapHtml(colsH, b.active, {paneHead:function(n){ return '<button class="btn bs sm se-day-add" onclick="event.stopPropagation();openSchedForDay(\''+esc(b.day)+'\','+n+')">＋ '+n+'班に追加</button>'; }});
     });
   }
   g('sch-list').innerHTML=sections.map(function(gp,idx){
@@ -2812,8 +2868,8 @@ function saveSched(){
   p.then(function(){
     // 新規地点は場所ライブラリへ自動保存
     return Promise.all([
-      savePlaceIfNew(data.placeName, data.lat, data.lng, data.mapUrl, data.mapMode),
-      data.isMove?savePlaceIfNew(data.toName, data.toLat, data.toLng, data.toMapUrl, data.toMapMode):Promise.resolve()
+      savePlaceIfNew(data.placeName, data.lat, data.lng, data.mapUrl, data.mapMode, data.category, data.title),
+      data.isMove?savePlaceIfNew(data.toName, data.toLat, data.toLng, data.toMapUrl, data.toMapMode, data.category, data.toName||data.title):Promise.resolve()
     ]);
   }).then(function(){ if(data.date) _schExpandedDays[data.date]=true; toast(_schEditId?'更新しました':'追加しました'); closeSchedEd(); loadSchedItems(); })
    .catch(function(e){ g('se-err').textContent='保存失敗: '+e.message; })
