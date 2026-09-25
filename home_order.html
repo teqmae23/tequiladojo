@@ -1554,14 +1554,26 @@ function renderNOMs(){
 function setNOM(n){currentNOM=currentNOM===n?'':n;renderNOMs();filterProducts();}
 // クラス略称 → classId[1]数値マッピング
 var CLS_MAP={B:'1',J:'2',R:'3',A:'4',X:'5'};
-// クラス桁の取り出し（menu.html/tastinglog.html 準拠）。
-// classId は本来2桁(カテゴリ+クラス)だが、1桁で保存された銘柄もあるため桁数を考慮する。
-// classId が無い場合は bottleId の9桁目(index 8)をフォールバックに使う。
-// ※ 旧実装は String(classId)[1] 決め打ちで、1桁classIdの銘柄(例: Reposado/Añejo)が
-//   クラスを1つでも外すと undefined 扱いで除外される不具合があった。
+// クラス桁の取り出し。データモデル上、12桁 bottleId の9桁目(index 8)が本来のクラス桁で、
+// classId フィールドはその派生。銘柄によっては classId フィールドが壊れている（未対応値の）
+// ものがあり（例: Pueblo Viejo の一部）、そのまま使うとクラスを1つ外しただけで除外された。
+// そこで bottleId・classId の両ソースから候補を集め、BJRAX(=1〜5)に該当する候補を優先採用する。
 function clsDigit(i){
-  if(i&&i.classId!=null&&i.classId!==''){ var c=String(i.classId); return c.length>=2?c.charAt(1):c; }
-  var s=String((i&&(i.bottleId||i.id))||''); return s.length>=9?s.charAt(8):'';
+  if(!i) return '';
+  var cands=[];
+  var bid=String(i.bottleId||''); if(bid.length>=9) cands.push(bid.charAt(8)); // 12桁bottleId: classId 2桁目
+  if(i.classId!=null&&i.classId!==''){ var c=String(i.classId); cands.push(c.length>=2?c.charAt(1):c); }
+  var s=String(i.id||''); if(s.length>=9) cands.push(s.charAt(8));
+  for(var k=0;k<cands.length;k++){ if('12345'.indexOf(cands[k])>=0) return cands[k]; } // 有効クラスを優先
+  // 最終フォールバック: 銘柄名からクラスを推定（桁ソースが全て未対応値だった場合の救済）。
+  // ※ Extra Añejo は Añejo を含むため先に判定する。
+  var nm=String(i.bottleEsBase||i.bottleEs||i.bottleJa||i.name||'').toLowerCase();
+  if(/extra\s*a[nñ]ejo|エクストラ|エキストラ/.test(nm)) return '5';
+  if(/a[nñ]ejo|アネホ|アニェホ/.test(nm)) return '4';
+  if(/reposado|レポサ/.test(nm)) return '3';
+  if(/joven|gold|オロ|\boro\b|ゴールド/.test(nm)) return '2';
+  if(/blanco|plata|silver|ブランコ|プラタ|シルバー/.test(nm)) return '1';
+  return cands.length?cands[0]:'';
 }
 // 全クラスをデフォルトでアクティブに初期化
 currentClasses=new Set(['B','J','R','A','X']);
