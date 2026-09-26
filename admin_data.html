@@ -486,6 +486,14 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div id="backup-collection-list" style="display:flex;flex-wrap:wrap;gap:8px"></div>
           </div>
           <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="font-size:11px;color:var(--ink3);margin-bottom:6px;font-weight:500;letter-spacing:.06em;text-transform:uppercase">データ整合性スキャン（全コレクション）</div>
+            <div style="background:var(--cream2);border:1px solid var(--border2);border-radius:var(--r);padding:10px 14px;font-size:12px;color:var(--ink2);margin-bottom:10px">
+              全コレクションを読み込み、各フィールドの型・桁・書式・列挙値・存在率の<strong>多数派パターンから外れる特異レコード</strong>を検出します（キー=doc IDの書式も検査）。読み取りが多いため時間がかかります。各コレクション最大10000件をスキャンします。
+            </div>
+            <button class="btn bp" style="width:fit-content" onclick="runFullDataScan()" id="btn-fullscan">🔎 全データ異常スキャン</button>
+            <div id="fullscan-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+          </div>
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
             <div style="font-size:11px;color:var(--ink3);margin-bottom:6px;font-weight:500;letter-spacing:.06em;text-transform:uppercase">データメンテナンス</div>
             <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#5a4000;margin-bottom:10px">
               <strong>不要フィールド削除</strong> — セッション（sessionId・seq）、来場（visitKey）、注文（visitId）の廃止済フィールドをFirestoreから削除します。<br>
@@ -4237,6 +4245,140 @@ async function exportAllCSV(){
   }
   if(prog) prog.textContent='完了: '+done+'/'+total+'コレクションをダウンロードしました';
   toast('全データCSVバックアップ完了（'+done+'ファイル）','success');
+}
+
+// ── 全データ整合性スキャン（汎用異常検出） ──────────────────────────────
+// 各コレクションのフィールドごとに多数派パターン（型・桁・書式・列挙値・存在率）を学習し、
+// そこから外れる特異レコードを検出する。スキーマ非依存でマスタ・営業・注文すべてに適用。
+function _fsType(v){ if(v===null) return 'null'; if(Array.isArray(v)) return 'array'; return typeof v; }
+function _fsIdShape(id){
+  id=String(id);
+  if(/^\d{4}$/.test(id)) return '4桁数字';
+  if(/^\d{6}$/.test(id)) return '6桁数字';
+  if(/^\d{7}$/.test(id)) return '7桁数字';
+  if(/^\d{12}$/.test(id)) return '12桁数字';
+  if(/^T\d+$/.test(id)) return 'T連番';
+  if(/^\d+$/.test(id)) return (id.length)+'桁数字';
+  if(/^[A-Za-z0-9_-]{20}$/.test(id)) return '自動ID20';
+  return 'その他';
+}
+function _fsAnalyze(colId, docs){
+  var N=docs.length, issues=[];
+  if(N<5) return issues; // 少数すぎて多数派を学習できない
+  var cap=function(arr,n){ return arr.length>n?arr.slice(0,n):arr; };
+  // doc ID 書式の多数派外れ
+  var shp={}; docs.forEach(function(d){ var s=_fsIdShape(d.id); shp[s]=(shp[s]||0)+1; });
+  var sk=Object.keys(shp).sort(function(a,b){return shp[b]-shp[a];});
+  if(sk.length>1 && shp[sk[0]]/N>=0.9){
+    cap(docs.filter(function(d){return _fsIdShape(d.id)!==sk[0];}),10).forEach(function(d){
+      issues.push({id:d.id,field:'(doc ID)',msg:'doc ID書式が多数派('+sk[0]+' '+Math.round(shp[sk[0]]/N*100)+'%)と異なる: '+_fsIdShape(d.id)});
+    });
+  }
+  // フィールド統計
+  var F={};
+  docs.forEach(function(d){ var data=d.data||{}; Object.keys(data).forEach(function(k){
+    var v=data[k]; if(v===undefined) return;
+    var f=F[k]||(F[k]={present:0,nonNull:0,types:{},lens:{},valc:{},distinct:0,nums:[]});
+    f.present++;
+    if(v===null||v==='') return;
+    f.nonNull++;
+    var t=_fsType(v); f.types[t]=(f.types[t]||0)+1;
+    if(t==='string'){ f.lens[v.length]=(f.lens[v.length]||0)+1; }
+    if(t==='number'){ f.nums.push(v); }
+    if(t==='string'||t==='number'||t==='boolean'){ var key=String(v); if(f.valc[key]===undefined){ f.valc[key]=0; f.distinct++; } f.valc[key]++; }
+  }); });
+  Object.keys(F).forEach(function(k){
+    var f=F[k], pr=f.present/N;
+    // 欠落（多数派が持つフィールドが無い）
+    if(pr>=0.9 && f.present<N){
+      var miss=docs.filter(function(d){ return !(k in (d.data||{})) || d.data[k]===undefined; });
+      cap(miss,6).forEach(function(d){ issues.push({id:d.id,field:k,msg:'多数('+Math.round(pr*100)+'%)が持つ「'+k+'」が無い'}); });
+      if(miss.length>6) issues.push({id:'ほか'+(miss.length-6)+'件',field:k,msg:'「'+k+'」欠落が合計'+miss.length+'件'});
+    }
+    // 希少フィールド（ごく少数しか持たない＝フィールド名の打ち間違い疑い）
+    if(f.present<=2 && N>=30){
+      docs.forEach(function(d){ if(k in (d.data||{}) && d.data[k]!==undefined) issues.push({id:d.id,field:k,msg:'「'+k+'」を持つのは全'+N+'件中'+f.present+'件のみ（名前の打ち間違い疑い）'}); });
+    }
+    if(f.nonNull>=5){
+      // 型の多数派外れ
+      var tks=Object.keys(f.types).sort(function(a,b){return f.types[b]-f.types[a];});
+      if(tks.length>1 && f.types[tks[0]]/f.nonNull>=0.9){
+        cap(docs.filter(function(d){var v=(d.data||{})[k];return v!=null&&v!==''&&_fsType(v)!==tks[0];}),10).forEach(function(d){
+          var v=(d.data||{})[k]; issues.push({id:d.id,field:k,msg:'「'+k+'」の型が多数派('+tks[0]+')と異なる: '+_fsType(v)+' ('+JSON.stringify(v).slice(0,40)+')'});
+        });
+      }
+      // 桁数の多数派外れ（コード的な均一長フィールド）
+      if(tks[0]==='string'){
+        var lks=Object.keys(f.lens).sort(function(a,b){return f.lens[b]-f.lens[a];});
+        if(lks.length>1 && f.lens[lks[0]]/f.nonNull>=0.9){
+          cap(docs.filter(function(d){var v=(d.data||{})[k];return typeof v==='string'&&v!==''&&String(v.length)!==lks[0];}),10).forEach(function(d){
+            var v=(d.data||{})[k]; issues.push({id:d.id,field:k,msg:'「'+k+'」の桁数が多数派('+lks[0]+'桁 '+Math.round(f.lens[lks[0]]/f.nonNull*100)+'%)と異なる: '+v.length+'桁 ("'+v.slice(0,24)+'")'});
+          });
+        }
+      }
+    }
+    // 列挙値の単発（定型値の集合に対する外れ値＝ステータス等の打ち間違い）
+    if(f.nonNull>=20 && f.distinct>=2 && f.distinct<=Math.min(20, Math.ceil(N*0.3))){
+      Object.keys(f.valc).forEach(function(val){ if(f.valc[val]===1){
+        var d=docs.find(function(x){ var v=(x.data||{})[k]; return v!=null&&String(v)===val; });
+        if(d) issues.push({id:d.id,field:k,msg:'「'+k+'」の値「'+val.slice(0,30)+'」は全'+f.nonNull+'件中1件のみ（他は'+(f.distinct-1)+'種の定型値）'});
+      }});
+    }
+    // 数値の異常（負値・突出）
+    if(f.nums.length>=10){
+      if(f.nums.filter(function(x){return x>=0;}).length/f.nums.length>=0.98){
+        cap(docs.filter(function(d){var v=(d.data||{})[k];return typeof v==='number'&&v<0;}),6).forEach(function(d){ issues.push({id:d.id,field:k,msg:'「'+k+'」が負値('+(d.data||{})[k]+')。他は全て0以上'}); });
+      }
+      var s=f.nums.slice().sort(function(a,b){return a-b;}), med=s[Math.floor(s.length/2)]||0;
+      if(med>0){ cap(docs.filter(function(d){var v=(d.data||{})[k];return typeof v==='number'&&v>med*1000&&v>1000;}),6).forEach(function(d){ issues.push({id:d.id,field:k,msg:'「'+k+'」('+(d.data||{})[k]+')が中央値('+med+')の1000倍超で突出'}); }); }
+    }
+  });
+  return issues;
+}
+async function runFullDataScan(){
+  var btn=document.getElementById('btn-fullscan'), prog=document.getElementById('fullscan-progress');
+  if(btn){ if(btn.disabled) return; btn.disabled=true; btn.textContent='🔎 スキャン中…'; }
+  var CAP=10000; var summary=[], allIssues=[], totalDocs=0;
+  var cols=BACKUP_COLLECTIONS;
+  for(var i=0;i<cols.length;i++){
+    var c=cols[i];
+    if(prog) prog.textContent='('+(i+1)+'/'+cols.length+') '+c.label+' を検査中…';
+    try{
+      var q=(c.group?db.collectionGroup(c.id):db.collection(c.id)).limit(CAP);
+      var snap=await q.get();
+      var docs=snap.docs.map(function(d){ return {id:d.id, data:d.data()}; });
+      totalDocs+=docs.length;
+      var iss=_fsAnalyze(c.id, docs);
+      summary.push({id:c.id, label:c.label, n:docs.length, capped:(docs.length>=CAP), issues:iss.length});
+      iss.forEach(function(x){ x.col=c.label; x.colId=c.id; allIssues.push(x); });
+    }catch(e){ summary.push({id:c.id, label:c.label, n:-1, err:String((e&&e.message)||e), issues:0}); }
+    await new Promise(function(r){ setTimeout(r,120); });
+  }
+  if(btn){ btn.disabled=false; btn.textContent='🔎 全データ異常スキャン'; }
+  if(prog) prog.textContent='完了: '+cols.length+'コレクション / '+totalDocs+'件を検査 / 異常 '+allIssues.length+'件';
+  _fsShowReport(summary, allIssues, totalDocs);
+}
+function _fsShowReport(summary, allIssues, totalDocs){
+  var old=document.getElementById('_fsrep'); if(old) old.remove();
+  var esc2=function(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');};
+  var td='border:1px solid #ccc;padding:3px 6px;text-align:left;vertical-align:top';
+  var withIssues=summary.filter(function(s){return s.issues>0||s.err;}).sort(function(a,b){return (b.issues||0)-(a.issues||0);});
+  var sumRows=withIssues.map(function(s){ return '<tr><td style="'+td+'">'+esc2(s.label)+'<br><span style="color:#888;font-size:10px">'+esc2(s.id)+'</span></td><td style="'+td+';text-align:right">'+(s.n<0?'—':s.n)+(s.capped?'+':'')+'</td><td style="'+td+';text-align:right;font-weight:700;color:'+(s.err?'#b03020':'#b06a00')+'">'+(s.err?'ERR':s.issues)+'</td></tr>'; }).join('');
+  var CAPI=600;
+  var detRows=allIssues.slice(0,CAPI).map(function(x){ return '<tr><td style="'+td+'">'+esc2(x.col)+'</td><td style="'+td+';font-family:monospace;font-size:11px">'+esc2(x.id)+'</td><td style="'+td+';font-family:monospace">'+esc2(x.field)+'</td><td style="'+td+'">'+esc2(x.msg)+'</td></tr>'; }).join('');
+  var ov=document.createElement('div'); ov.id='_fsrep';
+  ov.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:10px';
+  ov.innerHTML='<div style="background:#fff;border-radius:10px;max-width:900px;width:100%;max-height:92vh;display:flex;flex-direction:column;overflow:hidden">'
+    +'<div style="padding:12px 14px;border-bottom:1px solid #ddd;display:flex;align-items:center;gap:10px"><b style="font-size:15px;flex:1">データ異常スキャン結果</b><button id="_fsClose" style="padding:7px 14px;border:1px solid #ccc;background:#f5f5f5;border-radius:8px">閉じる</button></div>'
+    +'<div style="padding:8px 14px;font-size:12px;color:#555">検査 '+totalDocs+'件 ／ 異常 '+allIssues.length+'件 ／ 異常のあるコレクション '+withIssues.length+'</div>'
+    +'<div style="overflow:auto;flex:1;padding:0 10px 12px">'
+    +'<div style="font-weight:700;font-size:13px;margin:6px 0">コレクション別サマリ</div>'
+    +'<table style="border-collapse:collapse;width:100%;font-size:12px;margin-bottom:14px"><tr style="background:#eee"><th style="'+td+'">コレクション</th><th style="'+td+'">件数</th><th style="'+td+'">異常</th></tr>'+(sumRows||'<tr><td style="'+td+'" colspan=3>異常なし</td></tr>')+'</table>'
+    +'<div style="font-weight:700;font-size:13px;margin:6px 0">明細'+(allIssues.length>CAPI?'（先頭'+CAPI+'件表示）':'')+'</div>'
+    +'<table style="border-collapse:collapse;width:100%;font-size:12px"><tr style="background:#eee"><th style="'+td+'">コレクション</th><th style="'+td+'">doc ID</th><th style="'+td+'">項目</th><th style="'+td+'">内容</th></tr>'+(detRows||'<tr><td style="'+td+'" colspan=4>異常なし</td></tr>')+'</table>'
+    +'</div></div>';
+  document.body.appendChild(ov);
+  document.getElementById('_fsClose').onclick=function(){ ov.remove(); };
 }
 
 // ── テストデータ一括クリーンアップ ──────────────────────────────
