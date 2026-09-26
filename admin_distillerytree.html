@@ -886,6 +886,51 @@ function runAudit(){
     }
   });
 
+  // ── キー項目の形式・エンコード・整合の網羅チェック ──────────────────
+  // 名称→クラス桁（誤検出の少ない判定。Blanco/Plataを先、ブランド名に紛れる oro は不使用）
+  function _nmCls(nm){ nm=String(nm||'').toLowerCase();
+    if(/extra\s*a[nñ]ejo|エクストラ|エキストラ/.test(nm)) return '5';
+    if(/a[nñ]ejo|アネホ|アニェホ/.test(nm)) return '4';
+    if(/reposado|レポサ/.test(nm)) return '3';
+    if(/blanco|plata|silver|ブランコ|プラタ|シルバー/.test(nm)) return '1';
+    if(/joven|gold|ゴールド/.test(nm)) return '2';
+    return ''; }
+  var CLSN={'1':'Blanco','2':'Joven/Gold','3':'Reposado','4':'Añejo','5':'ExtraAñejo'};
+
+  // 蒸留所: NOM(doc ID)は4桁数字
+  rawDis.forEach(function(d){ var id=String(d.id); if(!/^\d{4}$/.test(id)) add('warn','dis',id,'distilleries',id.slice(0,4),'NOM(doc ID)が4桁数字ではありません'); });
+
+  // ブランド: brandId(doc ID)は7桁数字／フィールドと一致
+  rawBrands.forEach(function(b){ var id=String(b.id);
+    if(!/^\d{7}$/.test(id)) add('err','brand',id,'brands',id.slice(0,4),'brandId(doc ID)が7桁数字ではありません');
+    if(b.brandId!=null && String(b.brandId)!==id) add('warn','brand',id,'brands',id.slice(0,4),'brandIdフィールド('+b.brandId+')がdoc IDと不一致');
+  });
+
+  // ボトル: bottleId(doc ID)は12桁数字／classId=slice(7,9)／seq=slice(9,12)／名称クラス整合／ABV
+  rawBottles.forEach(function(b){ var id=String(b.id), nom=id.slice(0,4);
+    if(!/^\d{12}$/.test(id)){ add('err','bottle',id,'bottles',nom,'bottleId(doc ID)が12桁数字ではありません'); return; }
+    var idCls=id.slice(7,9), idClsD=idCls.charAt(1);
+    if(b.classId!=null && b.classId!=='' && String(b.classId)!==idCls) add('warn','bottle',id,'bottles',nom,'classId('+b.classId+')がID内クラス('+idCls+')と不一致');
+    if(b.seq!=null && b.seq!=='' && String(b.seq).padStart(3,'0')!==id.slice(9,12)) add('warn','bottle',id,'bottles',nom,'seq('+b.seq+')がID末尾3桁('+id.slice(9,12)+')と不一致');
+    var nd=_nmCls(getName(b,['bottleEs','bottleJa']));
+    if(nd&&idClsD&&nd!==idClsD) add('warn','bottle',id,'bottles',nom,'名称のクラス('+CLSN[nd]+')がID内クラス('+(CLSN[idClsD]||idClsD)+')と不一致（複製→改名でID未更新の疑い）');
+    if(b.abv!=null&&b.abv!==''){ var a=parseFloat(b.abv); if(isNaN(a)||a<20||a>75) add('warn','bottle',id,'bottles',nom,'ABV('+b.abv+')が異常値（20〜75外）'); }
+  });
+
+  // ボトルデータ: bottleId 12桁／classIdのクラス桁 vs bottleId vs 名称／数値異常
+  rawBdata.forEach(function(bd){ var id=String(bd.id); var bottleId=String(bd.bottleId||''); var nom=bottleId.slice(0,4)||String(bd.brandId||'').slice(0,4);
+    if(bottleId && !/^\d{12}$/.test(bottleId)) add('err','bdata',id,'bottleData',nom,'bottleIdフィールドが12桁数字ではありません');
+    var bidCls=bottleId.length>=9?bottleId.slice(7,9):''; var bidD=bidCls.charAt(1);
+    var cur=(bd.classId!=null&&bd.classId!=='')?String(bd.classId):''; var curD=cur?(cur.length>=2?cur.charAt(1):cur):'';
+    var nd=_nmCls(bd.bottleEsBase||bd.bottleEs||bd.bottleJa||'');
+    if(cur&&bidCls&&curD!==bidD) add('warn','bdata',id,'bottleData',nom,'classId('+cur+')のクラス桁がbottleId('+bidCls+')と不一致');
+    if(nd&&curD&&nd!==curD) add('warn','bdata',id,'bottleData',nom,'classId('+(CLSN[curD]||curD)+')が名称のクラス('+CLSN[nd]+')と不一致');
+    if(nd&&bidD&&nd!==bidD) add('warn','bdata',id,'bottleData',nom,'bottleIdのクラス桁('+(CLSN[bidD]||bidD)+')が名称('+CLSN[nd]+')と不一致（bottleId再生成が必要）');
+    if(bd.abv!=null&&bd.abv!==''){ var a2=parseFloat(bd.abv); if(isNaN(a2)||a2<20||a2>75) add('warn','bdata',id,'bottleData',nom,'ABV('+bd.abv+')が異常値（20〜75外）'); }
+    if(bd.price!=null&&bd.price!==''){ var p=parseFloat(bd.price); if(isNaN(p)||p<0||p>100000) add('warn','bdata',id,'bottleData',nom,'price('+bd.price+')が異常値'); }
+    if(bd.remaining!=null&&bd.volume!=null&&Number(bd.remaining)>Number(bd.volume)+1) add('warn','bdata',id,'bottleData',nom,'remaining('+bd.remaining+')がvolume('+bd.volume+')超過');
+  });
+
   // 重要度順（err→warn）、その後 NOM 順
   var order={err:0,warn:1};
   issues.sort(function(a,b){ return (order[a.sev]-order[b.sev])||String(a.nom).localeCompare(String(b.nom))||String(a.id).localeCompare(String(b.id)); });
