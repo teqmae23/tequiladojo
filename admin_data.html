@@ -595,6 +595,22 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
               </div>
             </div>
           </div>
+
+          <!-- orderDate 欠落レコードの検出・削除 -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px" id="nodate-tool-section">
+            <div style="font-size:11px;color:var(--ink3);margin-bottom:6px;font-weight:500;letter-spacing:.06em;text-transform:uppercase">orderDate 欠落レコードの検出・削除</div>
+            <div style="background:#fff6e5;border:1px solid #e0b054;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#5a3d00;margin-bottom:10px">
+              <strong>orderDate（注文日）が無い注文レコード</strong>は、正規の注文書き込みでは必ず付与されるフィールドが欠けた<strong>不正／テストデータ</strong>です。日付フィルタ（期間クリーンアップや人気集計の期間絞り込み）をすべてすり抜けるため、集計を歪める原因になります。上の期間クリーンアップ（<code>orderDate&lt;=…</code>）では対象にできません。<br>
+              <span style="font-size:11px">まず「🔍 検出」で一覧を確認し、「💾 CSVバックアップ」を保存してから「🗑 削除実行」してください。</span>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+              <button class="btn bp sm" onclick="scanNoDateOrders()" id="btn-nodate-scan">🔍 検出</button>
+              <button class="btn bs sm" onclick="backupNoDateOrders()" id="btn-nodate-backup" disabled>💾 CSVバックアップ</button>
+              <button class="btn bd sm" onclick="deleteNoDateOrders()" id="btn-nodate-del" disabled>🗑 削除実行</button>
+            </div>
+            <div id="nodate-status" style="font-size:12px;color:var(--ink3);min-height:20px;margin-bottom:6px"></div>
+            <div id="nodate-report" style="max-height:340px;overflow:auto"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -4379,6 +4395,86 @@ function _fsShowReport(summary, allIssues, totalDocs){
     +'</div></div>';
   document.body.appendChild(ov);
   document.getElementById('_fsClose').onclick=function(){ ov.remove(); };
+}
+
+// ── orderDate 欠落レコードの検出・削除 ──────────────────────────
+var _noDateOrders = []; // orderDate が無い orders ドキュメント（QueryDocumentSnapshot）
+function _noDateStatus(msg,color){ var el=g('nodate-status'); if(el){ el.textContent=msg; el.style.color=color||'var(--ink3)'; } }
+function _hasNoDate(o){ return o.orderDate==null || String(o.orderDate).trim()===''; }
+function _esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+async function scanNoDateOrders(){
+  var btn=g('btn-nodate-scan'); btn.disabled=true; var _t=btn.textContent; btn.textContent='検出中...';
+  _noDateStatus('注文データ取得中...','var(--ink3)');
+  g('nodate-report').innerHTML='';
+  g('btn-nodate-backup').disabled=true; g('btn-nodate-del').disabled=true;
+  try{
+    var snap=await db.collection('orders').get();
+    _noDateOrders=snap.docs.filter(function(d){ return _hasNoDate(d.data()); });
+    if(!_noDateOrders.length){
+      _noDateStatus('✅ orderDate 欠落レコードはありません（全 '+snap.size+' 件中 0 件）','var(--teal)');
+      btn.disabled=false; btn.textContent=_t; return;
+    }
+    // 商品別の内訳
+    var byCode={};
+    _noDateOrders.forEach(function(d){ var o=d.data(); var key=(o.productName||'')+' ['+(o.productCode||'?')+']'; byCode[key]=(byCode[key]||0)+1; });
+    var codeRows=Object.keys(byCode).sort(function(a,b){return byCode[b]-byCode[a];})
+      .map(function(k){ return '<tr><td style="padding:2px 8px">'+_esc(k)+'</td><td style="padding:2px 8px;text-align:right">'+byCode[k]+'</td></tr>'; }).join('');
+    // 明細（先頭200件）
+    var esc=_esc;
+    var detRows=_noDateOrders.slice(0,200).map(function(d){ var o=d.data();
+      return '<tr>'
+        +'<td style="padding:2px 6px;font-family:monospace;font-size:10px">'+esc(d.id)+'</td>'
+        +'<td style="padding:2px 6px">'+esc(o.productName||'')+'</td>'
+        +'<td style="padding:2px 6px;font-family:monospace">'+esc(o.productCode||'')+'</td>'
+        +'<td style="padding:2px 6px">'+esc(o.productType||'')+'</td>'
+        +'<td style="padding:2px 6px;text-align:right">'+(o.served===0?'取消':'有効')+'</td>'
+        +'<td style="padding:2px 6px;text-align:right">'+(o.unitPrice==null?'':('¥'+o.unitPrice))+'</td>'
+        +'<td style="padding:2px 6px;font-family:monospace;font-size:10px">'+esc(o.orderTime||'')+'</td>'
+        +'<td style="padding:2px 6px;font-family:monospace;font-size:10px">'+esc(o.visitKey||'')+'</td>'
+        +'</tr>'; }).join('');
+    var more=_noDateOrders.length>200?('<div style="font-size:11px;color:var(--ink3);padding:6px">…ほか '+(_noDateOrders.length-200)+' 件（CSVには全件含まれます）</div>'):'';
+    g('nodate-report').innerHTML=
+      '<div style="font-size:12px;font-weight:700;color:var(--ink2);margin:6px 0 4px">商品別（'+_noDateOrders.length+'件 / 全'+snap.size+'件）</div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px"><thead><tr style="background:var(--cream2)"><th style="padding:3px 8px;text-align:left">商品 [コード]</th><th style="padding:3px 8px;text-align:right">件数</th></tr></thead><tbody>'+codeRows+'</tbody></table>'
+      +'<div style="font-size:12px;font-weight:700;color:var(--ink2);margin:6px 0 4px">明細</div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="background:var(--cream2)"><th style="padding:3px 6px;text-align:left">docID</th><th style="padding:3px 6px;text-align:left">商品名</th><th style="padding:3px 6px;text-align:left">コード</th><th style="padding:3px 6px;text-align:left">種別</th><th style="padding:3px 6px">状態</th><th style="padding:3px 6px">単価</th><th style="padding:3px 6px;text-align:left">時刻</th><th style="padding:3px 6px;text-align:left">visitKey</th></tr></thead><tbody>'+detRows+'</tbody></table>'+more;
+    _noDateStatus('🔍 orderDate 欠落レコード '+_noDateOrders.length+' 件を検出。CSVバックアップ後に削除できます。','var(--gold-d)');
+    g('btn-nodate-backup').disabled=false;
+    g('btn-nodate-del').disabled=false;
+  }catch(e){ _noDateStatus('❌ 失敗: '+e.message,'var(--red)'); }
+  btn.disabled=false; btn.textContent=_t;
+}
+function backupNoDateOrders(){
+  if(!_noDateOrders.length){ toast('先に「検出」を実行してください','err'); return; }
+  var ts=new Date().toISOString().slice(0,10).replace(/-/g,'');
+  csvDownload('orders_nodate_backup_'+ts+'.csv', colToRows({docs:_noDateOrders}, true));
+  _noDateStatus('💾 CSVバックアップを保存しました（'+_noDateOrders.length+'件）。','var(--teal)');
+  toast('バックアップCSVを保存しました','success');
+}
+async function deleteNoDateOrders(){
+  if(!_noDateOrders.length){ toast('先に「検出」を実行してください','err'); return; }
+  var n=_noDateOrders.length;
+  if(!confirm('orderDate（注文日）が無い注文レコード '+n+' 件を削除します。\n\n財務記録のため、先に「💾 CSVバックアップ」を保存済みか確認してください。\nこの操作は元に戻せません。\n\n実行しますか？')) return;
+  var btn=g('btn-nodate-del'); btn.disabled=true; var _t=btn.textContent; btn.textContent='削除中...';
+  _noDateStatus('削除中... 合計 '+n+' 件','var(--ink3)');
+  try{
+    for(var i=0;i<_noDateOrders.length;i+=400){
+      var b=db.batch();
+      _noDateOrders.slice(i,i+400).forEach(function(d){
+        try{ if(window.writeJournal) window.writeJournal('delete','orders',d.id,d.data(),null); }catch(_e){}
+        b.delete(d.ref);
+      });
+      await b.commit();
+      _noDateStatus('削除中... '+Math.min(i+400,n)+' / '+n+' 件','var(--ink3)');
+    }
+    _noDateStatus('✅ 削除完了 — orderDate 欠落レコード '+n+' 件を削除しました。','var(--teal)');
+    toast('削除完了（'+n+'件）','success');
+    g('nodate-report').innerHTML='';
+    _noDateOrders=[]; g('btn-nodate-backup').disabled=true; btn.disabled=true; btn.textContent=_t;
+  }catch(e){
+    _noDateStatus('❌ 失敗: '+e.message,'var(--red)');
+    btn.disabled=false; btn.textContent=_t;
+  }
 }
 
 // ── テストデータ一括クリーンアップ ──────────────────────────────
