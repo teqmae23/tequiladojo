@@ -4402,6 +4402,15 @@ var _noDateOrders = []; // orderDate が無い orders ドキュメント（Query
 function _noDateStatus(msg,color){ var el=g('nodate-status'); if(el){ el.textContent=msg; el.style.color=color||'var(--ink3)'; } }
 function _hasNoDate(o){ return o.orderDate==null || String(o.orderDate).trim()===''; }
 function _esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function _validYmd(s){ if(!/^\d{6}$/.test(s)) return false; var mo=+s.slice(2,4), da=+s.slice(4,6); return mo>=1&&mo<=12&&da>=1&&da<=31; }
+function _fmtYmd(s){ return (s&&s.length>=6)?(s.slice(0,2)+'/'+s.slice(2,4)+'/'+s.slice(4,6)):'不明'; }
+// orderDate が無くても、doc ID(=YYMMDD+連番)・batchId・orderGroupId・visitKey は
+// いずれも YYMMDD で始まるため、そこから作成日を推定できる。
+function _inferOrderDate(id, o){
+  var cands=[[String(id||'').slice(0,6),'docID'],[String(o.batchId||'').slice(0,6),'batchId'],[String(o.orderGroupId||'').slice(0,6),'groupId'],[String(o.visitKey||'').slice(0,6),'visitKey']];
+  for(var i=0;i<cands.length;i++){ if(_validYmd(cands[i][0])) return {date:cands[i][0], src:cands[i][1]}; }
+  return {date:'', src:''};
+}
 async function scanNoDateOrders(){
   var btn=g('btn-nodate-scan'); btn.disabled=true; var _t=btn.textContent; btn.textContent='検出中...';
   _noDateStatus('注文データ取得中...','var(--ink3)');
@@ -4419,11 +4428,18 @@ async function scanNoDateOrders(){
     _noDateOrders.forEach(function(d){ var o=d.data(); var key=(o.productName||'')+' ['+(o.productCode||'?')+']'; byCode[key]=(byCode[key]||0)+1; });
     var codeRows=Object.keys(byCode).sort(function(a,b){return byCode[b]-byCode[a];})
       .map(function(k){ return '<tr><td style="padding:2px 8px">'+_esc(k)+'</td><td style="padding:2px 8px;text-align:right">'+byCode[k]+'</td></tr>'; }).join('');
+    // 推定作成日ごとの内訳（doc ID / batchId / groupId / visitKey の日付接頭辞から推定）
+    var byDate={};
+    _noDateOrders.forEach(function(d){ var inf=_inferOrderDate(d.id,d.data()); var key=inf.date||'不明'; byDate[key]=(byDate[key]||0)+1; });
+    var dateRows=Object.keys(byDate).sort().reverse()
+      .map(function(k){ return '<tr><td style="padding:2px 8px">'+(k==='不明'?'不明':_fmtYmd(k))+'</td><td style="padding:2px 8px;text-align:right">'+byDate[k]+'</td></tr>'; }).join('');
     // 明細（先頭200件）
     var esc=_esc;
-    var detRows=_noDateOrders.slice(0,200).map(function(d){ var o=d.data();
+    var detRows=_noDateOrders.slice(0,200).map(function(d){ var o=d.data(); var inf=_inferOrderDate(d.id,o);
       return '<tr>'
         +'<td style="padding:2px 6px;font-family:monospace;font-size:10px">'+esc(d.id)+'</td>'
+        +'<td style="padding:2px 6px;white-space:nowrap">'+(inf.date?_fmtYmd(inf.date):'—')+'</td>'
+        +'<td style="padding:2px 6px;font-size:10px;color:var(--ink3)">'+esc(inf.src||'')+'</td>'
         +'<td style="padding:2px 6px">'+esc(o.productName||'')+'</td>'
         +'<td style="padding:2px 6px;font-family:monospace">'+esc(o.productCode||'')+'</td>'
         +'<td style="padding:2px 6px">'+esc(o.productType||'')+'</td>'
@@ -4434,10 +4450,12 @@ async function scanNoDateOrders(){
         +'</tr>'; }).join('');
     var more=_noDateOrders.length>200?('<div style="font-size:11px;color:var(--ink3);padding:6px">…ほか '+(_noDateOrders.length-200)+' 件（CSVには全件含まれます）</div>'):'';
     g('nodate-report').innerHTML=
-      '<div style="font-size:12px;font-weight:700;color:var(--ink2);margin:6px 0 4px">商品別（'+_noDateOrders.length+'件 / 全'+snap.size+'件）</div>'
+      '<div style="font-size:12px;font-weight:700;color:var(--ink2);margin:6px 0 4px">推定作成日ごと（'+_noDateOrders.length+'件 / 全'+snap.size+'件）<span style="font-weight:400;font-size:10px;color:var(--ink3)"> ※docID/batchId/groupId/visitKey の日付接頭辞から推定</span></div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px"><thead><tr style="background:var(--cream2)"><th style="padding:3px 8px;text-align:left">推定日</th><th style="padding:3px 8px;text-align:right">件数</th></tr></thead><tbody>'+dateRows+'</tbody></table>'
+      +'<div style="font-size:12px;font-weight:700;color:var(--ink2);margin:6px 0 4px">商品別</div>'
       +'<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px"><thead><tr style="background:var(--cream2)"><th style="padding:3px 8px;text-align:left">商品 [コード]</th><th style="padding:3px 8px;text-align:right">件数</th></tr></thead><tbody>'+codeRows+'</tbody></table>'
       +'<div style="font-size:12px;font-weight:700;color:var(--ink2);margin:6px 0 4px">明細</div>'
-      +'<table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="background:var(--cream2)"><th style="padding:3px 6px;text-align:left">docID</th><th style="padding:3px 6px;text-align:left">商品名</th><th style="padding:3px 6px;text-align:left">コード</th><th style="padding:3px 6px;text-align:left">種別</th><th style="padding:3px 6px">状態</th><th style="padding:3px 6px">単価</th><th style="padding:3px 6px;text-align:left">時刻</th><th style="padding:3px 6px;text-align:left">visitKey</th></tr></thead><tbody>'+detRows+'</tbody></table>'+more;
+      +'<table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="background:var(--cream2)"><th style="padding:3px 6px;text-align:left">docID</th><th style="padding:3px 6px;text-align:left">推定日</th><th style="padding:3px 6px;text-align:left">根拠</th><th style="padding:3px 6px;text-align:left">商品名</th><th style="padding:3px 6px;text-align:left">コード</th><th style="padding:3px 6px;text-align:left">種別</th><th style="padding:3px 6px">状態</th><th style="padding:3px 6px">単価</th><th style="padding:3px 6px;text-align:left">時刻</th><th style="padding:3px 6px;text-align:left">visitKey</th></tr></thead><tbody>'+detRows+'</tbody></table>'+more;
     _noDateStatus('🔍 orderDate 欠落レコード '+_noDateOrders.length+' 件を検出。CSVバックアップ後に削除できます。','var(--gold-d)');
     g('btn-nodate-backup').disabled=false;
     g('btn-nodate-del').disabled=false;
