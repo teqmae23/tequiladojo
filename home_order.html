@@ -503,7 +503,7 @@ body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-
               <button onclick="setCocktailSpiritTab('other')" id="csp-tab-other" class="btn bs sm">他酒</button>
               <button onclick="setCocktailSpiritTab('popular')" id="csp-tab-popular" class="btn bs sm" title="よく使われるベース（人気順）">🔥人気</button>
               <button onclick="setCocktailSpiritTab('recent')" id="csp-tab-recent" class="btn bs sm" title="最近使われたベース（新しい順）">🕐最近</button>
-              <button onclick="cspSetHouse()" class="btn bs sm" title="ハウス（Agavales Blanco）を表示">🏠ハウス</button>
+              <button onclick="setCocktailSpiritTab('house')" id="csp-tab-house" class="btn bs sm" title="ハウス（Agavales Blanco）を表示">🏠ハウス</button>
               <span style="width:1px;background:var(--border2);margin:0 2px;align-self:stretch;display:inline-block;"></span>
               <div id="csp-cls-wrap" style="display:flex;gap:2px;">
                 <button onclick="cspToggleCls('B',this)" class="nom-btn">B</button>
@@ -1963,22 +1963,25 @@ function selectCocktail(cocktailId){
   _cspSortKey='';_cspSortDir='asc';
   _updateCspSortBtns();
   document.querySelectorAll('#csp-cls-wrap .nom-btn[onclick^="cspToggleCls"]').forEach(b=>b.classList.add('active'));
-  cspSetHouse(); // 既定でハウス（Agavales Blanco）を表示
+  document.getElementById('cocktail-spirit-search').value='';
+  setCocktailSpiritTab('house'); // 既定でハウスタブを選択（検索欄は空・🏠ハウスをハイライト）
 }
 function setCocktailSpiritTab(type){
   _cocktailSpiritTab=type; _pendingSpirit=null;
   document.getElementById('csp-preview').style.display='none';
-  ['tequila','other','popular','recent'].forEach(function(t){
+  ['tequila','other','popular','recent','house'].forEach(function(t){
     var b=document.getElementById('csp-tab-'+t); if(b) b.className=(type===t?'btn bp sm':'btn bs sm');
   });
   document.getElementById('csp-cls-wrap').style.display=(type==='tequila')?'flex':'none';
-  // 価格/名前ソートは銘柄一覧(テキーラ/他酒)のみ。人気/最近では独自順のため隠す。
+  // 価格/名前ソートは銘柄一覧(テキーラ/他酒)のみ。人気/最近/ハウスでは独自順のため隠す。
   var showSort=(type==='tequila'||type==='other');
   ['csp-sort-price','csp-sort-name'].forEach(function(id){ var b=document.getElementById(id); if(b) b.style.display=showSort?'':'none'; });
   if(type==='tequila'){
     _cspClasses=new Set(['B','J','R','X','A']); // タブ切り替えで全選択にリセット
     document.querySelectorAll('#csp-cls-wrap .nom-btn[onclick^="cspToggleCls"]').forEach(b=>b.classList.add('active'));
   }
+  // ハウスは検索欄を空にしてハウス既定リストを表示（テキーラtab＋名前入力の従来挙動を廃止）
+  if(type==='house'){ var s=document.getElementById('cocktail-spirit-search'); if(s) s.value=''; }
   filterCocktailSpirit();
 }
 function cspToggleCls(cls,el){
@@ -2006,12 +2009,9 @@ function _updateCspSortBtns(){
     b.textContent=x[2]+(on?(_cspSortDir==='asc'?' ▲':' ▼'):'');
   });
 }
-function _cspName(t){ return (_cocktailSpiritTab==='tequila'?(AuthRole.bdName(t,'es')||''):(t.bottleEn||t.bottleName||t.name||t.bottleEs||t.bottleJa||t.id||'')); }
-function cspSetHouse(){
-  document.getElementById('cocktail-spirit-search').value='Agavales Blanco';
-  filterCocktailSpirit();
-  document.getElementById('cocktail-spirit-search').focus();
-}
+function _cspName(t){ return (_cocktailSpiritTab!=='other'?(AuthRole.bdName(t,'es')||''):(t.bottleEn||t.bottleName||t.name||t.bottleEs||t.bottleJa||t.id||'')); }
+var HOUSE_SPIRIT_NAME='Agavales Blanco'; // ハウス（既定ベース）の銘柄名（前方一致）
+function cspSetHouse(){ setCocktailSpiritTab('house'); } // 後方互換：ハウスタブを選択
 function cspClearSearch(){
   document.getElementById('cocktail-spirit-search').value='';
   filterCocktailSpirit();
@@ -2029,8 +2029,16 @@ function filterCocktailSpirit(){
   const raw=document.getElementById('cocktail-spirit-search').value||'';
   const isNOM=/^\d{4}$/.test(raw.trim());
   const q=raw.trim().toLowerCase();
-  let pool=_cocktailSpiritTab==='tequila'?masterData.tequila:masterData.other;
+  const isHouse=(_cocktailSpiritTab==='house');
+  // ハウスはテキーラプールを使い、検索が空なら銘柄名を前方一致で絞り込む
+  let pool=(_cocktailSpiritTab==='other')?masterData.other:masterData.tequila;
+  const houseKey=HOUSE_SPIRIT_NAME.toLowerCase();
   let items=pool.filter(t=>{
+    if(isHouse && !q){
+      const nEs=(AuthRole.bdName(t,'es')||'').toLowerCase();
+      const nJa=(t.bottleJa||t.name||'').toLowerCase();
+      return nEs.startsWith(houseKey)||nJa.startsWith(houseKey);
+    }
     if(!q)return true;
     if(isNOM) return String(t.nom!=null&&t.nom!==''?t.nom:(t.bottleId||t.brandId||'')).toLowerCase().startsWith(q);
     const nameEs=(AuthRole.bdName(t,'es')||'').toLowerCase();
@@ -2057,8 +2065,9 @@ function filterCocktailSpirit(){
     }
   }
   document.getElementById('cocktail-spirit-list').innerHTML=items.slice(0,60).map(t=>{
-    const name=_cocktailSpiritTab==='tequila'?AuthRole.bdName(t,'es'):(t.bottleEn||t.bottleName||t.name||t.bottleEs||t.bottleJa||t.id);
-    const sub=_cocktailSpiritTab==='tequila'?(t.bottleJa||''):'';
+    const _isTeqName=(_cocktailSpiritTab!=='other'); // テキーラ/ハウス はテキーラ名で表示
+    const name=_isTeqName?AuthRole.bdName(t,'es'):(t.bottleEn||t.bottleName||t.name||t.bottleEs||t.bottleJa||t.id);
+    const sub=_isTeqName?(t.bottleJa||''):'';
     const up=priceOf(t); const price=up?`¥${up}/10ml`:'';
     const isSel=_pendingSpirit&&_pendingSpirit.id===t.id;
     const bg=isSel?'var(--teal-l)':'var(--white)';
