@@ -440,7 +440,8 @@ body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-
         </div>
         <div class="product-tabs">
           <div class="ptab active" onclick="switchPTab('tequila',this)">テキーラ</div>
-          <div class="ptab" onclick="switchPTab('recent',this)" title="最近注文された商品から追加">🕐最近</div>
+          <div class="ptab" onclick="switchPTab('popular',this)" title="よく注文される商品（人気順）から追加">🔥人気</div>
+          <div class="ptab" onclick="switchPTab('recent',this)" title="最近注文された商品（新しい順）から追加">🕐最近</div>
           <div class="ptab" onclick="switchPTab('other',this)">他酒</div>
           <div class="ptab" onclick="switchPTab('misc',this)">その他</div>
           <div class="ptab" onclick="switchPTab('set',this)">セット</div>
@@ -1586,8 +1587,8 @@ function filterProducts(){
       return`<div class="set-item" onclick="addSetToCart('${esc(s.id)}')"><span style="font-size:13px">${esc(s.setName||s.id)}${b}</span></div>`;
     }).join('');return;
   }
-  if(currentPTab==='recent'){
-    renderRecentProducts(q, c); return;
+  if(currentPTab==='recent'||currentPTab==='popular'){
+    renderQuickProducts(currentPTab, q, c); return;
   }
   let items=[...(masterData[currentPTab]||[])];
   if(currentNOM&&currentPTab==='tequila')items=items.filter(i=>String(i.nom==null?'':i.nom).startsWith(currentNOM)||String(i.brandId==null?'':i.brandId).startsWith(currentNOM));
@@ -1675,8 +1676,9 @@ function filterProducts(){
   }).join('')+_moreNote+keepTile;
 }
 
-// ── 最近注文された商品（クイック追加） ──
+// ── クイック追加（最近注文順 / 人気順・いずれもセッション跨ぎで全注文対象） ──
 var _recentOrdersRaw=[]; // {productCode, productName, productType, orderDate, orderTime} 重複排除済み・新しい順
+var _popularProducts=[]; // {productCode, productName, productType, count, orderDate, orderTime} 注文回数の多い順
 function _findMaster(code){ return (masterData.tequila||[]).find(x=>x.id===code)||(masterData.other||[]).find(x=>x.id===code)||(masterData.misc||[]).find(x=>x.id===code)||null; }
 function _recentWhen(d,t){
   if(!d) return '';
@@ -1686,21 +1688,24 @@ function _recentWhen(d,t){
 }
 function buildRecentProducts(ordersArr){
   var arr=(ordersArr||[]).slice().sort(function(a,b){ return String((b.orderDate||'')+(b.orderTime||'')).localeCompare(String((a.orderDate||'')+(a.orderTime||''))); });
-  var seen={}, out=[];
+  var seen={}, out=[], agg={};
   for(var k=0;k<arr.length;k++){
     var o=arr[k];
     if(!o.productCode) continue;
     if(['tequila','other','misc'].indexOf(o.productType)<0) continue; // クイック追加できる単品のみ
-    if(seen[o.productCode]) continue;
-    seen[o.productCode]=1;
-    out.push({productCode:o.productCode, productName:o.productName, productType:o.productType, orderDate:o.orderDate, orderTime:o.orderTime});
-    if(out.length>=120) break;
+    // 最近順（重複排除・新しい順）
+    if(!seen[o.productCode]){ seen[o.productCode]=1; if(out.length<200) out.push({productCode:o.productCode, productName:o.productName, productType:o.productType, orderDate:o.orderDate, orderTime:o.orderTime}); }
+    // 人気順（注文回数を集計。最新日時も保持）
+    var a=agg[o.productCode]||(agg[o.productCode]={productCode:o.productCode, productName:o.productName, productType:o.productType, count:0, orderDate:o.orderDate, orderTime:o.orderTime});
+    a.count++; // arr は新しい順なので最初に出た日時が最新
   }
   _recentOrdersRaw=out;
+  _popularProducts=Object.keys(agg).map(function(k){return agg[k];}).sort(function(x,y){ return (y.count-x.count)||String((y.orderDate||'')+(y.orderTime||'')).localeCompare(String((x.orderDate||'')+(x.orderTime||''))); });
 }
-function renderRecentProducts(q, c){
+function renderQuickProducts(mode, q, c){
   // 現マスタに存在する商品のみ（addToCartはマスタ参照のため）。マスタ読込順に依存しないよう描画時に解決。
-  var rec=_recentOrdersRaw.filter(function(r){ return !!_findMaster(r.productCode); });
+  var src=(mode==='popular')?_popularProducts:_recentOrdersRaw;
+  var rec=src.filter(function(r){ return !!_findMaster(r.productCode); });
   if(q){
     rec=rec.filter(function(r){
       var m=_findMaster(r.productCode);
@@ -1709,13 +1714,14 @@ function renderRecentProducts(q, c){
     });
   }
   rec=rec.slice(0,60);
-  if(!rec.length){ c.innerHTML='<div class="empty">最近注文された商品がありません</div>'; return; }
-  c.innerHTML='<div style="font-size:11px;color:var(--ink3);padding:4px 2px 8px">最近注文された商品（タップでカートに追加）</div>'+rec.map(function(r){
+  var head=(mode==='popular')?'よく注文される商品（人気順・タップで追加）':'最近注文された商品（新しい順・タップで追加）';
+  if(!rec.length){ c.innerHTML='<div class="empty">'+(mode==='popular'?'注文実績がありません':'最近注文された商品がありません')+'</div>'; return; }
+  c.innerHTML='<div style="font-size:11px;color:var(--ink3);padding:4px 2px 8px">'+head+'</div>'+rec.map(function(r){
     var m=_findMaster(r.productCode);
     var name=m?(m.type==='tequila'?AuthRole.bdName(m,'es'):(m.bottleEn||m.bottleName||m.name||AuthRole.bdName(m,'ja'))):(r.productName||r.productCode);
     var priceNum=m?(m.price||m.unitPrice||m.price10):null;
     var price=priceNum?('¥'+priceNum+'/10ml'):'-';
-    var sub='🕐 '+_recentWhen(r.orderDate,r.orderTime);
+    var sub=(mode==='popular')?('🔥 '+r.count+'回'):('🕐 '+_recentWhen(r.orderDate,r.orderTime));
     return '<div class="product-item" onclick="addToCart(\''+esc(r.productCode)+'\')">'
       +'<div><div class="product-item-name">'+esc(name)+'</div><div class="product-item-sub">'+esc(sub)+'</div></div>'
       +'<span class="product-item-price">'+esc(price)+'</span></div>';
