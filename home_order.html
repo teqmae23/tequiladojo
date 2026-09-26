@@ -1590,7 +1590,7 @@ function filterProducts(){
     }).join('');return;
   }
   if(currentPTab==='recent'||currentPTab==='popular'){
-    renderQuickProducts(currentPTab, q, c); return;
+    renderQuickProducts(currentPTab, q, c, {types:['tequila'], action:'cart', label:'テキーラ'}); return;
   }
   let items=[...(masterData[currentPTab]||[])];
   if(currentNOM&&currentPTab==='tequila')items=items.filter(i=>String(i.nom==null?'':i.nom).startsWith(currentNOM)||String(i.brandId==null?'':i.brandId).startsWith(currentNOM));
@@ -1699,45 +1699,63 @@ function _yymmddMonthsAgo(n){
   return y+m+dd;
 }
 var _popularWindowFrom='';   // 人気集計の起点(YYMMDD)。描画側のラベルにも使う。
+var _cocktailBasePopular=[]; // カクテルのベースに使われたお酒だけの人気
+var _cocktailBaseRecent=[];  // 同・最近使われた順
+// 注文配列を集計。codeOf(o)が返すコードで集計。人気は窓期間(paid>0)、最近は全期間・重複排除。
+// paid＝served≠0かつ単価>0（奢られ¥0の重複や取消を除く）。各商品の日別内訳(dcnt)も保持。
+function _aggOrders(arr, codeOf, windowFrom){
+  var seen={}, out=[], agg={};
+  for(var k=0;k<arr.length;k++){
+    var o=arr[k];
+    if(o.orderDate && String(o.orderDate)<=AGG_CUTOFF_YYMMDD) continue; // テスト期間(2026/5/26以前)は除外
+    var code=codeOf(o);
+    if(!code) continue;
+    // 最近順（重複排除・新しい順）※期間制限なし
+    if(!seen[code]){ seen[code]=1; if(out.length<200) out.push({productCode:code, productName:o.productName, productType:o.productType, orderDate:o.orderDate, orderTime:o.orderTime}); }
+    // 人気順（窓期間のみ）
+    if(o.orderDate && String(o.orderDate)<windowFrom) continue;
+    var a=agg[code]||(agg[code]={productCode:code, productName:o.productName, productType:o.productType, count:0, valid:0, voided:0, zero:0, paid:0, dates:{}, dcnt:{}, orderDate:o.orderDate, orderTime:o.orderTime});
+    a.count++; // arr は新しい順なので最初に出た日時が最新
+    var _up=(Number(o.unitPrice)||0);
+    var isVoid=(o.served===0);
+    if(isVoid) a.voided++; else a.valid++;
+    if(_up===0) a.zero++;                 // ¥0＝奢り受取/KB等（1回の奢りがN人分の重複レコードになる）
+    var isPaid=(!isVoid && _up>0);
+    if(isPaid) a.paid++;                  // 有料の実注文のみ。奢られ(¥0)の重複を人気に計上しない
+    if(o.orderDate){
+      var dd=a.dcnt[o.orderDate]||(a.dcnt[o.orderDate]={t:0,paid:0,voided:0,zero:0});
+      dd.t++; if(isVoid) dd.voided++; if(_up===0) dd.zero++; if(isPaid){ dd.paid++; a.dates[o.orderDate]=1; }
+    }
+  }
+  var popular=Object.keys(agg).map(function(k){var a=agg[k]; a.dateList=Object.keys(a.dates).sort(); a.ndates=a.dateList.length; return a;})
+    .filter(function(a){ return (a.paid||0)>0; }) // 有料注文が1件も無い(奢られのみ等)は人気に出さない
+    .sort(function(x,y){ return (y.paid-x.paid)||(y.valid-x.valid)||(y.count-x.count)||String((y.orderDate||'')+(y.orderTime||'')).localeCompare(String((x.orderDate||'')+(x.orderTime||''))); });
+  return {recent:out, popular:popular};
+}
 function buildRecentProducts(ordersArr){
   var arr=(ordersArr||[]).slice().sort(function(a,b){ return String((b.orderDate||'')+(b.orderTime||'')).localeCompare(String((a.orderDate||'')+(a.orderTime||''))); });
   // 人気は直近2ヶ月のみ。ただしテスト期間(2026/5/26以前)は常に除外するので起点はその新しい方。
   var winFrom=_yymmddMonthsAgo(POPULAR_WINDOW_MONTHS);
   _popularWindowFrom=(winFrom>AGG_CUTOFF_YYMMDD)?winFrom:AGG_CUTOFF_YYMMDD;
-  var seen={}, out=[], agg={};
-  for(var k=0;k<arr.length;k++){
-    var o=arr[k];
-    if(o.orderDate && String(o.orderDate)<=AGG_CUTOFF_YYMMDD) continue; // 2026/5/26以前(テスト期間)は集計対象外
-    if(!o.productCode) continue;
-    // テキーラ・他酒のみ集計（その他/キープ/セット等は除外）。表示側でさらにテキーラのみ等に絞る。
-    if(['tequila','other'].indexOf(o.productType)<0) continue;
-    // 最近順（重複排除・新しい順）※期間制限なし
-    if(!seen[o.productCode]){ seen[o.productCode]=1; if(out.length<200) out.push({productCode:o.productCode, productName:o.productName, productType:o.productType, orderDate:o.orderDate, orderTime:o.orderTime}); }
-    // 人気順（直近2ヶ月のみ集計。内訳も保持して異常を可視化）
-    if(o.orderDate && String(o.orderDate)<_popularWindowFrom) continue; // 期間外は人気に含めない
-    var a=agg[o.productCode]||(agg[o.productCode]={productCode:o.productCode, productName:o.productName, productType:o.productType, count:0, valid:0, voided:0, zero:0, paid:0, dates:{}, orderDate:o.orderDate, orderTime:o.orderTime});
-    a.count++; // arr は新しい順なので最初に出た日時が最新
-    if(o.served===0) a.voided++; else a.valid++;
-    var _up=(Number(o.unitPrice)||0);
-    if(_up===0) a.zero++;                       // ¥0＝奢り受取/KB等（1回の奢りがN人分の重複レコードになる）
-    if(o.served!==0 && _up>0) a.paid++;         // 有料の実注文のみ。奢られ(¥0)の重複を人気に計上しない
-    if(o.orderDate && !(o.served!==0 && _up>0)) { /* ¥0/取消の日付は集中判定に含めない */ }
-    else if(o.orderDate) a.dates[o.orderDate]=1;
-  }
-  _recentOrdersRaw=out;
-  // 人気の基準は「有料の実注文件数(paid)」。奢られ(¥0)の重複や取消を除く。同数なら有効数→総数→新しい順。
-  _popularProducts=Object.keys(agg).map(function(k){var a=agg[k]; a.dateList=Object.keys(a.dates).sort(); a.ndates=a.dateList.length; return a;})
-    .filter(function(a){ return (a.paid||0)>0; }) // 有料注文が1件も無い(奢られのみ等)は人気に出さない
-    .sort(function(x,y){ return (y.paid-x.paid)||(y.valid-x.valid)||(y.count-x.count)||String((y.orderDate||'')+(y.orderTime||'')).localeCompare(String((x.orderDate||'')+(x.orderTime||''))); });
+  // 単品(テキーラ・他酒)の人気/最近。表示側でさらにテキーラのみ等に絞る。
+  var r1=_aggOrders(arr, function(o){ return (['tequila','other'].indexOf(o.productType)>=0)?o.productCode:null; }, _popularWindowFrom);
+  _recentOrdersRaw=r1.recent; _popularProducts=r1.popular;
+  // カクテルのベースに使われたお酒だけを、baseProductCode で集計（カクテル注文のみ対象）。
+  var r2=_aggOrders(arr, function(o){ return o.baseProductCode||null; }, _popularWindowFrom);
+  _cocktailBaseRecent=r2.recent; _cocktailBasePopular=r2.popular;
 }
 // opts.types : 表示を許可するマスタ種別（既定 ['tequila']＝テキーラのみ）
 // opts.action: 'cart'（addToCart, 既定）| 'spirit'（カクテルのベース選択=previewCocktailSpirit）
+// opts.popularSrc/recentSrc: 集計ソース差し替え（既定＝全単品）。opts.label: 見出しの対象名。
+var _dfmtYMD=function(d){ d=String(d||''); return d.length>=6?(d.slice(0,2)+'/'+d.slice(2,4)+'/'+d.slice(4,6)):d; };
+var _pdSeq=0;
 function renderQuickProducts(mode, q, c, opts){
   opts=opts||{};
   var types=opts.types||['tequila'];
   var action=opts.action||'cart';
-  // 現マスタに存在する商品のみ（addToCartはマスタ参照のため）。マスタ読込順に依存しないよう描画時に解決。
-  var src=(mode==='popular')?_popularProducts:_recentOrdersRaw;
+  var label=opts.label||'商品';
+  // 現マスタに存在する商品のみ（addToCart/選択はマスタ参照のため）。マスタ読込順に依存しないよう描画時に解決。
+  var src=(mode==='popular')?(opts.popularSrc||_popularProducts):(opts.recentSrc||_recentOrdersRaw);
   var rec=src.filter(function(r){ var m=_findMaster(r.productCode); return m && types.indexOf(m.type)>=0; });
   if(q){
     rec=rec.filter(function(r){
@@ -1747,21 +1765,29 @@ function renderQuickProducts(mode, q, c, opts){
     });
   }
   rec=rec.slice(0,60);
-  var _wf=function(d){ d=String(d||''); return d.length>=6?(d.slice(0,2)+'/'+d.slice(2,4)+'/'+d.slice(4,6)):d; };
-  var head=(mode==='popular')?('よく注文される商品（直近'+POPULAR_WINDOW_MONTHS+'ヶ月・人気順'+(_popularWindowFrom?'／'+_wf(_popularWindowFrom)+'〜':'')+'）'):'最近注文された商品（新しい順・タップで追加）';
-  if(!rec.length){ c.innerHTML='<div class="empty">'+(mode==='popular'?'注文実績がありません':'最近注文された商品がありません')+'</div>'; return; }
+  var head=(mode==='popular')?('よく'+(action==='spirit'?'使われるベース':'注文される'+label)+'（直近'+POPULAR_WINDOW_MONTHS+'ヶ月・人気順'+(_popularWindowFrom?'／'+_dfmtYMD(_popularWindowFrom)+'〜':'')+'・タップで'+(action==='spirit'?'選択':'追加')+'）'):('最近'+(action==='spirit'?'使われたベース':'注文された'+label)+'（新しい順・タップで'+(action==='spirit'?'選択':'追加')+'）');
+  if(!rec.length){ c.innerHTML='<div class="empty">'+(mode==='popular'?'実績がありません':'該当がありません')+'</div>'; return; }
   c.innerHTML='<div style="font-size:11px;color:var(--ink3);padding:4px 2px 8px">'+head+'</div>'+rec.map(function(r){
     var m=_findMaster(r.productCode);
     var name=m?(m.type==='tequila'?AuthRole.bdName(m,'es'):(m.bottleEn||m.bottleName||m.name||AuthRole.bdName(m,'ja'))):(r.productName||r.productCode);
     var priceNum=m?(m.price||m.unitPrice||m.price10):null;
     var price=priceNum?('¥'+priceNum+'/10ml'):'-';
-    var _dfmt=function(d){ d=String(d||''); return d.length>=6?(d.slice(0,2)+'/'+d.slice(2,4)+'/'+d.slice(4,6)):d; };
-    var _dlbl=(r.ndates<=2 && r.dateList&&r.dateList.length)?('【'+r.dateList.map(_dfmt).join(',')+'】に集中'):(r.ndates+'日に分散');
+    var _dlbl=(r.ndates<=2 && r.dateList&&r.dateList.length)?('【'+r.dateList.map(_dfmtYMD).join(',')+'】に集中'):(r.ndates+'日に分散');
     var sub=(mode==='popular')?('🔥 '+(r.paid||0)+'回（有料）｜ 有効'+r.valid+'/取消'+r.voided+'/¥0(奢られ等)'+r.zero+' ・ '+_dlbl+' ['+r.productCode+']'):('🕐 '+_recentWhen(r.orderDate,r.orderTime));
     var onclick=(action==='spirit')?('previewCocktailSpirit(\''+esc(r.productCode)+'\')'):('addToCart(\''+esc(r.productCode)+'\')');
+    // 人気は日別内訳(dcnt)を折りたたみ表示できるようにする（回数異常の原因調査用）
+    var detailHtml='', toggleBtn='';
+    if(mode==='popular' && r.dcnt){
+      var did='pd_'+(_pdSeq++);
+      var rows=Object.keys(r.dcnt).sort().reverse().map(function(d){ var x=r.dcnt[d]; return '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--ink2);padding:1px 0"><span>'+_dfmtYMD(d)+'</span><span>計'+x.t+'（有料'+x.paid+'/取消'+x.voided+'/¥0'+x.zero+'）</span></div>'; }).join('');
+      detailHtml='<div id="'+did+'" style="display:none;padding:5px 9px;background:var(--cream2);border:1px solid var(--border);border-radius:4px;margin:1px 0 6px">'
+        +'<div style="font-size:10px;font-weight:700;color:var(--ink3);margin-bottom:3px">注文日ごとの件数</div>'+rows+'</div>';
+      toggleBtn='<button onclick="event.stopPropagation();var e=document.getElementById(\''+did+'\');e.style.display=(e.style.display===\'none\'?\'block\':\'none\');" style="margin-left:6px;padding:1px 6px;font-size:10px;border:1px solid var(--border2);border-radius:3px;background:var(--white);color:var(--ink2);cursor:pointer;flex-shrink:0">📅日別</button>';
+    }
     return '<div class="product-item" onclick="'+onclick+'">'
-      +'<div><div class="product-item-name">'+esc(name)+'</div><div class="product-item-sub">'+esc(sub)+'</div></div>'
-      +'<span class="product-item-price">'+esc(price)+'</span></div>';
+      +'<div style="min-width:0;flex:1"><div class="product-item-name">'+esc(name)+'</div><div class="product-item-sub">'+esc(sub)+'</div></div>'
+      +toggleBtn
+      +'<span class="product-item-price">'+esc(price)+'</span></div>'+detailHtml;
   }).join('');
 }
 
@@ -1995,7 +2021,8 @@ function filterCocktailSpirit(){
   // 人気/最近タブ：注文実績からベース候補（テキーラ＋他酒）をクイック表示。タップで選択。
   if(_cocktailSpiritTab==='popular'||_cocktailSpiritTab==='recent'){
     const qq=(document.getElementById('cocktail-spirit-search').value||'').trim().toLowerCase();
-    renderQuickProducts(_cocktailSpiritTab, qq, listEl, {types:['tequila','other'], action:'spirit'});
+    // カクテルのベースに実際に使われたお酒だけを集計対象にする
+    renderQuickProducts(_cocktailSpiritTab, qq, listEl, {types:['tequila','other'], action:'spirit', popularSrc:_cocktailBasePopular, recentSrc:_cocktailBaseRecent});
     return;
   }
   const raw=document.getElementById('cocktail-spirit-search').value||'';
