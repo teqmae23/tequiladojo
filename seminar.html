@@ -64,6 +64,7 @@ function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'
 var Q=new URLSearchParams(location.search);
 var EID=Q.get('e')||'', SID=Q.get('s')||'', PRESENT=Q.get('present')==='1';
 var _sem=null, _pdf=null, _numPages=0, _page=0, _presenter=false, _unsub=null, _rendering=false, _pendingPage=null;
+var _syncOn=true, _livePage=1; // 参加者: 配信ページ同期のON/OFF と 現在の配信ページ
 
 function showMsg(html){ g('screen').innerHTML='<div class="msg">'+html+'</div>'; }
 if(!EID||!SID){ showMsg('セミナーが指定されていません。'); }
@@ -132,6 +133,9 @@ async function start(user){
     if(_presenter){
       _page=Math.min(Math.max(1,_sem.currentPage||1),_numPages);
       renderPage(_page); updateCtl();
+      // 配信者が開いたら live 状態にする（前回の配信終了後でも再配信できるように）
+      db.collection('events').doc(EID).collection('seminars').doc(SID)
+        .set({live:true, currentPage:_page, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).catch(function(){});
     } else {
       // 参加者は配信中ページに同期
       subscribe();
@@ -150,13 +154,19 @@ function subscribe(){
   _unsub=ref.onSnapshot(function(d){
     if(!d.exists) return; var data=d.data()||{}; _sem=data;
     var p=Math.min(Math.max(1,data.currentPage||1),_numPages||1);
+    _livePage=p;
     updateLive(data.live!==false);
     if(_presenter){
       // 配信者は自分の操作を優先。ライブ表示のみ更新。
       return;
     }
-    if(p!==_page){ _page=p; renderPage(p); }
-    updateFoot();
+    if(data.live===false){ // 配信終了
+      if(_unsub){ _unsub(); _unsub=null; }
+      showMsg('配信は終了しました。<br><br><a href="'+esc(joinUrl())+'">▶ 再入場する</a>');
+      return;
+    }
+    if(_syncOn && p!==_page){ _page=p; renderPage(p); } // 同期ON時のみ配信ページへ追従
+    updateFoot(); updatePPg();
   }, function(){});
 }
 
@@ -168,9 +178,16 @@ function buildUI(){
   var bottom;
   if(_presenter){
     bottom='<div class="ctl"><button id="btn-prev" onclick="prevPage()">◀</button><span class="pg" id="sem-pg">- / -</span><button id="btn-next" onclick="nextPage()">▶</button></div>'
-      +'<div class="pbar"><button class="pbtn" onclick="openQr()">📱 参加者QR/URL</button><button class="pbtn" onclick="copyJoin()">🔗 URLコピー</button><span style="font-size:11px;color:var(--ink3)">配信者モード（あなたの操作が全員に同期）</span></div>';
+      +'<div class="pbar"><button class="pbtn" onclick="openQr()">📱 参加者QR/URL</button><button class="pbtn" onclick="copyJoin()">🔗 URLコピー</button><button class="pbtn" onclick="endBroadcast()" style="border-color:#e26a6a;color:#e26a6a">⏹ 配信終了</button><span style="font-size:11px;color:var(--ink3)">配信者モード（あなたの操作が全員に同期）</span></div>';
   } else {
-    bottom='<div class="foot" id="sem-foot">配信に同期中…</div>';
+    bottom='<div class="ctl" id="p-ctl">'
+      +'<button id="p-prev" onclick="pMove(-1)" style="display:none">◀</button>'
+      +'<span class="pg" id="p-pg" style="display:none">- / -</span>'
+      +'<button id="p-next" onclick="pMove(1)" style="display:none">▶</button>'
+      +'<button class="pbtn" id="p-sync" onclick="toggleSync()">✋ 自由に移動</button>'
+      +'<button class="pbtn" onclick="leaveSeminar()" style="border-color:#e26a6a;color:#e26a6a">🚪 退出</button>'
+      +'</div>'
+      +'<div class="foot" id="sem-foot">配信に同期中…</div>';
   }
   g('screen').innerHTML=hd+stage+bottom;
 }
@@ -211,14 +228,47 @@ function updateCtl(){
   var pb=g('btn-prev'), nb=g('btn-next');
   if(pb) pb.disabled=(_page<=1); if(nb) nb.disabled=(_page>=_numPages);
 }
-function updateFoot(){ var f=g('sem-foot'); if(f) f.textContent='配信に同期中 — ページ '+_page+' / '+(_numPages||'-'); }
+function updateFoot(){ var f=g('sem-foot'); if(!f) return; f.textContent=_syncOn?('配信に同期中 — ページ '+_livePage+' / '+(_numPages||'-')):('自由閲覧中 — ページ '+_page+' / '+(_numPages||'-')+'（配信ページ: '+_livePage+'）'); }
 function updateLive(on){ var l=g('sem-live'); if(l) l.style.display=on?'':'none'; }
+
+// ── 参加者: ページ同期 ON/OFF と自由移動 ──
+function updatePPg(){
+  var pg=g('p-pg'); if(pg) pg.textContent=_page+' / '+(_numPages||'-');
+  var pb=g('p-prev'), nb=g('p-next');
+  if(pb) pb.disabled=(_page<=1); if(nb) nb.disabled=(_page>=(_numPages||1));
+}
+function toggleSync(){
+  _syncOn=!_syncOn;
+  var free=!_syncOn;
+  ['p-prev','p-pg','p-next'].forEach(function(id){ var e=g(id); if(e) e.style.display=free?'':'none'; });
+  var sb=g('p-sync'); if(sb) sb.textContent=free?'🔗 配信に同期':'✋ 自由に移動';
+  if(_syncOn && _livePage){ _page=_livePage; renderPage(_page); } // 同期に戻したら配信ページへ復帰
+  updatePPg(); updateFoot();
+}
+function pMove(d){ if(_syncOn) return; setLocalPage(_page+d); }
+function setLocalPage(p){ p=Math.min(Math.max(1,p),_numPages||1); _page=p; renderPage(p); updatePPg(); updateFoot(); }
+
+// ── 配信者: 配信終了 ／ 参加者: 退出 ──
+function endBroadcast(){
+  if(!_presenter) return;
+  if(!confirm('配信を終了しますか？\n参加者の画面に「配信は終了しました」と表示されます。')) return;
+  db.collection('events').doc(EID).collection('seminars').doc(SID)
+    .set({live:false, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).catch(function(){});
+  if(_unsub){ _unsub(); _unsub=null; }
+  showMsg('配信を終了しました。<br><span style="font-size:12px;color:var(--ink3)">もう一度配信するには、この画面を再読み込みしてください。</span>');
+}
+function leaveSeminar(){
+  if(_unsub){ _unsub(); _unsub=null; }
+  showMsg('退出しました。ご参加ありがとうございました。<br><br><a href="'+esc(joinUrl())+'">▶ もう一度参加する</a>');
+}
 
 // キーボード（配信者PC）
 document.addEventListener('keydown',function(e){
-  if(!_presenter) return;
-  if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){ e.preventDefault(); nextPage(); }
-  else if(e.key==='ArrowLeft'||e.key==='PageUp'){ e.preventDefault(); prevPage(); }
+  var right=(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' ');
+  var left=(e.key==='ArrowLeft'||e.key==='PageUp');
+  if(!right&&!left) return;
+  if(_presenter){ e.preventDefault(); if(right) nextPage(); else prevPage(); }
+  else if(!_syncOn){ e.preventDefault(); pMove(right?1:-1); } // 参加者は自由移動中のみ
 });
 window.addEventListener('resize',function(){ if(_pdf) renderPage(_page); });
 

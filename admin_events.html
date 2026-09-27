@@ -3424,11 +3424,44 @@ function renderSeminars(){
   if(!_seminars.length){ g('sem-list').innerHTML='<div class="ec">セミナーはまだありません。</div>'; return; }
   g('sem-list').innerHTML=_seminars.map(function(s){
     var acc=(s.access==='public')?'<span class="doc-sub">公開</span>':'<span class="doc-sub">会員限定</span>';
+    var url=_semJoinUrl(s.id);
     return '<div class="doc-item"><div class="doc-main"><div class="doc-ttl">'+esc(s.title||'（無題）')+'</div><div class="doc-sub">'+esc(s.fileName||'')+'　'+acc+'</div></div>'
-      +'<a class="btn bp sm" style="text-decoration:none" href="'+esc(_semJoinUrl(s.id))+'&present=1" target="_blank">▶ 配信</a>'
-      +'<button class="btn bs sm" onclick="copySemUrl(\''+esc(s.id)+'\')">🔗 参加URL</button>'
-      +'<button class="rm" title="削除" onclick="delSeminar(\''+esc(s.id)+'\')">×</button></div>';
+      +'<a class="btn bp sm" style="text-decoration:none" href="'+esc(url)+'&present=1" target="_blank">▶ 配信</a>'
+      +'<button class="btn bs sm" onclick="toggleSemQr(\''+esc(s.id)+'\')">📱 QR/URL</button>'
+      +'<button class="rm" title="削除" onclick="delSeminar(\''+esc(s.id)+'\')">×</button></div>'
+      +'<div id="semqr-'+esc(s.id)+'" style="display:none;padding:12px;background:var(--cream2);border:1px solid var(--border);border-radius:var(--r);margin:2px 0 10px;text-align:center">'
+        +'<div style="font-size:11px;color:var(--ink3);margin-bottom:8px">参加者はこのQRを読み取るか、URLを開くだけで参加できます</div>'
+        +'<div id="semqrbox-'+esc(s.id)+'" style="display:flex;justify-content:center;margin-bottom:8px;min-height:60px;align-items:center"></div>'
+        +'<div style="font-size:11px;word-break:break-all;color:var(--ink2);background:var(--white);border:1px solid var(--border);border-radius:6px;padding:6px 8px;margin-bottom:8px">'+esc(url)+'</div>'
+        +'<button class="btn bs sm" onclick="copySemUrl(\''+esc(s.id)+'\')">🔗 URLをコピー</button>'
+      +'</div>';
   }).join('');
+}
+function _loadQrJs(){
+  if(window.QRCode) return Promise.resolve();
+  if(window._qrP) return window._qrP;
+  window._qrP=new Promise(function(res,rej){
+    var sc=document.createElement('script');
+    sc.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+    sc.onload=function(){ res(); }; sc.onerror=function(){ rej(new Error('qr')); };
+    document.head.appendChild(sc);
+  });
+  return window._qrP;
+}
+function toggleSemQr(sid){
+  var panel=g('semqr-'+sid); if(!panel) return;
+  var show=(panel.style.display==='none');
+  panel.style.display=show?'block':'none';
+  if(!show) return;
+  var box=g('semqrbox-'+sid);
+  if(box && !box.dataset.done){
+    box.textContent='QR生成中…';
+    _loadQrJs().then(function(){
+      box.innerHTML='';
+      try{ new QRCode(box,{text:_semJoinUrl(sid),width:180,height:180,correctLevel:QRCode.CorrectLevel.M}); box.dataset.done='1'; }
+      catch(e){ box.textContent='QRを生成できませんでした'; }
+    }).catch(function(){ box.textContent='QRを生成できませんでした'; });
+  }
 }
 function copySemUrl(sid){
   var u=_semJoinUrl(sid);
