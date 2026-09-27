@@ -3427,13 +3427,16 @@ function renderSeminars(){
     var acc=(s.access==='public')?'<span class="doc-sub">公開</span>':'<span class="doc-sub">会員限定</span>';
     var dl=s.allowDownload?'<span class="doc-sub" style="color:var(--teal)">・保存可</span>':'';
     var isLive=(s.started && s.live!==false);
-    var st=isLive?'<span class="doc-sub" style="color:#e26a6a">・🔴配信中</span>':(s.live===false?'<span class="doc-sub" style="color:var(--ink3)">・配信終了</span>':'<span class="doc-sub" style="color:var(--ink3)">・未配信</span>');
+    var pre=(s.preBroadcast!==false); // 既定ON=配信前
+    var st=isLive?'<span class="doc-sub" style="color:#e26a6a">・🔴配信中</span>':(pre?'<span class="doc-sub" style="color:var(--ink3)">・配信前</span>':'<span class="doc-sub" style="color:var(--ink3)">・配信終了</span>');
     var url=_semJoinUrl(s.id);
     var endBtn=isLive?'<button class="btn bs sm" onclick="endSemBroadcast(\''+esc(s.id)+'\')" style="border-color:#e26a6a;color:#e26a6a">⏹ 配信終了</button>':'';
+    var preBtn='<button class="btn bs sm" onclick="toggleSemPre(\''+esc(s.id)+'\')" title="ON=配信前メッセージ / OFF=配信終了メッセージ"'+(pre?' style="border-color:var(--gold-d);color:var(--gold-d)"':'')+'>🔵 配信前:'+(pre?'ON':'OFF')+'</button>';
     var dlBtn='<button class="btn bs sm" onclick="toggleSemDownload(\''+esc(s.id)+'\')" title="資料の保存(ダウンロード)可否を切替"'+(s.allowDownload?' style="border-color:var(--teal);color:var(--teal)"':'')+'>💾 保存:'+(s.allowDownload?'可':'不可')+'</button>';
     return '<div class="doc-item"><div class="doc-main"><div class="doc-ttl">'+esc(s.title||'（無題）')+'</div><div class="doc-sub">'+esc(s.fileName||'')+'　'+acc+dl+st+'</div></div>'
       +'<a class="btn bp sm" style="text-decoration:none" href="'+esc(url)+'&present=1" target="_blank">▶ 配信</a>'
       +'<button class="btn bs sm" onclick="toggleSemQr(\''+esc(s.id)+'\')">📱 QR/URL</button>'
+      +preBtn
       +dlBtn
       +endBtn
       +'<button class="rm" title="削除" onclick="delSeminar(\''+esc(s.id)+'\')">×</button></div>'
@@ -3485,9 +3488,18 @@ function toggleSemDownload(sid){
 }
 function endSemBroadcast(sid){
   if(!confirm('この配信を終了しますか？\n参加者の画面に「配信は終了しました」と表示されます。')) return;
-  semCol(_semEventId).doc(sid).set({live:false, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+  semCol(_semEventId).doc(sid).set({live:false, preBroadcast:false, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
     .then(function(){ toast('配信を終了しました'); loadSeminars(); })
     .catch(function(e){ toast('配信終了に失敗: '+e.message,'err'); });
+}
+// 配信前トグル: ON=配信前メッセージ / OFF=配信終了メッセージ（配信中でないとき参加者に表示）
+function toggleSemPre(sid){
+  var s=_seminars.find(function(x){return x.id===sid;});
+  var cur=(s?s.preBroadcast!==false:true); // 既定ON
+  var next=!cur;
+  semCol(_semEventId).doc(sid).set({preBroadcast:next, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .then(function(){ toast(next?'「配信前」表示にしました':'「配信終了」表示にしました'); loadSeminars(); })
+    .catch(function(e){ toast('変更失敗: '+e.message,'err'); });
 }
 function addSeminar(){
   var title=(g('sem-title').value||'').trim();
@@ -3508,7 +3520,7 @@ function addSeminar(){
       return semCol(_semEventId).doc(pid).set({
         title:title, pdfUrl:url, storagePath:path, fileName:file.name, access:access,
         allowDownload:allowDownload,
-        currentPage:1, started:false, live:true, createdAt:firebase.firestore.FieldValue.serverTimestamp()
+        currentPage:1, started:false, live:true, preBroadcast:true, createdAt:firebase.firestore.FieldValue.serverTimestamp()
       });
     })
     .then(function(){ toast('セミナーを追加しました'); g('sem-title').value=''; g('sem-file').value=''; g('sem-prog').textContent=''; loadSeminars(); })

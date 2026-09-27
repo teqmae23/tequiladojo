@@ -65,7 +65,7 @@ var Q=new URLSearchParams(location.search);
 var EID=Q.get('e')||'', SID=Q.get('s')||'', PRESENT=Q.get('present')==='1';
 var _sem=null, _pdf=null, _numPages=0, _page=0, _presenter=false, _unsub=null, _rendering=false, _pendingPage=null;
 var _syncOn=true, _livePage=1; // 参加者: 配信ページ同期のON/OFF と 現在の配信ページ
-var _waiting=false; // 参加者: 配信開始前の待機表示中かどうか
+var _pstate=''; // 参加者の表示状態: 'pre'（配信前）/'live'（配信中）/'ended'（配信終了）
 function stageMsg(html){ var st=g('sem-stage'); if(st) st.innerHTML='<div class="stage-msg" style="max-width:82%;line-height:1.7;text-align:center">'+html+'</div>'; }
 function ensureCanvas(){ var st=g('sem-stage'); if(st && !g('sem-canvas')){ st.innerHTML='<canvas id="sem-canvas"></canvas>'; } }
 
@@ -164,21 +164,18 @@ function subscribe(){
       // 配信者は自分の操作を優先。ライブ表示のみ更新。
       return;
     }
-    if(data.live===false){ // 配信終了
-      if(_unsub){ _unsub(); _unsub=null; }
-      showMsg('配信は終了しました。<br><br><a href="'+esc(joinUrl())+'">▶ 再入場する</a>');
-      return;
+    var isLive=(data.started && data.live!==false);
+    if(isLive){ // 配信中：資料を同期表示
+      if(_pstate!=='live'){ _pstate='live'; ensureCanvas(); if(_syncOn) _page=_livePage; renderPage(_page); }
+      else if(_syncOn && p!==_page){ _page=p; renderPage(p); } // 同期ON時のみ配信ページへ追従
+      updateFoot(); updatePPg();
+    } else if(data.preBroadcast===false){ // 配信前=OFF → 配信終了メッセージ
+      if(_pstate!=='ended'){ _pstate='ended'; stageMsg('配信は終了しました。'); }
+      var fe=g('sem-foot'); if(fe) fe.textContent='配信は終了しました。';
+    } else { // 配信前=ON（既定）→ 配信開始前メッセージ
+      if(_pstate!=='pre'){ _pstate='pre'; stageMsg('配信開始前です。<br>開始までお待ちください。'); }
+      var fp=g('sem-foot'); if(fp) fp.textContent='配信開始前です。開始までお待ちください。';
     }
-    if(!data.started){ // 配信開始前
-      _waiting=true;
-      stageMsg('配信開始前です。<br>開始までお待ちください。');
-      var f0=g('sem-foot'); if(f0) f0.textContent='配信開始前です。開始までお待ちください。';
-      return;
-    }
-    // 配信中
-    if(_waiting){ _waiting=false; ensureCanvas(); if(_syncOn) _page=_livePage; renderPage(_page); }
-    else if(_syncOn && p!==_page){ _page=p; renderPage(p); } // 同期ON時のみ配信ページへ追従
-    updateFoot(); updatePPg();
   }, function(){});
 }
 
@@ -205,7 +202,7 @@ function buildUI(){
       +'<div class="foot" id="sem-foot">配信に同期中…</div>';
   }
   // 保存可のときは、保存ボタンの下に利用上の注意を表示
-  var saveNote=canSave?'<div style="text-align:center;font-size:10px;color:var(--ink3);padding:2px 14px 8px;line-height:1.5">ダウンロードしたセミナー資料の利用は個人利用のみにとどめ、転載・転用はご遠慮ください。</div>':'';
+  var saveNote=canSave?'<div style="text-align:center;font-size:10px;color:var(--ink3);padding:2px 14px 8px;line-height:1.5">ダウンロードしたセミナー資料は個人利用のみにとどめ、転載・転用はご遠慮下さい。</div>':'';
   g('screen').innerHTML=hd+stage+bottom+saveNote;
 }
 
@@ -270,7 +267,7 @@ function endBroadcast(){
   if(!_presenter) return;
   if(!confirm('配信を終了しますか？\n参加者の画面に「配信は終了しました」と表示されます。')) return;
   db.collection('events').doc(EID).collection('seminars').doc(SID)
-    .set({live:false, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).catch(function(){});
+    .set({live:false, preBroadcast:false, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).catch(function(){});
   if(_unsub){ _unsub(); _unsub=null; }
   showMsg('配信を終了しました。<br><span style="font-size:12px;color:var(--ink3)">もう一度配信するには、この画面を再読み込みしてください。</span>');
 }
