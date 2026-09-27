@@ -166,15 +166,15 @@ function subscribe(){
     }
     var isLive=(data.started && data.live!==false);
     if(isLive){ // 配信中：資料を同期表示
-      if(_pstate!=='live'){ _pstate='live'; ensureCanvas(); if(_syncOn) _page=_livePage; renderPage(_page); }
+      if(_pstate!=='live'){ _pstate='live'; ensureCanvas(); if(_syncOn) _page=_livePage; renderPage(_page); setParticipantControls('live'); }
       else if(_syncOn && p!==_page){ _page=p; renderPage(p); } // 同期ON時のみ配信ページへ追従
       updateFoot(); updatePPg();
     } else if(data.preBroadcast===false){ // 配信前=OFF → 配信終了メッセージ
-      if(_pstate!=='ended'){ _pstate='ended'; stageMsg('配信は終了しました。'); }
+      if(_pstate!=='ended'){ _pstate='ended'; stageMsg('配信は終了しました。'); setParticipantControls('ended'); }
       var fe=g('sem-foot'); if(fe) fe.textContent='配信は終了しました。';
-    } else { // 配信前=ON（既定）→ 配信開始前メッセージ
-      if(_pstate!=='pre'){ _pstate='pre'; stageMsg('配信開始前です。<br>開始までお待ちください。'); }
-      var fp=g('sem-foot'); if(fp) fp.textContent='配信開始前です。開始までお待ちください。';
+    } else { // 配信前=ON（既定）→ 資料を自由に閲覧できる（保存ボタンは非表示）
+      if(_pstate!=='pre'){ _pstate='pre'; ensureCanvas(); if(!(_page>=1)) _page=1; renderPage(_page); setParticipantControls('pre'); updatePPg(); }
+      updateFoot();
     }
   }, function(){});
 }
@@ -185,25 +185,36 @@ function buildUI(){
   var hd='<div class="sem-hd"><span class="sem-ttl">'+esc(_sem.title||'セミナー')+'</span>'+badge+live+'</div>';
   var stage='<div class="stage" id="sem-stage"><canvas id="sem-canvas"></canvas></div>';
   var canSave=!!_sem.allowDownload;
-  var saveBtn=canSave?'<button class="pbtn" onclick="savePdf()">💾 保存</button>':'';
   var bottom;
   if(_presenter){
+    var saveBtn=canSave?'<button class="pbtn" onclick="savePdf()">💾 保存</button>':'';
     bottom='<div class="ctl"><button id="btn-prev" onclick="prevPage()">◀</button><span class="pg" id="sem-pg">- / -</span><button id="btn-next" onclick="nextPage()">▶</button></div>'
       +'<div class="pbar"><button class="pbtn" onclick="openQr()">📱 参加者QR/URL</button><button class="pbtn" onclick="copyJoin()">🔗 URLコピー</button>'+saveBtn+'<button class="pbtn" onclick="endBroadcast()" style="border-color:#e26a6a;color:#e26a6a">⏹ 配信終了</button><span style="font-size:11px;color:var(--ink3)">配信者モード（あなたの操作が全員に同期）</span></div>';
   } else {
+    // 参加者コントロールは setParticipantControls(state) で状態別に表示制御する
     bottom='<div class="ctl" id="p-ctl">'
       +'<button id="p-prev" onclick="pMove(-1)" style="display:none">◀</button>'
       +'<span class="pg" id="p-pg" style="display:none">- / -</span>'
       +'<button id="p-next" onclick="pMove(1)" style="display:none">▶</button>'
-      +'<button class="pbtn" id="p-sync" onclick="toggleSync()">✋ 自由に移動</button>'
-      +saveBtn
+      +'<button class="pbtn" id="p-sync" onclick="toggleSync()" style="display:none">✋ 自由に移動</button>'
+      +(canSave?'<button class="pbtn" id="p-save" onclick="savePdf()" style="display:none">💾 保存</button>':'')
       +'<button class="pbtn" onclick="leaveSeminar()" style="border-color:#e26a6a;color:#e26a6a">🚪 退出</button>'
       +'</div>'
-      +'<div class="foot" id="sem-foot">配信に同期中…</div>';
+      +'<div class="foot" id="sem-foot">読み込み中…</div>';
   }
-  // 保存可のときは、保存ボタンの下に利用上の注意を表示
-  var saveNote=canSave?'<div style="text-align:center;font-size:10px;color:var(--ink3);padding:2px 14px 8px;line-height:1.5">ダウンロードしたセミナー資料は個人利用のみにとどめ、転載・転用はご遠慮下さい。</div>':'';
+  // 保存可のときの利用上の注意（配信者は常時、参加者は保存ボタン表示時のみ setParticipantControls で切替）
+  var saveNote=canSave?'<div id="sem-savenote" style="display:'+(_presenter?'block':'none')+';text-align:center;font-size:10px;color:var(--ink3);padding:2px 14px 8px;line-height:1.5">ダウンロードしたセミナー資料は個人利用のみにとどめ、転載・転用はご遠慮下さい。</div>':'';
   g('screen').innerHTML=hd+stage+bottom+saveNote;
+}
+// 参加者コントロールを状態別に表示制御。pre=配信前(自由閲覧・保存不可) / live=配信中 / ended=終了
+function setParticipantControls(state){
+  var canSave=!!(_sem&&_sem.allowDownload);
+  var showSave=canSave&&(state==='live'||state==='ended'); // 配信前は保存不可
+  var sv=g('p-save'); if(sv) sv.style.display=showSave?'':'none';
+  var nt=g('sem-savenote'); if(nt) nt.style.display=showSave?'':'none';
+  var sync=g('p-sync'); if(sync) sync.style.display=(state==='live')?'':'none'; // 同期トグルは配信中のみ
+  var showNav=(state==='pre')||(state==='live'&&!_syncOn); // 配信前は常に、配信中は自由移動時のみ
+  ['p-prev','p-pg','p-next'].forEach(function(id){ var e=g(id); if(e) e.style.display=showNav?'':'none'; });
 }
 
 function renderPage(p){
@@ -242,7 +253,10 @@ function updateCtl(){
   var pb=g('btn-prev'), nb=g('btn-next');
   if(pb) pb.disabled=(_page<=1); if(nb) nb.disabled=(_page>=_numPages);
 }
-function updateFoot(){ var f=g('sem-foot'); if(!f) return; f.textContent=_syncOn?('配信に同期中 — ページ '+_livePage+' / '+(_numPages||'-')):('自由閲覧中 — ページ '+_page+' / '+(_numPages||'-')+'（配信ページ: '+_livePage+'）'); }
+function updateFoot(){ var f=g('sem-foot'); if(!f) return;
+  if(_pstate==='pre'){ f.textContent='配信前（自由に閲覧できます） — ページ '+_page+' / '+(_numPages||'-'); }
+  else if(_pstate==='live'){ f.textContent=_syncOn?('配信に同期中 — ページ '+_livePage+' / '+(_numPages||'-')):('自由閲覧中 — ページ '+_page+' / '+(_numPages||'-')); }
+}
 function updateLive(on){ var l=g('sem-live'); if(l) l.style.display=on?'':'none'; }
 
 // ── 参加者: ページ同期 ON/OFF と自由移動 ──
@@ -253,13 +267,12 @@ function updatePPg(){
 }
 function toggleSync(){
   _syncOn=!_syncOn;
-  var free=!_syncOn;
-  ['p-prev','p-pg','p-next'].forEach(function(id){ var e=g(id); if(e) e.style.display=free?'':'none'; });
-  var sb=g('p-sync'); if(sb) sb.textContent=free?'🔗 配信に同期':'✋ 自由に移動';
+  var sb=g('p-sync'); if(sb) sb.textContent=_syncOn?'✋ 自由に移動':'🔗 配信に同期';
   if(_syncOn && _livePage){ _page=_livePage; renderPage(_page); } // 同期に戻したら配信ページへ復帰
+  setParticipantControls('live');
   updatePPg(); updateFoot();
 }
-function pMove(d){ if(_syncOn) return; setLocalPage(_page+d); }
+function pMove(d){ if(_pstate==='live' && _syncOn) return; setLocalPage(_page+d); } // 配信前と自由移動中は移動可
 function setLocalPage(p){ p=Math.min(Math.max(1,p),_numPages||1); _page=p; renderPage(p); updatePPg(); updateFoot(); }
 
 // ── 配信者: 配信終了 ／ 参加者: 退出 ──
@@ -282,23 +295,37 @@ function _dlBlob(b,name){
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(function(){ URL.revokeObjectURL(u); },2000);
 }
+function _dlFallback(name){
+  fetch(_sem.pdfUrl).then(function(r){ if(!r.ok) throw new Error('http '+r.status); return r.blob(); })
+    .then(function(b){ _dlBlob(b,name); })
+    .catch(function(){ window.open(_sem.pdfUrl,'_blank','noopener'); });
+}
 function savePdf(){
   if(!_sem||!_sem.pdfUrl||!_sem.allowDownload) return;
   var name=String(_sem.fileName||_sem.title||'seminar');
   if(!/\.pdf$/i.test(name)) name+='.pdf';
+  // PC(Chrome/Edge等): 保存先を選ぶ「名前を付けて保存」ダイアログを表示
+  if(window.showSaveFilePicker){
+    window.showSaveFilePicker({suggestedName:name, types:[{description:'PDF',accept:{'application/pdf':['.pdf']}}]})
+      .then(function(handle){
+        return fetch(_sem.pdfUrl).then(function(r){ if(!r.ok) throw new Error('http '+r.status); return r.blob(); })
+          .then(function(blob){ return handle.createWritable().then(function(w){ return w.write(blob).then(function(){ return w.close(); }); }); });
+      })
+      .catch(function(e){ if(e && e.name==='AbortError') return; _dlFallback(name); }); // キャンセルは何もしない
+    return;
+  }
+  // モバイル: download 属性が無視されPDFが開くだけになるため、共有シート経由で保存
   fetch(_sem.pdfUrl).then(function(r){ if(!r.ok) throw new Error('http '+r.status); return r.blob(); })
     .then(function(b){
       var file=null; try{ file=new File([b],name,{type:'application/pdf'}); }catch(e){}
-      // モバイルは download 属性が無視されPDFが開くだけになるため、共有シート経由で
-      // 「ファイルに保存」できるようにする（Web Share API・ユーザー操作起点で有効）。
       if(file && navigator.share && navigator.canShare && navigator.canShare({files:[file]})){
         navigator.share({files:[file], title:name})
-          .catch(function(err){ if(err && err.name!=='AbortError') _dlBlob(b,name); }); // キャンセル時は何もしない
+          .catch(function(err){ if(err && err.name!=='AbortError') _dlBlob(b,name); });
         return;
       }
-      _dlBlob(b,name); // PC等はそのままダウンロード
+      _dlBlob(b,name);
     })
-    .catch(function(){ window.open(_sem.pdfUrl,'_blank','noopener'); }); // 取得失敗時は直接開く
+    .catch(function(){ window.open(_sem.pdfUrl,'_blank','noopener'); });
 }
 
 // キーボード（配信者PC）
@@ -307,7 +334,7 @@ document.addEventListener('keydown',function(e){
   var left=(e.key==='ArrowLeft'||e.key==='PageUp');
   if(!right&&!left) return;
   if(_presenter){ e.preventDefault(); if(right) nextPage(); else prevPage(); }
-  else if(!_syncOn){ e.preventDefault(); pMove(right?1:-1); } // 参加者は自由移動中のみ
+  else if(_pstate==='pre' || (_pstate==='live' && !_syncOn)){ e.preventDefault(); pMove(right?1:-1); } // 配信前・自由移動中
 });
 window.addEventListener('resize',function(){ if(_pdf) renderPage(_page); });
 
