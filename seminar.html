@@ -37,11 +37,11 @@ body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSys
 .stage{flex:1 1 auto;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;padding:4px;min-width:0;min-height:0}
 #sem-canvas{max-width:100%;max-height:100%;background:#fff;box-shadow:0 4px 24px rgba(0,0,0,.5);border-radius:2px;pointer-events:none}
 .stage-msg{position:absolute;color:var(--ink3);font-size:13px}
-/* ページ送りは資料に重ねるフローティング表示にして資料を最大化する */
-.navov{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:12px;align-items:center;background:rgba(20,18,16,.72);border:1px solid var(--line);border-radius:12px;padding:4px 9px;z-index:5}
-.navov button{background:var(--gold);color:#241c0e;border:none;border-radius:9px;font-size:15px;font-weight:800;padding:6px 15px;cursor:pointer;min-width:50px}
-.navov button:disabled{opacity:.35;cursor:default}
-.navov .pg{font-size:13px;font-variant-numeric:tabular-nums;min-width:58px;text-align:center;font-weight:700;color:#fff}
+/* ページ送りバー（サイドバー/下部に配置。横画面では縦並び） */
+.navbar{flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:10px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+.navbar button{background:var(--gold);color:#241c0e;border:none;border-radius:9px;font-size:15px;font-weight:800;padding:7px 16px;cursor:pointer;min-width:52px}
+.navbar button:disabled{opacity:.35;cursor:default}
+.navbar .pg{font-size:14px;font-variant-numeric:tabular-nums;min-width:62px;text-align:center;font-weight:700;color:var(--ink)}
 .foot{flex:0 0 auto;text-align:center;font-size:11px;color:var(--ink3);padding:4px}
 .pbar{flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:8px;justify-content:center;padding:6px 12px;border-top:1px solid var(--line);background:var(--panel)}
 .pbtn{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer}
@@ -59,6 +59,8 @@ body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSys
   .sidebar{width:210px;border-left:1px solid var(--line);justify-content:center;gap:4px}
   .pbar{flex-direction:column;align-items:stretch;border-top:none;gap:8px}
   .pbar .pbtn{width:100%;text-align:center}
+  .navbar{flex-direction:column;border-bottom:none;gap:8px;padding-bottom:0}
+  .navbar button{width:100%}
   #sem-savenote{font-size:12px!important;border-top:1px solid var(--line)}
 }
 </style>
@@ -78,13 +80,13 @@ var _sem=null, _pdf=null, _numPages=0, _page=0, _presenter=false, _unsub=null, _
 var _syncOn=true, _livePage=1; // 参加者: 配信ページ同期のON/OFF と 現在の配信ページ
 var _pstate=''; // 参加者の表示状態: 'pre'（配信前）/'live'（配信中）/'ended'（配信終了）
 function stageMsg(html){ var st=g('sem-stage'); if(st) st.innerHTML='<div class="stage-msg" style="max-width:82%;line-height:1.7;text-align:center">'+html+'</div>'; }
-// ページ送りバー（資料に重ねる）。配信者/参加者でボタンのidと動作が異なる。
+// ページ送りバー。配信者/参加者でボタンのidと動作が異なる。サイドバー内に配置。
 function _navHtml(){
   return _presenter
-    ? '<div class="navov" id="navov"><button id="btn-prev" onclick="prevPage()">◀</button><span class="pg" id="sem-pg">- / -</span><button id="btn-next" onclick="nextPage()">▶</button></div>'
-    : '<div class="navov" id="navov" style="display:none"><button id="p-prev" onclick="pMove(-1)">◀</button><span class="pg" id="p-pg">- / -</span><button id="p-next" onclick="pMove(1)">▶</button></div>';
+    ? '<div class="navbar" id="navbar"><button id="btn-prev" onclick="prevPage()">◀</button><span class="pg" id="sem-pg">- / -</span><button id="btn-next" onclick="nextPage()">▶</button></div>'
+    : '<div class="navbar" id="navbar" style="display:none"><button id="p-prev" onclick="pMove(-1)">◀</button><span class="pg" id="p-pg">- / -</span><button id="p-next" onclick="pMove(1)">▶</button></div>';
 }
-function ensureCanvas(){ var st=g('sem-stage'); if(st && !g('sem-canvas')){ st.innerHTML='<canvas id="sem-canvas"></canvas>'+_navHtml(); } }
+function ensureCanvas(){ var st=g('sem-stage'); if(st && !g('sem-canvas')){ st.innerHTML='<canvas id="sem-canvas"></canvas>'; } }
 
 function showMsg(html){ g('screen').innerHTML='<div class="msg">'+html+'</div>'; }
 if(!EID||!SID){ showMsg('セミナーが指定されていません。'); }
@@ -201,8 +203,8 @@ function buildUI(){
   var live='<span class="sem-live" id="sem-live"><span class="dot"></span>LIVE</span>';
   var hd='<div class="sem-hd"><span class="sem-ttl">'+esc(_sem.title||'セミナー')+'</span>'+badge+live+'</div>';
   var canSave=!!_sem.allowDownload;
-  // ページ送りは資料に重ねる（_navHtml）。資料エリアを最大化するため独立の操作行は持たない。
-  var stage='<div class="stage" id="sem-stage"><canvas id="sem-canvas"></canvas>'+_navHtml()+'</div>';
+  // 資料エリアは canvas のみで最大化。ページ送りは操作類(sidebar)側に置く。
+  var stage='<div class="stage" id="sem-stage"><canvas id="sem-canvas"></canvas></div>';
   var bottom;
   if(_presenter){
     var saveBtn=canSave?'<button class="pbtn" onclick="savePdf()">💾 資料を保存</button>':'';
@@ -218,8 +220,8 @@ function buildUI(){
   }
   // 保存可のときの利用上の注意（配信者は常時、参加者は保存ボタン表示時のみ setParticipantControls で切替）
   var saveNote=canSave?'<div id="sem-savenote" style="display:'+(_presenter?'block':'none')+';text-align:center;font-size:14px;font-weight:700;color:var(--gold);background:rgba(216,181,107,.12);border-top:1px solid var(--line);padding:10px 16px;line-height:1.6">⚠ ダウンロードしたセミナー資料は個人利用のみにとどめ、転載・転用はご遠慮下さい。</div>':'';
-  // 横画面では stage を左・操作類(sidebar)を右に並べる（.body が縦/横を切替）
-  g('screen').innerHTML=hd+'<div class="body">'+stage+'<div class="sidebar">'+bottom+saveNote+'</div></div>';
+  // 横画面では stage を左・操作類(sidebar)を右に並べる（.body が縦/横を切替）。ページ送りバーは sidebar 先頭。
+  g('screen').innerHTML=hd+'<div class="body">'+stage+'<div class="sidebar">'+_navHtml()+bottom+saveNote+'</div></div>';
 }
 // 参加者コントロールを状態別に表示制御。pre=配信前(自由閲覧・保存不可) / live=配信中 / ended=終了
 function setParticipantControls(state){
@@ -229,7 +231,7 @@ function setParticipantControls(state){
   var nt=g('sem-savenote'); if(nt) nt.style.display=showSave?'':'none';
   var sync=g('p-sync'); if(sync) sync.style.display=(state==='live')?'':'none'; // 同期トグルは配信中のみ
   var showNav=(state==='live'&&!_syncOn); // ページ移動は配信中の自由移動時のみ（配信前/終了は資料を出さない）
-  var ov=g('navov'); if(ov) ov.style.display=showNav?'':'none'; // フローティングのページ送りバー
+  var ov=g('navbar'); if(ov) ov.style.display=showNav?'':'none'; // サイドバーのページ送りバー
 }
 
 function renderPage(p){
