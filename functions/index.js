@@ -2511,17 +2511,20 @@ exports.createTreatCheckout = functions
       if (ss.exists) { storeOpen = ss.data().status === 'open'; sessionDate = ss.data().sessionDate || null; }
     } catch (e) { /* noop */ }
 
-    let toName = 'テキミチ', toUid = null;
+    // 受取会員: memberId(displayId=260003) で検索し、ドキュメントID(realId)と authUid を取得。
+    // visits.memberId / orders.customerId は members のドキュメントID(realId)なので、承認時の
+    // 来場照合にはこの toMemberDocId を使う（displayId とは別物）。
+    let toName = 'テキミチ', toUid = null, toDocId = TREAT_RECIPIENT_ID;
     try {
       const rq = await db.collection('members').where('memberId', '==', TREAT_RECIPIENT_ID).limit(1).get();
-      if (!rq.empty) { toName = rq.docs[0].data().nickname || rq.docs[0].data().name || toName; toUid = rq.docs[0].data().authUid || null; }
+      if (!rq.empty) { toName = rq.docs[0].data().nickname || rq.docs[0].data().name || toName; toUid = rq.docs[0].data().authUid || null; toDocId = rq.docs[0].id; }
     } catch (e) { /* noop */ }
 
     const treatRef = db.collection('onlineTreats').doc();
     const treatId = treatRef.id;
     await treatRef.set({
       treatId, fromUid: context.auth.uid, fromMemberId, fromMemberName,
-      toMemberId: TREAT_RECIPIENT_ID, toMemberName: toName, toUid: toUid,
+      toMemberId: TREAT_RECIPIENT_ID, toMemberDocId: toDocId, toMemberName: toName, toUid: toUid,
       style, baseBottleId, baseProductCode: baseBottleId, baseName, nom,
       ml, soda: style === 'soda',
       unitPrice10: price10, tequilaAmount, sodaFee, amount,
@@ -2580,7 +2583,9 @@ exports.approveOnlineTreat = functions
     const t = tsnap.data();
     if (t.status !== 'paid') throw new functions.https.HttpsError('failed-precondition', 'この奢りは承認できません（状態: ' + t.status + '）');
 
-    const vsnap = await db.collection('visits').where('memberId', '==', t.toMemberId).get();
+    // 来場照合は members ドキュメントID(realId)で行う（visits.memberId は realId）。
+    const recipientKey = t.toMemberDocId || t.toMemberId;
+    const vsnap = await db.collection('visits').where('memberId', '==', recipientKey).get();
     const active = vsnap.docs.map((d) => Object.assign({ id: d.id }, d.data())).filter((v) => !v.checkoutTime && !v.checkoutPayTime);
     if (!active.length) throw new functions.https.HttpsError('failed-precondition', '受取会員が来場中ではありません。来場後に承認してください。');
     active.sort((a, b) => String(b.visitDate || b.id).localeCompare(String(a.visitDate || a.id)));
@@ -2619,7 +2624,7 @@ exports.approveOnlineTreat = functions
       const docId = useDate + String(++seq).padStart(3, '0');
       orderIds.push(docId);
       const rec = {
-        orderDate: useDate, orderTime, customerId: t.toMemberId, visitKey, orderGroupId, batchId,
+        orderDate: useDate, orderTime, customerId: recipientKey, visitKey, orderGroupId, batchId,
         itemSeq: i + 1, productCode: ln.productCode, productName: ln.productName, productType: ln.productType,
         qty: ln.qty, unit: ln.unit, unitPrice: ln.unitPrice,
         blindId: 0, blindMarkId: null, served: 1,
