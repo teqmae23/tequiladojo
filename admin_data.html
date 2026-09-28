@@ -1019,7 +1019,10 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         <div class="fg"><label class="fl">終了時間（HHMMSS）<span class="req">*</span> <span class="db-field">endTime</span></label><input class="fi mono" id="rsv-end" maxlength="6" placeholder="HHMMSS"></div>
       </div>
       <div class="fg"><label class="fl">人数<span class="req">*</span> <span class="db-field">guests</span></label>
-        <select class="fs" id="rsv-guests"><option value="">—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option></select>
+        <select class="fs" id="rsv-guests" onchange="renderGuestNames()"><option value="">—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option></select>
+      </div>
+      <div class="fg" id="rsv-names-wrap" style="display:none"><label class="fl">参加者氏名 <span class="db-field">guestNames</span></label>
+        <div id="rsv-names"></div>
       </div>
       <div class="fg"><label class="fl">貸切区分 <span class="db-field">charterType</span></label>
         <select class="fs" id="rsv-charter"><option value="0">0: 通常予約</option><option value="1">1: 貸切予約</option></select>
@@ -2078,6 +2081,27 @@ function renderReservations(){
   });
 })();
 
+// 人数2名以上のとき、参加者氏名の入力欄を人数分（guests個）表示する
+function renderGuestNames(prevVals){
+  var wrap=g("rsv-names-wrap"), box=g("rsv-names"); if(!box) return;
+  var guests=parseInt(gv("rsv-guests"))||0;
+  if(guests<2){ wrap.style.display="none"; box.innerHTML=""; return; }
+  wrap.style.display="";
+  var prev=prevVals||[].map.call(box.querySelectorAll(".rsv-name"),function(i){return i.value;});
+  var html="";
+  for(var k=0;k<guests;k++){
+    html+='<input class="fi rsv-name" placeholder="'+(k+1)+'人目のお名前" value="'+escHtml(prev[k]||"")+'" style="margin-bottom:6px">';
+  }
+  box.innerHTML=html;
+}
+// 参加者氏名を配列で回収（末尾の空欄は落とす）
+function collectGuestNames(){
+  var box=g("rsv-names"); if(!box) return [];
+  var arr=[].map.call(box.querySelectorAll(".rsv-name"),function(i){return (i.value||"").trim();});
+  while(arr.length && !arr[arr.length-1]) arr.pop();
+  return arr;
+}
+
 function openReservationModal(id){
   editId.reservation=id;
   g("mt-reservation").textContent=id?"予約編集":"予約登録";
@@ -2088,10 +2112,11 @@ function openReservationModal(id){
     sv("rsv-charter",r?String(r.charterType||"0"):"0");
     var _non=r?!!r.nonMember:false;
     g("rsv-nonmember").checked=_non; sv("rsv-customer-freetext",r?(r.customerName||""):""); setRsvNonMemberMode(_non);
+    renderGuestNames((r&&Array.isArray(r.guestNames))?r.guestNames:[]);
     g("kb-reservation").innerHTML='<span class="keypart kp-nom">'+id+'</span><span class="klabel">reservationId</span>';
   } else {
     ["rsv-date","rsv-start","rsv-end","rsv-customer","rsv-memo","rsv-customer-freetext"].forEach(function(i){sv(i,"");}); sv("rsv-guests",""); sv("rsv-charter","0");
-    g("rsv-nonmember").checked=false; setRsvNonMemberMode(false);
+    g("rsv-nonmember").checked=false; setRsvNonMemberMode(false); renderGuestNames([]);
     var nid=genRsvId();
     g("kb-reservation").innerHTML='<span class="keypart kp-nom">'+nid.slice(0,2)+'</span><span class="keypart kp-seq">'+nid.slice(2)+'</span><span class="klabel">reservationId</span>';
   }
@@ -2224,6 +2249,7 @@ if(_bsr2) _bsr2.addEventListener("click",function(){
       customerName:nonMember?custName:null,
       nonMember:nonMember,
       guests:parseInt(guests),
+      guestNames:(parseInt(guests)>=2?collectGuestNames():[]),
       charterType:parseInt(gv("rsv-charter")||"0"),
       memo:gv("rsv-memo")||null,
       createdAt:firebase.firestore.FieldValue.serverTimestamp()
