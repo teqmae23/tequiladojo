@@ -56,8 +56,17 @@
         var by = d.createdByName ? '<span class="an-sub">申請: ' + esc(d.createdByName) + '</span>' : '';
         return '<b>' + esc(nm) + '</b>' + by;
       }
+    },
+    {
+      key: 'onlineTreats', coll: 'onlineTreats', wq: ['status', '==', 'paid'],
+      href: 'admin_treats.html', icon: '🥃', label: 'オンライン奢り（承認待ち）',
+      line: function (d) {
+        var who = esc(d.fromMemberName || '') + ' → ' + esc(d.toMemberName || '');
+        var what = (d.style === 'soda' ? 'ソーダ割' : 'ストレート') + ' ' + (d.ml || '') + 'ml・' + esc(d.baseName || '');
+        return '<b>' + who + '</b><span class="an-sub">' + what + ' ／ ¥' + Number(d.amount || 0).toLocaleString() + '</span>';
+      }
     }
-    // 将来: { key:'onlineTreat', ... }, { key:'sameDayReservation', ... }, { key:'memberMessages', ... }
+    // 将来: { key:'sameDayReservation', ... }, { key:'memberMessages', ... }
   ];
 
   var MAX_ITEMS_PER_SOURCE = 6; // パネル内で各種別に表示する最大明細数
