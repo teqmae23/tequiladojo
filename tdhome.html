@@ -69,6 +69,16 @@ input{font-family:var(--sans)}
 .tile-admin .tile-label{color:var(--gold-d);font-size:16px}
 .tile-admin .tile-icon{font-size:30px}
 
+/* ── よく使うメニュー（利用頻度順・端末ごと） ── */
+.freq-head{display:flex;align-items:center;gap:8px;margin:6px 0 12px}
+.freq-reset{margin-left:auto;font-size:11px;color:var(--ink3);text-decoration:underline;cursor:pointer;background:none;border:none;padding:2px 4px}
+.freq-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:28px}
+.freq-tile{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);padding:15px 12px;text-align:center;cursor:pointer;transition:box-shadow .15s,transform .1s,border-color .15s;display:flex;flex-direction:column;align-items:center;gap:6px;text-decoration:none;color:inherit}
+.freq-tile:hover{box-shadow:0 4px 18px rgba(24,17,10,.12);transform:translateY(-2px);border-color:var(--gold)}
+.freq-ic{width:36px;height:36px;flex:0 0 auto;border-radius:9px;background:var(--cream2);display:flex;align-items:center;justify-content:center;font-size:20px}
+.freq-lb{font-size:13px;font-weight:600;color:var(--ink);line-height:1.35}
+.freq-ct{font-size:10px;color:var(--ink3);font-variant-numeric:tabular-nums}
+
 /* ── 管理業務ツリー ── */
 .back-btn{background:var(--cream2);border:1px solid var(--border2);color:var(--ink2);padding:8px 16px;border-radius:20px;font-size:13px;margin-bottom:16px;display:inline-flex;align-items:center;gap:6px}
 .back-btn:hover{background:var(--cream3)}
@@ -181,6 +191,14 @@ details[open]>.nav-sum::before{transform:rotate(90deg)}
     <!-- 日常業務（タイル） -->
     <div id="view-daily">
       <div class="home-sub" id="today-label"></div>
+      <!-- よく使うメニュー（利用頻度順・オーナーのみ・端末ごとに集計） -->
+      <div id="view-frequent" style="display:none">
+        <div class="freq-head">
+          <span class="tile-section-label" style="margin:0">★ よく使うメニュー</span>
+          <button class="freq-reset" onclick="resetMenuUsage()">履歴をリセット</button>
+        </div>
+        <div class="freq-grid" id="frequent-grid"></div>
+      </div>
       <div class="tile-section-label">日常業務</div>
       <div class="home-grid" id="daily-grid"></div>
     </div>
@@ -249,7 +267,7 @@ function renderDaily(){
     { label:'営業実績管理',   href:'admin_data.html',                icon:'📊', desc:'営業・来店・注文データ' }
   ];
   html += SHORTCUTS.map(function(t){
-    return '<a class="home-tile owner-only" href="'+t.href+'"><div class="tile-icon">'+t.icon+'</div>'
+    return '<a class="home-tile owner-only" href="'+t.href+'"'+muAttrs(t)+'><div class="tile-icon">'+t.icon+'</div>'
       + '<div class="tile-label">'+esc(t.label)+'</div><div class="tile-desc">'+esc(t.desc)+'</div></a>';
   }).join('');
   // 管理業務タイル（オーナーのみ表示。押すと管理ツリーへ）
@@ -364,26 +382,99 @@ var NAV = [
   ]}
 ];
 
+// 利用頻度トラッキング用の data 属性を組み立てる（key=遷移先href もしくは action）
+function muAttrs(n){
+  var key = n.href || n.action || '';
+  if(!key) return '';
+  return ' data-mu-key="'+esc(key)+'" data-mu-label="'+esc(n.label||'')+'" data-mu-icon="'+esc(n.icon||'')+'"'
+    + (n.href ? ' data-mu-href="'+esc(n.href)+'"' : '')
+    + (n.action ? ' data-mu-action="'+esc(n.action)+'"' : '');
+}
 function navLeafHtml(n){
   var note = n.note ? '<span class="nav-note">'+esc(n.note)+'</span>' : '';
   var inner = '<span class="nav-ic">'+n.icon+'</span><span class="nav-lb">'+esc(n.label)+note+'</span><span class="nav-ar">→</span>';
-  if(n.action) return '<div class="nav-leaf" onclick="'+n.action+'">'+inner+'</div>';
-  return '<a class="nav-leaf" href="'+n.href+'">'+inner+'</a>';
+  if(n.action) return '<div class="nav-leaf" onclick="'+n.action+'"'+muAttrs(n)+'>'+inner+'</div>';
+  return '<a class="nav-leaf" href="'+n.href+'"'+muAttrs(n)+'>'+inner+'</a>';
 }
 function navGroupHtml(n){
   var head = '<summary class="nav-sum"><span class="nav-ic">'+n.icon+'</span><span class="nav-lb">'+esc(n.label)+'</span>'
-    + (n.href ? '<a class="nav-open" href="'+n.href+'" onclick="event.stopPropagation()">開く →</a>' : '') + '</summary>';
+    + (n.href ? '<a class="nav-open" href="'+n.href+'" onclick="event.stopPropagation()"'+muAttrs({href:n.href,label:n.label,icon:n.icon})+'>開く →</a>' : '') + '</summary>';
   var kids = '<div class="nav-kids">'+n.children.map(navNodeHtml).join('')+'</div>';
   return '<details class="nav-group" open>'+head+kids+'</details>';
 }
 function navNodeHtml(n){ return n.children ? navGroupHtml(n) : navLeafHtml(n); }
 function renderNav(){ g('nav-root').innerHTML = NAV.map(function(n,i){ return '<div class="nav-top nav-c'+(i%8)+'">'+navNodeHtml(n)+'</div>'; }).join(''); }
 
+// ── メニュー利用頻度の記録・表示 ────────────────────────────────
+// 管理ページ（ショートカット/管理ツリーのリンク・アクション）のクリック回数を
+// この端末の localStorage に記録し、上位を「よく使うメニュー」としてTOPに表示する。
+// ※端末（ブラウザ）ごとの集計。日常業務タイルは常時表示のため対象外。
+var MU_KEY   = 'td_menu_usage_v1';
+var FREQ_MAX = 8;   // 表示上限
+var FREQ_MIN = 1;   // これ以上使われたら表示
+var _isOwner = false;
+function muLoad(){ try{ return JSON.parse(localStorage.getItem(MU_KEY)) || {}; }catch(e){ return {}; } }
+function muSave(o){ try{ localStorage.setItem(MU_KEY, JSON.stringify(o)); }catch(e){} }
+function recordMenuUse(rec){
+  if(!rec || !rec.key) return;
+  var o = muLoad();
+  var r = o[rec.key] || { count:0 };
+  r.count = (r.count||0) + 1;
+  r.last  = Date.now();
+  if(rec.label)  r.label  = rec.label;
+  if(rec.icon)   r.icon   = rec.icon;
+  if(rec.href)   r.href   = rec.href;
+  if(rec.action) r.action = rec.action;
+  o[rec.key] = r;
+  muSave(o);
+  renderFrequent();
+}
+function renderFrequent(){
+  var wrap = g('view-frequent'), grid = g('frequent-grid');
+  if(!wrap || !grid) return;
+  if(!_isOwner){ wrap.style.display = 'none'; return; }
+  var o = muLoad();
+  var items = Object.keys(o).map(function(k){ var r = o[k]; r._key = k; return r; })
+    .filter(function(r){ return (r.count||0) >= FREQ_MIN && (r.href || r.action); })
+    .sort(function(a,b){ return (b.count - a.count) || ((b.last||0) - (a.last||0)); })
+    .slice(0, FREQ_MAX);
+  if(!items.length){ wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  grid.innerHTML = items.map(function(r){
+    var inner = '<div class="freq-ic">'+(r.icon||'📄')+'</div>'
+      + '<div class="freq-lb">'+esc(r.label || r.href || r.action)+'</div>'
+      + '<div class="freq-ct">'+r.count+'回</div>';
+    var attrs = ' data-mu-key="'+esc(r._key)+'" data-mu-label="'+esc(r.label||'')+'" data-mu-icon="'+esc(r.icon||'')+'"'
+      + (r.href ? ' data-mu-href="'+esc(r.href)+'"' : '')
+      + (r.action ? ' data-mu-action="'+esc(r.action)+'"' : '');
+    if(r.action) return '<div class="freq-tile" onclick="'+esc(r.action)+'"'+attrs+'>'+inner+'</div>';
+    return '<a class="freq-tile" href="'+esc(r.href)+'"'+attrs+'>'+inner+'</a>';
+  }).join('');
+}
+function resetMenuUsage(){
+  if(!confirm('よく使うメニューの利用履歴（この端末）をリセットしますか？')) return;
+  try{ localStorage.removeItem(MU_KEY); }catch(e){}
+  renderFrequent();
+}
+// クリックを捕捉して記録（リンク遷移前に localStorage は同期保存される）
+document.addEventListener('click', function(e){
+  var el = e.target.closest && e.target.closest('[data-mu-key]');
+  if(!el) return;
+  recordMenuUse({
+    key:    el.getAttribute('data-mu-key'),
+    label:  el.getAttribute('data-mu-label') || '',
+    icon:   el.getAttribute('data-mu-icon') || '',
+    href:   el.getAttribute('data-mu-href') || el.getAttribute('href') || '',
+    action: el.getAttribute('data-mu-action') || ''
+  });
+}, true);
+
 function showAdmin(){ g('view-daily').style.display='none'; g('view-admin').style.display='block'; window.scrollTo(0,0); }
 function showDaily(){ g('view-admin').style.display='none'; g('view-daily').style.display='block'; window.scrollTo(0,0); }
 
 renderDaily();
 renderNav();
+renderFrequent();
 
 // 今日の日付
 (function(){
@@ -408,6 +499,8 @@ AuthRole.requireStaff(auth,
       document.querySelectorAll(".owner-only").forEach(function(el){
         el.style.display = el.classList.contains("home-tile") ? "flex" : "block";
       });
+      _isOwner = true;
+      renderFrequent();
     }
   },
   function(){
