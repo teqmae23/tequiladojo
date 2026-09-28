@@ -1101,6 +1101,19 @@ exports.stripeWebhook = functions
           stripeSessionId: obj.id,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
+      } else if (md.type === 'onlineTreat' && md.treatId) {
+        // オンライン奢りの決済完了 → 奢りを paid にして管理者通知に載せる
+        const tref = db.collection('onlineTreats').doc(md.treatId);
+        const tsnap = await tref.get();
+        if (tsnap.exists && tsnap.data().status === 'created') {
+          await tref.update({
+            status: 'paid',
+            paymentIntentId: obj.payment_intent || null,
+            stripeSessionId: obj.id,
+            amountPaid: obj.amount_total || null,
+            paidAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
       }
     }
 
@@ -2440,4 +2453,293 @@ exports.getBankRatesLive = functions.region('asia-northeast1')
       if (!Object.keys(rates).length) { sources.prestia.ready = false; sources.prestia.sample = sampleOf((xml || '').replace(/<[^>]+>/g, ' ').replace(/[\s　]+/g, ' ')); }
     }
     return { asof: new Date().toISOString().slice(0, 10), sources: sources };
+  });
+
+// ══════════════════════════════════════════════════════════════════
+// オンライン奢り（マイ道場からの奢り。Stripe Checkout 決済 / 承認で注文登録）
+// 受取会員は当面 260003（テキミチ）固定。決済系は us-central1（Stripe関数群）に置く。
+// ══════════════════════════════════════════════════════════════════
+const TREAT_RECIPIENT_ID = '260003';
+function _treatHms() { // JST の HHMMSS
+  const d = new Date(Date.now() + 9 * 3600 * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return p(d.getUTCHours()) + p(d.getUTCMinutes()) + p(d.getUTCSeconds());
+}
+function _treatMsg(v) { return String(v == null ? '' : v).trim().slice(0, 100); }
+
+// 会員が奢りを作成し、Stripe Checkout（一回払い）のURLを返す
+exports.createTreatCheckout = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onCall(async (data, context) => {
+    if (!context.auth || (context.auth.token.firebase && context.auth.token.firebase.sign_in_provider === 'anonymous')) {
+      throw new functions.https.HttpsError('unauthenticated', 'ログインが必要です');
+    }
+    const stripe = require('stripe')(stripeSecretKey.value());
+    const origin = safeSubOrigin(data && data.origin);
+    const lang = normalizeLang(data && data.lang);
+    const style = (data && data.style) === 'soda' ? 'soda' : 'straight';
+    const baseBottleId = String((data && data.baseBottleId) || '');
+    const message = _treatMsg(data && data.message);
+    let ml = parseInt(data && data.ml, 10);
+    if (style === 'soda') ml = 30;
+    if ([10, 20, 30].indexOf(ml) < 0) throw new functions.https.HttpsError('invalid-argument', '量が不正です');
+    if (!baseBottleId) throw new functions.https.HttpsError('invalid-argument', 'テキーラを選択してください');
+
+    const msnap = await db.collection('members').where('authUid', '==', context.auth.uid).limit(1).get();
+    if (msnap.empty) throw new functions.https.HttpsError('not-found', '会員情報が見つかりません');
+    const memberRef = msnap.docs[0].ref;
+    const member = msnap.docs[0].data();
+    const fromMemberId = String(member.memberId || msnap.docs[0].id);
+    const fromMemberName = member.nickname || member.name || fromMemberId;
+
+    const bsnap = await db.collection('bottleData').doc(baseBottleId).get();
+    if (!bsnap.exists) throw new functions.https.HttpsError('not-found', 'テキーラが見つかりません');
+    const b = bsnap.data();
+    const price10 = parseInt(b.price != null ? b.price : (b.unitPrice != null ? b.unitPrice : b.price10), 10) || 0;
+    if (price10 < 300) throw new functions.https.HttpsError('failed-precondition', 'このテキーラは対象外です（10ml 300円以上のみ）');
+    const baseName = b.bottleEn || b.bottleName || b.name || baseBottleId;
+    const nom = String(b.nom || (baseBottleId.length >= 4 ? baseBottleId.slice(0, 4) : '') || '');
+
+    const tequilaAmount = Math.round(price10 * ml / 10);
+    const sodaFee = style === 'soda' ? 100 : 0;
+    const amount = tequilaAmount + sodaFee;
+    if (amount <= 0) throw new functions.https.HttpsError('failed-precondition', '金額が不正です');
+
+    let storeOpen = false, sessionDate = null;
+    try {
+      const ss = await db.collection('storeStatus').doc('current').get();
+      if (ss.exists) { storeOpen = ss.data().status === 'open'; sessionDate = ss.data().sessionDate || null; }
+    } catch (e) { /* noop */ }
+
+    let toName = 'テキミチ', toUid = null;
+    try {
+      const rq = await db.collection('members').where('memberId', '==', TREAT_RECIPIENT_ID).limit(1).get();
+      if (!rq.empty) { toName = rq.docs[0].data().nickname || rq.docs[0].data().name || toName; toUid = rq.docs[0].data().authUid || null; }
+    } catch (e) { /* noop */ }
+
+    const treatRef = db.collection('onlineTreats').doc();
+    const treatId = treatRef.id;
+    await treatRef.set({
+      treatId, fromUid: context.auth.uid, fromMemberId, fromMemberName,
+      toMemberId: TREAT_RECIPIENT_ID, toMemberName: toName, toUid: toUid,
+      style, baseBottleId, baseProductCode: baseBottleId, baseName, nom,
+      ml, soda: style === 'soda',
+      unitPrice10: price10, tequilaAmount, sodaFee, amount,
+      message: message || null, reply: null, replyAt: null,
+      status: 'created', storeOpenAtCreate: storeOpen, sessionDateAtCreate: sessionDate,
+      thanksAck: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    const desc = 'オンライン奢り: ' + baseName + '（' + (style === 'soda' ? ('ソーダ割 ' + ml + 'ml') : ('ストレート ' + ml + 'ml')) + '）→ ' + toName;
+    async function freshCustomerId() {
+      const c = await stripe.customers.create({ email: (member && (member.email || member.authEmail)) || undefined, name: (member && member.name) || '', metadata: { memberId: fromMemberId } });
+      await memberRef.update({ stripeCustomerId: c.id });
+      return c.id;
+    }
+    function sessionParams(cust) {
+      return {
+        mode: 'payment',
+        customer: cust,
+        line_items: [{ price_data: { currency: 'jpy', unit_amount: amount, product_data: { name: desc } }, quantity: 1 }],
+        client_reference_id: fromMemberId,
+        metadata: { type: 'onlineTreat', treatId, memberId: fromMemberId },
+        payment_intent_data: { metadata: { type: 'onlineTreat', treatId } },
+        success_url: origin + '/member_treat.html?paid=1&t=' + treatId,
+        cancel_url: origin + '/member_treat.html?canceled=1&t=' + treatId,
+        locale: lang,
+      };
+    }
+    let session;
+    try {
+      const customerId = await resolveValidCustomerId(stripe, memberRef, member, fromMemberId);
+      session = await stripe.checkout.sessions.create(sessionParams(customerId));
+    } catch (e) {
+      const stale = e && e.code === 'resource_missing' && e.param === 'customer';
+      if (stale) { const cid = await freshCustomerId(); session = await stripe.checkout.sessions.create(sessionParams(cid)); }
+      else {
+        console.error('createTreatCheckout stripe error', { treatId, code: e && e.code, message: e && e.message });
+        throw new functions.https.HttpsError('failed-precondition', '決済の開始に失敗しました: ' + ((e && e.message) || 'Stripe error'));
+      }
+    }
+    await treatRef.update({ stripeSessionId: session.id });
+    return { url: session.url, treatId };
+  });
+
+// スタッフが奢りを承認 → 受取会員(来場中)の注文（未提供 served:1）に登録。ストレートは飲酒ログにも登録。
+exports.approveOnlineTreat = functions
+  .https.onCall(async (data, context) => {
+    if (!context.auth || (context.auth.token.role !== 'owner' && context.auth.token.role !== 'staff')) {
+      throw new functions.https.HttpsError('permission-denied', 'スタッフ権限が必要です');
+    }
+    const treatId = String((data && data.treatId) || '');
+    if (!treatId) throw new functions.https.HttpsError('invalid-argument', 'treatId が必要です');
+    const tref = db.collection('onlineTreats').doc(treatId);
+    const tsnap = await tref.get();
+    if (!tsnap.exists) throw new functions.https.HttpsError('not-found', '奢りが見つかりません');
+    const t = tsnap.data();
+    if (t.status !== 'paid') throw new functions.https.HttpsError('failed-precondition', 'この奢りは承認できません（状態: ' + t.status + '）');
+
+    const vsnap = await db.collection('visits').where('memberId', '==', t.toMemberId).get();
+    const active = vsnap.docs.map((d) => Object.assign({ id: d.id }, d.data())).filter((v) => !v.checkoutTime && !v.checkoutPayTime);
+    if (!active.length) throw new functions.https.HttpsError('failed-precondition', '受取会員が来場中ではありません。来場後に承認してください。');
+    active.sort((a, b) => String(b.visitDate || b.id).localeCompare(String(a.visitDate || a.id)));
+    const visit = active[0];
+    const visitKey = visit.id;
+    const useDate = String(visit.visitDate || visitKey.slice(0, 6));
+
+    const lines = [{ productType: 'tequila', productCode: t.baseProductCode, productName: t.baseName, qty: t.ml, unit: 'ml', unitPrice: t.unitPrice10 }];
+    if (t.soda) lines.push({ productType: 'misc', productCode: 'SODA', productName: 'ソーダ割り（ソーダ代）', qty: 1, unit: '杯', unitPrice: 100 });
+
+    const vkSnap = await db.collection('orders').where('visitKey', '==', visitKey).get();
+    const usedG = vkSnap.docs.map((d) => parseInt((d.data().orderGroupId || '').slice(visitKey.length)) || 0);
+    const orderGroupId = visitKey + String((usedG.length ? Math.max.apply(null, usedG) : 0) + 1).padStart(2, '0');
+
+    const dateSnap = await db.collection('orders').where('orderDate', '==', useDate).get();
+    let maxSeq = 0, maxBatch = 0;
+    dateSnap.docs.forEach((d) => {
+      const id = d.id; if (id.slice(0, 6) === useDate) { const s = parseInt(id.slice(6)) || 0; if (s > maxSeq) maxSeq = s; }
+      const bid = d.data().batchId || ''; if (bid.slice(0, 6) === useDate) { const bs = parseInt(bid.slice(6)) || 0; if (bs > maxBatch) maxBatch = bs; }
+    });
+    const counterRef = db.collection('counters').doc('orderSeq');
+    const seqStart = await db.runTransaction(async (tx) => {
+      const cs = await tx.get(counterRef);
+      const cur = cs.exists ? (cs.data()[useDate] || 0) : 0;
+      const start = Math.max(cur, maxSeq);
+      const upd = {}; upd[useDate] = start + lines.length;
+      tx.set(counterRef, upd, { merge: true });
+      return start;
+    });
+    const batchId = useDate + String(maxBatch + 1).padStart(3, '0');
+    const orderTime = _treatHms();
+    let seq = seqStart;
+    const batch = db.batch();
+    const orderIds = [];
+    lines.forEach((ln, i) => {
+      const docId = useDate + String(++seq).padStart(3, '0');
+      orderIds.push(docId);
+      const rec = {
+        orderDate: useDate, orderTime, customerId: t.toMemberId, visitKey, orderGroupId, batchId,
+        itemSeq: i + 1, productCode: ln.productCode, productName: ln.productName, productType: ln.productType,
+        qty: ln.qty, unit: ln.unit, unitPrice: ln.unitPrice,
+        blindId: 0, blindMarkId: null, served: 1,
+        isGiftRecipient: true, giftFromName: t.fromMemberName, giftFromMemberId: t.fromMemberId,
+        isOnlineTreat: true, treatId,
+      };
+      if (ln.productType === 'tequila') rec.baseProductCode = t.baseProductCode;
+      batch.set(db.collection('orders').doc(docId), rec);
+    });
+    batch.update(tref, {
+      status: 'approved', approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      recipientVisitKey: visitKey, orderIds, orderDate: useDate, approvedByUid: context.auth.uid,
+    });
+    await batch.commit();
+
+    if (!t.soda) {
+      try {
+        const rq = await db.collection('members').where('memberId', '==', t.toMemberId).limit(1).get();
+        const rUid = rq.empty ? null : (rq.docs[0].data().authUid || null);
+        await db.collection('tequilaLogs').add({
+          authUid: rUid, memberId: t.toMemberId,
+          bottleId: t.baseBottleId, bottleName: t.baseName,
+          amountMl: t.ml, source: 'onlineTreat', treatId,
+          note: 'オンライン奢り（' + t.fromMemberName + 'より）', rating: null,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (e) { console.error('treat tequilaLog error', e && e.message); }
+    }
+    return { ok: true, orderIds: orderIds };
+  });
+
+// 奢りのキャンセル（承認前のみ）。会員本人 or スタッフ。paid の場合は Stripe 返金。
+exports.cancelOnlineTreat = functions
+  .runWith({ secrets: ['STRIPE_SECRET_KEY'] })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'ログインが必要です');
+    const treatId = String((data && data.treatId) || '');
+    if (!treatId) throw new functions.https.HttpsError('invalid-argument', 'treatId が必要です');
+    const tref = db.collection('onlineTreats').doc(treatId);
+    const tsnap = await tref.get();
+    if (!tsnap.exists) throw new functions.https.HttpsError('not-found', '奢りが見つかりません');
+    const t = tsnap.data();
+    const role = context.auth.token.role;
+    const isStaff = role === 'owner' || role === 'staff';
+    const isOwnerMember = t.fromUid === context.auth.uid;
+    if (!isStaff && !isOwnerMember) throw new functions.https.HttpsError('permission-denied', 'キャンセル権限がありません');
+    if (t.status === 'approved' || t.status === 'served') throw new functions.https.HttpsError('failed-precondition', '承認後のためキャンセルできません');
+    if (t.status === 'cancelled') return { ok: true, already: true };
+    if (t.status !== 'paid' && t.status !== 'created') throw new functions.https.HttpsError('failed-precondition', 'この状態ではキャンセルできません（' + t.status + '）');
+
+    let refundId = null;
+    if (t.status === 'paid' && t.paymentIntentId) {
+      const stripe = require('stripe')(stripeSecretKey.value());
+      try {
+        const r = await stripe.refunds.create({ payment_intent: t.paymentIntentId });
+        refundId = r.id;
+      } catch (e) {
+        console.error('cancelOnlineTreat refund error', { treatId, message: e && e.message });
+        throw new functions.https.HttpsError('failed-precondition', '返金に失敗しました: ' + ((e && e.message) || 'Stripe error'));
+      }
+    }
+    await tref.update({ status: 'cancelled', cancelledAt: admin.firestore.FieldValue.serverTimestamp(), cancelledByUid: context.auth.uid, refundId: refundId });
+    return { ok: true, refundId: refundId };
+  });
+
+// 受取会員が奢りに返信（100字以内）。奢り履歴に残る。
+exports.replyOnlineTreat = functions
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'ログインが必要です');
+    const treatId = String((data && data.treatId) || '');
+    const reply = _treatMsg(data && data.reply);
+    if (!treatId) throw new functions.https.HttpsError('invalid-argument', 'treatId が必要です');
+    if (!reply) throw new functions.https.HttpsError('invalid-argument', '返信内容を入力してください');
+    const tref = db.collection('onlineTreats').doc(treatId);
+    const tsnap = await tref.get();
+    if (!tsnap.exists) throw new functions.https.HttpsError('not-found', '奢りが見つかりません');
+    const t = tsnap.data();
+    const role = context.auth.token.role;
+    const isStaff = role === 'owner' || role === 'staff';
+    // 受取会員本人（authUid or memberId 一致）または スタッフ
+    let isRecipient = false;
+    try {
+      const rq = await db.collection('members').where('authUid', '==', context.auth.uid).limit(1).get();
+      if (!rq.empty) {
+        const mid = String(rq.docs[0].data().memberId || rq.docs[0].id);
+        isRecipient = (mid === String(t.toMemberId));
+      }
+    } catch (e) { /* noop */ }
+    if (!isRecipient && !isStaff) throw new functions.https.HttpsError('permission-denied', '返信権限がありません');
+    await tref.update({ reply: reply, replyAt: admin.firestore.FieldValue.serverTimestamp(), repliedByUid: context.auth.uid });
+    return { ok: true };
+  });
+
+// 奢った会員が「提供済み（お礼）」通知を確認して解除する
+exports.ackTreatThanks = functions
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'ログインが必要です');
+    const treatId = String((data && data.treatId) || '');
+    if (!treatId) throw new functions.https.HttpsError('invalid-argument', 'treatId が必要です');
+    const tref = db.collection('onlineTreats').doc(treatId);
+    const tsnap = await tref.get();
+    if (!tsnap.exists) throw new functions.https.HttpsError('not-found', '奢りが見つかりません');
+    if (tsnap.data().fromUid !== context.auth.uid) throw new functions.https.HttpsError('permission-denied', '権限がありません');
+    await tref.update({ thanksAck: true });
+    return { ok: true };
+  });
+
+// 奢り注文が提供済み(served 1→3)になったら奢りを served にし、奢った会員へお礼通知を出す
+exports.onTreatOrderServed = functions.firestore
+  .document('orders/{orderId}')
+  .onUpdate(async (change, context) => {
+    const before = change.before.data() || {};
+    const after = change.after.data() || {};
+    if (!after.isOnlineTreat || !after.treatId) return null;
+    if (before.served !== 3 && after.served === 3) {
+      const tref = db.collection('onlineTreats').doc(after.treatId);
+      const tsnap = await tref.get();
+      if (tsnap.exists && tsnap.data().status === 'approved') {
+        await tref.update({ status: 'served', servedAt: admin.firestore.FieldValue.serverTimestamp() });
+      }
+    }
+    return null;
   });
