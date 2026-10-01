@@ -555,6 +555,28 @@ function duplicateBdata(bd){
     rawBdata.push(Object.assign({id:newId},doc)); buildTree(); renderTree();
   }).catch(function(e){ alert('複製失敗: '+e.message); });
 }
+// ＋BD: 編集モーダルを開かず、このボトルのボトルデータを価格0円で即作成・保存する。
+// 既定値はボトルマスタ(b)から継承。詳細はボトルデータ編集画面で後から調整する想定。
+function addBdataForBottle(b){
+  if(!b||!b.id){ alert('ボトル情報が不正です'); return; }
+  var max=0;
+  rawBdata.forEach(function(d){ if(d.id&&d.id[0]==='T'){ var s=parseInt(d.id.slice(1))||0; if(s>max) max=s; } });
+  var newId='T'+String(max+1).padStart(5,'0');
+  var doc={
+    bottleDataId:newId, seq:newId, bottleId:b.id, brandId:b.brandId||null,
+    bottleEs:b.bottleEs||null, bottleJa:b.bottleJa||null,
+    bottleEsBase:b.bottleEsBase||b.bottleEs||null, bottleJaBase:b.bottleJaBase||b.bottleJa||null,
+    suffix:b.suffix||null, classId:b.classId||null, abv:(b.abv!=null&&b.abv!==''?b.abv:null),
+    production:b.production||null, filtration:b.filtration||null, additive:b.additive||null,
+    lotType:1, lotNo:'N/A', volume:750, remaining:750,
+    price:0, cost:null, status:'serving', visibility:'0', importType:'0', domesticDist:'0', note:null
+  };
+  // 表示用の派生フィールド(_amm* 等)は保存しない
+  Object.keys(doc).forEach(function(k){ if(k.charAt(0)==='_') delete doc[k]; });
+  db.collection('bottleData').doc(newId).set(doc).then(function(){
+    rawBdata.push(Object.assign({id:newId},doc)); buildTree(); renderTree();
+  }).catch(function(e){ alert('BD追加失敗: '+e.message); });
+}
 
 // ── 削除 ─────────────────────────────────────────────────────────────
 function deleteRecord(col, docId, label){
@@ -713,13 +735,12 @@ function makeRow(lv, r, stateKey, hasChildren, nameColor){
     (function(rec){ ammBtn.addEventListener('click',function(e){ e.stopPropagation(); openAmmMatch(rec); }); })(r);
     acts.appendChild(ammBtn);
 
-    var bdAddA=document.createElement('a');
-    bdAddA.className='act-link';
-    bdAddA.href='admin_tequila.html?tab=bdata&newbd='+encodeURIComponent(r.id);
-    bdAddA.target='_blank'; bdAddA.rel='noopener';
-    bdAddA.textContent='＋BD';
-    bdAddA.title='このボトルの新規ボトルデータを登録';
-    acts.appendChild(bdAddA);
+    var bdAddBtn=document.createElement('button');
+    bdAddBtn.className='act-link';
+    bdAddBtn.textContent='＋BD';
+    bdAddBtn.title='このボトルのボトルデータを価格0円で作成（編集は別画面で）';
+    (function(rec){ bdAddBtn.addEventListener('click',function(e){ e.stopPropagation(); addBdataForBottle(rec); }); })(r);
+    acts.appendChild(bdAddBtn);
   }
 
   // ブランドには新規ボトルマスタ(BT)追加ボタン
