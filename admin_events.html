@@ -133,6 +133,14 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .se-item.ov{background:#f6f1e6;border-style:dashed}
 .se-t{min-width:52px;font-family:var(--mono);font-size:16px;font-weight:700;color:var(--ink);flex:0 0 auto;text-align:center;line-height:1.1}
 .se-move-arrow{display:block;font-size:14px;color:var(--gold-d);line-height:1}
+.se-t .se-actual{color:#1a6e58;font-size:16px}
+.se-t .se-sched-strike{display:block;font-size:10px;color:var(--ink3);text-decoration:line-through;font-weight:400;line-height:1}
+.se-cico{display:flex;flex-direction:column;gap:4px;flex:0 0 auto}
+.cico-btn{font-family:var(--sans);font-size:11px;font-weight:700;border-radius:6px;padding:3px 9px;border:1px solid var(--border2);background:var(--white);color:var(--ink2);cursor:pointer;white-space:nowrap;min-width:60px;text-align:center}
+.cico-btn.set{background:#e4f3ec;border-color:#9fd3bb;color:#1a6e58}
+.cico-btn.ci.set{background:#e4f3ec}
+.cico-btn.co.set{background:#eaf0fb;border-color:#b7cdec;color:#2a5fa0}
+.cico-clear{font-size:10px;color:var(--ink3);text-align:center;cursor:pointer;text-decoration:underline}
 .se-day-toggle{user-select:none;display:flex;align-items:center;gap:6px}
 .se-day-hd{flex:1;min-width:0;cursor:pointer;display:flex;align-items:center;gap:6px}
 .se-day-add{flex:0 0 auto;padding:2px 9px;font-size:11px}
@@ -3003,16 +3011,53 @@ function renderSchedItemRow(it){
     var ct=costText(it);
     costHtml=ct?('<span class="se-cost">'+esc(ct)+'</span>'):'';
   }
-  var timeHtml=(it.isMove&&it.toTime)
-    ? '<span class="se-t">'+esc(it.time||'—')+'<span class="se-move-arrow">↓</span>'+esc(it.toTime)+'</span>'
-    : ((!it.isMove&&it.endTime)
-      ? '<span class="se-t">'+esc(it.time||'—')+'<span class="se-move-arrow">↓</span>'+esc(it.endTime)+'</span>'
-      : '<span class="se-t">'+esc(it.time||'—')+(it.isMove?'<span class="se-move-arrow">↓</span>':'')+'</span>');
+  // 実時間(CI/CO)があれば予定時間に上書き表示（予定は小さく取り消し線で残す）
+  var schedStart=it.time||'—', schedEnd=(it.isMove?it.toTime:it.endTime)||'';
+  function _tCell(actual, sched){
+    if(actual) return '<span class="se-actual">'+esc(actual)+'</span>'+(sched&&sched!=='—'&&sched!==actual?'<span class="se-sched-strike">'+esc(sched)+'</span>':'');
+    return esc(sched||'—');
+  }
+  var startCell=_tCell(it.actualStart, schedStart);
+  var endCell=schedEnd?_tCell(it.actualEnd, schedEnd):(it.actualEnd?_tCell(it.actualEnd,''):'');
+  var timeHtml='<span class="se-t">'+startCell+((endCell)?'<span class="se-move-arrow">↓</span>'+endCell:(it.isMove?'<span class="se-move-arrow">↓</span>':''))+'</span>';
+  var ciSet=!!it.actualStart, coSet=!!it.actualEnd;
+  var cico='<div class="se-cico" onclick="event.stopPropagation()">'
+    +'<button class="cico-btn ci'+(ciSet?' set':'')+'" onclick="eventCI(\''+esc(it.id)+'\')" title="開始の実時間を記録">'+(ciSet?('CI '+esc(it.actualStart)):'CI 開始')+'</button>'
+    +'<button class="cico-btn co'+(coSet?' set':'')+'" onclick="eventCO(\''+esc(it.id)+'\')" title="終了の実時間を記録">'+(coSet?('CO '+esc(it.actualEnd)):'CO 終了')+'</button>'
+    +((ciSet||coSet)?'<span class="cico-clear" onclick="eventCICOClear(\''+esc(it.id)+'\')">実時間を消去</span>':'')
+    +'</div>';
   return '<div class="se-item'+(it.overnight?' ov':'')+'" onclick="openSchedEd(\''+esc(it.id)+'\')" style="cursor:pointer;background:'+catBg(it.category)+'">'
     +timeHtml+'<span class="se-ic">'+ic+'</span>'
     +'<div class="se-main"><div class="se-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'（無題）')+SchedGroups.badge(it,esc)+'</div>'+noteHtml+(markers.length?'<div class="se-sub">'+markers.join('　')+'</div>':'')+'</div>'
-    +costHtml+'</div>';
+    +costHtml+cico+'</div>';
 }
+// ── イベントCI/CO（実時間の記録。管理者・共同管理者がスケジュール管理画面から押す） ──
+function _nowHM(){ var d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
+function _nowDate(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
+function eventCI(id){
+  var it=_schItems.find(function(x){return x.id===id;}); if(!it) return;
+  if(it.actualStart && !confirm('開始の実時間を '+_nowHM()+' に記録し直しますか？（現在: '+it.actualStart+'）')) return;
+  var hm=_nowHM(), ms=Date.now(), dt=_nowDate();
+  schCol(_schEventId).doc(id).update({ actualStart:hm, actualStartMs:ms, actualStartDate:dt })
+    .then(function(){ it.actualStart=hm; it.actualStartMs=ms; it.actualStartDate=dt; renderSchedList(); toast('CI 記録: '+hm); })
+    .catch(function(e){ toast('記録失敗: '+e.message); });
+}
+function eventCO(id){
+  var it=_schItems.find(function(x){return x.id===id;}); if(!it) return;
+  if(it.actualEnd && !confirm('終了の実時間を '+_nowHM()+' に記録し直しますか？（現在: '+it.actualEnd+'）')) return;
+  var hm=_nowHM(), ms=Date.now(), dt=_nowDate();
+  schCol(_schEventId).doc(id).update({ actualEnd:hm, actualEndMs:ms, actualEndDate:dt })
+    .then(function(){ it.actualEnd=hm; it.actualEndMs=ms; it.actualEndDate=dt; renderSchedList(); toast('CO 記録: '+hm); })
+    .catch(function(e){ toast('記録失敗: '+e.message); });
+}
+function eventCICOClear(id){
+  if(!confirm('この項目の実時間(CI/CO)を消去しますか？')) return;
+  var FV=firebase.firestore.FieldValue;
+  schCol(_schEventId).doc(id).update({ actualStart:FV.delete(), actualStartMs:FV.delete(), actualStartDate:FV.delete(), actualEnd:FV.delete(), actualEndMs:FV.delete(), actualEndDate:FV.delete() })
+    .then(function(){ loadSchedItems(); toast('実時間を消去しました'); })
+    .catch(function(e){ toast('消去失敗: '+e.message); });
+}
+
 var _schExpandedDays={}; // 展開中の日付を記憶（追加・編集後も維持）
 function toggleDay(idx, date){ var b=g('se-day-body-'+idx), c=g('se-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▶':'▼'; _schExpandedDays[date]=!open; }
 function openSchedForDay(date, grp){ _schExpandedDays[date]=true; openSchedEd(null, date, grp); }
