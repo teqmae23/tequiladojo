@@ -308,7 +308,13 @@ a{color:var(--gold-d)}
 .ph-pin-wrap{background:none;border:none}
 .ph-pin{display:inline-flex;align-items:center;gap:1px;background:var(--gold-d);color:#fff;border-radius:12px;padding:2px 7px;font-size:13px;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;cursor:pointer}
 .ph-pin b{font-size:11px;font-weight:700}
-#ph-suggest{font-size:11px;color:var(--teal);margin-bottom:8px;min-height:14px}
+#ph-review{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+.phr-row{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:10px;padding:8px}
+.phr-row img{width:52px;height:52px;object-fit:cover;border-radius:7px;flex:0 0 auto;background:var(--cream2)}
+.phr-main{flex:1;min-width:0}
+.phr-by{font-size:10px;margin-bottom:3px}
+.phr-by.geo{color:var(--teal)}.phr-by.time{color:var(--gold-d)}.phr-by.none{color:var(--red)}
+.phr-sel{width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border2);border-radius:7px;background:var(--cream)}
 .ck-summary{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:5px 12px;border-radius:14px;border:1px solid rgba(0,0,0,.06)}
 .ck-summary.done{background:#e3edfb;color:#22568f}
 .ck-summary.todo{background:#fbf1d6;color:#8a6a1e}
@@ -524,24 +530,18 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
   </div>
 </div>
 
-<!-- 写真アップロード -->
+<!-- 写真アップロード（撮影時刻＋GPSで自動分類→確認して保存） -->
 <div class="mbg" id="ph-modal">
   <div class="modal">
     <div class="mhd"><span>📷 写真を追加</span><button class="x" onclick="closePh()">閉じる</button></div>
     <div class="mbd">
-      <div class="fg"><label class="fl">スケジュール項目</label><select class="fi" id="ph-item"></select><div id="ph-suggest"></div></div>
       <div class="fg"><label class="fl">写真（複数選択可）</label><input class="fi" id="ph-file" type="file" accept="image/*" multiple></div>
-      <div id="ph-preview" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px"></div>
-      <div class="mnote">アップロード前に自動で圧縮（長辺〜1600px）します。「画像のタイムスタンプを使う」を選ぶと、各写真の撮影時刻から自動で項目に振り分けます。</div>
+      <div class="mnote">撮影時刻と位置情報（GPS）から該当するスケジュール項目を自動で判定します。分類が違うときは各写真の項目名（セレクト）をタップして、前後6時間の候補から選び直せます。保存前に長辺〜1600pxへ圧縮します。</div>
+      <div id="ph-review"></div>
       <div class="sv-err" id="ph-err"></div>
       <div id="ph-prog" style="font-size:12px;color:var(--ink3);margin-top:6px"></div>
-      <div id="ph-manual" style="display:none;border-top:1px dashed var(--border2);margin-top:10px;padding-top:10px">
-        <div class="mnote" id="ph-manual-msg" style="color:var(--gold-d)"></div>
-        <div class="fg"><label class="fl">項目を選択</label><select class="fi" id="ph-manual-item"></select></div>
-        <button class="btn bp" id="ph-manual-btn" onclick="uploadPending()">この項目でアップロード</button>
-      </div>
     </div>
-    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closePh()">キャンセル</button><button class="btn bp" id="ph-up" onclick="uploadPhotos()">アップロード</button></div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closePh()">キャンセル</button><button class="btn bp" id="ph-up" onclick="saveReview()" disabled>保存</button></div>
   </div>
 </div>
 <!-- 掲示板 投稿 -->
@@ -2174,30 +2174,57 @@ function focusSched(id){
 /* ── 写真アップロード（B3a） ── */
 var _phPending=[], _phDone=0;
 function _phItemOptions(){ return _schedItems.map(function(it){ return '<option value="'+esc(it.id)+'">'+esc((it.date||'')+' '+(it.time||'')+' '+(it.title||'')).trim()+'</option>'; }).join(''); }
+var _phReview=[]; // [{f, ex, itemId}]
 function openPh(){
   if(!_isReal){ return; }
-  var opts=_phItemOptions();
-  // 既定は「画像のタイムスタンプを使う」
-  g('ph-item').innerHTML='<option value="__auto__">画像のタイムスタンプを使う（自動振り分け）</option>'+opts;
-  g('ph-item').value='__auto__';
-  g('ph-file').value=''; g('ph-preview').innerHTML=''; g('ph-err').textContent=''; g('ph-prog').textContent=''; g('ph-suggest').textContent='';
-  g('ph-manual').style.display='none'; g('ph-up').style.display='';
-  _phPending=[]; _phDone=0;
+  g('ph-file').value=''; g('ph-review').innerHTML=''; g('ph-err').textContent=''; g('ph-prog').textContent='';
+  g('ph-up').disabled=true; _phReview=[]; _phDone=0;
   g('ph-modal').classList.add('open');
 }
-function closePh(){ g('ph-modal').classList.remove('open'); }
+function closePh(){ g('ph-modal').classList.remove('open'); _phReview.forEach(function(r){ if(r._url) URL.revokeObjectURL(r._url); }); _phReview=[]; }
 g('ph-modal').addEventListener('click',function(e){ if(e.target===g('ph-modal')) closePh(); });
+// 項目の基準時刻(ms): 実時間(CI)優先、無ければ予定時刻。終了も実時間(CO)優先。
+function _itemStartMs(it){ if(it.actualStartMs) return it.actualStartMs; if(it.date) return new Date(it.date+'T'+(it.time||'12:00')+':00').getTime(); return 0; }
+function _itemEndMs(it){ if(it.actualEndMs) return it.actualEndMs; var e=it.isMove?it.toTime:it.endTime; if(it.date&&e) return new Date(it.date+'T'+e+':00').getTime(); return 0; }
+function _itemLabel(it){ var t=(it.actualStart||it.time||''); return ((it.date||'')+' '+t+' '+(it.title||'（無題）')).trim(); }
+// 撮影時刻 t(ms) の前後 hours 時間内のスケジュール項目（時刻不明なら全項目）
+function _itemsWithin(t, hours){
+  if(!t) return _schedItems.slice();
+  var win=hours*3600*1000;
+  var inWin=_schedItems.filter(function(it){ var s=_itemStartMs(it); return s && Math.abs(s-t)<=win; });
+  return inWin.length?inWin:_schedItems.slice();
+}
 g('ph-file').addEventListener('change',function(){
-  var box=g('ph-preview'); box.innerHTML=''; g('ph-suggest').textContent='';
-  var files=Array.prototype.slice.call(this.files);
-  files.slice(0,20).forEach(function(f){
-    var img=document.createElement('img'); img.src=URL.createObjectURL(f);
-    var w=document.createElement('div'); w.className='ph-prev'; w.appendChild(img); box.appendChild(w);
-  });
-  if(g('ph-item').value==='__auto__') g('ph-suggest').textContent='📷 各写真の撮影時刻で項目に自動振り分けします（時刻不明の写真は後で選択）';
+  var files=Array.prototype.slice.call(this.files).slice(0,30);
+  g('ph-err').textContent='';
+  if(!files.length){ _phReview=[]; g('ph-review').innerHTML=''; g('ph-up').disabled=true; return; }
+  g('ph-prog').textContent='解析中…';
+  Promise.all(files.map(function(f){ return readExif(f); })).then(function(exs){
+    g('ph-prog').textContent='';
+    _phReview=files.map(function(f,i){
+      var ex=exs[i]||{};
+      var sug=suggestItem(ex);
+      return { f:f, ex:ex, itemId:(sug?sug.id:''), by:(sug?sug.by:'none'), _url:URL.createObjectURL(f) };
+    });
+    renderReview();
+  }).catch(function(e){ g('ph-prog').textContent=''; g('ph-err').textContent='画像の解析に失敗しました: '+e.message; });
 });
-// 撮影時刻に最も近いスケジュール項目
-function _nearestByTime(t){ var b=null,bd=1e15; _schedItems.forEach(function(it){ if(!it.date)return; var tt=new Date(it.date+'T'+(it.time||'12:00')+':00').getTime(); var d=Math.abs(tt-t); if(d<bd){bd=d;b=it;} }); return b?b.id:null; }
+function renderReview(){
+  if(!_phReview.length){ g('ph-review').innerHTML=''; g('ph-up').disabled=true; return; }
+  g('ph-review').innerHTML=_phReview.map(function(r,i){
+    var cands=_itemsWithin(r.ex.time, 6);
+    // 候補に現在の選択が含まれていなければ加える
+    if(r.itemId && !cands.some(function(it){return it.id===r.itemId;})){ var cur=_schedItems.find(function(it){return it.id===r.itemId;}); if(cur) cands=[cur].concat(cands); }
+    var opts='<option value="">— 未分類 —</option>'+cands.map(function(it){ return '<option value="'+esc(it.id)+'"'+(it.id===r.itemId?' selected':'')+'>'+esc(_itemLabel(it))+'</option>'; }).join('');
+    var byTxt=r.by==='位置情報'?'📍 位置情報で判定':(r.by==='撮影時刻'?'🕐 撮影時刻で判定':'⚠ 自動判定できません（項目を選択）');
+    var byCls=r.by==='位置情報'?'geo':(r.by==='撮影時刻'?'time':'none');
+    return '<div class="phr-row"><img src="'+r._url+'" alt="">'
+      +'<div class="phr-main"><div class="phr-by '+byCls+'">'+byTxt+'</div>'
+      +'<select class="phr-sel" onchange="_phSetItem('+i+',this.value)">'+opts+'</select></div></div>';
+  }).join('');
+  g('ph-up').disabled=false;
+}
+function _phSetItem(i,v){ if(_phReview[i]){ _phReview[i].itemId=v; } }
 function compressImage(file, maxDim, quality){
   return new Promise(function(resolve,reject){
     var img=new Image();
@@ -2253,8 +2280,15 @@ function parseExif(dv){
 }
 function haversine(a,b,c,d){ var R=6371,r=Math.PI/180,dLat=(c-a)*r,dLng=(d-b)*r; var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a*r)*Math.cos(c*r)*Math.sin(dLng/2)*Math.sin(dLng/2); return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x)); }
 function suggestItem(ex){
+  // ① 位置情報（GPS）が近い項目を最優先（50km以内）
   if(ex.lat!=null&&ex.lng!=null){ var best=null,bd=1e9; _schedItems.forEach(function(it){ if(it.lat!=null&&it.lng!=null){ var d=haversine(ex.lat,ex.lng,it.lat,it.lng); if(d<bd){bd=d;best=it;} } }); if(best&&bd<50) return {id:best.id, by:'位置情報'}; }
-  if(ex.time){ var b2=null,bd2=1e15; _schedItems.forEach(function(it){ if(!it.date)return; var t=new Date(it.date+'T'+(it.time||'12:00')+':00').getTime(); var d=Math.abs(t-ex.time); if(d<bd2){bd2=d;b2=it;} }); if(b2&&bd2<12*3600*1000) return {id:b2.id, by:'撮影時刻'}; }
+  // ② 撮影時刻（実時間CI/CO優先）。まず時間帯[開始,終了]に入る項目、無ければ最も近い開始時刻（12h以内）
+  if(ex.time){
+    var inWin=null;
+    _schedItems.forEach(function(it){ var s=_itemStartMs(it); if(!s)return; var e=_itemEndMs(it)||s; if(ex.time>=s-5*60000 && ex.time<=e+5*60000){ if(!inWin || s>_itemStartMs(inWin)) inWin=it; } });
+    if(inWin) return {id:inWin.id, by:'撮影時刻'};
+    var b2=null,bd2=1e15; _schedItems.forEach(function(it){ var s=_itemStartMs(it); if(!s)return; var d=Math.abs(s-ex.time); if(d<bd2){bd2=d;b2=it;} }); if(b2&&bd2<12*3600*1000) return {id:b2.id, by:'撮影時刻'};
+  }
   return null;
 }
 
@@ -2287,50 +2321,18 @@ function _phRun(list, onProg){
     })(0);
   });
 }
-function uploadPhotos(){
+// 確認済みの分類で保存（各写真を選択中の項目に紐づけ。複数写真→複数項目も可）
+function saveReview(){
   if(!_isReal){ g('ph-err').textContent='参加者（会員）のみ投稿できます'; return; }
   if(!storage){ g('ph-err').textContent='この環境では写真投稿を利用できません'; return; }
-  var mode=g('ph-item').value;
-  var files=Array.prototype.slice.call(g('ph-file').files);
-  if(!files.length){ g('ph-err').textContent='写真を選択してください'; return; }
-  if(mode!=='__auto__' && !_schedItems.find(function(x){return x.id===mode;})){ g('ph-err').textContent='スケジュール項目を選択してください'; return; }
-  g('ph-err').textContent=''; var btn=g('ph-up'); btn.disabled=true; g('ph-prog').textContent='解析中…';
-  Promise.all(files.map(function(f){ return readExif(f); })).then(function(exs){
-    var ready=[], pending=[];
-    files.forEach(function(f,i){
-      var ex=exs[i];
-      if(mode==='__auto__'){
-        var id=ex.time?_nearestByTime(ex.time):null; // タイムスタンプで振り分け
-        if(id) ready.push({f:f,ex:ex,itemId:id});
-        else pending.push({f:f,ex:ex}); // タイムスタンプ不明→後で項目選択
-      } else { ready.push({f:f,ex:ex,itemId:mode}); }
-    });
-    return _phRun(ready, function(a,b){ g('ph-prog').textContent='アップロード中… '+a+'/'+b; }).then(function(n){
-      _phDone+=n;
-      if(pending.length){
-        _phPending=pending;
-        g('ph-prog').textContent=''; g('ph-file').value=''; g('ph-preview').innerHTML=''; g('ph-suggest').textContent='';
-        g('ph-manual-item').innerHTML=_phItemOptions();
-        g('ph-manual-msg').textContent='撮影時刻を確認できない写真が'+pending.length+'枚あります。項目を選んでアップロードしてください。';
-        g('ph-manual').style.display='block'; g('ph-up').style.display='none';
-        btn.disabled=false;
-        if(n) toast(n+'枚をアップロードしました');
-      } else {
-        btn.disabled=false; g('ph-prog').textContent=''; toast(_phDone+'枚をアップロードしました'); closePh(); loadSchedule();
-      }
-    });
-  }).catch(function(e){ btn.disabled=false; g('ph-prog').textContent=''; g('ph-err').textContent='アップロード失敗: '+e.message; });
-}
-function uploadPending(){
-  var id=g('ph-manual-item').value;
-  if(!id||!_schedItems.find(function(x){return x.id===id;})){ g('ph-err').textContent='項目を選択してください'; return; }
-  if(!_phPending.length){ g('ph-manual').style.display='none'; return; }
-  var list=_phPending.map(function(p){ return {f:p.f, ex:p.ex, itemId:id}; });
-  g('ph-err').textContent=''; var mb=g('ph-manual-btn'); mb.disabled=true;
-  _phRun(list, function(a,b){ g('ph-prog').textContent='アップロード中… '+a+'/'+b; }).then(function(n){
-    _phDone+=n; _phPending=[]; mb.disabled=false; g('ph-prog').textContent='';
-    toast(_phDone+'枚をアップロードしました'); closePh(); loadSchedule();
-  }).catch(function(e){ mb.disabled=false; g('ph-prog').textContent=''; g('ph-err').textContent='アップロード失敗: '+e.message; });
+  if(!_phReview.length){ g('ph-err').textContent='写真を選択してください'; return; }
+  var unassigned=_phReview.filter(function(r){ return !r.itemId; });
+  if(unassigned.length){ g('ph-err').textContent='未分類の写真が'+unassigned.length+'枚あります。各写真の項目を選択してください。'; return; }
+  g('ph-err').textContent=''; var btn=g('ph-up'); btn.disabled=true;
+  var list=_phReview.map(function(r){ return {f:r.f, ex:r.ex, itemId:r.itemId}; });
+  _phRun(list, function(a,b){ g('ph-prog').textContent='保存中… '+a+'/'+b; }).then(function(n){
+    g('ph-prog').textContent=''; toast(n+'枚を保存しました'); closePh(); loadSchedule();
+  }).catch(function(e){ btn.disabled=false; g('ph-prog').textContent=''; g('ph-err').textContent='保存に失敗しました: '+e.message; });
 }
 
 /* ── ライトボックス ── */
@@ -2354,12 +2356,14 @@ function showLb(){
   g('lb-cap').textContent=(p.uploaderName?('投稿: '+p.uploaderName):'')+'　'+(_lbIdx+1)+'/'+_lbList.length;
   g('lb-nav-prev').style.visibility=_lbList.length>1?'visible':'hidden';
   g('lb-nav-next').style.visibility=_lbList.length>1?'visible':'hidden';
-  g('lb-del').style.display=(_isStaff && !_lbNoDelete)?'inline-block':'none'; // 管理者は投稿写真を削除可（項目添付は管理画面で管理）
+  // 削除は投稿者本人または管理者（項目添付写真は管理画面で管理するため不可）
+  var canDel=!_lbNoDelete && (_isStaff || (p.uploaderUid && p.uploaderUid===_uid));
+  g('lb-del').style.display=canDel?'inline-block':'none';
 }
 function lbNav(d){ _lbIdx=(_lbIdx+d+_lbList.length)%_lbList.length; showLb(); }
 function deletePhoto(){
-  if(!_isStaff) return;
   var p=_lbList[_lbIdx]; if(!p) return;
+  if(!(_isStaff || (p.uploaderUid && p.uploaderUid===_uid))) return; // 投稿者本人または管理者のみ
   if(!confirm('この写真を削除しますか？（元に戻せません）')) return;
   db.collection('events').doc(eventId).collection('photos').doc(p.id).delete().then(function(){
     if(p.storagePath&&storage){ storage.ref(p.storagePath+'.jpg').delete().catch(function(){}); storage.ref(p.storagePath+'_thumb.jpg').delete().catch(function(){}); }
