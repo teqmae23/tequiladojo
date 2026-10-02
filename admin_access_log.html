@@ -64,6 +64,15 @@ td.mono{font-family:var(--mono);font-size:12px;color:var(--ink2)}
 .pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;background:var(--cream2);color:var(--ink2)}
 .mid{font-size:10px;color:var(--ink3);font-family:var(--mono)}
 .ec{text-align:center;color:var(--ink3);padding:40px 12px;font-size:13px}
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+.tab{border:1px solid var(--border2);border-radius:var(--r);padding:8px 16px;font-size:13px;font-weight:600;background:var(--white);color:var(--ink2)}
+.tab.active{background:var(--gold-d);color:var(--cream);border-color:var(--gold-d)}
+.rk-no{width:52px;text-align:center;font-weight:700;color:var(--gold-d);font-variant-numeric:tabular-nums}
+.rk-no.top{font-size:17px}
+.rk-medal{font-size:17px}
+.rk-cnt{font-variant-numeric:tabular-nums;font-weight:700;color:var(--ink)}
+.rk-bar{height:6px;border-radius:3px;background:var(--gold-l);margin-top:4px;min-width:3px}
+.rk-sub{font-size:11px;color:var(--ink3)}
 
 /* ===== 可読性向上（管理画面共通・濃い文字/大きめフォント）===== */
 .pdesc{font-size:13px;color:var(--ink2)}
@@ -98,7 +107,11 @@ td.mono{font-family:var(--mono);font-size:12px;color:var(--ink2)}
   </div>
   <div class="wrap">
     <div class="ptitle">会員アクセスログ</div>
-    <div class="pdesc">会員が会員ページ／マイページ・下位ページを開いた記録（新しい順・最大500件）。同一ページは10分以内の重複を除外して記録しています。</div>
+    <div class="pdesc">会員が会員ページ／マイページ・下位ページを開いた記録（新しい順・最大500件）。同一ページは10分以内の重複を除外して記録しています。ランキングは読み込んだ記録（下の絞り込みを反映）を集計します。</div>
+    <div class="tabs">
+      <button class="tab active" id="tab-list">📋 ログ一覧</button>
+      <button class="tab" id="tab-rank">🏆 アクセスランキング</button>
+    </div>
     <div class="toolbar">
       <input type="text" id="f-q" placeholder="会員名 / 会員IDで検索">
       <select id="f-page"><option value="">全ページ</option></select>
@@ -107,11 +120,8 @@ td.mono{font-family:var(--mono);font-size:12px;color:var(--ink2)}
       <button class="btn" id="btn-reload">↻ 再読み込み</button>
       <span class="cnt" id="cnt"></span>
     </div>
-    <div class="card">
-      <table>
-        <thead><tr><th style="width:150px">日時</th><th>会員</th><th style="width:150px">ページ</th></tr></thead>
-        <tbody id="tb"><tr><td colspan="3" class="ec">読み込み中…</td></tr></tbody>
-      </table>
+    <div class="card" id="card">
+      <div class="ec">読み込み中…</div>
     </div>
   </div>
 </div>
@@ -167,15 +177,19 @@ function init(){
   ['f-q','f-page','f-date'].forEach(function(id){ g(id).addEventListener('input',render); g(id).addEventListener('change',render); });
   g('btn-clear').addEventListener('click',function(){ g('f-q').value=''; g('f-page').value=''; g('f-date').value=''; render(); });
   g('btn-reload').addEventListener('click',load);
+  g('tab-list').addEventListener('click',function(){ setView('list'); });
+  g('tab-rank').addEventListener('click',function(){ setView('rank'); });
   loadMembers().then(load);
 }
+var _view='list';
+function setView(v){ _view=v; g('tab-list').classList.toggle('active',v==='list'); g('tab-rank').classList.toggle('active',v==='rank'); render(); }
 
 function load(){
-  g('tb').innerHTML='<tr><td colspan="3" class="ec">読み込み中…</td></tr>';
+  g('card').innerHTML='<div class="ec">読み込み中…</div>';
   db.collection('accessLogs').orderBy('at','desc').limit(500).get().then(function(snap){
     logs=snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
     render();
-  }).catch(function(e){ g('tb').innerHTML='<tr><td colspan="3" class="ec">読み込み失敗: '+esc(e.message)+'</td></tr>'; });
+  }).catch(function(e){ g('card').innerHTML='<div class="ec">読み込み失敗: '+esc(e.message)+'</div>'; });
 }
 
 function fmtAt(at){
@@ -203,15 +217,52 @@ function render(){
     return true;
   });
   g('cnt').textContent=list.length+' 件'+(list.length!==logs.length?(' / 全'+logs.length+'件'):'');
-  var tb=g('tb');
-  if(!list.length){ tb.innerHTML='<tr><td colspan="3" class="ec">該当するアクセスログはありません</td></tr>'; return; }
-  tb.innerHTML=list.map(function(l){
+  if(_view==='rank') renderRank(list); else renderList(list);
+}
+function renderList(list){
+  if(!list.length){ g('card').innerHTML='<div class="ec">該当するアクセスログはありません</div>'; return; }
+  var rows=list.map(function(l){
     return '<tr>'
       +'<td class="mono">'+esc(fmtAt(l.at))+'</td>'
       +'<td>'+esc(l.name||'（名称未設定）')+' <span class="mid">'+esc(dispMid(l.memberId))+'</span></td>'
       +'<td><span class="pill">'+esc(pageLabel(l.page))+'</span></td>'
       +'</tr>';
   }).join('');
+  g('card').innerHTML='<table><thead><tr><th style="width:150px">日時</th><th>会員</th><th style="width:150px">ページ</th></tr></thead><tbody>'+rows+'</tbody></table>';
+}
+// 会員別アクセス数ランキング（絞り込み後の記録を集計）
+function renderRank(list){
+  if(!list.length){ g('card').innerHTML='<div class="ec">集計できるアクセスログはありません</div>'; return; }
+  var map={};
+  list.forEach(function(l){
+    var mid=dispMid(l.memberId);
+    var key=mid||('name:'+(l.name||'（名称未設定）'));
+    var r=map[key]||(map[key]={key:key, mid:mid, name:(l.name||''), count:0, lastMs:0, lastAt:null, days:{}, pages:{}});
+    if(l.name) r.name=l.name;
+    r.count++;
+    var t=(l.at&&l.at.toDate)?l.at.toDate().getTime():0;
+    if(t>r.lastMs){ r.lastMs=t; r.lastAt=l.at; }
+    var dk=dayKey(l.at); if(dk) r.days[dk]=1;
+    var pg=l.page||''; if(pg) r.pages[pg]=(r.pages[pg]||0)+1;
+  });
+  var arr=Object.keys(map).map(function(k){ return map[k]; });
+  arr.sort(function(a,b){ return (b.count-a.count) || (b.lastMs-a.lastMs); });
+  var max=arr[0].count||1;
+  var medal=function(i){ return i===0?'🥇':(i===1?'🥈':(i===2?'🥉':'')); };
+  var topPage=function(r){ var best='',bc=0; Object.keys(r.pages).forEach(function(p){ if(r.pages[p]>bc){ bc=r.pages[p]; best=p; } }); return best?(pageLabel(best)+' '+bc+'回'):'—'; };
+  var rows=arr.map(function(r,i){
+    var md=medal(i);
+    var barW=Math.max(3,Math.round(r.count/max*100));
+    return '<tr>'
+      +'<td class="rk-no'+(i<3?' top':'')+'">'+(md?('<span class="rk-medal">'+md+'</span>'):(i+1))+'</td>'
+      +'<td>'+esc(r.name||'（名称未設定）')+' <span class="mid">'+esc(r.mid||'')+'</span>'
+        +'<div class="rk-bar" style="width:'+barW+'%"></div></td>'
+      +'<td class="rk-cnt">'+r.count+'<div class="rk-sub">'+Object.keys(r.days).length+'日</div></td>'
+      +'<td class="rk-sub">'+esc(topPage(r))+'</td>'
+      +'<td class="mono rk-sub">'+esc(fmtAt(r.lastAt))+'</td>'
+      +'</tr>';
+  }).join('');
+  g('card').innerHTML='<table><thead><tr><th style="width:52px">順位</th><th>会員</th><th style="width:90px">アクセス数</th><th style="width:140px">よく見るページ</th><th style="width:150px">最終アクセス</th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 </script>
 </body>
