@@ -3034,6 +3034,27 @@ function renderSchedItemRow(it){
 // ── イベントCI/CO（実時間の記録。管理者・共同管理者がスケジュール管理画面から押す） ──
 function _nowHM(){ var d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
 function _nowDate(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
+// 同じ班か（班未使用なら常に同一班扱い）
+function _sameGroupCICO(a,b){
+  if(!SchedGroups.used(_schItems)) return true;
+  for(var g=1; g<=(SchedGroups.MAX||3); g++){ if(SchedGroups.inGroup(a,g)&&SchedGroups.inGroup(b,g)) return true; }
+  return false;
+}
+// 同じ班の他項目と実時間[sMs,eMs]がかぶるか（分単位で判定。端点一致=接触はOK）。かぶる項目を返す。
+function _ciCoConflict(it, sMs, eMs){
+  if(sMs==null && eMs==null) return null;
+  var toMin=function(ms){ return Math.floor(ms/60000); };
+  var A1=toMin(sMs!=null?sMs:eMs), A2=toMin(eMs!=null?eMs:sMs); if(A1>A2){ var t=A1;A1=A2;A2=t; }
+  for(var i=0;i<_schItems.length;i++){ var y=_schItems[i]; if(y.id===it.id) continue;
+    var ys=(y.actualStartMs!=null?y.actualStartMs:null), ye=(y.actualEndMs!=null?y.actualEndMs:null);
+    if(ys==null && ye==null) continue;
+    if(!_sameGroupCICO(it,y)) continue;
+    var B1=toMin(ys!=null?ys:ye), B2=toMin(ye!=null?ye:ys); if(B1>B2){ var u=B1;B1=B2;B2=u; }
+    if(A1 < B2 && B1 < A2) return y; // 厳密に重なる（接触は許容）
+  }
+  return null;
+}
+function _ciCoConflictMsg(y){ return '同じ班の「'+(y.title||'項目')+'」('+((y.actualStart||'?')+(y.actualEnd?('〜'+y.actualEnd):''))+')と実時間がかぶります。接する時刻（例: 前10:00終了→次10:00開始）は可能です。'; }
 // 確定済みの実時間を手入力で修正（HH:MM）。日付は記録日(無ければ項目の日付)を用いてmsも更新。
 function _editActualTime(id, which){
   var it=_schItems.find(function(x){return x.id===id;}); if(!it) return;
@@ -3046,6 +3067,10 @@ function _editActualTime(id, which){
   var pp=v.split(':'); v=('0'+parseInt(pp[0],10)).slice(-2)+':'+pp[1];
   var dateStr=((which==='start')?(it.actualStartDate||it.date):(it.actualEndDate||it.date))||it.date||'';
   var ms=dateStr?new Date(dateStr+'T'+v+':00').getTime():Date.now();
+  var cfS=(which==='start')?ms:(it.actualStartMs!=null?it.actualStartMs:null);
+  var cfE=(which==='end')?ms:(it.actualEndMs!=null?it.actualEndMs:null);
+  var cf=_ciCoConflict(it, cfS, cfE);
+  if(cf){ toast('変更不可: '+_ciCoConflictMsg(cf),'err'); return; }
   var upd={};
   if(which==='start'){ upd.actualStart=v; upd.actualStartMs=ms; if(dateStr) upd.actualStartDate=(it.actualStartDate||dateStr); }
   else { upd.actualEnd=v; upd.actualEndMs=ms; if(dateStr) upd.actualEndDate=(it.actualEndDate||dateStr); }
@@ -3057,6 +3082,8 @@ function eventCI(id){
   var it=_schItems.find(function(x){return x.id===id;}); if(!it) return;
   if(it.actualStart){ _editActualTime(id,'start'); return; } // 確定後はタップで時間修正
   var hm=_nowHM(), ms=Date.now(), dt=_nowDate();
+  var cf=_ciCoConflict(it, ms, (it.actualEndMs!=null?it.actualEndMs:null));
+  if(cf){ toast('CI不可: '+_ciCoConflictMsg(cf),'err'); return; }
   schCol(_schEventId).doc(id).update({ actualStart:hm, actualStartMs:ms, actualStartDate:dt })
     .then(function(){ it.actualStart=hm; it.actualStartMs=ms; it.actualStartDate=dt; renderSchedList(); toast('CI 記録: '+hm); })
     .catch(function(e){ toast('記録失敗: '+e.message); });
@@ -3065,6 +3092,8 @@ function eventCO(id){
   var it=_schItems.find(function(x){return x.id===id;}); if(!it) return;
   if(it.actualEnd){ _editActualTime(id,'end'); return; } // 確定後はタップで時間修正
   var hm=_nowHM(), ms=Date.now(), dt=_nowDate();
+  var cf=_ciCoConflict(it, (it.actualStartMs!=null?it.actualStartMs:null), ms);
+  if(cf){ toast('CO不可: '+_ciCoConflictMsg(cf),'err'); return; }
   schCol(_schEventId).doc(id).update({ actualEnd:hm, actualEndMs:ms, actualEndDate:dt })
     .then(function(){ it.actualEnd=hm; it.actualEndMs=ms; it.actualEndDate=dt; renderSchedList(); toast('CO 記録: '+hm); })
     .catch(function(e){ toast('記録失敗: '+e.message); });
