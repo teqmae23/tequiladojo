@@ -2459,14 +2459,23 @@ function parseExif(dv){
   return {};
 }
 function haversine(a,b,c,d){ var R=6371,r=Math.PI/180,dLat=(c-a)*r,dLng=(d-b)*r; var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a*r)*Math.cos(c*r)*Math.sin(dLng/2)*Math.sin(dLng/2); return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x)); }
-// 写真座標が項目の位置に合うか。2点間移動は2点の緯度帯かつ経度帯に入ればOK、滞在地点は50km以内。
+var MOVE_ROUTE_KM=50; // 2点間移動: 経路直線からこの距離以内なら「道中」とみなす
+// 点Pから線分A-Bまでの距離(km)。緯度を考慮した等距円筒近似（この縮尺では十分）。
+function _kmPointToSeg(plat,plng, alat,alng, blat,blng){
+  var toR=Math.PI/180, R=6371;
+  var latRef=((alat+blat+plat)/3)*toR, kx=Math.cos(latRef)*R*toR, ky=R*toR;
+  var Px=plng*kx, Py=plat*ky, Ax=alng*kx, Ay=alat*ky, Bx=blng*kx, By=blat*ky;
+  var ABx=Bx-Ax, ABy=By-Ay, len2=ABx*ABx+ABy*ABy;
+  var t=len2>0?((Px-Ax)*ABx+(Py-Ay)*ABy)/len2:0; t=Math.max(0,Math.min(1,t));
+  var Cx=Ax+t*ABx, Cy=Ay+t*ABy, dx=Px-Cx, dy=Py-Cy;
+  return Math.sqrt(dx*dx+dy*dy);
+}
+// 写真座標が項目の位置に合うか。2点間移動は経路直線から MOVE_ROUTE_KM 以内、滞在地点は50km以内。
 function _geoInItem(it, lat, lng){
   if(lat==null||lng==null||!it) return {hit:false};
   if(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null){
-    var la1=Math.min(it.lat,it.toLat), la2=Math.max(it.lat,it.toLat);
-    var lo1=Math.min(it.lng,it.toLng), lo2=Math.max(it.lng,it.toLng);
-    var mLat=(la2-la1)*0.05+0.02, mLng=(lo2-lo1)*0.05+0.02; // わずかな余裕
-    return { hit:(lat>=la1-mLat && lat<=la2+mLat && lng>=lo1-mLng && lng<=lo2+mLng), move:true };
+    var dseg=_kmPointToSeg(lat,lng, it.lat,it.lng, it.toLat,it.toLng);
+    return { hit:(dseg<=MOVE_ROUTE_KM), move:true, dist:dseg };
   }
   if(it.lat!=null && it.lng!=null){ var dd=haversine(lat,lng,it.lat,it.lng); return { hit:(dd<50), dist:dd }; }
   return {hit:false};
