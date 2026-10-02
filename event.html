@@ -1419,7 +1419,7 @@ function loadSchedule(){
     loadCats()
   ]).then(function(res){
     _schedItems=res[0].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
-    _schedItems.sort(function(a,b){ var ka=(a.date||'')+' '+(a.time||'99:99')+' '+_endMark(a)+' '+('00'+(a.seq||0)).slice(-3), kb=(b.date||'')+' '+(b.time||'99:99')+' '+_endMark(b)+' '+('00'+(b.seq||0)).slice(-3); return ka<kb?-1:1; });
+    _schedItems.sort(function(a,b){ var ka=(a.date||'')+' '+(a.time||'99:99')+' '+_endMark(a)+' '+('000000000000'+_caSec(a)).slice(-12)+' '+('00'+(a.seq||0)).slice(-3), kb=(b.date||'')+' '+(b.time||'99:99')+' '+_endMark(b)+' '+('000000000000'+_caSec(b)).slice(-12)+' '+('00'+(b.seq||0)).slice(-3); return ka<kb?-1:(ka>kb?1:0); });
     _photosByItem={};
     res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).forEach(function(p){ (_photosByItem[p.scheduleItemId]=_photosByItem[p.scheduleItemId]||[]).push(p); });
     Object.keys(_photosByItem).forEach(function(k){ _photosByItem[k].sort(phSort); });
@@ -1623,12 +1623,13 @@ function _schedInstant(it){
 // JST絶対時刻で並べ替え（時差のある行程も実際の時系列で並ぶ）
 // 終了時刻（滞在終了 or 移動の到着）が無い項目を先に（同じ開始時刻なら「10:30-」を「10:30-12:30」より上に）
 function _endMark(it){ var e=(it&&it.endTime&&it.endTime.trim())||(it&&it.isMove&&it.toTime&&it.toTime.trim()); return e?1:0; }
+function _caSec(it){ return (it&&it.createdAt&&it.createdAt.seconds)||0; } // 登録タイミング（createdAt秒）
 function _sortByJst(items){
-  return items.map(function(it,i){ var d=_schedInstant(it); return {it:it, ms:d?d.getTime():0, ck:(it.date||'')+' '+(it.time||'99:99'), em:_endMark(it), seq:it.seq||0, i:i}; })
+  return items.map(function(it,i){ var d=_schedInstant(it); return {it:it, ms:d?d.getTime():0, ck:(it.date||'')+' '+(it.time||'99:99'), em:_endMark(it), ca:_caSec(it), seq:it.seq||0, i:i}; })
     .sort(function(a,b){
-      // 同じ日付＋開始時刻なら ms（時差）を無視し、終了なし→終了あり→登録順で確定
-      if(a.ck===b.ck) return (a.em-b.em)||(a.seq-b.seq)||(a.i-b.i);
-      return (a.ms-b.ms)||(a.em-b.em)||(a.seq-b.seq)||(a.i-b.i);
+      // 同じ日付＋開始時刻なら ms（時差）を無視し、終了なし→終了あり→登録タイミング順(createdAt)で確定
+      if(a.ck===b.ck) return (a.em-b.em)||(a.ca-b.ca)||(a.seq-b.seq)||(a.i-b.i);
+      return (a.ms-b.ms)||(a.em-b.em)||(a.ca-b.ca)||(a.seq-b.seq)||(a.i-b.i);
     });
 }
 function _idlCross(it){ return !!(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null && Math.abs(it.toLng-it.lng)>180); }
