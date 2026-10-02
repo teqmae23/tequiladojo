@@ -264,7 +264,9 @@ a{color:var(--gold-d)}
 .sc-now-t{font-size:18px;font-weight:800;color:var(--ink)}
 .sc-now-ic{font-size:20px;flex:0 0 auto}
 .sc-now-ttl{font-size:16px;font-weight:700;color:var(--ink);min-width:0}
-.sc-now-next{font-size:12px;color:var(--ink2);margin-top:8px;padding-top:8px;border-top:1px dashed var(--border2)}
+.sc-now-next{font-size:12px;color:var(--ink2);margin-top:8px;padding-top:8px;border-top:1px dashed var(--border2);display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.ins-btn{margin-left:auto;font-size:12px;font-weight:700;color:#fff;background:#b8471f;border:none;border-radius:14px;padding:4px 12px;cursor:pointer;white-space:nowrap}
+.ins-btn:hover{filter:brightness(1.07)}
 #sc-now-map{height:220px;border-radius:var(--r);border:1px solid var(--border2);margin-top:10px;z-index:0}
 /* 管理者プレビュー用: 現在時刻の上書き */
 .sc-dbg{display:flex;flex-wrap:wrap;align-items:center;gap:6px;background:#fff7e6;border:1px dashed var(--gold);border-radius:var(--r);padding:8px 10px;margin-bottom:12px;font-size:12px;color:var(--ink2)}
@@ -554,6 +556,27 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
       <div id="ph-prog" style="font-size:12px;color:var(--ink3);margin-top:6px"></div>
     </div>
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closePh()">キャンセル</button><button class="btn bp" id="ph-up" onclick="saveReview()" disabled>保存</button></div>
+  </div>
+</div>
+<!-- 割込イベント追加（管理者のみ） -->
+<div class="mbg" id="ins-modal">
+  <div class="modal">
+    <div class="mhd"><span>➕ 割込イベントを追加</span><button class="x" onclick="closeInsert()">閉じる</button></div>
+    <div class="mbd">
+      <div class="fg"><label class="fl">タイトル</label><input class="fi" id="ins-title" placeholder="例: 急きょ蒸留所見学"></div>
+      <div style="display:flex;gap:10px">
+        <div class="fg" style="flex:1"><label class="fl">日付</label><input class="fi" id="ins-date" type="date"></div>
+        <div class="fg" style="flex:1"><label class="fl">開始</label><input class="fi" id="ins-time" type="time"></div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <div class="fg" style="flex:1"><label class="fl">終了（任意）</label><input class="fi" id="ins-end" type="time"></div>
+        <div class="fg" style="flex:1"><label class="fl">分類</label><select class="fi" id="ins-cat"></select></div>
+      </div>
+      <div class="fg"><label class="fl">メモ（任意）</label><textarea class="fi" id="ins-note" rows="2"></textarea></div>
+      <div class="mnote">この画面から追加した項目はスケジュールに即時反映されます。詳細（場所・地図など）は管理ページで編集できます。</div>
+      <div class="sv-err" id="ins-err"></div>
+    </div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeInsert()">キャンセル</button><button class="btn bp" id="ins-save" onclick="saveInsert()">追加</button></div>
   </div>
 </div>
 <!-- 掲示板 投稿 -->
@@ -1989,11 +2012,43 @@ function nowSectionHtml(visEnr){
     +schedNamesHtml(it);
   if(geo && window.L) h+='<div id="sc-now-map"></div>';
   else if(hideLoc) h+='<div class="sc-now-sub sc-loclock">'+(_isLodging(it)?'🏨 ホテル情報はチェックアウト後に公開されます':'📍 位置情報は滞在終了後に公開されます')+'</div>';
-  if(cur && next) h+='<div class="sc-now-next">⏭ <b>NEXT</b>　'+(next.it.time?esc(next.it.time)+' ':'')+esc(next.it.title||'')+'</div>';
+  var _adminIns=(_isStaff||_isCoAdmin)?'<button class="ins-btn" onclick="openInsert(\''+esc(it.date||'')+'\')">➕ 割込</button>':'';
+  if(cur && next) h+='<div class="sc-now-next">⏭ <b>NEXT</b>　'+(next.it.time?esc(next.it.time)+' ':'')+esc(next.it.title||'')+_adminIns+'</div>';
+  else if(_adminIns) h+='<div class="sc-now-next">'+_adminIns+'</div>';
   if(_isReal){ var _pc=(_photosByItem[it.id]||[]).length; h+='<div style="margin-top:8px"><button class="sc-photo-btn" onclick="openItemPhotoMgr(\''+esc(it.id)+'\')">📷 写真 '+(_pc?('('+_pc+')'):'を追加・閲覧')+'</button></div>'; }
   h+='</div>';
   return h;
 }
+// ── 割込イベントの追加（管理者・共同管理者のみ。NEXT横の「割込」ボタンから） ──
+function openInsert(presetDate){
+  if(!(_isStaff||_isCoAdmin)) return;
+  var d=new Date();
+  var today=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+  g('ins-title').value=''; g('ins-note').value=''; g('ins-end').value=''; g('ins-err').textContent='';
+  g('ins-date').value=presetDate||today;
+  g('ins-time').value=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+  g('ins-cat').innerHTML=(_cats||[]).map(function(c){ return '<option value="'+esc(c.id)+'">'+esc((c.icon?c.icon+' ':'')+(c.name||c.id))+'</option>'; }).join('');
+  var sv=g('ins-save'); if(sv) sv.disabled=false;
+  g('ins-modal').classList.add('open');
+}
+function closeInsert(){ g('ins-modal').classList.remove('open'); }
+function saveInsert(){
+  if(!(_isStaff||_isCoAdmin)) return;
+  var title=(g('ins-title').value||'').trim();
+  if(!title){ g('ins-err').textContent='タイトルを入力してください'; return; }
+  var date=g('ins-date').value||'';
+  if(!date){ g('ins-err').textContent='日付を入力してください'; return; }
+  var btn=g('ins-save'); btn.disabled=true; g('ins-err').textContent='';
+  var doc={
+    title:title, date:date, time:(g('ins-time').value||null), endTime:(g('ins-end').value||null),
+    category:(g('ins-cat').value||'other'), note:((g('ins-note').value||'').trim()||null),
+    seq:900, insertedAdhoc:true, createdAt:firebase.firestore.FieldValue.serverTimestamp()
+  };
+  db.collection('events').doc(eventId).collection('scheduleItems').add(doc).then(function(){
+    btn.disabled=false; toast('割込イベントを追加しました'); closeInsert(); loadSchedule();
+  }).catch(function(e){ btn.disabled=false; g('ins-err').textContent='追加に失敗しました: '+((e&&e.message)||e); });
+}
+g('ins-modal').addEventListener('click',function(e){ if(e.target===g('ins-modal')) closeInsert(); });
 var _nowMapItem=null;
 function initNowMap(it){
   var el=g('sc-now-map'); if(!el||!window.L||!it||it.lat==null||it.lng==null) return;
