@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ライブ位置中継 - テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:"G-KMS18946JQ"
+};
+</script>
+<script src="/auth-role.js?v=20260829"></script>
+<style>
+:root{
+  --ink:#18110a;--ink2:#3a2c14;--ink3:#6b5a44;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --cream:#faf7f1;--cream2:#f0ebe0;--white:#fff;
+  --border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);
+  --shadow-lg:0 6px 36px rgba(24,17,10,.13);
+  --red:#b03020;--teal:#1a6e58;
+  --r:8px;--rl:14px;
+  --serif:'Hiragino Mincho ProN','Yu Mincho',serif;
+  --sans:'Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif;
+  --mono:'SFMono-Regular',Consolas,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+button{cursor:pointer;font-family:var(--sans)}
+#login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+#app{display:none}
+.lcard{width:100%;max-width:360px;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:40px 30px;box-shadow:var(--shadow-lg)}
+.llogo{text-align:center;font-size:40px;margin-bottom:6px}
+.lbrand{font-family:var(--serif);font-size:22px;color:var(--gold-d);letter-spacing:.1em;text-align:center}
+.lsub{text-align:center;font-size:10px;letter-spacing:.18em;color:var(--ink3);margin-bottom:24px}
+.lcard label{display:block;font-size:10px;color:var(--ink3);letter-spacing:.06em;margin:12px 0 4px}
+.lcard input{width:100%;padding:11px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.lerr{min-height:16px;font-size:12px;color:#b03020;margin-top:8px;text-align:center}
+.lbtn{width:100%;margin-top:18px;padding:12px;background:var(--gold-d);color:var(--cream);border:none;border-radius:var(--r);font-size:13px}
+.hdr{background:var(--ink);padding:0 16px;height:56px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:40}
+.hdr-title{font-family:var(--serif);font-size:17px;color:var(--gold-l);letter-spacing:.06em}
+.hdr-right{margin-left:auto;display:flex;gap:8px}
+.hdr-nav{padding:6px 11px;border:1px solid rgba(255,255,255,.16);border-radius:6px;color:var(--gold-l);font-size:11px;text-decoration:none;background:none}
+.wrap{max-width:560px;margin:0 auto;padding:18px 14px 60px}
+.ptitle{font-family:var(--serif);font-size:20px;color:var(--ink);margin-bottom:4px}
+.pdesc{font-size:12.5px;color:var(--ink2);margin-bottom:16px;line-height:1.7}
+.card{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);box-shadow:0 1px 12px rgba(24,17,10,.07);padding:16px 18px;margin-bottom:14px}
+.fl{display:block;font-size:11px;color:var(--ink3);margin:10px 0 4px;font-weight:600}
+.fi{width:100%;padding:10px 12px;border:1px solid var(--border2);border-radius:var(--r);font-size:14px;background:var(--cream)}
+select.fi{background:var(--white)}
+.bigbtn{width:100%;margin-top:16px;padding:16px;border:none;border-radius:var(--rl);font-size:17px;font-weight:800;color:#fff;letter-spacing:.04em}
+.bigbtn.go{background:var(--teal)}
+.bigbtn.stop{background:var(--red)}
+.bigbtn:disabled{opacity:.5}
+.stat{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--cream2);font-size:13px}
+.stat .l{color:var(--ink3)}
+.stat .v{font-weight:700;font-variant-numeric:tabular-nums;font-family:var(--mono)}
+.live-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--red);margin-right:6px;animation:pulse 1.2s infinite}
+@keyframes pulse{0%{opacity:1}50%{opacity:.3}100%{opacity:1}}
+.warn{font-size:12px;color:var(--gold-d);background:#fff6e4;border:1px solid #ecd9a0;border-radius:var(--r);padding:8px 10px;margin-top:10px;line-height:1.6}
+#toasts{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:6px;align-items:center}
+.toast{background:#18110a;color:#fff;font-size:13px;padding:10px 18px;border-radius:18px;box-shadow:var(--shadow-lg)}
+.toast.err{background:#b03020}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="lcard">
+    <div class="llogo">🛰</div>
+    <div class="lbrand">テキーラ道場</div>
+    <div class="lsub">ライブ位置中継</div>
+    <label>メールアドレス</label>
+    <input type="email" id="lemail" autocomplete="username">
+    <label>パスワード</label>
+    <input type="password" id="lpass" autocomplete="current-password">
+    <div class="lerr" id="lerr"></div>
+    <button class="lbtn" id="lbtn">ログイン</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="hdr">
+    <div class="hdr-title">🛰 ライブ位置中継</div>
+    <div class="hdr-right"><a class="hdr-nav" href="/tdhome.html">← ホーム</a><button class="hdr-nav" id="btn-logout">ログアウト</button></div>
+  </div>
+  <div class="wrap">
+    <div class="ptitle">現在地をイベントに中継</div>
+    <div class="pdesc">この端末のGPS現在地をイベントページへリアルタイム送信します。班ごとに1台（スタッフ端末）で実行してください。画面はつけたまま・充電しながらの使用を推奨します。</div>
+    <div class="card">
+      <label class="fl">イベント</label>
+      <select class="fi" id="ev-sel"></select>
+      <label class="fl">表示名（班名・端末名など／会員ページに表示）</label>
+      <input class="fi" id="label" placeholder="例: 1班">
+      <label class="fl">送信間隔</label>
+      <select class="fi" id="interval">
+        <option value="3">3秒</option>
+        <option value="5" selected>5秒</option>
+        <option value="10">10秒</option>
+        <option value="20">20秒</option>
+        <option value="30">30秒</option>
+      </select>
+      <button class="bigbtn go" id="btn-toggle">▶ 送信開始</button>
+      <div class="warn" id="warn" style="display:none"></div>
+    </div>
+    <div class="card" id="status-card" style="display:none">
+      <div class="stat"><span class="l">状態</span><span class="v" id="st-state">—</span></div>
+      <div class="stat"><span class="l">送信回数</span><span class="v" id="st-count">0</span></div>
+      <div class="stat"><span class="l">最終送信</span><span class="v" id="st-last">—</span></div>
+      <div class="stat"><span class="l">精度</span><span class="v" id="st-acc">—</span></div>
+      <div class="stat" style="border-bottom:none"><span class="l">現在座標</span><span class="v" id="st-coord" style="font-size:11px">—</span></div>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function toast(m,t){ var d=document.createElement('div'); d.className='toast'+(t?' '+t:''); d.textContent=m; g('toasts').appendChild(d); setTimeout(function(){d.remove();},3000); }
+function pad(n){return('0'+n).slice(-2);}
+function hms(ms){ var d=new Date(ms); return pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds()); }
+function qp(k){ try{ return new URLSearchParams(location.search).get(k); }catch(e){ return null; } }
+
+var _uid=null, _deviceKey=null, _running=false, _watchId=null, _trail=[], _count=0, _lastWrite=0, _wakeLock=null;
+
+AuthRole.requireStaff(auth, function(user){
+  _uid=user.uid;
+  g('login-screen').style.display='none'; g('app').style.display='block';
+  try{ _deviceKey=localStorage.getItem('liveDeviceKey'); }catch(e){}
+  if(!_deviceKey){ _deviceKey='d'+Math.random().toString(36).slice(2,10)+Date.now().toString(36); try{ localStorage.setItem('liveDeviceKey',_deviceKey); }catch(e){} }
+  try{ var lb=localStorage.getItem('liveLabel'); if(lb) g('label').value=lb; }catch(e){}
+  loadEvents();
+}, function(){ g('login-screen').style.display='flex'; g('app').style.display='none'; });
+g('lbtn').addEventListener('click',function(){ auth.signInWithEmailAndPassword((g('lemail').value||'').trim(), g('lpass').value).catch(function(e){ g('lerr').textContent=e.message; }); });
+g('lpass').addEventListener('keydown',function(e){ if(e.key==='Enter') g('lbtn').click(); });
+g('btn-logout').addEventListener('click',function(){ if(_running) stopLive(); auth.signOut(); });
+
+function loadEvents(){
+  db.collection('events').get().then(function(snap){
+    var evs=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    // 開催中/近いものを上に（終了日の降順）
+    evs.sort(function(a,b){ return String(b.endDate||b.startDate||'').localeCompare(String(a.endDate||a.startDate||'')); });
+    var pre=qp('ev')||qp('id')||'';
+    g('ev-sel').innerHTML=evs.map(function(e){ var per=(e.startDate||'')+(e.endDate&&e.endDate!==e.startDate?('〜'+e.endDate):''); return '<option value="'+esc(e.id)+'"'+(e.id===pre?' selected':'')+'>'+esc(e.name||'（無題）')+'（'+esc(per)+'）</option>'; }).join('');
+  }).catch(function(e){ toast('イベント読込失敗: '+e.message,'err'); });
+}
+
+g('btn-toggle').addEventListener('click',function(){ if(_running) stopLive(); else startLive(); });
+
+function startLive(){
+  if(!('geolocation' in navigator)){ toast('この端末では位置情報が使えません','err'); return; }
+  var eid=g('ev-sel').value; if(!eid){ toast('イベントを選択してください','err'); return; }
+  var label=(g('label').value||'').trim()||'端末';
+  try{ localStorage.setItem('liveLabel',label); }catch(e){}
+  _running=true; _trail=[]; _count=0; _lastWrite=0;
+  g('btn-toggle').textContent='■ 送信停止'; g('btn-toggle').className='bigbtn stop';
+  g('ev-sel').disabled=true; g('interval').disabled=true;
+  g('status-card').style.display=''; g('st-state').innerHTML='<span class="live-dot"></span>送信中';
+  g('warn').style.display=''; g('warn').textContent='⚠ この画面を開いたままにしてください（閉じる・スリープで停止します）。充電しながらの使用を推奨。';
+  _requestWakeLock();
+  _watchId=navigator.geolocation.watchPosition(onPos, onErr, {enableHighAccuracy:true, maximumAge:1000, timeout:20000});
+}
+function stopLive(){
+  _running=false;
+  if(_watchId!=null){ try{ navigator.geolocation.clearWatch(_watchId); }catch(e){} _watchId=null; }
+  _releaseWakeLock();
+  g('btn-toggle').textContent='▶ 送信開始'; g('btn-toggle').className='bigbtn go';
+  g('ev-sel').disabled=false; g('interval').disabled=false;
+  g('st-state').textContent='停止';
+  var eid=g('ev-sel').value;
+  if(eid&&_deviceKey){ db.collection('events').doc(eid).collection('live').doc(_deviceKey).set({ active:false, updatedMs:Date.now() },{merge:true}).catch(function(){}); }
+}
+function onPos(pos){
+  if(!_running) return;
+  var c=pos.coords, lat=c.latitude, lng=c.longitude, acc=c.accuracy||null;
+  g('st-acc').textContent=(acc!=null?Math.round(acc)+' m':'—');
+  g('st-coord').textContent=lat.toFixed(5)+', '+lng.toFixed(5);
+  var now=Date.now(), intMs=(parseInt(g('interval').value,10)||5)*1000;
+  if(now-_lastWrite < intMs) return; // 送信間隔で間引き
+  _lastWrite=now;
+  _trail.push([Math.round(lat*1e5)/1e5, Math.round(lng*1e5)/1e5]);
+  if(_trail.length>400) _trail=_trail.slice(_trail.length-400);
+  var eid=g('ev-sel').value, label=(g('label').value||'').trim()||'端末';
+  db.collection('events').doc(eid).collection('live').doc(_deviceKey).set({
+    label:label, lat:lat, lng:lng, acc:acc, active:true, by:_uid,
+    at:firebase.firestore.FieldValue.serverTimestamp(), updatedMs:now, trail:_trail
+  }).then(function(){
+    _count++; g('st-count').textContent=_count; g('st-last').textContent=hms(now);
+  }).catch(function(e){ g('st-state').innerHTML='<span style="color:#b03020">送信エラー</span>'; });
+}
+function onErr(err){
+  if(err && err.code===1){ toast('位置情報が許可されていません。ブラウザの設定で許可してください','err'); stopLive(); }
+  else { g('st-state').innerHTML='<span style="color:#b03020">取得エラー</span>'; }
+}
+function _requestWakeLock(){ try{ if(navigator.wakeLock&&navigator.wakeLock.request){ navigator.wakeLock.request('screen').then(function(wl){ _wakeLock=wl; }).catch(function(){}); } }catch(e){} }
+function _releaseWakeLock(){ try{ if(_wakeLock){ _wakeLock.release(); _wakeLock=null; } }catch(e){} }
+document.addEventListener('visibilitychange',function(){ if(document.visibilityState==='visible' && _running) _requestWakeLock(); });
+window.addEventListener('beforeunload',function(){ if(_running){ var eid=g('ev-sel').value; if(eid&&_deviceKey){ try{ db.collection('events').doc(eid).collection('live').doc(_deviceKey).set({active:false,updatedMs:Date.now()},{merge:true}); }catch(e){} } } });
+</script>
+</body>
+</html>
