@@ -11,6 +11,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <script src="/tz-lookup.js"></script>
 <script src="/sched-groups.js?v=20260925"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 var FIREBASE_CONFIG={
   apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -806,6 +808,8 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
         <div class="fg" style="display:flex;align-items:flex-end"><button type="button" class="btn bs sm" onclick="previewGpx()">↻ 再プレビュー</button></div>
       </div>
       <div id="gpx-summary" style="font-size:12px;color:var(--ink2);margin:4px 0 8px"></div>
+      <div id="gpx-map" style="height:220px;border:1px solid var(--border2);border-radius:8px;display:none;margin-bottom:8px;z-index:0"></div>
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">各移動の開始・終了時刻を調整すると、取り込む区間（点数）が変わります。行をタップで地図にその区間を表示。</div>
       <div id="gpx-preview"></div>
       <div id="gpx-err" style="color:var(--red);font-size:12px;min-height:14px;margin-top:6px"></div>
     </div>
@@ -3335,7 +3339,7 @@ function openGpxImport(){
   g('gpx-summary').textContent=''; g('gpx-preview').innerHTML=''; g('gpx-err').textContent=''; g('gpx-save').disabled=true;
   g('gpx-modal').classList.add('open');
 }
-function closeGpxImport(){ g('gpx-modal').classList.remove('open'); }
+function closeGpxImport(){ g('gpx-modal').classList.remove('open'); _gpxMapClear(); }
 function _readFileText(f){ return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){res(r.result);}; r.onerror=function(){rej(new Error('ファイル読込失敗'));}; r.readAsText(f); }); }
 function _parseGpxTrack(xml){
   var out=[]; try{
@@ -3382,26 +3386,74 @@ function _moveWindow(it){
   if(s==null&&e==null) return null; if(s==null)s=e; if(e==null)e=s; if(s>e){var t=s;s=e;e=t;}
   return {s:s,e:e};
 }
+function _dtLocal(ms){ var d=new Date(ms); function p(n){return('0'+n).slice(-2);} return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
+function _gpxOff(){ return (parseInt(g('gpx-offset').value,10)||0)*60000; }
+// 指定ウィンドウ[s,e]に入るGPX点を返す（オフセット適用）
+function _gpxPtsIn(s,e){ var off=_gpxOff(); return _gpxPts.filter(function(p){ return p.t!=null && (p.t+off)>=s && (p.t+off)<=e; }).map(function(p){return [p.lat,p.lng];}); }
 function previewGpx(){
-  if(!_gpxPts.length){ g('gpx-summary').textContent='トラックがありません'; g('gpx-preview').innerHTML=''; g('gpx-save').disabled=true; return; }
+  if(!_gpxPts.length){ g('gpx-summary').textContent='トラックがありません'; g('gpx-preview').innerHTML=''; g('gpx-save').disabled=true; _gpxMapClear(); return; }
   var withT=_gpxPts.filter(function(p){return p.t!=null;});
-  var offMs=(parseInt(g('gpx-offset').value,10)||0)*60000;
+  var off=_gpxOff();
   g('gpx-summary').innerHTML='取得点数: <b>'+_gpxPts.length+'</b>　時刻付き: <b>'+withT.length+'</b>'
-    +(withT.length?('　範囲: '+_gpxFmt(withT[0].t+offMs)+' 〜 '+_gpxFmt(withT[withT.length-1].t+offMs)):'（時刻なし→自動割当できません）');
+    +(withT.length?('　範囲: '+_gpxFmt(withT[0].t+off)+' 〜 '+_gpxFmt(withT[withT.length-1].t+off)):'（時刻なし→自動割当できません）');
   var moves=_schItems.filter(function(it){ return it.isMove; });
   _gpxMatch=[];
   var rows=moves.map(function(it){
-    var w=_moveWindow(it), pts=[];
-    if(w && withT.length){ pts=_gpxPts.filter(function(p){ return p.t!=null && (p.t+offMs)>=w.s && (p.t+offMs)<=w.e; }).map(function(p){return [p.lat,p.lng];}); }
-    _gpxMatch.push({id:it.id, count:pts.length, pts:pts});
+    var w=_moveWindow(it); if(!w) w={s:(withT.length?withT[0].t+off:Date.now()), e:(withT.length?withT[withT.length-1].t+off:Date.now())};
+    var pts=withT.length?_gpxPtsIn(w.s,w.e):[];
+    _gpxMatch.push({id:it.id, s:w.s, e:w.e, count:pts.length, pts:pts});
     var ok=pts.length>=2;
-    return '<label style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-bottom:1px solid var(--border);font-size:12px;'+(ok?'cursor:pointer':'opacity:.55')+'">'
-      +'<input type="checkbox" class="gpx-chk" data-id="'+esc(it.id)+'" '+(ok?'checked':'disabled')+' style="width:15px;height:15px">'
-      +'<span style="flex:1">'+esc(it.title||'（無題）')+'<span style="color:var(--ink3)"> （'+esc(it.actualStart||it.time||'?')+'→'+esc(it.actualEnd||it.toTime||'?')+'）</span>'+(Array.isArray(it.track)&&it.track.length?' <span style="color:#1a6e58">✓登録済</span>':'')+'</span>'
-      +'<b style="color:'+(ok?'#1a6e58':'var(--ink3)')+'">'+pts.length+'点</b></label>';
+    return '<div class="gpx-row" data-id="'+esc(it.id)+'" onclick="_gpxShowOnMap(\''+esc(it.id)+'\')" style="padding:7px 9px;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer">'
+      +'<div style="display:flex;align-items:center;gap:8px">'
+        +'<input type="checkbox" class="gpx-chk" data-id="'+esc(it.id)+'" '+(ok?'checked':'')+' onclick="event.stopPropagation()" style="width:15px;height:15px">'
+        +'<span style="flex:1">'+esc(it.title||'（無題）')+(Array.isArray(it.track)&&it.track.length?' <span style="color:#1a6e58">✓登録済</span>':'')+'</span>'
+        +'<b class="gpx-cnt" data-id="'+esc(it.id)+'" style="color:'+(ok?'#1a6e58':'var(--ink3)')+'">'+pts.length+'点</b></div>'
+      +'<div style="display:flex;align-items:center;gap:6px;margin-top:5px" onclick="event.stopPropagation()">'
+        +'<input type="datetime-local" class="fi gpx-s" data-id="'+esc(it.id)+'" value="'+_dtLocal(w.s)+'" onchange="_gpxRecount(\''+esc(it.id)+'\')" style="font-size:11px;padding:4px 6px;flex:1">'
+        +'<span style="color:var(--ink3)">→</span>'
+        +'<input type="datetime-local" class="fi gpx-e" data-id="'+esc(it.id)+'" value="'+_dtLocal(w.e)+'" onchange="_gpxRecount(\''+esc(it.id)+'\')" style="font-size:11px;padding:4px 6px;flex:1">'
+      +'</div></div>';
   }).join('');
   g('gpx-preview').innerHTML=moves.length?('<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:40vh;overflow-y:auto">'+rows+'</div>'):'<div style="font-size:12px;color:var(--ink3)">このイベントに「2点間移動」がありません。</div>';
   g('gpx-save').disabled=!_gpxMatch.some(function(m){return m.count>=2;});
+  _gpxMapDrawAll();
+}
+// 開始/終了の編集で再カウント
+function _gpxRecount(id){
+  var m=_gpxMatch.find(function(x){return x.id===id;}); if(!m) return;
+  var si=document.querySelector('.gpx-s[data-id="'+id+'"]'), ei=document.querySelector('.gpx-e[data-id="'+id+'"]');
+  var s=si&&si.value?new Date(si.value).getTime():m.s, e=ei&&ei.value?new Date(ei.value).getTime():m.e;
+  if(s>e){ var t=s;s=e;e=t; }
+  m.s=s; m.e=e; m.pts=_gpxPtsIn(s,e); m.count=m.pts.length;
+  var cnt=document.querySelector('.gpx-cnt[data-id="'+id+'"]'); if(cnt){ cnt.textContent=m.count+'点'; cnt.style.color=m.count>=2?'#1a6e58':'var(--ink3)'; }
+  var chk=document.querySelector('.gpx-chk[data-id="'+id+'"]'); if(chk && m.count<2) chk.checked=false;
+  g('gpx-save').disabled=!_gpxMatch.some(function(x){return x.count>=2;});
+  _gpxShowOnMap(id);
+}
+// 地図プレビュー
+var _gpxMap=null, _gpxFullLayer=null, _gpxSegLayer=null;
+function _gpxMapEnsure(){
+  var el=g('gpx-map'); if(!el||!window.L) return null;
+  el.style.display='';
+  if(!_gpxMap){ _gpxMap=L.map(el,{scrollWheelZoom:false}); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OSM'}).addTo(_gpxMap); }
+  setTimeout(function(){ try{_gpxMap.invalidateSize();}catch(e){} },80);
+  return _gpxMap;
+}
+function _gpxMapClear(){ if(_gpxMap){ try{_gpxMap.remove();}catch(e){} _gpxMap=null; } _gpxFullLayer=null; _gpxSegLayer=null; var el=g('gpx-map'); if(el) el.style.display='none'; }
+function _gpxMapDrawAll(){
+  var map=_gpxMapEnsure(); if(!map) return;
+  if(_gpxFullLayer){ map.removeLayer(_gpxFullLayer); _gpxFullLayer=null; }
+  var all=_gpxPts.map(function(p){return [p.lat,p.lng];}); if(all.length<1){ return; }
+  _gpxFullLayer=L.polyline(all,{color:'#9aa',weight:2,opacity:.7}).addTo(map);
+  try{ map.fitBounds(_gpxFullLayer.getBounds(),{padding:[20,20],maxZoom:14}); }catch(e){}
+}
+function _gpxShowOnMap(id){
+  var m=_gpxMatch.find(function(x){return x.id===id;}); if(!m) return;
+  var map=_gpxMapEnsure(); if(!map) return;
+  if(_gpxSegLayer){ map.removeLayer(_gpxSegLayer); _gpxSegLayer=null; }
+  if(m.pts.length<1) return;
+  _gpxSegLayer=L.polyline(m.pts,{color:'#c8921e',weight:5,opacity:.95}).addTo(map);
+  try{ map.fitBounds(_gpxSegLayer.getBounds(),{padding:[24,24],maxZoom:15}); }catch(e){}
 }
 function _mPerDeg(lat){ return {x:111320*Math.cos(lat*Math.PI/180), y:110540}; }
 function _segDistM(p,a,b){ var m=_mPerDeg(a[0]); var px=p[1]*m.x,py=p[0]*m.y,ax=a[1]*m.x,ay=a[0]*m.y,bx=b[1]*m.x,by=b[0]*m.y; var ABx=bx-ax,ABy=by-ay,len2=ABx*ABx+ABy*ABy; var t=len2>0?((px-ax)*ABx+(py-ay)*ABy)/len2:0; t=Math.max(0,Math.min(1,t)); var cx=ax+t*ABx,cy=ay+t*ABy,dx=px-cx,dy=py-cy; return Math.sqrt(dx*dx+dy*dy); }
