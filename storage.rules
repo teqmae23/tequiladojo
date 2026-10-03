@@ -57,12 +57,14 @@ service firebase.storage {
     }
 
     // イベント写真: 実会員（匿名不可）がアップロード可、認証ユーザーは閲覧可。
-    // 削除は staff/owner のみ（管理者による写真削除）。
+    // 原本（*_orig.*）はフル解像度＋EXIF入りのため staff/owner のみ閲覧可・最大25MB。
+    // 削除は staff/owner のみ（管理者による写真削除／原本の回収後削除）。
+    function isEvtOrig(n){ return n.matches('[A-Za-z0-9_.-]*_orig[.](jpg|jpeg|png|webp)'); }
     match /event_photos/{eventId}/{fileName} {
-      allow read: if request.auth != null;
+      allow read: if request.auth != null && (isEvtOrig(fileName) ? isStaffRole() : true);
       allow create, update: if request.auth != null
         && request.auth.token.firebase.sign_in_provider != 'anonymous'
-        && request.resource.size < 6 * 1024 * 1024
+        && request.resource.size < (isEvtOrig(fileName) ? 25 : 6) * 1024 * 1024
         && fileName.matches('[A-Za-z0-9_.-]+\\.(jpg|jpeg|png|webp)');
       allow delete: if isStaffRole();
     }
