@@ -144,6 +144,8 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .cico-btn.ci.set{background:#e4f3ec}
 .cico-btn.co.set{background:#eaf0fb;border-color:#b7cdec;color:#2a5fa0}
 .cico-clear{font-size:10px;color:var(--ink3);text-align:center;cursor:pointer;text-decoration:underline}
+.se-actx{cursor:pointer;text-decoration:underline dotted}
+#se-actpop{position:absolute;z-index:320;background:var(--white);border:1px solid var(--border2);border-radius:8px;padding:6px 10px;font-size:12px;box-shadow:var(--shadow-lg);color:var(--ink2);white-space:nowrap}
 .se-day-toggle{user-select:none;display:flex;align-items:center;gap:6px}
 .se-day-hd{flex:1;min-width:0;cursor:pointer;display:flex;align-items:center;gap:6px}
 .se-day-add{flex:0 0 auto;padding:2px 9px;font-size:11px}
@@ -791,6 +793,22 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
   </div>
 </div>
 
+<!-- 実時間(CI/CO) 変更・消去モーダル -->
+<div class="mbg" id="act-modal" style="z-index:300">
+  <div class="modal" style="max-width:360px">
+    <div class="mhd"><span id="act-title">実時間</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeActEdit()">✕</button></div>
+    <div class="mbd">
+      <div class="fg"><label class="fl" id="act-label">実時間（HH:MM）</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input class="fi" id="act-time" type="time" style="flex:1">
+          <button class="btn bs" id="act-clear" onclick="clearActField()" title="この実時間を消去" style="flex:0 0 auto;padding:9px 12px">✖ 消去</button>
+        </div>
+      </div>
+      <div id="act-err" style="color:var(--red);font-size:12px;min-height:14px"></div>
+    </div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeActEdit()">キャンセル</button><button class="btn bp" onclick="saveActEdit()">保存</button></div>
+  </div>
+</div>
 <!-- スケジュール項目 編集モーダル -->
 <div class="mbg" id="sch-ed-modal">
   <div class="modal">
@@ -2114,12 +2132,18 @@ function _schedInstant(it){ var tz=(it.lat!=null&&it.lng!=null)?_safeTz(it.lat,i
 function _endMark(it){ var e=(it&&it.endTime&&it.endTime.trim())||(it&&it.isMove&&it.toTime&&it.toTime.trim()); return e?1:0; }
 function _caSec(it){ return (it&&it.createdAt&&it.createdAt.seconds)||0; } // 登録タイミング（createdAt秒）
 function _sortByJst(items){
-  return items.map(function(it,i){ var d=_schedInstant(it); return {it:it, ms:d?d.getTime():0, ck:(it.date||'')+' '+(it.time||'99:99'), em:_endMark(it), ca:_caSec(it), seq:it.seq||0, i:i}; })
-    .sort(function(a,b){
-      // 同じ日付＋開始時刻なら ms（時差）を無視し、終了なし→終了あり→登録タイミング順(createdAt)で確定
-      if(a.ck===b.ck) return (a.em-b.em)||(a.ca-b.ca)||(a.seq-b.seq)||(a.i-b.i);
-      return (a.ms-b.ms)||(a.em-b.em)||(a.ca-b.ca)||(a.seq-b.seq)||(a.i-b.i);
-    });
+  // 実時間(CI)が入っていればその時刻で並べ替える（予定より実時間を優先）
+  return items.map(function(it,i){
+    var d=_schedInstant(it); var sms=d?d.getTime():0;
+    var ams=(it.actualStartMs!=null)?it.actualStartMs:null;
+    var ms=(ams!=null)?ams:sms;
+    var ck=(ams!=null)?('A'+ams):((it.date||'')+' '+(it.time||'99:99'));
+    return {it:it, ms:ms, ck:ck, em:_endMark(it), ca:_caSec(it), seq:it.seq||0, i:i};
+  }).sort(function(a,b){
+    // 同じ日付＋開始時刻なら ms（時差）を無視し、終了なし→終了あり→登録タイミング順(createdAt)で確定
+    if(a.ck===b.ck) return (a.em-b.em)||(a.ca-b.ca)||(a.seq-b.seq)||(a.i-b.i);
+    return (a.ms-b.ms)||(a.em-b.em)||(a.ca-b.ca)||(a.seq-b.seq)||(a.i-b.i);
+  });
 }
 function _idlCross(it){ return !!(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null && Math.abs(it.toLng-it.lng)>180); }
 function schCol(eid){ return db.collection('events').doc(eid).collection('scheduleItems'); }
@@ -3089,19 +3113,20 @@ function renderSchedItemRow(it){
   }
   // 実時間(CI/CO)があれば予定時間に上書き表示（予定は小さく取り消し線で残す）
   var schedStart=it.time||'—', schedEnd=(it.isMove?it.toTime:it.endTime)||'';
-  function _tCell(actual, sched){
-    if(actual) return '<span class="se-actual">'+esc(actual)+'</span>'+(sched&&sched!=='—'&&sched!==actual?'<span class="se-sched-strike">'+esc(sched)+'</span>':'');
+  // 左の時刻: 実時間があれば実時間のみ表示（予定との併記はやめ、クリックで「予定→実」をポップアップ）
+  function _tCell(actual, sched, which){
+    if(actual) return '<span class="se-actual se-actx" onclick="showActualPop(event,\''+esc(it.id)+'\',\''+which+'\')">'+esc(actual)+'</span>';
     return esc(sched||'—');
   }
-  var startCell=_tCell(it.actualStart, schedStart);
-  var endCell=schedEnd?_tCell(it.actualEnd, schedEnd):(it.actualEnd?_tCell(it.actualEnd,''):'');
+  var startCell=_tCell(it.actualStart, schedStart, 'start');
+  var endCell=schedEnd?_tCell(it.actualEnd, schedEnd, 'end'):(it.actualEnd?_tCell(it.actualEnd,'','end'):'');
   var timeHtml='<span class="se-t">'+startCell+((endCell)?'<span class="se-move-arrow">↓</span>'+endCell:(it.isMove?'<span class="se-move-arrow">↓</span>':''))+'</span>';
   var ciSet=!!it.actualStart, coSet=!!it.actualEnd;
-  var noCO=_noCO(it); // 宿泊(泊)・チェックイン等はCOなし（CIのみ）
+  // COは「2点移動」または「終了時刻のある項目」のみ。それ以外はCIのみ。
+  var hasCO=!!(it.isMove || (it.endTime&&String(it.endTime).trim()));
   var cico='<div class="se-cico" onclick="event.stopPropagation()">'
-    +'<button class="cico-btn ci'+(ciSet?' set':'')+'" onclick="eventCI(\''+esc(it.id)+'\')" title="'+(ciSet?'タップで開始の実時間を修正':'開始の実時間を記録')+'">'+(ciSet?('CI '+esc(it.actualStart)):'CI 開始')+'</button>'
-    +(noCO?'':'<button class="cico-btn co'+(coSet?' set':'')+'" onclick="eventCO(\''+esc(it.id)+'\')" title="'+(coSet?'タップで終了の実時間を修正':'終了の実時間を記録')+'">'+(coSet?('CO '+esc(it.actualEnd)):'CO 終了')+'</button>')
-    +((ciSet||coSet)?'<span class="cico-clear" onclick="eventCICOClear(\''+esc(it.id)+'\')">実時間を消去</span>':'')
+    +'<button class="cico-btn ci'+(ciSet?' set':'')+'" onclick="eventCI(\''+esc(it.id)+'\')" title="'+(ciSet?'タップで開始の実時間を変更':'開始の実時間を記録')+'">'+(ciSet?'CI ✓':'CI 開始')+'</button>'
+    +(hasCO?'<button class="cico-btn co'+(coSet?' set':'')+'" onclick="eventCO(\''+esc(it.id)+'\')" title="'+(coSet?'タップで終了の実時間を変更':'終了の実時間を記録')+'">'+(coSet?'CO ✓':'CO 終了')+'</button>':'')
     +'</div>';
   return '<div class="se-item'+(it.overnight?' ov':'')+'" onclick="openSchedEd(\''+esc(it.id)+'\')" style="cursor:pointer;background:'+catBg(it.category)+'">'
     +timeHtml+'<span class="se-ic">'+ic+'</span>'
@@ -3109,7 +3134,6 @@ function renderSchedItemRow(it){
     +costHtml+cico+'</div>';
 }
 // ── イベントCI/CO（実時間の記録。管理者・共同管理者がスケジュール管理画面から押す） ──
-function _noCO(it){ return !!(it && (it.overnight || it.category==='hotel' || it.category==='checkin')); } // 宿泊系はCOなし
 function _nowHM(){ var d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
 function _nowDate(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
 // 同じ班か（班未使用なら常に同一班扱い）
@@ -3134,26 +3158,68 @@ function _ciCoPointConflict(it, pointMs){
   return null;
 }
 function _ciCoConflictMsg(y){ return '同じ班の「'+(y.title||'項目')+'」('+((y.actualStart||'?')+(y.actualEnd?('〜'+y.actualEnd):''))+')の実時間と重なります。接する時刻（例: 前10:00終了→次10:00開始）は可能です。'; }
-// 確定済みの実時間を手入力で修正（HH:MM）。日付は記録日(無ければ項目の日付)を用いてmsも更新。
-function _editActualTime(id, which){
+// 確定済みの実時間はモーダルで変更/消去（CI/COをクリックで開く）
+function _editActualTime(id, which){ openActEdit(id, which); }
+var _actId=null, _actWhich=null;
+function openActEdit(id, which){
   var it=_schItems.find(function(x){return x.id===id;}); if(!it) return;
+  _actId=id; _actWhich=which;
   var cur=(which==='start')?(it.actualStart||''):(it.actualEnd||'');
-  var label=(which==='start')?'開始(CI)':'終了(CO)';
-  var v=prompt(label+'の実時間を修正してください（HH:MM）', cur);
-  if(v==null) return;
-  v=String(v).trim(); if(v==='') return;
-  if(!/^([01]?\d|2[0-3]):[0-5]\d$/.test(v)){ toast('HH:MM 形式で入力してください','err'); return; }
+  var lbl=(which==='start')?'開始(CI)':'終了(CO)';
+  g('act-title').textContent=lbl+'の実時間';
+  g('act-label').textContent=lbl+'の実時間（HH:MM）';
+  g('act-time').value=cur||_nowHM();
+  g('act-err').textContent='';
+  g('act-clear').style.display=cur?'inline-block':'none';
+  g('act-modal').classList.add('open');
+}
+function closeActEdit(){ g('act-modal').classList.remove('open'); _actId=null; _actWhich=null; }
+function saveActEdit(){
+  if(!_actId) return;
+  var it=_schItems.find(function(x){return x.id===_actId;}); if(!it){ closeActEdit(); return; }
+  var v=(g('act-time').value||'').trim();
+  if(!/^([01]?\d|2[0-3]):[0-5]\d$/.test(v)){ g('act-err').textContent='HH:MM 形式で入力してください'; return; }
   var pp=v.split(':'); v=('0'+parseInt(pp[0],10)).slice(-2)+':'+pp[1];
+  var which=_actWhich;
   var dateStr=((which==='start')?(it.actualStartDate||it.date):(it.actualEndDate||it.date))||it.date||'';
   var ms=dateStr?new Date(dateStr+'T'+v+':00').getTime():Date.now();
-  // 時間チェック（前後関係・班の重なり）は廃止：手入力の時刻をそのまま採用する
   var upd={};
   if(which==='start'){ upd.actualStart=v; upd.actualStartMs=ms; if(dateStr) upd.actualStartDate=(it.actualStartDate||dateStr); }
   else { upd.actualEnd=v; upd.actualEndMs=ms; if(dateStr) upd.actualEndDate=(it.actualEndDate||dateStr); }
-  schCol(_schEventId).doc(id).update(upd)
-    .then(function(){ Object.assign(it,upd); renderSchedList(); toast((which==='start'?'CI':'CO')+'を修正: '+v); })
-    .catch(function(e){ toast('修正失敗: '+e.message); });
+  schCol(_schEventId).doc(_actId).update(upd)
+    .then(function(){ Object.assign(it,upd); closeActEdit(); renderSchedList(); toast((which==='start'?'CI':'CO')+'を変更: '+v); })
+    .catch(function(e){ g('act-err').textContent='保存失敗: '+e.message; });
 }
+function clearActField(){
+  if(!_actId) return;
+  var it=_schItems.find(function(x){return x.id===_actId;}); if(!it){ closeActEdit(); return; }
+  var which=_actWhich;
+  if(!confirm((which==='start'?'開始(CI)':'終了(CO)')+'の実時間を消去しますか？')) return;
+  var FV=firebase.firestore.FieldValue, upd={};
+  if(which==='start'){ upd.actualStart=FV.delete(); upd.actualStartMs=FV.delete(); upd.actualStartDate=FV.delete(); }
+  else { upd.actualEnd=FV.delete(); upd.actualEndMs=FV.delete(); upd.actualEndDate=FV.delete(); }
+  schCol(_schEventId).doc(_actId).update(upd).then(function(){
+    if(which==='start'){ delete it.actualStart; delete it.actualStartMs; delete it.actualStartDate; }
+    else { delete it.actualEnd; delete it.actualEndMs; delete it.actualEndDate; }
+    closeActEdit(); renderSchedList(); toast('実時間を消去しました');
+  }).catch(function(e){ g('act-err').textContent='消去失敗: '+e.message; });
+}
+// 左の時刻クリックで「予定（取り消し線）→ 実」をポップアップ表示
+function showActualPop(ev, id, which){
+  if(ev&&ev.stopPropagation) ev.stopPropagation();
+  var it=_schItems.find(function(x){return x.id===id;}); if(!it) return;
+  var actual=(which==='start')?it.actualStart:it.actualEnd;
+  var sched=(which==='start')?(it.time||''):((it.isMove?it.toTime:it.endTime)||'');
+  if(!actual) return;
+  var pop=g('se-actpop'); if(!pop){ pop=document.createElement('div'); pop.id='se-actpop'; document.body.appendChild(pop); }
+  pop.innerHTML=(sched?'予定 <span style="text-decoration:line-through;color:#8a7a60">'+esc(sched)+'</span> → ':'')+'実 <b style="color:#1a6e58">'+esc(actual)+'</b>';
+  pop.style.display='block';
+  var r=(ev&&ev.target&&ev.target.getBoundingClientRect)?ev.target.getBoundingClientRect():{left:20,bottom:60};
+  var w=210; pop.style.left=Math.max(8,Math.min(window.innerWidth-w-8, r.left))+'px';
+  pop.style.top=(window.scrollY+r.bottom+6)+'px';
+}
+document.addEventListener('click',function(){ var p=g('se-actpop'); if(p) p.style.display='none'; });
+g('act-modal').addEventListener('click',function(e){ if(e.target===g('act-modal')) closeActEdit(); });
 function eventCI(id){
   var it=_schItems.find(function(x){return x.id===id;}); if(!it) return;
   if(it.actualStart){ _editActualTime(id,'start'); return; } // 確定後はタップで時間修正
