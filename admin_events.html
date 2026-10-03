@@ -2132,17 +2132,17 @@ function _schedInstant(it){ var tz=(it.lat!=null&&it.lng!=null)?_safeTz(it.lat,i
 function _endMark(it){ var e=(it&&it.endTime&&it.endTime.trim())||(it&&it.isMove&&it.toTime&&it.toTime.trim()); return e?1:0; }
 function _caSec(it){ return (it&&it.createdAt&&it.createdAt.seconds)||0; } // 登録タイミング（createdAt秒）
 function _sortByJst(items){
-  // 実時間(CI)が入っていればその時刻で並べ替える（予定より実時間を優先）
+  // 日付（現地日付）でまとめ、同じ日の中で「実時間(あれば)→予定時刻」の順に並べる。
+  // 実時間が翌日にまたがっても日付グループは予定日のまま（日またぎで並びが割れないように）。
   return items.map(function(it,i){
     var d=_schedInstant(it); var sms=d?d.getTime():0;
     var ams=(it.actualStartMs!=null)?it.actualStartMs:null;
-    var ms=(ams!=null)?ams:sms;
-    var ck=(ams!=null)?('A'+ams):((it.date||'')+' '+(it.time||'99:99'));
-    return {it:it, ms:ms, ck:ck, em:_endMark(it), ca:_caSec(it), seq:it.seq||0, i:i};
+    var ms=(ams!=null)?ams:sms; // 同日内の並び（実時間優先）
+    return {it:it, ms:ms, day:(it.date||'9999-99-99'), em:_endMark(it), ca:_caSec(it), seq:it.seq||0, i:i};
   }).sort(function(a,b){
-    // 同じ日付＋開始時刻なら ms（時差）を無視し、終了なし→終了あり→登録タイミング順(createdAt)で確定
-    if(a.ck===b.ck) return (a.em-b.em)||(a.ca-b.ca)||(a.seq-b.seq)||(a.i-b.i);
-    return (a.ms-b.ms)||(a.em-b.em)||(a.ca-b.ca)||(a.seq-b.seq)||(a.i-b.i);
+    if(a.day!==b.day) return a.day<b.day?-1:1;                 // 日付順
+    if(a.ms!==b.ms) return a.ms-b.ms;                          // 同日内は実時間/予定の時刻順
+    return (a.em-b.em)||(a.ca-b.ca)||(a.seq-b.seq)||(a.i-b.i); // 同時刻は終了なし→あり→登録順
   });
 }
 function _idlCross(it){ return !!(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null && Math.abs(it.toLng-it.lng)>180); }
