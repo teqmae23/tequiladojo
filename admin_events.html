@@ -787,10 +787,29 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
   <div class="modal" style="max-width:640px">
     <div class="mhd"><span id="sch-mgr-title">スケジュール</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeSchedMgr()">✕</button></div>
     <div class="mbd">
-      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm ca-only-hide" onclick="openCatMgr()">🏷 種別管理</button><span class="cnt" id="sch-total"></span></div>
+      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm ca-only-hide" onclick="openCatMgr()">🏷 種別管理</button><button class="btn bs sm" onclick="openGpxImport()" title="GPSロガーのGPX/CSVを取り込み、2点間移動の実ルートを登録">🛰 GPXルート取込</button><span class="cnt" id="sch-total"></span></div>
       <div id="sch-list"><div class="ec">読み込み中…</div></div>
     </div>
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeSchedMgr()">閉じる</button></div>
+  </div>
+</div>
+
+<!-- GPXルート取り込みモーダル -->
+<div class="mbg" id="gpx-modal" style="z-index:300">
+  <div class="modal" style="max-width:560px">
+    <div class="mhd"><span>🛰 GPXルート取り込み</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeGpxImport()">✕</button></div>
+    <div class="mbd">
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:8px;line-height:1.6">GPSロガーのログ（GPX推奨 / CSVも可・複数選択可）を取り込み、各「2点間移動」の<b>開始〜到着の時間帯</b>に合うトラックを自動で割り当てます。CI/COの実時間があればそれを優先します。</div>
+      <div class="fg"><label class="fl">ログファイル（.gpx / .xml / .csv）</label><input class="fi" id="gpx-file" type="file" accept=".gpx,.xml,.csv,application/gpx+xml,text/csv" multiple></div>
+      <div class="row2">
+        <div class="fg"><label class="fl">時刻オフセット（分・ログが実際と±ずれる時に補正）</label><input class="fi" id="gpx-offset" type="number" value="0" step="1" style="max-width:120px"></div>
+        <div class="fg" style="display:flex;align-items:flex-end"><button type="button" class="btn bs sm" onclick="previewGpx()">↻ 再プレビュー</button></div>
+      </div>
+      <div id="gpx-summary" style="font-size:12px;color:var(--ink2);margin:4px 0 8px"></div>
+      <div id="gpx-preview"></div>
+      <div id="gpx-err" style="color:var(--red);font-size:12px;min-height:14px;margin-top:6px"></div>
+    </div>
+    <div class="mft"><button class="btn bs sm" onclick="clearAllTracks()" style="color:var(--red);border-color:var(--red)">全移動のルート消去</button><div style="flex:1"></div><button class="btn bs" onclick="closeGpxImport()">キャンセル</button><button class="btn bp" id="gpx-save" onclick="saveGpx()" disabled>ルートを保存</button></div>
   </div>
 </div>
 
@@ -3306,6 +3325,120 @@ function eventCICOClear(id){
     .then(function(){ loadSchedItems(); toast('実時間を消去しました'); })
     .catch(function(e){ toast('消去失敗: '+e.message); });
 }
+
+// ── GPXルート取り込み（GPSロガー）。各2点間移動の時間帯に合うトラックを自動割当 ──
+var _gpxPts=[], _gpxMatch=[];
+function _gpxFmt(ms){ var d=new Date(ms); function p(n){return('0'+n).slice(-2);} return d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes()); }
+function openGpxImport(){
+  if(!_schEventId){ toast('イベントを開いてください','err'); return; }
+  _gpxPts=[]; _gpxMatch=[]; g('gpx-file').value=''; g('gpx-offset').value='0';
+  g('gpx-summary').textContent=''; g('gpx-preview').innerHTML=''; g('gpx-err').textContent=''; g('gpx-save').disabled=true;
+  g('gpx-modal').classList.add('open');
+}
+function closeGpxImport(){ g('gpx-modal').classList.remove('open'); }
+function _readFileText(f){ return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){res(r.result);}; r.onerror=function(){rej(new Error('ファイル読込失敗'));}; r.readAsText(f); }); }
+function _parseGpxTrack(xml){
+  var out=[]; try{
+    var doc=new DOMParser().parseFromString(xml,'application/xml');
+    var pts=doc.getElementsByTagName('trkpt');
+    if(!pts.length) pts=doc.getElementsByTagName('rtept');
+    if(!pts.length) pts=doc.getElementsByTagName('wpt');
+    for(var i=0;i<pts.length;i++){ var e=pts[i];
+      var lat=parseFloat(e.getAttribute('lat')), lng=parseFloat(e.getAttribute('lon'));
+      var tn=e.getElementsByTagName('time')[0], t=tn?Date.parse(tn.textContent):NaN;
+      out.push({lat:lat,lng:lng,t:isFinite(t)?t:null});
+    }
+  }catch(e){}
+  return out;
+}
+function _csvIdx(head, res){ for(var i=0;i<head.length;i++){ for(var r=0;r<res.length;r++){ if(res[r].test(head[i])) return i; } } return -1; }
+function _parseCsvTrack(txt){
+  var lines=String(txt||'').split(/\r?\n/).filter(function(l){return l.trim();}); if(lines.length<2) return [];
+  var head=lines[0].split(/[,\t;]/).map(function(s){return s.trim().toLowerCase();});
+  var iLat=_csvIdx(head,[/^lat/,/緯度/]), iLng=_csvIdx(head,[/^lon/,/^lng/,/経度/]), iT=_csvIdx(head,[/time/,/date/,/日時/,/時刻/]);
+  if(iLat<0||iLng<0) return [];
+  var out=[];
+  for(var i=1;i<lines.length;i++){ var c=lines[i].split(/[,\t;]/);
+    var lat=parseFloat(c[iLat]), lng=parseFloat(c[iLng]); if(!isFinite(lat)||!isFinite(lng)) continue;
+    var t=null; if(iT>=0&&c[iT]){ var tp=Date.parse(c[iT]); if(isFinite(tp)) t=tp; else { var ep=parseInt(c[iT],10); if(isFinite(ep)) t=ep*(String(Math.abs(ep)).length<=10?1000:1); } }
+    out.push({lat:lat,lng:lng,t:t});
+  }
+  return out;
+}
+(function(){ var fe=g('gpx-file'); if(fe) fe.addEventListener('change', function(){
+  var files=Array.prototype.slice.call(this.files||[]); if(!files.length) return;
+  g('gpx-err').textContent=''; g('gpx-summary').textContent='解析中…';
+  Promise.all(files.map(_readFileText)).then(function(texts){
+    var pts=[]; texts.forEach(function(t,i){ var nm=files[i].name||''; pts=pts.concat(/\.csv$/i.test(nm)?_parseCsvTrack(t):_parseGpxTrack(t)); });
+    pts=pts.filter(function(p){ return isFinite(p.lat)&&isFinite(p.lng); });
+    pts.sort(function(a,b){ return (a.t||0)-(b.t||0); });
+    _gpxPts=pts; previewGpx();
+  }).catch(function(e){ g('gpx-summary').textContent=''; g('gpx-err').textContent='読み込み失敗: '+(e&&e.message||e); });
+}); })();
+function _schedMs(dateStr, hm){ if(!dateStr||!hm) return null; var d=_wallInstant(dateStr, hm, 'Asia/Tokyo'); return d?d.getTime():null; }
+function _moveWindow(it){
+  var s=(it.actualStartMs!=null)?it.actualStartMs:_schedMs(it.date, it.time);
+  var e=(it.actualEndMs!=null)?it.actualEndMs:_schedMs(it.date, it.toTime);
+  if(s==null&&e==null) return null; if(s==null)s=e; if(e==null)e=s; if(s>e){var t=s;s=e;e=t;}
+  return {s:s,e:e};
+}
+function previewGpx(){
+  if(!_gpxPts.length){ g('gpx-summary').textContent='トラックがありません'; g('gpx-preview').innerHTML=''; g('gpx-save').disabled=true; return; }
+  var withT=_gpxPts.filter(function(p){return p.t!=null;});
+  var offMs=(parseInt(g('gpx-offset').value,10)||0)*60000;
+  g('gpx-summary').innerHTML='取得点数: <b>'+_gpxPts.length+'</b>　時刻付き: <b>'+withT.length+'</b>'
+    +(withT.length?('　範囲: '+_gpxFmt(withT[0].t+offMs)+' 〜 '+_gpxFmt(withT[withT.length-1].t+offMs)):'（時刻なし→自動割当できません）');
+  var moves=_schItems.filter(function(it){ return it.isMove; });
+  _gpxMatch=[];
+  var rows=moves.map(function(it){
+    var w=_moveWindow(it), pts=[];
+    if(w && withT.length){ pts=_gpxPts.filter(function(p){ return p.t!=null && (p.t+offMs)>=w.s && (p.t+offMs)<=w.e; }).map(function(p){return [p.lat,p.lng];}); }
+    _gpxMatch.push({id:it.id, count:pts.length, pts:pts});
+    var ok=pts.length>=2;
+    return '<label style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-bottom:1px solid var(--border);font-size:12px;'+(ok?'cursor:pointer':'opacity:.55')+'">'
+      +'<input type="checkbox" class="gpx-chk" data-id="'+esc(it.id)+'" '+(ok?'checked':'disabled')+' style="width:15px;height:15px">'
+      +'<span style="flex:1">'+esc(it.title||'（無題）')+'<span style="color:var(--ink3)"> （'+esc(it.actualStart||it.time||'?')+'→'+esc(it.actualEnd||it.toTime||'?')+'）</span>'+(Array.isArray(it.track)&&it.track.length?' <span style="color:#1a6e58">✓登録済</span>':'')+'</span>'
+      +'<b style="color:'+(ok?'#1a6e58':'var(--ink3)')+'">'+pts.length+'点</b></label>';
+  }).join('');
+  g('gpx-preview').innerHTML=moves.length?('<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:40vh;overflow-y:auto">'+rows+'</div>'):'<div style="font-size:12px;color:var(--ink3)">このイベントに「2点間移動」がありません。</div>';
+  g('gpx-save').disabled=!_gpxMatch.some(function(m){return m.count>=2;});
+}
+function _mPerDeg(lat){ return {x:111320*Math.cos(lat*Math.PI/180), y:110540}; }
+function _segDistM(p,a,b){ var m=_mPerDeg(a[0]); var px=p[1]*m.x,py=p[0]*m.y,ax=a[1]*m.x,ay=a[0]*m.y,bx=b[1]*m.x,by=b[0]*m.y; var ABx=bx-ax,ABy=by-ay,len2=ABx*ABx+ABy*ABy; var t=len2>0?((px-ax)*ABx+(py-ay)*ABy)/len2:0; t=Math.max(0,Math.min(1,t)); var cx=ax+t*ABx,cy=ay+t*ABy,dx=px-cx,dy=py-cy; return Math.sqrt(dx*dx+dy*dy); }
+function _rdp(pts, eps){ if(pts.length<3) return pts.slice(); var dmax=0,idx=0,last=pts.length-1; for(var i=1;i<last;i++){ var d=_segDistM(pts[i],pts[0],pts[last]); if(d>dmax){dmax=d;idx=i;} } if(dmax>eps){ var l=_rdp(pts.slice(0,idx+1),eps), r=_rdp(pts.slice(idx),eps); return l.slice(0,l.length-1).concat(r); } return [pts[0],pts[last]]; }
+function _simplifyTrack(pts, epsM, maxPts){
+  var p=pts;
+  if(p.length>2500){ var step=Math.ceil(p.length/2500), q=[]; for(var i=0;i<p.length;i+=step) q.push(p[i]); if(q[q.length-1]!==p[p.length-1]) q.push(p[p.length-1]); p=q; }
+  var s=_rdp(p, epsM);
+  if(s.length>maxPts){ var st=Math.ceil(s.length/maxPts), r=[]; for(var j=0;j<s.length;j+=st) r.push(s[j]); if(r[r.length-1]!==s[s.length-1]) r.push(s[s.length-1]); s=r; }
+  return s.map(function(pt){ return [Math.round(pt[0]*1e5)/1e5, Math.round(pt[1]*1e5)/1e5]; });
+}
+function _haversineKm(a,b,c,dd){ var R=6371,r=Math.PI/180,dLat=(c-a)*r,dLng=(dd-b)*r; var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a*r)*Math.cos(c*r)*Math.sin(dLng/2)*Math.sin(dLng/2); return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x)); }
+function _trackDistKm(pts){ var d=0; for(var i=1;i<pts.length;i++){ d+=_haversineKm(pts[i-1][0],pts[i-1][1],pts[i][0],pts[i][1]); } return d; }
+function saveGpx(){
+  var checked={}; [].forEach.call(document.querySelectorAll('.gpx-chk:checked'), function(c){ checked[c.getAttribute('data-id')]=1; });
+  var targets=_gpxMatch.filter(function(m){ return m.count>=2 && checked[m.id]; });
+  if(!targets.length){ g('gpx-err').textContent='保存対象がありません'; return; }
+  g('gpx-err').textContent=''; g('gpx-save').disabled=true;
+  var FV=firebase.firestore.FieldValue, seq=Promise.resolve(), saved=0;
+  targets.forEach(function(m){ seq=seq.then(function(){
+    var simp=_simplifyTrack(m.pts, 15, 800), dist=_trackDistKm(simp);
+    return schCol(_schEventId).doc(m.id).update({ track:simp, trackPts:simp.length, trackDistKm:Math.round(dist*100)/100, trackSrc:'gpx', trackAt:FV.serverTimestamp() })
+      .then(function(){ var it=_schItems.find(function(x){return x.id===m.id;}); if(it){ it.track=simp; it.trackPts=simp.length; it.trackDistKm=Math.round(dist*100)/100; } saved++; });
+  }); });
+  seq.then(function(){ g('gpx-save').disabled=false; toast(saved+'件の移動に実ルートを保存しました'); closeGpxImport(); renderSchedList(); })
+     .catch(function(e){ g('gpx-save').disabled=false; g('gpx-err').textContent='保存失敗: '+(e&&e.message||e); });
+}
+function clearAllTracks(){
+  var moves=_schItems.filter(function(it){ return it.isMove && Array.isArray(it.track)&&it.track.length; });
+  if(!moves.length){ toast('消去する実ルートがありません'); return; }
+  if(!confirm(moves.length+'件の移動の実ルートを消去しますか？（予定の直線表示に戻ります）')) return;
+  var FV=firebase.firestore.FieldValue;
+  Promise.all(moves.map(function(it){ return schCol(_schEventId).doc(it.id).update({ track:FV.delete(), trackPts:FV.delete(), trackDistKm:FV.delete(), trackSrc:FV.delete(), trackAt:FV.delete() }).then(function(){ delete it.track; delete it.trackPts; delete it.trackDistKm; }); }))
+    .then(function(){ toast('実ルートを消去しました'); previewGpx(); renderSchedList(); })
+    .catch(function(e){ toast('消去失敗: '+e.message,'err'); });
+}
+g('gpx-modal').addEventListener('click',function(e){ if(e.target===g('gpx-modal')) closeGpxImport(); });
 
 var _schExpandedDays={}; // 展開中の日付を記憶（追加・編集後も維持）
 function toggleDay(idx, date){ var b=g('se-day-body-'+idx), c=g('se-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▶':'▼'; _schExpandedDays[date]=!open; }
