@@ -799,6 +799,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
   <div class="modal" style="max-width:360px">
     <div class="mhd"><span id="act-title">実時間</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeActEdit()">✕</button></div>
     <div class="mbd">
+      <div id="act-note" style="font-size:12px;color:var(--gold-d);margin-bottom:8px"></div>
       <div class="fg"><label class="fl" id="act-label">実時間（HH:MM）</label>
         <div style="display:flex;gap:8px;align-items:center">
           <input class="fi" id="act-time" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" style="flex:1">
@@ -3189,18 +3190,25 @@ function _ciCoConflictMsg(y){ return '同じ班の「'+(y.title||'項目')+'」(
 // 確定済みの実時間はモーダルで変更/消去（CI/COをクリックで開く）
 function _editActualTime(id, which){ openActEdit(id, which); }
 var _actId=null, _actWhich=null;
-function openActEdit(id, which){
+function openActEdit(id, which, presetHM, note){
   var it=_schItems.find(function(x){return x.id===id;}); if(!it) return;
   _actId=id; _actWhich=which;
   var cur=(which==='start')?(it.actualStart||''):(it.actualEnd||'');
   var lbl=(which==='start')?'開始(CI)':'終了(CO)';
   g('act-title').textContent=lbl+'の実時間';
   g('act-label').textContent=lbl+'の実時間（HH:MM）';
-  g('act-time').value=cur||_nowHM();
+  g('act-time').value=presetHM||cur||_nowHM();
   g('act-err').textContent='';
+  if(g('act-note')) g('act-note').textContent=note||'';
   g('act-clear').style.display=cur?'inline-block':'none';
   g('act-modal').classList.add('open');
 }
+// 予定時刻(ms)。which='start'は開始、'end'は到着/終了(無ければ開始)。
+function _schedMsFor(it, which){
+  var t=(which==='start')?it.time:((it.isMove?it.toTime:it.endTime)||it.time);
+  return (t&&it.date)?_msFromWallHM(it.date, t):null;
+}
+var _CICO_LATE_MS=30*60000; // 予定より30分以上遅れていたら、あとから記録として時刻修正を促す
 function closeActEdit(){ g('act-modal').classList.remove('open'); _actId=null; _actWhich=null; }
 function saveActEdit(){
   if(!_actId) return;
@@ -3265,6 +3273,9 @@ function eventCI(id){
   var it=_schItems.find(function(x){return x.id===id;}); if(!it) return;
   if(it.actualStart){ _editActualTime(id,'start'); return; } // 確定後はタップで時間修正
   var rc=_nowRecFor(it.date), hm=rc.hm, ms=rc.ms, dt=rc.dt; // 朝帰り: 翌朝6時までは前日扱い(24〜29時)
+  // 予定より30分以上遅れている場合は、あとから記録の可能性があるので時刻を修正して記録できるように
+  var schMs=_schedMsFor(it,'start');
+  if(schMs!=null && (Date.now()-schMs)>=_CICO_LATE_MS){ openActEdit(id,'start', hm, '開始予定より30分以上過ぎています。あとから記録する場合は、実際の開始時刻に修正して保存してください。'); return; }
   if(!confirm('「'+(it.title||'この項目')+'」を '+hm+' でCI（開始）として記録しますか？')) return; // 誤タップ防止
   schCol(_schEventId).doc(id).update({ actualStart:hm, actualStartMs:ms, actualStartDate:dt })
     .then(function(){ it.actualStart=hm; it.actualStartMs=ms; it.actualStartDate=dt; renderSchedList(); toast('CI 記録: '+hm); })
@@ -3274,6 +3285,8 @@ function eventCO(id){
   var it=_schItems.find(function(x){return x.id===id;}); if(!it) return;
   if(it.actualEnd){ _editActualTime(id,'end'); return; } // 確定後はタップで時間修正
   var rc=_nowRecFor(it.date), hm=rc.hm, ms=rc.ms, dt=rc.dt; // 朝帰り: 翌朝6時までは前日扱い(24〜29時)
+  var schMs=_schedMsFor(it,'end');
+  if(schMs!=null && (Date.now()-schMs)>=_CICO_LATE_MS){ openActEdit(id,'end', hm, '終了予定より30分以上過ぎています。あとから記録する場合は、実際の終了時刻に修正して保存してください。'); return; }
   if(!confirm('「'+(it.title||'この項目')+'」を '+hm+' でCO（終了）として記録しますか？')) return; // 誤タップ防止
   // 時間チェック（CI/COの前後関係・班の重なり）は廃止：現在時刻でそのまま記録する
   schCol(_schEventId).doc(id).update({ actualEnd:hm, actualEndMs:ms, actualEndDate:dt })
