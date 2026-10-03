@@ -313,6 +313,10 @@ a{color:var(--gold-d)}
 #lb-nav-prev{left:2px}#lb-nav-next{right:2px}
 .ph-pin-wrap{background:none;border:none}
 .ph-pin{display:inline-flex;align-items:center;gap:1px;background:var(--gold-d);color:#fff;border-radius:12px;padding:2px 7px;font-size:13px;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;cursor:pointer}
+.live-pin-wrap{background:transparent;border:0}
+.live-pin{display:block;width:16px;height:16px;border-radius:50%;background:#e8352b;border:2px solid #fff;box-shadow:0 0 0 2px rgba(232,53,43,.4);animation:livepulse 1.3s infinite}
+@keyframes livepulse{0%{box-shadow:0 0 0 2px rgba(232,53,43,.5)}70%{box-shadow:0 0 0 10px rgba(232,53,43,0)}100%{box-shadow:0 0 0 2px rgba(232,53,43,0)}}
+.sc-live-badge{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:#e8352b;border-radius:10px;padding:1px 8px;margin-left:6px;vertical-align:middle}
 .ph-pin b{font-size:11px;font-weight:700}
 #ph-existing{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
 .phx-wrap{width:70px;display:flex;flex-direction:column}
@@ -1460,6 +1464,7 @@ function loadSchedule(){
     res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).forEach(function(p){ (_photosByItem[p.scheduleItemId]=_photosByItem[p.scheduleItemId]||[]).push(p); });
     Object.keys(_photosByItem).forEach(function(k){ _photosByItem[k].sort(phSort); });
     renderSchedule(_schedItems);
+    subscribeLive(); // ライブ位置の購読を開始（1回のみ）
   }).catch(function(){ var el=g('schedule-cont'); if(el) el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">読み込みに失敗しました</div></div>'; });
 }
 // 緯度・経度を数値に正規化（文字列や余分な空白でも安全に）
@@ -2279,7 +2284,7 @@ function nowSectionHtml(visEnr){
   var ic=itemIcon(it);
   var _nowEndRaw=it.isMove?it.toTime:it.endTime;
   var tline=(it.time||it.endTime||it.actualStart||it.actualEnd)?('<span class="sc-now-t">'+_tcell(it.actualStart,it.time||'—')+(_hasEnd(it)?' → '+_tcell(it.actualEnd,_nowEndRaw):'')+'</span>'):'';
-  var h='<div class="sc-now live"><div class="sc-now-lbl">'+(cur?'▶ 現在のイベント':'⏭ まもなく')+'</div>'
+  var h='<div class="sc-now live"><div class="sc-now-lbl">'+(cur?'▶ 現在のイベント':'⏭ まもなく')+'<span class="sc-live-badge" id="sc-live-badge" style="display:none">🔴 ライブ</span></div>'
     +'<div class="sc-now-item">'+tline+'<span class="sc-now-ic">'+ic+'</span><span class="sc-now-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'')+'</span></div>'
     +(function(){
        var pb=_isReal?('<button class="sc-photo-btn" style="margin-left:auto" onclick="openItemPhotoMgr(\''+esc(it.id)+'\')">📷'+((_photosByItem[it.id]||[]).length?(' '+(_photosByItem[it.id]||[]).length):'')+'</button>'):'';
@@ -2342,6 +2347,7 @@ function initNowMap(it){
   }
   if(bounds.length>1) map.fitBounds(bounds,{padding:[30,30],maxZoom:13}); else map.setView([it.lat,plng],13);
   setTimeout(function(){ map.invalidateSize(); },120);
+  _drawLiveLayers(map); // ライブ位置を重ねる
 }
 // カウントダウン/フェーズの自動更新（デバッグ固定時は静止）
 function _startNowTimer(){
@@ -2390,7 +2396,7 @@ function renderSchedule(items){
   // 日付ごとの項目（その日のルートマップ用）。並びはJST順。
   var dayItemsMap={};
   visEnr.forEach(function(e){ var d=e.it.date||''; (dayItemsMap[d]=dayItemsMap[d]||[]).push(e.it); });
-  var h='<div class="card"><div class="sec-row"><div class="sec">🗓 スケジュール</div>'+((_isStaff||_isCoAdmin)?'<a class="ph-btn" style="text-decoration:none" href="/admin_events.html?sched='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛠 管理ページで編集</a>':'')+(_isReal?'<button class="ph-btn" onclick="openPh()">📷 写真を追加</button>':'')+'</div>';
+  var h='<div class="card"><div class="sec-row"><div class="sec">🗓 スケジュール</div>'+((_isStaff||_isCoAdmin)?'<a class="ph-btn" style="text-decoration:none" href="/admin_events.html?sched='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛠 管理ページで編集</a><a class="ph-btn" style="text-decoration:none" href="/event_live.html?ev='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛰 ライブ中継</a>':'')+(_isReal?'<button class="ph-btn" onclick="openPh()">📷 写真を追加</button>':'')+'</div>';
   h+=debugTimeBar();
   var useG=SchedGroups.used(items); // 班（2班・3班）を使っている場合のみ右端バー表示
   var myG=useG?_viewerGroup(enr):1;
@@ -2545,6 +2551,30 @@ function _drawMoveRoute(map, it, oLL, tLL){
   var arc=_greatCircle(oLL, tLL, 64);
   L.polyline(arc,{color:'#c8921e',weight:3,dashArray:'6,6'}).addTo(map);
   return arc;
+}
+// ── ライブ位置（イベント中の現在地中継）の購読・描画 ──
+var _liveUnsub=null, _liveDocs={}, _liveLayers=[];
+function subscribeLive(){
+  if(!eventId || _liveUnsub || !db) return;
+  _liveUnsub=db.collection('events').doc(eventId).collection('live').onSnapshot(function(snap){
+    _liveDocs={}; snap.forEach(function(d){ _liveDocs[d.id]=Object.assign({id:d.id}, d.data()); });
+    if(_nowMap) _drawLiveLayers(_nowMap);
+    _updateLiveBadge();
+  }, function(){});
+}
+function _liveActive(d){ return d && d.active!==false && d.lat!=null && d.lng!=null && (Date.now()-(d.updatedMs||0) < 180000); }
+function _liveAnyActive(){ return Object.keys(_liveDocs).some(function(k){ return _liveActive(_liveDocs[k]); }); }
+function _updateLiveBadge(){ var b=g('sc-live-badge'); if(b) b.style.display=_liveAnyActive()?'inline-block':'none'; }
+function _drawLiveLayers(map){
+  if(!window.L||!map) return;
+  _liveLayers.forEach(function(l){ try{ map.removeLayer(l); }catch(e){} }); _liveLayers=[];
+  Object.keys(_liveDocs).forEach(function(k){
+    var d=_liveDocs[k]; if(!_liveActive(d)) return;
+    if(Array.isArray(d.trail)&&d.trail.length>=2){ var pl=L.polyline(d.trail,{color:'#e8352b',weight:3,opacity:.75}).addTo(map); _liveLayers.push(pl); }
+    var icon=L.divIcon({className:'live-pin-wrap',html:'<span class="live-pin"></span>',iconSize:[20,20],iconAnchor:[10,10]});
+    var mk=L.marker([d.lat,d.lng],{icon:icon,zIndexOffset:2000}).addTo(map).bindPopup('🔴 '+esc(d.label||'ライブ')+'<br>'+esc(_fmtDbg(d.updatedMs||Date.now())));
+    _liveLayers.push(mk);
+  });
 }
 function initSchedMap(items){
   var mapEl=g('sc-map-el'); if(!mapEl||!window.L) return;
