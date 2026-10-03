@@ -2820,13 +2820,14 @@ function suggestItem(ex){
 function _phUploadOne(f, ex, itemId, caption){
   var it=_schedItems.find(function(x){return x.id===itemId;})||{};
   var col=db.collection('events').doc(eventId).collection('photos');
+  var keepOrig=!!(_ev && _ev.keepOriginals); // イベント設定がオンなら原本(無圧縮)も保存
   return Promise.all([compressImage(f,1600,0.72), compressImage(f,400,0.7)]).then(function(bl){
     var pid=col.doc().id, base='event_photos/'+eventId+'/'+pid;
     var mref=storage.ref(base+'.jpg'), tref=storage.ref(base+'_thumb.jpg');
     return mref.put(bl[0],{contentType:'image/jpeg'}).then(function(){ return tref.put(bl[1],{contentType:'image/jpeg'}); })
       .then(function(){ return Promise.all([mref.getDownloadURL(), tref.getDownloadURL()]); })
       .then(function(urls){
-        return col.doc(pid).set({
+        var docData={
           scheduleItemId:itemId, uploaderUid:_uid, uploaderName:_memberName||'',
           url:urls[0], thumbUrl:urls[1], storagePath:base,
           caption:((caption||'').trim()||null),
@@ -2836,9 +2837,17 @@ function _phUploadOne(f, ex, itemId, caption){
           // 撮影時刻のない写真は項目の実終了時間(なければ予定終了)を付与。あとでライトボックスから変更可。
           takenAt:(ex.time||_itemEndMs(it)||f.lastModified||Date.now()),
           timeInherited:(ex.time?false:true),
+          hasOriginal:false,
           createdMs:Date.now(),
           createdAt:firebase.firestore.FieldValue.serverTimestamp()
-        });
+        };
+        if(!keepOrig) return col.doc(pid).set(docData);
+        // 原本(無圧縮)を保存。失敗しても表示用は保存する。
+        var ext=(f.type==='image/png')?'png':(f.type==='image/webp')?'webp':'jpg';
+        var origPath=base+'_orig.'+ext;
+        return storage.ref(origPath).put(f,{contentType:(f.type||'image/jpeg')})
+          .then(function(){ docData.hasOriginal=true; docData.origPath=origPath; docData.origSize=(f.size||0); docData.origName=(f.name||''); docData.origType=(f.type||'image/jpeg'); return col.doc(pid).set(docData); })
+          .catch(function(){ return col.doc(pid).set(docData); });
       });
   });
 }
