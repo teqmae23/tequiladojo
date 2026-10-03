@@ -602,7 +602,7 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
       <div id="act-note" style="font-size:12px;color:var(--gold-d);margin-bottom:8px"></div>
       <div class="fg"><label class="fl" id="act-label">実時間（HH:MM）</label>
         <div style="display:flex;gap:8px;align-items:center">
-          <input class="fi" id="act-time" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" style="flex:1">
+          <input class="fi" id="act-time" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" onblur="_fmtTimeField(this)" style="flex:1">
           <button class="btn bs" id="act-clear" onclick="clearActField()" title="この実時間を消去" style="flex:0 0 auto">✖ 消去</button>
         </div>
       </div>
@@ -2031,12 +2031,18 @@ function _nowHM(){ var d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0
 function _nowDate(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
 function _schedDoc(id){ return db.collection('events').doc(eventId).collection('scheduleItems').doc(id); }
 // 深夜対応（朝帰り）: 0:00〜30:00（翌朝6時まで）を同一日付に格納できる
+// "HH:MM" のほか、数字のみ（例 0000→00:00 / 2530→25:30 / 930→09:30）も受け付ける。
 function _normHM(s){
   s=String(s==null?'':s).trim(); if(!s) return '';
-  var m=s.match(/^(\d{1,2}):([0-5]\d)$/); if(!m) return null;
-  var hh=+m[1], tot=hh*60+(+m[2]); if(tot<0||tot>1800) return null;
-  return (hh<10?'0'+hh:''+hh)+':'+m[2];
+  var hh, mm, m;
+  if(m=s.match(/^(\d{1,2}):([0-5]\d)$/)){ hh=+m[1]; mm=+m[2]; }
+  else if(m=s.match(/^(\d{3,4})$/)){ var d=(m[1].length===3?'0':'')+m[1]; hh=+d.slice(0,2); mm=+d.slice(2); if(mm>59) return null; }
+  else return null;
+  var tot=hh*60+mm; if(tot<0||tot>1800) return null;
+  return (hh<10?'0'+hh:''+hh)+':'+('0'+mm).slice(-2);
 }
+// 時刻入力欄を離れたら HH:MM に自動整形（数字のみ入力に対応）
+function _fmtTimeField(el){ if(!el) return; var v=_normHM(el.value); if(v) el.value=v; }
 function _msFromWallHM(dateStr, hm){
   var m=String(hm||'').match(/^(\d{1,2}):([0-5]\d)$/), p=(dateStr||'').split('-');
   if(!m||p.length<3) return Date.now();
@@ -2185,13 +2191,13 @@ function openSchedEdit(id){
   h+='<div style="display:flex;gap:10px"><div class="fg" style="flex:1"><label class="fl">日付</label><input class="fi" id="se-date" type="date" value="'+esc(it.date||'')+'"></div>'
      +'<div class="fg" style="flex:1"><label class="fl">分類</label><select class="fi" id="se-cat">'+catOpts+'</select></div></div>';
   if(isMove){
-    h+='<div style="display:flex;gap:10px"><div class="fg" style="flex:1"><label class="fl">出発時刻</label><input class="fi" id="se-time" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" value="'+esc(it.time||'')+'"></div>'
-       +'<div class="fg" style="flex:1"><label class="fl">到着時刻</label><input class="fi" id="se-end" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" value="'+esc(it.toTime||'')+'"></div></div>';
+    h+='<div style="display:flex;gap:10px"><div class="fg" style="flex:1"><label class="fl">出発時刻</label><input class="fi" id="se-time" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" onblur="_fmtTimeField(this)" value="'+esc(it.time||'')+'"></div>'
+       +'<div class="fg" style="flex:1"><label class="fl">到着時刻</label><input class="fi" id="se-end" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" onblur="_fmtTimeField(this)" value="'+esc(it.toTime||'')+'"></div></div>';
     h+='<div class="fg"><label class="fl">出発地</label><input class="fi" id="se-place" value="'+esc(it.placeName||'')+'"></div>';
     h+='<div class="fg"><label class="fl">到着地</label><input class="fi" id="se-toname" value="'+esc(it.toName||'')+'"></div>';
   } else {
-    h+='<div style="display:flex;gap:10px"><div class="fg" style="flex:1"><label class="fl">開始時刻</label><input class="fi" id="se-time" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" value="'+esc(it.time||'')+'"></div>'
-       +'<div class="fg" style="flex:1"><label class="fl">終了時刻（任意）</label><input class="fi" id="se-end" type="text" inputmode="numeric" placeholder="HH:MM（深夜は26:00）" value="'+esc(it.endTime||'')+'"></div></div>';
+    h+='<div style="display:flex;gap:10px"><div class="fg" style="flex:1"><label class="fl">開始時刻</label><input class="fi" id="se-time" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" onblur="_fmtTimeField(this)" value="'+esc(it.time||'')+'"></div>'
+       +'<div class="fg" style="flex:1"><label class="fl">終了時刻（任意）</label><input class="fi" id="se-end" type="text" inputmode="numeric" placeholder="HH:MM（深夜は26:00）" onblur="_fmtTimeField(this)" value="'+esc(it.endTime||'')+'"></div></div>';
     h+='<div class="fg"><label class="fl">場所名</label><input class="fi" id="se-place" value="'+esc(it.placeName||'')+'"></div>';
   }
   h+='<div class="mnote" style="margin-top:-4px">深夜（朝帰り）は 24:00〜30:00（翌朝6時まで）で入力できます。</div>';
