@@ -601,7 +601,7 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
     <div class="mbd">
       <div class="fg"><label class="fl" id="act-label">実時間（HH:MM）</label>
         <div style="display:flex;gap:8px;align-items:center">
-          <input class="fi" id="act-time" type="time" style="flex:1">
+          <input class="fi" id="act-time" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" style="flex:1">
           <button class="btn bs" id="act-clear" onclick="clearActField()" title="この実時間を消去" style="flex:0 0 auto">✖ 消去</button>
         </div>
       </div>
@@ -1536,6 +1536,8 @@ function _tcell(actual, sched){
   if(actual) return '<span class="sc-act">'+esc(actual)+'</span>';
   return esc(sched||'—');
 }
+// 終了（到着/滞在終了）を持つ項目か（2点移動 or 終了時刻あり）。単一時間はfalse。
+function _hasEnd(it){ return !!(it && (it.isMove || (it.endTime&&String(it.endTime).trim()))); }
 function schedTimeHtml(it, leg){
   var body;
   var schedEndRaw=it.isMove?it.toTime:it.endTime;
@@ -1543,7 +1545,8 @@ function schedTimeHtml(it, leg){
   else if(leg==='arr'){ body=_tcell(it.actualEnd, schedEndRaw||it.time||'—'); }
   else {
     var startCell=_tcell(it.actualStart, it.time||'—');
-    if((it.isMove&&it.toTime)||(!it.isMove&&it.endTime)||it.actualEnd){
+    // 終了を表示するのは「2点移動」または「終了時刻のある項目」のみ。単一時間(チェックアウト等)は開始のみ。
+    if(_hasEnd(it)){
       body=startCell+'<span class="sc-arrow">↓</span>'+_tcell(it.actualEnd, schedEndRaw);
     } else { body=startCell; }
   }
@@ -2026,6 +2029,28 @@ function _canSchedEdit(){ return !!(_isStaff||_isCoAdmin); }
 function _nowHM(){ var d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
 function _nowDate(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
 function _schedDoc(id){ return db.collection('events').doc(eventId).collection('scheduleItems').doc(id); }
+// 深夜対応（朝帰り）: 0:00〜30:00（翌朝6時まで）を同一日付に格納できる
+function _normHM(s){
+  s=String(s==null?'':s).trim(); if(!s) return '';
+  var m=s.match(/^(\d{1,2}):([0-5]\d)$/); if(!m) return null;
+  var hh=+m[1], tot=hh*60+(+m[2]); if(tot<0||tot>1800) return null;
+  return (hh<10?'0'+hh:''+hh)+':'+m[2];
+}
+function _msFromWallHM(dateStr, hm){
+  var m=String(hm||'').match(/^(\d{1,2}):([0-5]\d)$/), p=(dateStr||'').split('-');
+  if(!m||p.length<3) return Date.now();
+  return new Date(+p[0],+p[1]-1,+p[2],0,0,0).getTime()+((+m[1])*60+(+m[2]))*60000;
+}
+// 実時間の自動記録。baseDate の翌朝6時までに記録した場合は 24〜29時として同一日付に格納（朝帰り対応）。
+function _nowRecFor(baseDate){
+  var d=new Date(), H=d.getHours(), M=d.getMinutes();
+  var dt=_nowDate(), hm=('0'+H).slice(-2)+':'+('0'+M).slice(-2);
+  if(baseDate && dt>baseDate){
+    var diff=Math.round((Date.parse(dt)-Date.parse(baseDate))/86400000);
+    if(diff===1 && H<6){ hm=(24+H)+':'+('0'+M).slice(-2); dt=baseDate; }
+  }
+  return {hm:hm, dt:dt, ms:Date.now()};
+}
 // 同じ班か（班未使用なら常に同一班扱い）
 function _sameGroupCICO(a,b){
   if(!SchedGroups.used(_schedItems)) return true;
@@ -2067,12 +2092,11 @@ function closeActEdit(){ g('act-modal').classList.remove('open'); _actId=null; _
 function saveActEdit(){
   if(!_actId||!_canSchedEdit()) return;
   var it=_schedItems.find(function(x){return x.id===_actId;}); if(!it){ closeActEdit(); return; }
-  var v=(g('act-time').value||'').trim();
-  if(!/^([01]?\d|2[0-3]):[0-5]\d$/.test(v)){ g('act-err').textContent='HH:MM 形式で入力してください'; return; }
-  var pp=v.split(':'); v=('0'+parseInt(pp[0],10)).slice(-2)+':'+pp[1];
+  var v=_normHM(g('act-time').value);
+  if(v===null || v===''){ g('act-err').textContent='HH:MM 形式で入力してください（深夜は25:30など30:00まで）'; return; }
   var which=_actWhich;
   var dateStr=((which==='start')?(it.actualStartDate||it.date):(it.actualEndDate||it.date))||it.date||'';
-  var ms=dateStr?new Date(dateStr+'T'+v+':00').getTime():Date.now();
+  var ms=dateStr?_msFromWallHM(dateStr, v):Date.now();
   var upd={};
   if(which==='start'){ upd.actualStart=v; upd.actualStartMs=ms; if(dateStr) upd.actualStartDate=(it.actualStartDate||dateStr); }
   else { upd.actualEnd=v; upd.actualEndMs=ms; if(dateStr) upd.actualEndDate=(it.actualEndDate||dateStr); }
@@ -2098,9 +2122,8 @@ function eventCI(id){
   if(!_canSchedEdit()) return;
   var it=_schedItems.find(function(x){return x.id===id;}); if(!it) return;
   if(it.actualStart){ _editActualTime(id,'start'); return; }
-  var hm=_nowHM();
+  var rc=_nowRecFor(it.date), hm=rc.hm, ms=rc.ms, dt=rc.dt; // 朝帰り: 翌朝6時までは前日扱い(24〜29時)
   if(!confirm('「'+(it.title||'この項目')+'」を '+hm+' でCI（開始）として記録しますか？')) return;
-  var ms=Date.now(), dt=_nowDate();
   _schedDoc(id).update({ actualStart:hm, actualStartMs:ms, actualStartDate:dt })
     .then(function(){ it.actualStart=hm; it.actualStartMs=ms; it.actualStartDate=dt; renderSchedule(_schedItems); toast('CI 記録: '+hm); })
     .catch(function(e){ toast('記録失敗: '+e.message); });
@@ -2109,9 +2132,8 @@ function eventCO(id){
   if(!_canSchedEdit()) return;
   var it=_schedItems.find(function(x){return x.id===id;}); if(!it) return;
   if(it.actualEnd){ _editActualTime(id,'end'); return; }
-  var hm=_nowHM();
+  var rc=_nowRecFor(it.date), hm=rc.hm, ms=rc.ms, dt=rc.dt; // 朝帰り: 翌朝6時までは前日扱い(24〜29時)
   if(!confirm('「'+(it.title||'この項目')+'」を '+hm+' でCO（終了）として記録しますか？')) return;
-  var ms=Date.now(), dt=_nowDate();
   // 時間チェック（CI/COの前後関係・班の重なり）は廃止：現在時刻でそのまま記録する
   _schedDoc(id).update({ actualEnd:hm, actualEndMs:ms, actualEndDate:dt })
     .then(function(){ it.actualEnd=hm; it.actualEndMs=ms; it.actualEndDate=dt; renderSchedule(_schedItems); toast('CO 記録: '+hm); })
@@ -2144,15 +2166,16 @@ function openSchedEdit(id){
   h+='<div style="display:flex;gap:10px"><div class="fg" style="flex:1"><label class="fl">日付</label><input class="fi" id="se-date" type="date" value="'+esc(it.date||'')+'"></div>'
      +'<div class="fg" style="flex:1"><label class="fl">分類</label><select class="fi" id="se-cat">'+catOpts+'</select></div></div>';
   if(isMove){
-    h+='<div style="display:flex;gap:10px"><div class="fg" style="flex:1"><label class="fl">出発時刻</label><input class="fi" id="se-time" type="time" value="'+esc(it.time||'')+'"></div>'
-       +'<div class="fg" style="flex:1"><label class="fl">到着時刻</label><input class="fi" id="se-end" type="time" value="'+esc(it.toTime||'')+'"></div></div>';
+    h+='<div style="display:flex;gap:10px"><div class="fg" style="flex:1"><label class="fl">出発時刻</label><input class="fi" id="se-time" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" value="'+esc(it.time||'')+'"></div>'
+       +'<div class="fg" style="flex:1"><label class="fl">到着時刻</label><input class="fi" id="se-end" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" value="'+esc(it.toTime||'')+'"></div></div>';
     h+='<div class="fg"><label class="fl">出発地</label><input class="fi" id="se-place" value="'+esc(it.placeName||'')+'"></div>';
     h+='<div class="fg"><label class="fl">到着地</label><input class="fi" id="se-toname" value="'+esc(it.toName||'')+'"></div>';
   } else {
-    h+='<div style="display:flex;gap:10px"><div class="fg" style="flex:1"><label class="fl">開始時刻</label><input class="fi" id="se-time" type="time" value="'+esc(it.time||'')+'"></div>'
-       +'<div class="fg" style="flex:1"><label class="fl">終了時刻（任意）</label><input class="fi" id="se-end" type="time" value="'+esc(it.endTime||'')+'"></div></div>';
+    h+='<div style="display:flex;gap:10px"><div class="fg" style="flex:1"><label class="fl">開始時刻</label><input class="fi" id="se-time" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" value="'+esc(it.time||'')+'"></div>'
+       +'<div class="fg" style="flex:1"><label class="fl">終了時刻（任意）</label><input class="fi" id="se-end" type="text" inputmode="numeric" placeholder="HH:MM（深夜は26:00）" value="'+esc(it.endTime||'')+'"></div></div>';
     h+='<div class="fg"><label class="fl">場所名</label><input class="fi" id="se-place" value="'+esc(it.placeName||'')+'"></div>';
   }
+  h+='<div class="mnote" style="margin-top:-4px">深夜（朝帰り）は 24:00〜30:00（翌朝6時まで）で入力できます。</div>';
   h+='<div class="fg"><label class="fl">メモ（任意）</label><textarea class="fi" id="se-note" rows="3">'+esc(it.note||'')+'</textarea></div>';
   h+='<div class="mnote">座標・地図・班・ルーミングなどの詳細設定は<a href="/admin_events.html?sched='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">管理ページ</a>で編集できます。</div>';
   h+='<div class="sv-err" id="se-err"></div>';
@@ -2167,10 +2190,12 @@ function saveSchedEdit(){
   var title=(g('se-ttl').value||'').trim();
   if(!title){ g('se-err').textContent='タイトルを入力してください'; return; }
   var isMove=!!it.isMove;
+  var tTime=_normHM(g('se-time').value), tEnd=_normHM(g('se-end').value);
+  if(tTime===null||tEnd===null){ g('se-err').textContent='時刻は HH:MM で入力してください（深夜は 24:00〜30:00）'; return; }
   var upd={ title:title, date:(g('se-date').value||it.date||''), category:(g('se-cat').value||it.category||'other'),
-            time:(g('se-time').value||null), note:((g('se-note').value||'').trim()||null) };
-  if(isMove){ upd.toTime=(g('se-end').value||null); upd.placeName=((g('se-place').value||'').trim()||null); upd.toName=((g('se-toname').value||'').trim()||null); }
-  else { upd.endTime=(g('se-end').value||null); upd.placeName=((g('se-place').value||'').trim()||null); }
+            time:(tTime||null), note:((g('se-note').value||'').trim()||null) };
+  if(isMove){ upd.toTime=(tEnd||null); upd.placeName=((g('se-place').value||'').trim()||null); upd.toName=((g('se-toname').value||'').trim()||null); }
+  else { upd.endTime=(tEnd||null); upd.placeName=((g('se-place').value||'').trim()||null); }
   var btn=g('se-save'); btn.disabled=true; g('se-err').textContent='';
   _schedDoc(_seId).update(upd).then(function(){
     Object.assign(it,upd); btn.disabled=false; closeSchedEdit(); renderSchedule(_schedItems); toast('保存しました');
@@ -2187,12 +2212,22 @@ function _fmtLocalInput(ms){ var d=new Date(ms); return d.getFullYear()+'-'+_pad
 function _fmtDbg(ms){ var d=new Date(ms); return d.getFullYear()+'/'+_pad2(d.getMonth()+1)+'/'+_pad2(d.getDate())+' '+_pad2(d.getHours())+':'+_pad2(d.getMinutes()); }
 function fmtCountdown(ms){ if(ms<0)ms=0; var tm=Math.floor(ms/60000); var days=Math.floor(tm/1440); var hh=Math.floor((tm%1440)/60); var mm=tm%60; return 'あと'+days+'日 '+_pad2(hh)+':'+_pad2(mm); }
 // イベントの開始・終了境界（開始=最初の項目の実時刻/なければ開催開始日、終了=終了日の翌日0:00 JST）
+// 項目の終了時刻（実時間優先→予定の到着/終了→なければ開始）の絶対ms
+function _endInstMs(it){
+  if(it.actualEndMs!=null) return it.actualEndMs;
+  var endRaw=it.isMove?it.toTime:it.endTime;
+  if(endRaw){ var e=_wallInstant(it.date, endRaw, 'Asia/Tokyo'); if(e) return e.getTime(); }
+  if(it.actualStartMs!=null) return it.actualStartMs;
+  var s=_schedInstant(it); return s?s.getTime():0;
+}
 function _eventBounds(items){
   var sorted=_sortByJst(items||[]);
   var startMs=sorted.length?sorted[0].ms:null;
   if(startMs==null && _ev && _ev.startDate){ var s=_wallInstant(_ev.startDate,'00:00','Asia/Tokyo'); startMs=s?s.getTime():null; }
   var endDate=(_ev&&_ev.endDate)||(_ev&&_ev.startDate)||(sorted.length?sorted[sorted.length-1].it.date:null);
   var endMs=null; if(endDate){ var e=_wallInstant(endDate,'00:00','Asia/Tokyo'); if(e) endMs=e.getTime()+86400000; }
+  // 朝帰り（深夜24時以降）対応: 各項目の終了実時刻/予定がendMsを超える場合はそこまで「開催中」とする
+  (sorted||[]).forEach(function(en){ var m=_endInstMs(en.it); if(m && (endMs==null || m>endMs)) endMs=m; });
   return {startMs:startMs, endMs:endMs, sorted:sorted};
 }
 // スケジュールTOP: 現在時刻からフェーズを判定して表示（visEnr=表示対象の{it,ms}配列）
@@ -2218,7 +2253,7 @@ function nowSectionHtml(visEnr){
   _nowMapItem=geo?it:null;
   var ic=itemIcon(it);
   var _nowEndRaw=it.isMove?it.toTime:it.endTime;
-  var tline=(it.time||it.endTime||it.actualStart||it.actualEnd)?('<span class="sc-now-t">'+_tcell(it.actualStart,it.time||'—')+((_nowEndRaw||it.actualEnd)?' → '+_tcell(it.actualEnd,_nowEndRaw):'')+'</span>'):'';
+  var tline=(it.time||it.endTime||it.actualStart||it.actualEnd)?('<span class="sc-now-t">'+_tcell(it.actualStart,it.time||'—')+(_hasEnd(it)?' → '+_tcell(it.actualEnd,_nowEndRaw):'')+'</span>'):'';
   var h='<div class="sc-now live"><div class="sc-now-lbl">'+(cur?'▶ 現在のイベント':'⏭ まもなく')+'</div>'
     +'<div class="sc-now-item">'+tline+'<span class="sc-now-ic">'+ic+'</span><span class="sc-now-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'')+'</span></div>'
     +(function(){
