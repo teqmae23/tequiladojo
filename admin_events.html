@@ -490,11 +490,6 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
         <input type="checkbox" id="f-pub" style="width:16px;height:16px;accent-color:var(--gold-d)">
         公開する（会員マイページにバナー表示）
       </label>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink2);cursor:pointer;margin-top:6px">
-        <input type="checkbox" id="f-keeporig" style="width:16px;height:16px;accent-color:var(--gold-d)">
-        写真の原本（無圧縮）を保存する
-      </label>
-      <div style="font-size:11px;color:var(--ink3);margin-top:2px">オンの間に投稿された写真は、表示用に加えて原本も保存します（管理者のみDL可）。イベント中いつでも切替可能。原本は「🗄 ストレージ管理」でZIP一括DL後に削除できます。</div>
       <div class="fg" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
         <label class="fl">👁 閲覧設定（イベント閲覧ページ）</label>
         <div class="row2">
@@ -792,7 +787,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
   <div class="modal" style="max-width:640px">
     <div class="mhd"><span id="sch-mgr-title">スケジュール</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeSchedMgr()">✕</button></div>
     <div class="mbd">
-      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm ca-only-hide" onclick="openCatMgr()">🏷 種別管理</button><button class="btn bs sm ca-only-hide" id="sch-keeporig-btn" onclick="toggleKeepOriginals()" title="写真の原本（無圧縮）保存のオン/オフ">🗂 原本保存: —</button><span class="cnt" id="sch-total"></span></div>
+      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm ca-only-hide" onclick="openCatMgr()">🏷 種別管理</button><span class="cnt" id="sch-total"></span></div>
       <div id="sch-list"><div class="ec">読み込み中…</div></div>
     </div>
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeSchedMgr()">閉じる</button></div>
@@ -1542,7 +1537,6 @@ function openEvent(id){ if(_coAdminMode) return;
   g('f-desc').value=ev?(ev.description||''):'';
   g('f-top').value=ev?(ev.topPageUrl||''):'';
   g('f-pub').checked=!!(ev&&ev.published);
-  g('f-keeporig').checked=!!(ev&&ev.keepOriginals);
   g('f-evtype').value=(ev&&ev.eventType)||'closed';
   g('f-joinself').checked=!!(ev&&ev.joinSelfEnabled);
   g('f-joininvite').checked=!!(ev&&ev.joinInviteEnabled);
@@ -1700,7 +1694,7 @@ function saveEvent(){
     worldClocks:_readWorldClocks(), fxPairs:_readFxPairs(),
     weatherCities:_readWeatherCities(),
     bankRates:_readBankRates(), bankRatesAsOf:(g('f-bankrates-asof').value||''),
-    published:!!g('f-pub').checked, keepOriginals:!!g('f-keeporig').checked, participantIds:_participants.slice(),
+    published:!!g('f-pub').checked, participantIds:_participants.slice(),
     coAdminIds:_coAdmins.filter(function(id){ return _participants.indexOf(id)>=0; }),
     coAdminUids:_coAdmins.filter(function(id){ return _participants.indexOf(id)>=0; }).map(function(id){ var m=members.find(function(x){return x.id===id;}); return m&&m.authUid; }).filter(Boolean),
     participantsPublic:participantsPublic,
@@ -3088,7 +3082,6 @@ function openSchedMgr(eventId){
   var ev=events.find(function(x){return x.id===eventId;});
   g('sch-mgr-title').textContent='🗓 スケジュール — '+(ev?ev.name:'');
   g('sch-list').innerHTML='<div class="ec">読み込み中…</div>';
-  _updKeepOrigBtn(!!(ev&&ev.keepOriginals));
   g('sch-mgr-modal').classList.add('open');
   _schRoster=[];
   loadDocRoster(eventId).then(function(r){ _schRoster=r||[]; }).catch(function(){});
@@ -3097,17 +3090,6 @@ function openSchedMgr(eventId){
   loadCats().then(loadSchedItems);
 }
 function closeSchedMgr(){ if(_coAdminMode){ location.href='/event.html?id='+encodeURIComponent(_coAdminEventId); return; } g('sch-mgr-modal').classList.remove('open'); }
-// 写真の原本保存オン/オフ（イベント中いつでも切替）
-function _updKeepOrigBtn(on){ var b=g('sch-keeporig-btn'); if(!b) return; b.textContent='🗂 原本保存: '+(on?'オン':'オフ'); b.style.color=on?'#1a6e58':'var(--ink3)'; b.style.borderColor=on?'#9fd3bb':'var(--border2)'; }
-function toggleKeepOriginals(){
-  if(!_schEventId) return;
-  var ev=events.find(function(x){return x.id===_schEventId;}); if(!ev) return;
-  var next=!ev.keepOriginals;
-  if(!confirm('写真の原本（無圧縮）保存を「'+(next?'オン':'オフ')+'」にしますか？\n'+(next?'これ以降に投稿される写真の原本を保存します。':'これ以降の写真は原本を保存しません（既存の原本は残ります）。'))) return;
-  db.collection('events').doc(_schEventId).update({ keepOriginals:next })
-    .then(function(){ ev.keepOriginals=next; _updKeepOrigBtn(next); toast('原本保存を'+(next?'オン':'オフ')+'にしました'); })
-    .catch(function(e){ toast('変更失敗: '+e.message,'err'); });
-}
 g('sch-mgr-modal').addEventListener('click',function(e){ if(e.target===g('sch-mgr-modal')){ if(_coAdminMode) return; closeSchedMgr(); } });
 
 function schSortKey(it){ return (it.date||'')+' '+(it.time||'99:99')+' '+_endMark(it)+' '+('000000000000'+_caSec(it)).slice(-12)+' '+('00'+(it.seq||0)).slice(-3); }
