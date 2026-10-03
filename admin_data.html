@@ -1037,11 +1037,13 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 <!-- 予約: 会員選択モーダル（本会員） -->
 <div class="mbg" id="m-rsv-picker">
   <div class="modal">
-    <div class="mhead"><div class="mtitle">会員選択（本会員）</div><button class="mx" data-close="m-rsv-picker">✕</button></div>
+    <div class="mhead"><div class="mtitle" id="rsv-picker-title">会員選択（本会員）</div><button class="mx" data-close="m-rsv-picker">✕</button></div>
     <div class="mbody">
+      <div id="rsv-picker-status" style="display:none;font-size:12px;font-weight:600;color:var(--teal);background:var(--cream2);border:1px solid var(--border2);border-radius:var(--r);padding:6px 10px;margin-bottom:8px"></div>
       <input class="fi" id="rsv-picker-search" placeholder="会員名・ニックネーム・IDで検索..." style="margin-bottom:8px">
-      <div id="rsv-picker-list" style="max-height:52vh;overflow-y:auto;border:1px solid var(--border2);border-radius:var(--r);background:var(--white)"></div>
+      <div id="rsv-picker-list" style="max-height:48vh;overflow-y:auto;border:1px solid var(--border2);border-radius:var(--r);background:var(--white)"></div>
     </div>
+    <div class="mfoot" id="rsv-picker-foot" style="display:none"><button class="btn bp" id="rsv-picker-done">完了</button></div>
   </div>
 </div>
 
@@ -2089,6 +2091,9 @@ function renderGuestNames(prevVals){
   wrap.style.display="";
   var prev=prevVals||[].map.call(box.querySelectorAll(".rsv-name"),function(i){return i.value;});
   var html="";
+  html+='<div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    +'<button type="button" class="btn bs sm" onclick="openRsvMemberPickerMulti()" style="white-space:nowrap">👥 会員をまとめて選択</button>'
+    +'<span style="font-size:11px;color:var(--ink3)">タップした会員のお名前が空いている欄に順番に入ります</span></div>';
   for(var k=0;k<guests;k++){
     html+='<input class="fi rsv-name" placeholder="'+(k+1)+'人目のお名前" value="'+escHtml(prev[k]||"")+'" style="margin-bottom:6px">';
   }
@@ -2138,16 +2143,42 @@ function rsvEnsureMembers(cb){
 function rsvIsFullMember(m){
   return !m.deleted && !m.isGuest && !m.pendingEmail && m.email && m.email.indexOf("@tequiladojo.member")<0;
 }
+var _rsvPickMode="primary"; // primary=顧客1件 / guestsMulti=参加者氏名を複数選択
+var _rsvMultiPicked={};     // guestsMultiで選択済みの会員コード
+function _rsvPickerSetMode(title, multi){
+  var t=g("rsv-picker-title"); if(t) t.textContent=title;
+  g("rsv-picker-status").style.display=multi?"":"none";
+  g("rsv-picker-foot").style.display=multi?"":"none";
+}
 function openRsvMemberPicker(){
+  _rsvPickMode="primary"; _rsvPickerSetMode("会員選択（本会員）", false);
   g("rsv-picker-search").value="";
   g("rsv-picker-list").innerHTML='<div style="padding:16px;text-align:center;color:var(--ink3);font-size:13px">読み込み中...</div>';
   rsvEnsureMembers(function(){ renderRsvPicker(""); });
   openM("m-rsv-picker");
   setTimeout(function(){ var s=g("rsv-picker-search"); if(s) s.focus(); },50);
 }
+// 参加者氏名を来場者選択と同様にまとめて選択（タップで空き欄に順番に氏名を入れる）
+function openRsvMemberPickerMulti(){
+  _rsvPickMode="guestsMulti"; _rsvMultiPicked={};
+  _rsvPickerSetMode("参加者を選択（本会員・複数可）", true);
+  g("rsv-picker-search").value="";
+  g("rsv-picker-list").innerHTML='<div style="padding:16px;text-align:center;color:var(--ink3);font-size:13px">読み込み中...</div>';
+  rsvEnsureMembers(function(){ renderRsvPicker(""); updateRsvPickerStatus(); });
+  openM("m-rsv-picker");
+  setTimeout(function(){ var s=g("rsv-picker-search"); if(s) s.focus(); },50);
+}
+function _rsvGuestInputs(){ var box=g("rsv-names"); return box?box.querySelectorAll(".rsv-name"):[]; }
+function updateRsvPickerStatus(){
+  var inputs=_rsvGuestInputs(), filled=0; [].forEach.call(inputs,function(i){ if((i.value||"").trim()) filled++; });
+  var total=inputs.length, st=g("rsv-picker-status"); if(!st) return;
+  st.textContent="参加者 "+filled+" / "+total+" 名選択済み（残り "+Math.max(0,total-filled)+"名）　タップで空き欄に追加されます";
+}
 function renderRsvPicker(q){
   q=(q||"").toLowerCase();
+  var multi=(_rsvPickMode==="guestsMulti");
   var list=(cache.members||[]).filter(rsvIsFullMember).filter(function(m){
+    if(multi && _rsvMultiPicked[rsvMemberCode(m).padStart(6,"0")]) return false;
     if(!q) return true;
     var hay=((m.nickname||"")+" "+(m.name||"")+" "+(m.nameKana||"")+" "+rsvMemberCode(m)).toLowerCase();
     return hay.indexOf(q)>=0;
@@ -2182,10 +2213,26 @@ function setRsvNonMemberMode(non){
   var pl=g("rsv-picker-list");
   if(pl) pl.addEventListener("click", function(e){
     var row=e.target.closest(".rsv-picker-row"); if(!row) return;
-    sv("rsv-customer", String(row.getAttribute("data-code")).padStart(6,"0"));
+    var code=String(row.getAttribute("data-code")).padStart(6,"0");
+    if(_rsvPickMode==="guestsMulti"){
+      // 来場者選択と同様: 会員のお名前を空いている参加者欄に順番に入れる（モーダルは開いたまま）
+      var m=(cache.members||[]).find(function(x){ return rsvMemberCode(x).padStart(6,"0")===code; });
+      var nm=m?(m.nickname||m.name||code):code;
+      var inputs=_rsvGuestInputs(), placed=false;
+      for(var i=0;i<inputs.length;i++){ if(!(inputs[i].value||"").trim()){ inputs[i].value=nm; placed=true; break; } }
+      if(!placed){ toast("人数分の参加者を選びました","inf"); closeM("m-rsv-picker"); return; }
+      _rsvMultiPicked[code]=1;
+      renderRsvPicker(g("rsv-picker-search").value||"");
+      updateRsvPickerStatus();
+      var remaining=[].filter.call(_rsvGuestInputs(), function(x){ return !(x.value||"").trim(); }).length;
+      if(remaining===0){ toast("参加者を選択しました","inf"); closeM("m-rsv-picker"); }
+      return;
+    }
+    sv("rsv-customer", code);
     updateRsvCustomerName();
     closeM("m-rsv-picker");
   });
+  var pd=g("rsv-picker-done"); if(pd) pd.addEventListener("click", function(){ closeM("m-rsv-picker"); });
 })();
 
 function checkRsvBusinessHours(date,start,end,cb){
