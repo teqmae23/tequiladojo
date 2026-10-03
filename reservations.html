@@ -304,12 +304,16 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
 <div class="mbg" id="m-picker">
   <div class="modal">
     <div class="mhead">
-      <div class="mtitle">会員選択（本会員）</div>
+      <div class="mtitle" id="picker-title">会員選択（本会員）</div>
       <button class="mx" id="mx-picker">✕</button>
     </div>
     <div class="mbody">
+      <div id="picker-status" style="display:none;font-size:12px;font-weight:600;color:#1a6e58;background:#eef6f3;border:1px solid #bfe0d4;border-radius:7px;padding:6px 10px;margin-bottom:8px"></div>
       <input class="fi" id="picker-search" placeholder="会員名・ニックネーム・IDで検索..." style="margin-bottom:8px">
-      <div id="picker-list" style="max-height:52vh;overflow-y:auto;border:1px solid #ddd;border-radius:8px;background:#fff"></div>
+      <div id="picker-list" style="max-height:48vh;overflow-y:auto;border:1px solid #ddd;border-radius:8px;background:#fff"></div>
+    </div>
+    <div class="mfoot" id="picker-foot" style="display:none">
+      <button class="btn bp" id="picker-done">完了</button>
     </div>
   </div>
 </div>
@@ -456,8 +460,14 @@ function loadMembers(){
 }
 function memberCode(m){ return String(m.displayId || m.memberId || m.id || ""); }
 var _pickTarget={type:"primary"}; // 会員選択の反映先（primary=顧客コード / comp=同伴者[idx]）
+function _pickerSetMode(title, multi){
+  g("picker-title").textContent=title;
+  g("picker-status").style.display=multi?"":"none";
+  g("picker-foot").style.display=multi?"":"none";
+}
 function openMemberPicker(){
   _pickTarget={type:"primary"};
+  _pickerSetMode("会員選択（本会員）", false);
   g("picker-search").value = "";
   renderPicker("");
   g("m-picker").classList.add("open");
@@ -465,15 +475,40 @@ function openMemberPicker(){
 }
 function openMemberPickerFor(idx){
   _pickTarget={type:"comp",idx:idx};
+  _pickerSetMode("会員選択（本会員）", false);
   g("picker-search").value = "";
   renderPicker("");
   g("m-picker").classList.add("open");
   setTimeout(function(){ var s=g("picker-search"); if(s) s.focus(); }, 50);
 }
+// 同伴者をまとめて選択（来場者選択モーダルと同様: タップで空き枠に順番に追加）
+function openMemberPickerMulti(){
+  _pickTarget={type:"compMulti"};
+  _pickerSetMode("同伴者を選択（本会員・複数可）", true);
+  g("picker-search").value = "";
+  renderPicker("");
+  updatePickerStatus();
+  g("m-picker").classList.add("open");
+  setTimeout(function(){ var s=g("picker-search"); if(s) s.focus(); }, 50);
+}
+function _compInputs(){ return document.querySelectorAll("#rsv-companions .rsv-comp"); }
+function _selectedCompCodes(){ return [].map.call(_compInputs(), function(i){ return (i.value||"").trim(); }).filter(Boolean).map(function(v){ return v.padStart(6,"0"); }); }
+function updatePickerStatus(){
+  var inputs=_compInputs(), filled=0; [].forEach.call(inputs,function(i){ if((i.value||"").trim()) filled++; });
+  var total=inputs.length, st=g("picker-status"); if(!st) return;
+  st.textContent="同伴者 "+filled+" / "+total+" 名選択済み（残り "+Math.max(0,total-filled)+"名）　タップで空き枠に追加されます";
+}
 function closePicker(){ g("m-picker").classList.remove("open"); }
 function renderPicker(q){
   q = (q||"").toLowerCase();
+  var multi = _pickTarget && _pickTarget.type==="compMulti";
+  var exclude = {};
+  if(multi){
+    _selectedCompCodes().forEach(function(c){ exclude[c]=1; });
+    var pc=(gv("rsv-customer")||"").trim(); if(pc) exclude[pc.padStart(6,"0")]=1; // 主顧客は同伴者候補から除外
+  }
   var list = members.filter(function(m){
+    if(multi && exclude[memberCode(m).padStart(6,"0")]) return false;
     if(!q) return true;
     var hay = ((m.nickname||"")+" "+(m.name||"")+" "+(m.nameKana||"")+" "+memberCode(m)).toLowerCase();
     return hay.indexOf(q) >= 0;
@@ -505,6 +540,9 @@ function renderRsvCompanions(prevVals){
   wrap.style.display="";
   var prev = prevVals || [].map.call(box.querySelectorAll(".rsv-comp"), function(i){return i.value;});
   var html="";
+  html+='<div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    +'<button type="button" class="btn bs" onclick="openMemberPickerMulti()" style="white-space:nowrap">👥 会員をまとめて選択</button>'
+    +'<span style="font-size:11px;color:#888">タップした会員が空いている枠に順番に入ります</span></div>';
   for(var k=0;k<n;k++){
     html+='<div class="rsv-comp-row" style="margin-bottom:8px">'
       +'<div style="display:flex;gap:6px;align-items:center">'
@@ -544,6 +582,17 @@ function collectMemberIds(primaryCode){
   if(pl) pl.addEventListener("click", function(e){
     var row=e.target.closest(".picker-row"); if(!row) return;
     var code=String(row.getAttribute("data-code")).padStart(6,"0");
+    if(_pickTarget && _pickTarget.type==="compMulti"){
+      // 来場者選択と同様: タップで空いている同伴者枠に順番に追加（モーダルは開いたまま）
+      var mInputs=_compInputs(), placed=false;
+      for(var mi=0;mi<mInputs.length;mi++){ if(!(mInputs[mi].value||"").trim()){ mInputs[mi].value=code; updateCompName(mInputs[mi]); placed=true; break; } }
+      if(!placed){ toast("人数分の同伴者を選びました","inf"); closePicker(); return; }
+      renderPicker(g("picker-search").value||"");
+      updatePickerStatus();
+      var remaining=[].filter.call(_compInputs(), function(i){ return !(i.value||"").trim(); }).length;
+      if(remaining===0){ toast("同伴者を選択しました","inf"); closePicker(); }
+      return;
+    }
     if(_pickTarget && _pickTarget.type==="comp"){
       var inputs=document.querySelectorAll("#rsv-companions .rsv-comp");
       var inp=inputs[_pickTarget.idx];
@@ -554,6 +603,7 @@ function collectMemberIds(primaryCode){
     }
     closePicker();
   });
+  var pd=g("picker-done"); if(pd) pd.addEventListener("click", closePicker);
 })();
 
 // ── 統計 ─────────────────────────────────────────────────────
