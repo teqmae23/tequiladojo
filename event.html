@@ -2394,19 +2394,18 @@ function debugTimeBar(){
     +(_nowOverride!=null?'<span class="sc-dbg-on">'+esc(_fmtDbg(_nowOverride))+' に固定中</span>':'')+'</div>';
 }
 // ── 時間帯で自動ネスト（最大3階層）: 終了時刻を持つ項目[開始〜終了]の内側に開始する項目を子にする ──
-// legs: {it, ms(開始JST絶対), leg(null/'dep'/'arr'), day, src} の配列（同日・JST昇順）
-// 戻り値: ツリー（{L, children:[], isCont, endMs, depth}）。容器になれるのは単独レグ(leg===null)かつ終了あり、深さ<2（＝0,1階層）。
-function _buildSchedTree(legs){
+// units: {ms(開始JST絶対), it, canContain(容器になれるか), html(葉として描画するHTML)} の配列（時系列昇順）
+// 戻り値: ツリー（{u, children:[], isCont, endMs, depth}）。容器になれるのは canContain かつ深さ<2（＝0,1階層）。
+function _buildSchedTree(units){
   var roots=[], stack=[]; // stack: 開いている容器 {node, endMs}
-  legs.forEach(function(L){
-    var startMs=L.ms;
+  units.forEach(function(u){
+    var startMs=u.ms;
     while(stack.length && stack[stack.length-1].endMs<=startMs) stack.pop(); // 開始前に閉じた容器を外す
     var parent=stack.length?stack[stack.length-1].node:null;
-    var node={L:L, children:[], isCont:false, endMs:null, depth:parent?parent.depth+1:0};
+    var node={u:u, children:[], isCont:false, endMs:null, depth:parent?parent.depth+1:0};
     if(parent) parent.children.push(node); else roots.push(node);
-    // 容器候補: 終了を持つ単独レグ（移動の日跨ぎdep/arrは対象外）で深さ0・1のみ
-    if(L.leg===null && _hasEnd(L.it) && node.depth<2){
-      var em=_arrInstant(L.it);
+    if(u.canContain && node.depth<2){
+      var em=_arrInstant(u.it);
       if(em>startMs){ node.isCont=true; node.endMs=em; stack.push({node:node, endMs:em}); }
     }
   });
@@ -2464,11 +2463,13 @@ function renderSchedule(items){
     }
     return row;
   }
-  // ネストツリーの1ノードHTML（容器なら 見出し＋子＋下端の終了時刻、それ以外は通常行）
+  // レグ→ネスト用ユニット（葉HTML＝従来行、容器候補＝単独レグかつ終了あり）
+  function _legUnit(L){ return {ms:L.ms, it:L.it, canContain:(L.leg===null&&_hasEnd(L.it)), html:_legRow(L)}; }
+  // ネストツリーの1ノードHTML（容器なら 見出し＋子＋下端の終了時刻、それ以外は葉HTML）
   function _renderSchedNode(node){
-    var L=node.L;
+    var u=node.u;
     if(node.isCont && node.children.length){
-      var it=L.it;
+      var it=u.it;
       var head=renderSchedItem(it, 'cont');                 // 見出し: 開始時刻のみ
       var body=node.children.map(_renderSchedNode).join(''); // 子（再帰）
       var endRaw=it.isMove?it.toTime:it.endTime;
@@ -2476,8 +2477,9 @@ function renderSchedule(items){
       var foot='<div class="sc-cont-foot"><span class="sc-time'+clk+'>'+_tcell(it.actualEnd, endRaw)+'</span><span class="sc-cont-endtag">🏁 終了</span></div>';
       return '<div class="sc-cont">'+head+'<div class="sc-cont-body">'+body+'</div>'+foot+'</div>';
     }
-    return _legRow(L);
+    return u.html;
   }
+  function _renderUnits(units){ return _buildSchedTree(units).map(_renderSchedNode).join(''); }
   // 別班併存の時間帯だけをサイドバー付き複数列に、単独班の時間帯は従来の1列に。日付見出しは日ごと。
   var sections=[], sec=null;
   if(!useG){
@@ -2486,22 +2488,25 @@ function renderSchedule(items){
     legs.forEach(function(L){ if(!_byDay[L.day]){ _byDay[L.day]=[]; _dayOrder.push(L.day); } _byDay[L.day].push(L); });
     _dayOrder.forEach(function(day){
       var dl=_byDay[day];
-      sec={day:day, html:_buildSchedTree(dl).map(_renderSchedNode).join(''), n:dl.length};
+      sec={day:day, html:_renderUnits(dl.map(_legUnit)), n:dl.length};
       sections.push(sec);
     });
   } else {
+    // 班分け中も、各班（列）ごとに時間帯の内包関係でネスト。別班併存ブロックは列ごと、単独班ブロックは1列で。
     SchedGroups.segment(legs.map(function(L){ return {it:L.it, day:L.day, markOnly:(L.leg==='arr'), L:L}; })).forEach(function(b){
       if(!sec||sec.day!==b.day){ sec={day:b.day, html:'', n:0}; sections.push(sec); }
       sec.n+=b.items.length;
-      if(!b.multi){ b.items.forEach(function(x){ sec.html+=_legRow(x.L); }); return; }
-      var colsH={1:'',2:'',3:''};
+      if(!b.multi){ sec.html+=_renderUnits(b.items.map(function(x){ return _legUnit(x.L); })); return; }
+      var colU={1:[],2:[],3:[]};
       b.items.forEach(function(x){
-        var L=x.L, it=L.it, row=_legRow(L);
+        var L=x.L, it=L.it;
         SchedGroups.cols(it).forEach(function(c){
-          if(c.mirror){ if(L.leg!=='arr') colsH[c.g]+=SchedGroups.mirrorHtml(it, esc, ''); }
-          else colsH[c.g]+=row;
+          if(c.mirror){ if(L.leg!=='arr') colU[c.g].push({ms:L.ms, it:it, canContain:false, html:SchedGroups.mirrorHtml(it, esc, '')}); }
+          else colU[c.g].push(_legUnit(L));
         });
       });
+      var colsH={1:'',2:'',3:''};
+      [1,2,3].forEach(function(g){ colsH[g]=_renderUnits(colU[g]); });
       sec.html+=SchedGroups.wrapHtml(colsH, b.active);
     });
   }
