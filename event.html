@@ -296,6 +296,15 @@ a{color:var(--gold-d)}
 .sc-hiddennote{margin-top:8px;font-size:12px;color:var(--ink3);background:var(--cream2);border-radius:var(--r);padding:8px 10px}
 .sc-item.has-geo{cursor:pointer}
 .sc-item.has-geo:hover{box-shadow:0 2px 8px rgba(0,0,0,.12)}
+/* ネスト容器（時間帯で自動ネスト・最大3階層） */
+.sc-cont{border:1px solid var(--border2);border-radius:10px;margin-bottom:8px;background:var(--cream)}
+.sc-cont>.sc-item{border:none;border-radius:10px 10px 0 0;margin-bottom:0}
+.sc-cont-body{margin:0 10px 0 28px;padding:6px 0 6px 14px;border-left:2px solid var(--gold)}
+.sc-cont-body>.sc-item:last-child,.sc-cont-body>.sc-cont:last-child{margin-bottom:0}
+.sc-cont-foot{display:flex;align-items:center;gap:10px;padding:4px 12px 9px}
+.sc-cont-foot .sc-time{min-width:56px;font-family:var(--mono);font-size:16px;font-weight:700;color:var(--ink2);flex:0 0 auto;text-align:center;line-height:1.15}
+.sc-cont-foot .sc-time .sc-act{color:#1a6e58}
+.sc-cont-endtag{font-size:10px;font-weight:700;color:var(--gold-d);background:rgba(200,146,30,.14);border:1px solid rgba(200,146,30,.3);border-radius:10px;padding:1px 8px}
 .sc-pin{color:var(--teal);font-weight:600;font-size:12px}
 .sec-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 .sec-row .sec{margin-bottom:0}
@@ -1548,6 +1557,7 @@ function schedTimeHtml(it, leg){
   var body;
   var schedEndRaw=it.isMove?it.toTime:it.endTime;
   if(leg==='dep'){ body=_tcell(it.actualStart, it.time||'—')+'<span class="sc-arrow">↓</span>'; }
+  else if(leg==='cont'){ body=_tcell(it.actualStart, it.time||'—'); } // ネスト容器の見出し: 開始のみ（終了は容器下端に表示）
   else if(leg==='arr'){ body=_tcell(it.actualEnd, schedEndRaw||it.time||'—'); }
   else {
     var startCell=_tcell(it.actualStart, it.time||'—');
@@ -2383,6 +2393,25 @@ function debugTimeBar(){
     +'<button type="button" class="sc-dbg-btn" onclick="clearDbgTime()">現在時刻</button>'
     +(_nowOverride!=null?'<span class="sc-dbg-on">'+esc(_fmtDbg(_nowOverride))+' に固定中</span>':'')+'</div>';
 }
+// ── 時間帯で自動ネスト（最大3階層）: 終了時刻を持つ項目[開始〜終了]の内側に開始する項目を子にする ──
+// legs: {it, ms(開始JST絶対), leg(null/'dep'/'arr'), day, src} の配列（同日・JST昇順）
+// 戻り値: ツリー（{L, children:[], isCont, endMs, depth}）。容器になれるのは単独レグ(leg===null)かつ終了あり、深さ<2（＝0,1階層）。
+function _buildSchedTree(legs){
+  var roots=[], stack=[]; // stack: 開いている容器 {node, endMs}
+  legs.forEach(function(L){
+    var startMs=L.ms;
+    while(stack.length && stack[stack.length-1].endMs<=startMs) stack.pop(); // 開始前に閉じた容器を外す
+    var parent=stack.length?stack[stack.length-1].node:null;
+    var node={L:L, children:[], isCont:false, endMs:null, depth:parent?parent.depth+1:0};
+    if(parent) parent.children.push(node); else roots.push(node);
+    // 容器候補: 終了を持つ単独レグ（移動の日跨ぎdep/arrは対象外）で深さ0・1のみ
+    if(L.leg===null && _hasEnd(L.it) && node.depth<2){
+      var em=_arrInstant(L.it);
+      if(em>startMs){ node.isCont=true; node.endMs=em; stack.push({node:node, endMs:em}); }
+    }
+  });
+  return roots;
+}
 function renderSchedule(items){
   var el=g('schedule-cont'); if(!el) return;
   if(!items.length){ var _nt0=g('now-top'); if(_nt0) _nt0.innerHTML=''; el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div>'+debugTimeBar()+'<div style="font-size:12px;color:var(--ink3)">スケジュールは準備中です。</div></div>'; return; }
@@ -2435,12 +2464,30 @@ function renderSchedule(items){
     }
     return row;
   }
+  // ネストツリーの1ノードHTML（容器なら 見出し＋子＋下端の終了時刻、それ以外は通常行）
+  function _renderSchedNode(node){
+    var L=node.L;
+    if(node.isCont && node.children.length){
+      var it=L.it;
+      var head=renderSchedItem(it, 'cont');                 // 見出し: 開始時刻のみ
+      var body=node.children.map(_renderSchedNode).join(''); // 子（再帰）
+      var endRaw=it.isMove?it.toTime:it.endTime;
+      var clk=(it.time||it.endTime||it.toTime||it.actualStart||it.actualEnd)?' sc-time-x" onclick="showTzPop(event,\''+esc(it.id)+'\')"':'"';
+      var foot='<div class="sc-cont-foot"><span class="sc-time'+clk+'>'+_tcell(it.actualEnd, endRaw)+'</span><span class="sc-cont-endtag">🏁 終了</span></div>';
+      return '<div class="sc-cont">'+head+'<div class="sc-cont-body">'+body+'</div>'+foot+'</div>';
+    }
+    return _legRow(L);
+  }
   // 別班併存の時間帯だけをサイドバー付き複数列に、単独班の時間帯は従来の1列に。日付見出しは日ごと。
   var sections=[], sec=null;
   if(!useG){
-    legs.forEach(function(L){
-      if(!sec||sec.day!==L.day){ sec={day:L.day, html:'', n:0}; sections.push(sec); }
-      sec.html+=_legRow(L); sec.n++;
+    // 日ごとにまとめ、時間帯の内包関係で自動ネストして描画
+    var _dayOrder=[], _byDay={};
+    legs.forEach(function(L){ if(!_byDay[L.day]){ _byDay[L.day]=[]; _dayOrder.push(L.day); } _byDay[L.day].push(L); });
+    _dayOrder.forEach(function(day){
+      var dl=_byDay[day];
+      sec={day:day, html:_buildSchedTree(dl).map(_renderSchedNode).join(''), n:dl.length};
+      sections.push(sec);
     });
   } else {
     SchedGroups.segment(legs.map(function(L){ return {it:L.it, day:L.day, markOnly:(L.leg==='arr'), L:L}; })).forEach(function(b){
