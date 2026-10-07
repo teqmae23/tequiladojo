@@ -230,6 +230,12 @@ a{color:var(--gold-d)}
 #sc-rosterpop .rp-body{color:#fff}
 #sc-rosterpop .rp-host{display:flex;align-items:center;gap:8px;margin:5px 0}
 #sc-rosterpop .rp-av{width:24px;height:24px;border-radius:50%;object-fit:cover;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;background:#5a4a30;color:#fff;font-size:10px;font-weight:700;text-transform:uppercase}
+#sc-rosterpop .rp-av-lg{width:56px;height:56px;font-size:18px}
+#sc-rosterpop .rp-chev{margin-left:auto;color:var(--gold-l);font-weight:700}
+#sc-rosterpop .rp-prof{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;margin:6px 0 4px}
+#sc-rosterpop .rp-prof-nm{font-weight:700;font-size:13px;color:#fff}
+#sc-rosterpop .rp-prof-bio{font-size:11.5px;color:#f1e6d2;line-height:1.6;white-space:pre-wrap;max-width:230px}
+#sc-rosterpop .rp-back{background:none;border:none;color:var(--gold-l);font-size:11px;font-weight:700;cursor:pointer;padding:0 0 4px;display:block}
 .sc-hostbtn{margin-left:6px;padding:1px 8px;border:1px solid var(--gold-d);background:var(--white);color:var(--gold-d);font-size:10px;font-weight:700;border-radius:11px;cursor:pointer;font-family:inherit;white-space:nowrap;vertical-align:middle}
 .sc-time-jst{display:block;font-size:10px;color:var(--teal);font-weight:600;white-space:nowrap}
 .sc-daydiff{color:var(--red);margin-left:2px}
@@ -1454,7 +1460,7 @@ function loadCats(){
 function catById(id){ for(var i=0;i<_cats.length;i++) if(_cats[i].id===id) return _cats[i]; return null; }
 function catIcon(id){ var c=catById(id); return (c&&c.icon)?c.icon:'📍'; }
 // 移動アイテムは選択した移動手段のアイコンを優先（未指定は種別アイコン=既定🚗）
-var TRAVEL_ICONS={flight:'✈️',driving:'🚗',transit:'🚆',walking:'🚶',bicycling:'🚲'};
+var TRAVEL_ICONS={flight:'✈️',driving:'🚗',car:'🚗',taxi:'🚕',shuttle:'🚐',transit:'🚆',bus:'🚌',train:'🚃',shinkansen:'🚅',walking:'🚶',bicycling:'🚲'};
 function itemIcon(it){
   if(it.overnight) return '🏨';
   if(it.travelMode && TRAVEL_ICONS[it.travelMode]) return TRAVEL_ICONS[it.travelMode];
@@ -1513,7 +1519,9 @@ function routeLink(it){
   }
   var o=endp(it.placeName, it.lat, it.lng);
   var d=endp(it.toName, it.toLat, it.toLng);
-  var tm=(it.travelMode&&/^(driving|transit|walking|bicycling)$/.test(it.travelMode))?('&travelmode='+it.travelMode):'';
+  // 具体的な手段をGoogleマップの travelmode に対応付け（自家用車/タクシー/シャトル→driving、バス/電車/新幹線→transit）
+  var _gm={driving:'driving',car:'driving',taxi:'driving',shuttle:'driving',transit:'transit',bus:'transit',train:'transit',shinkansen:'transit',walking:'walking',bicycling:'bicycling'}[it.travelMode||''];
+  var tm=_gm?('&travelmode='+_gm):'';
   return 'https://www.google.com/maps/dir/?api=1&origin='+o+'&destination='+d+tm;
 }
 /* ── 座標→タイムゾーン表示（現地時刻＋JST換算） ── */
@@ -1791,13 +1799,13 @@ function _computeRosters(enr){
   });
   return map;
 }
-// この項目の現地ホスト（spotOnlyで追加した相手）[{name,iconUrl}]
+// この項目の現地ホスト（spotOnlyで追加した相手）[{id,name,iconUrl,bio}]
 function _spotHostsOf(it){
   if(!it||!it.spotOnly||!Array.isArray(it.nameParticipants)) return [];
   return it.nameParticipants.map(function(np){
     if(!np) return null;
     var p=_findByTid(np.id);
-    return { name:(p?_pName(p):null)||np.name||'（ホスト）', iconUrl:(p&&p.iconUrl)||'' };
+    return { id:(p?p.id:(np.id||'')), name:(p?_pName(p):null)||np.name||'（ホスト）', iconUrl:(p&&p.iconUrl)||'', bio:(p&&p.bio)||'' };
   }).filter(Boolean);
 }
 // 閲覧者が現在いる班（開始前・不明は1班）
@@ -1832,19 +1840,32 @@ function showRoster(id, btn){
   pop.style.top=top+'px';
   pop.style.left=Math.max(8, Math.min(r.left, window.innerWidth-270))+'px';
 }
-// 現地ホスト一覧ポップアップ（名前の前にアイコン）
-function showHosts(id, btn){
-  var it=_schedItems.find(function(x){ return x.id===id; }); if(!it) return;
-  var hosts=_spotHostsOf(it);
-  var pop=g('sc-rosterpop'); if(!pop){ pop=document.createElement('div'); pop.id='sc-rosterpop'; document.body.appendChild(pop); }
-  var rows=hosts.map(function(h){
-    var icon=h.iconUrl?('<img class="rp-av" src="'+esc(h.iconUrl)+'" alt="">'):('<span class="rp-av">'+esc(initials(h.name))+'</span>');
-    return '<div class="rp-host">'+icon+'<span>'+esc(h.name)+'</span></div>';
+// 現地ホスト一覧ポップアップ（名前の前にアイコン・クリックでプロフィール）
+var _hostPopList=[];
+function _hostAvatar(h, big){ var cls='rp-av'+(big?' rp-av-lg':''); return h.iconUrl?('<img class="'+cls+'" src="'+esc(h.iconUrl)+'" alt="">'):('<span class="'+cls+'">'+esc(initials(h.name))+'</span>'); }
+function _renderHostList(){
+  var pop=g('sc-rosterpop'); if(!pop) return;
+  var rows=_hostPopList.map(function(h,k){
+    return '<div class="rp-host" style="cursor:pointer" onclick="_showHostProfile('+k+')">'+_hostAvatar(h,false)+'<span>'+esc(h.name)+'</span><span class="rp-chev">›</span></div>';
   }).join('');
   pop.innerHTML='<div class="rp-hd">🧑‍🤝‍🧑 現地ホスト</div>'+(rows||'<div class="rp-body">なし</div>');
+}
+function _showHostProfile(k){
+  var pop=g('sc-rosterpop'); if(!pop) return;
+  var h=_hostPopList[k]; if(!h) return;
+  var bio=(h.bio||'').trim();
+  pop.innerHTML='<button type="button" class="rp-back" onclick="_renderHostList()">‹ 一覧へ</button>'
+    +'<div class="rp-prof">'+_hostAvatar(h,true)+'<div class="rp-prof-nm">'+esc(h.name)+'</div></div>'
+    +'<div class="rp-prof-bio">'+(bio?esc(bio):'（プロフィール情報はありません）')+'</div>';
+}
+function showHosts(id, btn){
+  var it=_schedItems.find(function(x){ return x.id===id; }); if(!it) return;
+  _hostPopList=_spotHostsOf(it);
+  var pop=g('sc-rosterpop'); if(!pop){ pop=document.createElement('div'); pop.id='sc-rosterpop'; document.body.appendChild(pop); }
+  _renderHostList();
   pop.style.display='block';
   var r=btn.getBoundingClientRect();
-  var top=r.bottom+6; if(top+120>window.innerHeight) top=Math.max(8,r.top-120);
+  var top=r.bottom+6; if(top+160>window.innerHeight) top=Math.max(8,r.top-160);
   pop.style.top=top+'px';
   pop.style.left=Math.max(8, Math.min(r.left, window.innerWidth-270))+'px';
 }
@@ -1855,7 +1876,7 @@ function rosterBtnHtml(it){
   if(!it) return '';
   var html='';
   // 合流/離脱・班を使うイベントでは、各項目に「参加者」ボタン（人数表示なし）
-  if(_rosterFeatureOn) html+='<button type="button" class="sc-rosterbtn" onclick="event.stopPropagation();showRoster(\''+esc(it.id)+'\',this)">👥 参加者</button>';
+  if(_rosterFeatureOn) html+='<button type="button" class="sc-rosterbtn" title="参加者" onclick="event.stopPropagation();showRoster(\''+esc(it.id)+'\',this)">👥</button>';
   // この項目で追加した現地ホストは別ボタン→ポップアップ
   if(it.spotOnly && Array.isArray(it.nameParticipants) && it.nameParticipants.length)
     html+='<button type="button" class="sc-hostbtn" onclick="event.stopPropagation();showHosts(\''+esc(it.id)+'\',this)">🧑‍🤝‍🧑 現地ホスト</button>';
