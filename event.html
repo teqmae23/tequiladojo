@@ -256,9 +256,9 @@ a{color:var(--gold-d)}
 .hours-btn{margin-left:8px;padding:2px 10px;border:1px solid var(--teal);background:var(--white);color:var(--teal);font-size:11px;font-weight:700;border-radius:12px;cursor:pointer;font-family:inherit;white-space:nowrap}
 .ev-hours{margin:6px 0 2px}
 .sc-detail{margin-top:6px}
-.sc-people{display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-bottom:6px}
-.sc-meta{display:flex;gap:12px;flex-wrap:wrap;margin-top:3px;font-size:12px}
-.sc-photo-ln{background:none;border:none;color:var(--teal);font-weight:600;font-size:12px;cursor:pointer;padding:0;font-family:inherit}
+.sc-meta{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:3px;font-size:12px}
+.sc-meta .sc-rosterbtn,.sc-meta .sc-hostbtn{margin-left:0}
+.sc-photo-ln{background:none;border:none;color:var(--teal);font-weight:600;font-size:16px;line-height:1;cursor:pointer;padding:0;font-family:inherit}
 .sc-cost{color:var(--gold-d);font-weight:600}
 .sc-cost-sub{font-size:10px;color:var(--ink3);font-weight:400;margin-left:4px}
 .sc-map{color:var(--teal);text-decoration:none;font-weight:600}
@@ -1672,8 +1672,19 @@ function _arrInstant(it){
   var d=_wallInstant(arrDate, endT||'23:59', tz);
   return d?d.getTime():0;
 }
-// 容器の実効終了ms（CO実時間があれば優先。並び替えが実時間基準なのと揃え、予定より延びた分も入れ子に含める）
-function _effEndMs(it){ if(it && it.actualEndMs!=null) return it.actualEndMs; return _arrInstant(it); }
+// 壁時計分（HH:MM→分。00:00=0 / 25:30=1530）。空・不正はnull
+function _hmMin(s){ var v=_normHM(s); if(v==null||v==='') return null; var p=v.split(':'); return (+p[0])*60+(+p[1]); }
+// 容器の実効終了（壁時計分・CO実時間があれば優先・日跨ぎは+1440）。終了時刻が無ければnull
+function _uEndMin(it){
+  var raw=it&&(it.isMove?it.toTime:it.endTime);
+  var m=_hmMin(it&&it.actualEnd); if(m==null) m=_hmMin(raw);
+  if(m==null) return null;
+  var s=_hmMin(it&&it.actualStart); if(s==null) s=_hmMin(it&&it.time);
+  if(s!=null && m<s) m+=1440;
+  return m;
+}
+// 項目のこの日の開始（壁時計分・CO/CI実時間があれば優先）
+function _uStartMin(it){ var m=_hmMin(it&&it.actualStart); if(m==null) m=_hmMin(it&&it.time); return m==null?0:m; }
 // 終端レグの簡易カード（時刻＋アイコン＋「到着」/「終了」タグ。詳細・写真は開始カード側に集約）
 function renderArrLeg(it){
   var ic=itemIcon(it);
@@ -2086,11 +2097,12 @@ function renderSchedItem(it, leg){
   var moreThumbs=aphotos.length>1?('<div class="sc-gallery">'+aphotos.slice(1).map(function(p,idx){ return '<img class="sc-thumb" src="'+esc(p.url)+'" alt="" loading="lazy" onclick="event.stopPropagation();openItemPhotos(\''+did+'\','+(idx+1)+')">'; }).join('')+'</div>'):'';
   var phBtn=_isReal?('<div><button class="sc-photo-btn" onclick="event.stopPropagation();openItemPhotoMgr(\''+did+'\')">📷 写真 '+(photos.length?('('+photos.length+')'):'を追加・閲覧')+'</button></div>'):'';
   // 写真ボタン（複数ある場合はライトボックスで左右ページ送り）
-  if(aphotos.length) meta.push('<button type="button" class="sc-photo-ln" onclick="event.stopPropagation();openItemPhotos(\''+did+'\',0)" title="写真を表示">📷 写真('+aphotos.length+')</button>');
-  // 折畳の中に入れる「参加者・現地ホスト・班バッジ・名前」行（費用の前）
+  if(aphotos.length) meta.push('<button type="button" class="sc-photo-ln" onclick="event.stopPropagation();openItemPhotos(\''+did+'\',0)" title="写真を表示">📷('+aphotos.length+')</button>');
+  // 参加者・現地ホスト・班バッジ・名前を費用の前に。改行せず費用・地図などと同じ行に流す。
   var rb=rosterBtnHtml(it), bdg=SchedGroups.badge(it,esc), nm=schedNamesHtml(it,true);
-  var peopleRow=(rb||bdg||nm)?('<div class="sc-people">'+rb+bdg+nm+'</div>'):'';
-  var inner=peopleRow+(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')+(meta.length?'<div class="sc-meta">'+meta.join('')+'</div>':'')+schedRoomingHtml(it)+moreThumbs+gallery+phBtn;
+  var people=[]; if(rb)people.push(rb); if(bdg)people.push(bdg); if(nm)people.push(nm);
+  var allMeta=people.concat(meta);
+  var inner=(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')+(allMeta.length?'<div class="sc-meta">'+allMeta.join('')+'</div>':'')+schedRoomingHtml(it)+moreThumbs+gallery+phBtn;
   var hasDetail=!!inner;
   var detail=hasDetail?'<div class="sc-detail" id="scd-'+did+'" style="display:none">'+inner+'</div>':'';
   var clickable=hasDetail||geo;
@@ -2465,17 +2477,19 @@ function debugTimeBar(){
 // ── 時間帯で自動ネスト（最大3階層）: 終了時刻を持つ項目[開始〜終了]の内側に開始する項目を子にする ──
 // units: {ms(開始JST絶対), it, canContain(容器になれるか), html(葉として描画するHTML)} の配列（時系列昇順）
 // 戻り値: ツリー（{u, children:[], isCont, endMs, depth}）。容器になれるのは canContain かつ深さ<2（＝0,1階層）。
+// 同じ日の中は「壁時計時刻（分）」で内包判定する（タイムゾーン換算した絶対msだと、
+// 片方だけ座標未設定などで基準がズレ、見た目は内側なのに入れ子にならない不具合が出るため）。
 function _buildSchedTree(units){
-  var roots=[], stack=[]; // stack: 開いている容器 {node, endMs}
+  var roots=[], stack=[]; // stack: 開いている容器 {node, endMin}
   units.forEach(function(u){
-    var startMs=u.ms;
-    while(stack.length && stack[stack.length-1].endMs<=startMs) stack.pop(); // 開始前に閉じた容器を外す
+    var startMin=(u.smin!=null?u.smin:_uStartMin(u.it));
+    while(stack.length && stack[stack.length-1].endMin<=startMin) stack.pop(); // 開始前に閉じた容器を外す
     var parent=stack.length?stack[stack.length-1].node:null;
     var node={u:u, children:[], isCont:false, endMs:null, depth:parent?parent.depth+1:0};
     if(parent) parent.children.push(node); else roots.push(node);
     if(u.canContain && node.depth<2){
-      var em=_effEndMs(u.it);
-      if(em>startMs){ node.isCont=true; node.endMs=em; stack.push({node:node, endMs:em}); }
+      var em=_uEndMin(u.it);
+      if(em!=null && em>startMin){ node.isCont=true; node.endMs=em; stack.push({node:node, endMin:em}); }
     }
   });
   return roots;
@@ -2534,7 +2548,12 @@ function renderSchedule(items){
     return row;
   }
   // レグ→ネスト用ユニット（葉HTML＝従来行、容器候補＝単独レグかつ終了あり）
-  function _legUnit(L){ return {ms:L.ms, it:L.it, canContain:(L.leg===null&&_hasEnd(L.it)), html:_legRow(L)}; }
+  function _legUnit(L){
+    var it=L.it, smin;
+    if(L.leg==='arr'){ smin=_hmMin(it.actualEnd); if(smin==null) smin=_hmMin(it.isMove?it.toTime:it.endTime); } // 到着レグはこの日の到着時刻で並べる
+    else smin=_uStartMin(it);
+    return {ms:L.ms, it:it, canContain:(L.leg===null&&_hasEnd(it)), html:_legRow(L), smin:(smin==null?0:smin)};
+  }
   // ネストツリーの1ノードHTML（容器なら 見出し＋子＋下端の終了時刻、それ以外は葉HTML）
   function _renderSchedNode(node){
     var u=node.u;
@@ -2571,7 +2590,7 @@ function renderSchedule(items){
       b.items.forEach(function(x){
         var L=x.L, it=L.it;
         SchedGroups.cols(it).forEach(function(c){
-          if(c.mirror){ if(L.leg!=='arr') colU[c.g].push({ms:L.ms, it:it, canContain:false, html:SchedGroups.mirrorHtml(it, esc, '')}); }
+          if(c.mirror){ if(L.leg!=='arr') colU[c.g].push({ms:L.ms, it:it, canContain:false, html:SchedGroups.mirrorHtml(it, esc, ''), smin:_uStartMin(it)}); }
           else colU[c.g].push(_legUnit(L));
         });
       });
