@@ -172,6 +172,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .ic-opt.sel{border-color:var(--gold-d);background:#f6f1e6}
 .pl-item .nm{flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--ink)}
 .pl-item .co{font-family:var(--mono);font-size:11px;color:var(--ink3)}
+.pl-item .co .pl-evsel{font-family:var(--sans);font-size:11px;padding:1px 4px;border:1px solid var(--border);border-radius:5px;background:var(--white);color:var(--ink2);max-width:62%;vertical-align:middle;margin-left:2px}
 .se-ic{font-size:15px;flex:0 0 auto}
 .se-main{flex:1;min-width:0}
 .se-ttl{font-size:13px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:6px;min-width:0}
@@ -2596,7 +2597,8 @@ function autoPlaceCat(catId, title){
 var _placeCatFilter='', _placeEventFilter=null;
 function _ensurePlaceFilterDefault(){ if(_placeEventFilter===null) _placeEventFilter=_schEventId||'__all__'; }
 function _placeMatch(p){
-  if(_placeEventFilter && _placeEventFilter!=='__all__' && p.eventId!==_placeEventFilter) return false;
+  if(_placeEventFilter==='__none__'){ if(p.eventId) return false; }
+  else if(_placeEventFilter && _placeEventFilter!=='__all__' && p.eventId!==_placeEventFilter) return false;
   if(_placeCatFilter && (p.category||'')!==_placeCatFilter) return false;
   return true;
 }
@@ -2612,6 +2614,7 @@ function _placeFilterBarHtml(){
   var tabs='<button type="button" class="plf-tab'+(_placeCatFilter===''?' on':'')+'" onclick="setPlaceCat(\'\')">全て</button>'
     +_placeCats.map(function(c){ return '<button type="button" class="plf-tab'+(_placeCatFilter===c.k?' on':'')+'" onclick="setPlaceCat(\''+c.k+'\')">'+esc(c.n)+'</button>'; }).join('');
   var evOpts='<option value="__all__"'+(_placeEventFilter==='__all__'?' selected':'')+'>全件</option>'
+    +'<option value="__none__"'+(_placeEventFilter==='__none__'?' selected':'')+'>イベント未設定</option>'
     +(events||[]).map(function(ev){ return '<option value="'+esc(ev.id)+'"'+(_placeEventFilter===ev.id?' selected':'')+'>'+esc(ev.name||ev.id)+'</option>'; }).join('');
   return '<div class="plf-row"><div class="plf-tabs">'+tabs+'</div><select class="plf-ev" onchange="setPlaceEvent(this.value)">'+evOpts+'</select></div>';
 }
@@ -2649,7 +2652,13 @@ function renderPlaceList(){
     var catSel='<select class="plf-catsel" title="分類を変更" onchange="setPlaceCategory(\''+esc(p.id)+'\',this.value)">'
       +'<option value=""'+(!p.category?' selected':'')+'>未分類</option>'
       +_placeCats.map(function(c){ return '<option value="'+c.k+'"'+(p.category===c.k?' selected':'')+'>'+esc(c.n)+'</option>'; }).join('')+'</select>';
-    return '<div class="pl-item"><div class="nm">'+esc(p.name||'（無題）')+'<div class="co">'+esc((p.lat!=null?p.lat:'?')+', '+(p.lng!=null?p.lng:'?'))+' ・ '+esc(_evName(p.eventId))+'</div></div>'
+    // イベントの割り当て（スタッフのみ・担当管理者はイベント固定のため読み取り表示）
+    var evCell=_coAdminMode
+      ? esc(_evName(p.eventId))
+      : '<select class="pl-evsel" title="イベントを割り当て" onchange="assignPlaceEvent(\''+esc(p.id)+'\',this.value)">'
+        +'<option value=""'+(!p.eventId?' selected':'')+'>（イベント未設定）</option>'
+        +(events||[]).map(function(ev){ return '<option value="'+esc(ev.id)+'"'+(p.eventId===ev.id?' selected':'')+'>'+esc(ev.name||ev.id)+'</option>'; }).join('')+'</select>';
+    return '<div class="pl-item"><div class="nm">'+esc(p.name||'（無題）')+'<div class="co">'+esc((p.lat!=null?p.lat:'?')+', '+(p.lng!=null?p.lng:'?'))+' ・ '+evCell+'</div></div>'
       +catSel
       +'<button class="btn bs sm" onclick="editPlace(\''+esc(p.id)+'\')">編集</button>'
       +'<button class="rm" title="削除" onclick="delPlace(\''+esc(p.id)+'\')">×</button></div>';
@@ -2659,6 +2668,13 @@ function setPlaceCategory(pid, cat){
   db.collection('places').doc(pid).set({ category:cat||'', updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
     .then(function(){ var p=_places.find(function(x){return x.id===pid;}); if(p) p.category=cat||''; toast('分類を変更しました'); if(g('se-place-pick')){ g('se-place-pick').innerHTML=placeOptions(); } if(g('se-toplace-pick')){ g('se-toplace-pick').innerHTML=placeOptions(); } renderPlaceList(); })
     .catch(function(e){ toast('変更失敗: '+e.message,'err'); });
+}
+// イベント未設定（または別イベント）の場所にイベントを割り当て（スタッフのみ）
+function assignPlaceEvent(pid, eid){
+  if(_coAdminMode) return; // 担当管理者は変更不可
+  db.collection('places').doc(pid).set({ eventId:eid||'', updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
+    .then(function(){ var p=_places.find(function(x){return x.id===pid;}); if(p) p.eventId=eid||''; toast(eid?'イベントを割り当てました':'イベント未設定にしました'); fillPlacePickers(); renderPlaceList(); })
+    .catch(function(e){ toast('割り当て失敗: '+e.message,'err'); });
 }
 function editPlace(pid){
   var p=_places.find(function(x){return x.id===pid;}); if(!p) return;
