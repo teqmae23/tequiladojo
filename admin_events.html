@@ -921,7 +921,9 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
       <label class="reqlbl"><input type="checkbox" id="se-hideuntildone"> 閲覧者に隠す（完了後に公開）— クローズイベントで、参加者・家族以外にはこのアイテムを完了まで非表示</label>
       <label class="reqlbl"><input type="checkbox" id="se-shownames" onchange="onSeShowNames()"> 参加者名を表示（合流／離脱など）</label>
       <div id="se-names-box" style="display:none;border:1px solid var(--border);border-radius:var(--r);padding:8px 10px;margin-top:4px">
-        <div class="fg"><label class="fl">表示ラベル（自由入力）</label><input class="fi" id="se-nametext" placeholder="例: 合流 / 離脱"></div>
+        <label class="reqlbl" style="margin-top:0"><input type="checkbox" id="se-spot" onchange="onSeSpot()"> この項目だけの参加（次の項目の前に自動で外れる／現地ホスト等）</label>
+        <div id="se-spot-hint" style="display:none;font-size:11px;color:var(--ink3);margin:-2px 0 6px">選んだ人はこの項目の参加者一覧にだけ表示され、次の項目には引き継がれません。合流・離脱の項目を別々に作る必要はありません。</div>
+        <div class="fg"><label class="fl">表示ラベル（自由入力）</label><input class="fi" id="se-nametext" placeholder="例: 合流 / 離脱 / 現地ホスト"></div>
         <div class="fg"><label class="fl">対象の参加者を選択</label><div id="se-names-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r)"></div></div>
       </div>
       <label class="reqlbl"><input type="checkbox" id="se-rooming" onchange="onSeRooming()"> 🛏 部屋割りを設定する</label>
@@ -2245,7 +2247,13 @@ function updateCostPreview(){
 function onSeCat(){ var v=g('se-cat').value; if(v==='hotel') g('se-overnight').checked=true; if(v==='flight'||v==='move'){ g('se-move').checked=true; toggleMove(); } }
 // 参加者名の表示（合流/離脱など）
 var _seNameSel={};
-function onSeShowNames(){ var on=g('se-shownames').checked; g('se-names-box').style.display=on?'block':'none'; if(on) renderSeNames(); }
+function onSeShowNames(){ var on=g('se-shownames').checked; g('se-names-box').style.display=on?'block':'none'; if(on){ renderSeNames(); onSeSpot(); } }
+// この項目だけの参加（現地ホスト等）。ラベル未入力なら「現地ホスト」を補助入力。
+function onSeSpot(){
+  var on=g('se-spot')&&g('se-spot').checked;
+  if(g('se-spot-hint')) g('se-spot-hint').style.display=on?'block':'none';
+  if(on && g('se-nametext') && !(g('se-nametext').value||'').trim()) g('se-nametext').value='現地ホスト';
+}
 function renderSeNames(){
   var box=g('se-names-list'); if(!box) return;
   if(!_schRoster.length){ box.innerHTML='<div class="ec">対象にできる参加者がいません。</div>'; return; }
@@ -3142,7 +3150,7 @@ function loadSchedItems(){
 }
 function renderSchedItemRow(it){
   var ic=itemIcon(it);
-  var markers=[]; if(it.isMove) markers.push('🚗ルート'); if(it.lat!=null&&it.lng!=null) markers.push('📍地図'); if(it.hideUntilDone) markers.push('🙈完了後公開'); if(it.showNames&&(it.nameParticipants||[]).length) markers.push('👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名'); if(it.roomingEnabled&&(it.rooms||[]).length) markers.push('🛏部屋割り'+it.rooms.length);
+  var markers=[]; if(it.isMove) markers.push('🚗ルート'); if(it.lat!=null&&it.lng!=null) markers.push('📍地図'); if(it.hideUntilDone) markers.push('🙈完了後公開'); if(it.showNames&&(it.nameParticipants||[]).length) markers.push('👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名'+(it.spotOnly?'（この項目のみ）':'')); if(it.roomingEnabled&&(it.rooms||[]).length) markers.push('🛏部屋割り'+it.rooms.length);
   var noteHtml=it.note?'<div class="se-note-line">'+esc(it.note.slice(0,80))+(it.note.length>80?'…':'')+'</div>':'';
   var info=_schedCostInfo(it.id);
   var costHtml;
@@ -3588,6 +3596,7 @@ function openSchedEd(id, presetDate, presetGroup){
   g('se-hideuntildone').checked=!!(it&&it.hideUntilDone);
   g('se-shownames').checked=!!(it&&it.showNames);
   g('se-nametext').value=(it&&it.nameLabel)||'';
+  g('se-spot').checked=!!(it&&it.spotOnly);
   _seNameSel={}; if(it&&Array.isArray(it.nameParticipants)) it.nameParticipants.forEach(function(x){ if(x&&x.id) _seNameSel[x.id]=x.name||x.id; });
   onSeShowNames();
   // 班
@@ -3637,6 +3646,7 @@ function saveSched(){
     overnight:!!g('se-overnight').checked,
     hideUntilDone:!!g('se-hideuntildone').checked,
     showNames:!!g('se-shownames').checked,
+    spotOnly:!!(g('se-shownames').checked&&g('se-spot').checked), // この項目だけの参加（持ち越さない）
     nameLabel:(g('se-nametext').value||'').trim(),
     nameParticipants:(g('se-shownames').checked?Object.keys(_seNameSel).map(function(id){ return {id:id, name:_seNameSel[id]||id}; }):[]),
     roomingEnabled:!!g('se-rooming').checked,
