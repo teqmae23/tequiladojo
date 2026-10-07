@@ -228,6 +228,9 @@ a{color:var(--gold-d)}
 #sc-rosterpop{position:fixed;z-index:410;background:#18110a;color:#fff;font-size:12px;line-height:1.7;padding:10px 13px;border-radius:8px;max-width:260px;box-shadow:0 4px 16px rgba(0,0,0,.35);display:none}
 #sc-rosterpop .rp-hd{font-weight:700;color:var(--gold-l);margin-bottom:4px}
 #sc-rosterpop .rp-body{color:#fff}
+#sc-rosterpop .rp-host{display:flex;align-items:center;gap:8px;margin:5px 0}
+#sc-rosterpop .rp-av{width:24px;height:24px;border-radius:50%;object-fit:cover;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;background:#5a4a30;color:#fff;font-size:10px;font-weight:700;text-transform:uppercase}
+.sc-hostbtn{margin-left:6px;padding:1px 8px;border:1px solid var(--gold-d);background:var(--white);color:var(--gold-d);font-size:10px;font-weight:700;border-radius:11px;cursor:pointer;font-family:inherit;white-space:nowrap;vertical-align:middle}
 .sc-time-jst{display:block;font-size:10px;color:var(--teal);font-weight:600;white-space:nowrap}
 .sc-daydiff{color:var(--red);margin-left:2px}
 .sc-idl{display:flex;align-items:center;gap:10px;margin:10px 2px;color:#b0442e;font-size:11px;font-weight:700;letter-spacing:.06em}
@@ -1623,7 +1626,7 @@ function _itemHidden(it){
 }
 // 参加者名の表示（合流/離脱など・自由ラベル）
 function schedNamesHtml(it, inline){
-  if(!it||!it.showNames||!Array.isArray(it.nameParticipants)||!it.nameParticipants.length) return '';
+  if(!it||!it.showNames||it.spotOnly||!Array.isArray(it.nameParticipants)||!it.nameParticipants.length) return ''; // 現地ホスト(spotOnly)はインライン表示せず「現地ホスト」ボタンで表示
   var names=it.nameParticipants.map(function(x){ return esc((x&&(x.name||x.id))||''); }).filter(Boolean).join('、');
   if(!names) return '';
   var lbl=it.nameLabel?('<span class="sc-names-lbl">'+esc(it.nameLabel)+'</span> '):'';
@@ -1633,6 +1636,7 @@ function schedNamesHtml(it, inline){
 /* ── 合流/離脱にそった「現在参加しているメンバー」の管理 ── */
 // ラベルに「合流」を含めば加入、「離脱」を含めば離脱として扱う（既存の自由ラベルを利用）。
 var _rosterMap={};
+var _rosterFeatureOn=false; // このイベントで合流/離脱・班を使っているか（使っていれば全項目に「参加者」ボタンを出す）
 function _rosterOp(it){
   // 参加者が指定されていなければ増減なし
   if(!it||!it.showNames||!(Array.isArray(it.nameParticipants)&&it.nameParticipants.length)) return '';
@@ -1668,20 +1672,19 @@ function _computeRosters(enr){
   }, _rosterOp);
   var map={};
   enr.forEach(function(e){
-    var it=e.it, s=_rosterSnap[it.id]||{}, own=SchedGroups.owner(it), gr=s[own]||{};
-    // この項目だけの一時参加（現地ホスト等）: この項目のスナップショットにのみ加え、次項目へは持ち越さない
-    if(it.spotOnly && it.showNames && Array.isArray(it.nameParticipants) && it.nameParticipants.length){
-      gr=Object.assign({}, gr);
-      it.nameParticipants.forEach(function(np){
-        if(!np) return;
-        var p=_findByTid(np.id), key=p?p.id:('np:'+(np.id||np.name));
-        gr[key]=(p?_pName(p):null)||np.name||'（会員）';
-      });
-      s[own]=gr; _rosterSnap[it.id]=s;
-    }
+    var it=e.it, s=_rosterSnap[it.id]||{}, gr=s[SchedGroups.owner(it)]||{};
     map[it.id]=Object.keys(gr).map(function(k){ return gr[k]; });
   });
   return map;
+}
+// この項目の現地ホスト（spotOnlyで追加した相手）[{name,iconUrl}]
+function _spotHostsOf(it){
+  if(!it||!it.spotOnly||!Array.isArray(it.nameParticipants)) return [];
+  return it.nameParticipants.map(function(np){
+    if(!np) return null;
+    var p=_findByTid(np.id);
+    return { name:(p?_pName(p):null)||np.name||'（ホスト）', iconUrl:(p&&p.iconUrl)||'' };
+  }).filter(Boolean);
 }
 // 閲覧者が現在いる班（開始前・不明は1班）
 function _viewerGroup(enr){
@@ -1715,13 +1718,32 @@ function showRoster(id, btn){
   pop.style.top=top+'px';
   pop.style.left=Math.max(8, Math.min(r.left, window.innerWidth-270))+'px';
 }
+// 現地ホスト一覧ポップアップ（名前の前にアイコン）
+function showHosts(id, btn){
+  var it=_schedItems.find(function(x){ return x.id===id; }); if(!it) return;
+  var hosts=_spotHostsOf(it);
+  var pop=g('sc-rosterpop'); if(!pop){ pop=document.createElement('div'); pop.id='sc-rosterpop'; document.body.appendChild(pop); }
+  var rows=hosts.map(function(h){
+    var icon=h.iconUrl?('<img class="rp-av" src="'+esc(h.iconUrl)+'" alt="">'):('<span class="rp-av">'+esc(initials(h.name))+'</span>');
+    return '<div class="rp-host">'+icon+'<span>'+esc(h.name)+'</span></div>';
+  }).join('');
+  pop.innerHTML='<div class="rp-hd">🧑‍🤝‍🧑 現地ホスト</div>'+(rows||'<div class="rp-body">なし</div>');
+  pop.style.display='block';
+  var r=btn.getBoundingClientRect();
+  var top=r.bottom+6; if(top+120>window.innerHeight) top=Math.max(8,r.top-120);
+  pop.style.top=top+'px';
+  pop.style.left=Math.max(8, Math.min(r.left, window.innerWidth-270))+'px';
+}
 function hideRosterPop(){ var p=g('sc-rosterpop'); if(p) p.style.display='none'; }
-document.addEventListener('click',function(e){ var p=g('sc-rosterpop'); if(p&&p.style.display==='block'&&!p.contains(e.target)&&!(e.target.classList&&e.target.classList.contains('sc-rosterbtn'))) hideRosterPop(); });
-// 「参加者を表示」チェックのアイテムに、その時点の参加メンバーを閲覧するボタンを付ける。
+document.addEventListener('click',function(e){ var p=g('sc-rosterpop'); if(p&&p.style.display==='block'&&!p.contains(e.target)&&!(e.target.classList&&(e.target.classList.contains('sc-rosterbtn')||e.target.classList.contains('sc-hostbtn')))) hideRosterPop(); });
+// 合流/離脱・班を使うイベントでは各項目に「参加者」ボタン（人数表示なし）、現地ホストは別ボタン。
 function rosterBtnHtml(it){
-  if(!it||(!it.showNames&&!SchedGroups.op(it))) return '';
-  var n=(_rosterMap[it.id]||[]).length;
-  return '<button type="button" class="sc-rosterbtn" onclick="event.stopPropagation();showRoster(\''+esc(it.id)+'\',this)">👥 参加者'+(n?(' '+n+'名'):'')+'</button>';
+  if(!it) return '';
+  var html='';
+  if(_rosterFeatureOn) html+='<button type="button" class="sc-rosterbtn" onclick="event.stopPropagation();showRoster(\''+esc(it.id)+'\',this)">👥 参加者</button>';
+  if(it.spotOnly && Array.isArray(it.nameParticipants) && it.nameParticipants.length)
+    html+='<button type="button" class="sc-hostbtn" onclick="event.stopPropagation();showHosts(\''+esc(it.id)+'\',this)">🧑‍🤝‍🧑 現地ホスト</button>';
+  return html;
 }
 function _circNum(n){ return (n>=1&&n<=20)?String.fromCharCode(0x2460+(n-1)):String(n); }
 function _roomBlockHtml(r){
@@ -1799,7 +1821,7 @@ function costLineFor(it){
   var ci=_costItemForSched(it.id);
   if(ci){
     var mytid=_myCostTid();
-    if(mytid && _ciMembers(ci).indexOf(mytid)>=0){ var sh=_costShareOf(ci); if(sh>0) return '💰 あなたの負担 ¥'+sh.toLocaleString(); }
+    if(mytid && _ciMembers(ci).indexOf(mytid)>=0){ var sh=_costShareOf(ci); if(sh>0) return '💰 費用/人 ¥'+sh.toLocaleString(); }
     return '';
   }
   return costText(it);
@@ -2039,6 +2061,7 @@ function renderSchedule(items){
   var enr=_sortByJst(items);
   _revealMap=_computeReveals(enr); // 各アイテムの完了時刻を算出（restricted閲覧者向け）
   _rosterMap=_computeRosters(enr); // 合流/離脱にそった各時点の参加メンバー（全アイテム順で算出）
+  _rosterFeatureOn=enr.some(function(e){ return e.it.showNames && !e.it.spotOnly; })||SchedGroups.used(items); // 合流/離脱・班を使うイベントか
   // restricted閲覧者には hideUntilDone のアイテムを完了まで非表示
   var visEnr=enr.filter(function(e){ return !_itemHidden(e.it); });
   _nowMapItem=null;
