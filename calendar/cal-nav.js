@@ -1,6 +1,6 @@
 /* cal-nav.js (自動生成) — テキーラ道場 営業カレンダー 月ナビ共通部品 */
 (function(){
-var FROM=24313,TO=24324,BASE='https://www.tequiladojo.com/calendar/';
+var FROM=24317,TO=24324,BASE='https://www.tequiladojo.com/calendar/';
 function pad(n){return n<10?'0'+n:''+n;}
 function lab(v){var y=Math.floor((v-1)/12),m=((v-1)%12)+1;return{ym:y+pad(m),label:y+'\u5e74'+m+'\u6708'};}
 var mm=location.pathname.match(/(\d{4})(\d{2})(calendar|listcal)\.html/);if(!mm)return;
