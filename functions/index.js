@@ -2248,7 +2248,7 @@ exports.publishCalendar = functions.region('asia-northeast1')
       if (!f || typeof f.path !== 'string' || typeof f.content !== 'string') {
         throw new functions.https.HttpsError('invalid-argument', 'ファイル形式が不正です');
       }
-      if (!/^calendar\/[A-Za-z0-9_.\-]+\.html$/.test(f.path)) {
+      if (!/^calendar\/[A-Za-z0-9_.\-]+\.(html|js|json)$/.test(f.path)) {
         throw new functions.https.HttpsError('invalid-argument', 'パスが不正です: ' + f.path);
       }
       if (f.content.length > 800000) {
