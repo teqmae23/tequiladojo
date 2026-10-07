@@ -178,6 +178,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .se-ttl{font-size:13px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:6px;min-width:0}
 .se-ttl-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto;cursor:pointer}
 .se-sub{font-size:11px;color:var(--ink3);margin-top:1px}
+.se-maplink{color:var(--teal);text-decoration:none;font-weight:600;cursor:pointer;white-space:nowrap}
 .se-note-line{font-size:11px;color:var(--ink);line-height:1.5;margin-top:1px;white-space:pre-wrap}
 .se-cost{font-size:12px;color:var(--gold-d);font-weight:600;flex:0 0 auto}
 .cost-sec-t{font-size:13px;font-weight:700;color:var(--ink2);margin-bottom:6px}
@@ -2098,17 +2099,33 @@ var DEFAULT_CATS=[
   {id:'checkin',name:'チェックイン',icon:'🔑',bg:'#e8f5f0',seq:3},
   {id:'meal',name:'食事',icon:'🍴',bg:'#fbefe4',seq:4},
   {id:'distillery',name:'蒸留所',icon:'🏭',bg:'#eef5e7',seq:5},
-  {id:'activity',name:'アクティビティ',icon:'🎉',bg:'#fbe9ef',seq:6},
-  {id:'free',name:'自由行動',icon:'🚶',bg:'#f0efea',seq:7},
-  {id:'other',name:'その他',icon:'📍',bg:'#f5f3ee',seq:8}
+  {id:'distillery_tour',name:'蒸留所見学',icon:'⚗️',bg:'#eaf4ec',seq:6},
+  {id:'activity',name:'アクティビティ',icon:'🎉',bg:'#fbe9ef',seq:7},
+  {id:'free',name:'自由行動',icon:'🚶',bg:'#f0efea',seq:8},
+  {id:'other',name:'その他',icon:'📍',bg:'#f5f3ee',seq:9}
 ];
 var _cats=DEFAULT_CATS.slice();
 function catCol(){ return db.collection('scheduleCategories'); }
 function loadCats(){
   return catCol().get().then(function(s){
-    if(!s.empty) _cats=s.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).sort(function(a,b){ return (a.seq||0)-(b.seq||0); });
+    if(!s.empty){
+      _cats=s.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).sort(function(a,b){ return (a.seq||0)-(b.seq||0); });
+      _ensureDefaultCats(s.docs.map(function(d){ return d.id; }));
+    }
     else _cats=DEFAULT_CATS.slice();
   }).catch(function(){ _cats=DEFAULT_CATS.slice(); });
+}
+// 既存の種別コレクションに不足している既定種別（例: 蒸留所見学）を補充（best-effort・権限が無ければ無視）
+function _ensureDefaultCats(existingIds){
+  var missing=DEFAULT_CATS.filter(function(c){ return existingIds.indexOf(c.id)<0; });
+  if(!missing.length) return;
+  var b=db.batch();
+  missing.forEach(function(c){ b.set(catCol().doc(c.id),{name:c.name,icon:c.icon,bg:c.bg,seq:c.seq}); });
+  b.commit().then(function(){
+    missing.forEach(function(c){ if(!_cats.some(function(x){ return x.id===c.id; })) _cats.push(Object.assign({},c)); });
+    _cats.sort(function(a,b){ return (a.seq||0)-(b.seq||0); });
+    refreshCatUI();
+  }).catch(function(){});
 }
 function catById(id){ for(var i=0;i<_cats.length;i++) if(_cats[i].id===id) return _cats[i]; return null; }
 function catIcon(id){ var c=catById(id); return (c&&c.icon)?c.icon:'📍'; }
@@ -3231,9 +3248,29 @@ function loadSchedItems(){
     renderSchedList();
   }).catch(function(e){ g('sch-list').innerHTML='<div class="ec">読込失敗: '+esc(e.message)+'</div>'; });
 }
+// 地図/ルートのGoogleマップURL（会員ページと同等。クリックで開くため編集に入らない）
+function _siMap(it){
+  if(it.lat!=null&&it.lng!=null) return 'https://www.google.com/maps?q='+encodeURIComponent(it.lat+','+it.lng);
+  if(it.mapUrl) return it.mapUrl;
+  return '';
+}
+function _siRoute(it){
+  if(!(it.isMove&&it.lat!=null&&it.lng!=null&&it.toLat!=null&&it.toLng!=null)) return '';
+  var tm={driving:'driving',car:'driving',taxi:'driving',shuttle:'driving',transit:'transit',bus:'transit',train:'transit',shinkansen:'transit',walking:'walking',bicycling:'bicycling'}[it.travelMode||''];
+  return 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(it.lat+','+it.lng)+'&destination='+encodeURIComponent(it.toLat+','+it.toLng)+(tm?('&travelmode='+tm):'');
+}
 function renderSchedItemRow(it){
   var ic=itemIcon(it);
-  var markers=[]; if(it.isMove) markers.push('🚗ルート'); if(it.lat!=null&&it.lng!=null) markers.push('📍地図'); if(it.hideUntilDone) markers.push('🙈完了後公開'); if(it.showNames&&(it.nameParticipants||[]).length) markers.push('👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名'+(it.spotOnly?'（この項目のみ）':'')); if(it.roomingEnabled&&(it.rooms||[]).length) markers.push('🛏部屋割り'+it.rooms.length);
+  // ルート・地図・写真・現地ホストはクリックで開く/表示（行クリックの編集に入らないよう stopPropagation）
+  var markers=[];
+  var _rl=_siRoute(it); if(_rl) markers.push('<a class="se-maplink" href="'+esc(_rl)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🚗ルート</a>');
+  var _mp=_siMap(it); if(_mp) markers.push('<a class="se-maplink" href="'+esc(_mp)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍地図</a>');
+  var _aph=Array.isArray(it.photos)?it.photos:[];
+  if(_aph.length) markers.push('<a class="se-maplink" href="'+esc(_aph[0].url)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="添付写真 '+_aph.length+'枚">📷写真'+(_aph.length>1?('('+_aph.length+')'):'')+'</a>');
+  if(it.spotOnly && (it.nameParticipants||[]).length) markers.push('<span class="se-maplink" onclick="event.stopPropagation()" title="現地ホスト: '+esc((it.nameParticipants||[]).map(function(x){ return (x&&(x.name||x.id))||''; }).filter(Boolean).join('、'))+'">🧑‍🤝‍🧑現地ホスト</span>');
+  if(it.hideUntilDone) markers.push('🙈完了後公開');
+  if(it.showNames&&(it.nameParticipants||[]).length&&!it.spotOnly) markers.push('👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名');
+  if(it.roomingEnabled&&(it.rooms||[]).length) markers.push('🛏部屋割り'+it.rooms.length);
   var noteHtml=it.note?'<div class="se-note-line">'+esc(it.note.slice(0,80))+(it.note.length>80?'…':'')+'</div>':'';
   var info=_schedCostInfo(it.id);
   var costHtml;
