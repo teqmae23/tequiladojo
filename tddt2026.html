@@ -1636,6 +1636,7 @@ var _rosterMap={};
 function _rosterOp(it){
   // 参加者が指定されていなければ増減なし
   if(!it||!it.showNames||!(Array.isArray(it.nameParticipants)&&it.nameParticipants.length)) return '';
+  if(it.spotOnly) return ''; // この項目だけの参加（現地ホスト等）→ 持ち越さない＝名簿の増減なし
   var l=it.nameLabel||'';
   if(l.indexOf('離脱')>=0 || l.indexOf('解散')>=0) return 'leave'; // 離脱/解散＝除外
   return 'join'; // 合流/集合/参加など、その時点で名前が指定されていれば「参加」＝加入扱い
@@ -1667,7 +1668,17 @@ function _computeRosters(enr){
   }, _rosterOp);
   var map={};
   enr.forEach(function(e){
-    var it=e.it, s=_rosterSnap[it.id]||{}, gr=s[SchedGroups.owner(it)]||{};
+    var it=e.it, s=_rosterSnap[it.id]||{}, own=SchedGroups.owner(it), gr=s[own]||{};
+    // この項目だけの一時参加（現地ホスト等）: この項目のスナップショットにのみ加え、次項目へは持ち越さない
+    if(it.spotOnly && it.showNames && Array.isArray(it.nameParticipants) && it.nameParticipants.length){
+      gr=Object.assign({}, gr);
+      it.nameParticipants.forEach(function(np){
+        if(!np) return;
+        var p=_findByTid(np.id), key=p?p.id:('np:'+(np.id||np.name));
+        gr[key]=(p?_pName(p):null)||np.name||'（会員）';
+      });
+      s[own]=gr; _rosterSnap[it.id]=s;
+    }
     map[it.id]=Object.keys(gr).map(function(k){ return gr[k]; });
   });
   return map;
