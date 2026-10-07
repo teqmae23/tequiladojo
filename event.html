@@ -2479,6 +2479,17 @@ function debugTimeBar(){
 // 戻り値: ツリー（{u, children:[], isCont, endMs, depth}）。容器になれるのは canContain かつ深さ<2（＝0,1階層）。
 // 同じ日の中は「壁時計時刻（分）」で内包判定する（タイムゾーン換算した絶対msだと、
 // 片方だけ座標未設定などで基準がズレ、見た目は内側なのに入れ子にならない不具合が出るため）。
+// 一時デバッグ（スタッフのみ）: ネスト構造を画面に出す
+var _nestDbg=[];
+function _dbgDumpTree(nodes, depth){
+  nodes.forEach(function(n){
+    var it=n.u.it;
+    _nestDbg.push(('　'.repeat(depth))+(n.isCont?'▼':'・')+' '+((it.title||'').slice(0,16))
+      +' | date='+(it.date||'?')+' time='+(it.time||'?')+' end='+((it.isMove?it.toTime:it.endTime)||'-')+' move='+(it.isMove?'Y':'N')
+      +' | s='+n.u.smin+' e='+_uEndMin(it)+' cc='+(n.u.canContain?'Y':'N')+' cont='+(n.isCont?'Y':'N')+' ch='+n.children.length);
+    _dbgDumpTree(n.children, depth+1);
+  });
+}
 function _buildSchedTree(units){
   var roots=[], stack=[]; // stack: 開いている容器 {node, endMin}
   units.forEach(function(u){
@@ -2501,6 +2512,7 @@ function renderSchedule(items){
   _revealMap=_computeReveals(enr); // 各アイテムの完了時刻を算出（restricted閲覧者向け）
   _rosterMap=_computeRosters(enr); // 合流/離脱にそった各時点の参加メンバー（全アイテム順で算出）
   _rosterFeatureOn=enr.some(function(e){ return e.it.showNames && !e.it.spotOnly; })||SchedGroups.used(items); // 合流/離脱・班を使うイベントか
+  _nestDbg=[]; // 一時デバッグ初期化
   // restricted閲覧者には hideUntilDone のアイテムを完了まで非表示
   var visEnr=enr.filter(function(e){ return !_itemHidden(e.it); });
   _nowMapItem=null;
@@ -2568,7 +2580,7 @@ function renderSchedule(items){
     }
     return u.html;
   }
-  function _renderUnits(units){ return _buildSchedTree(units).map(_renderSchedNode).join(''); }
+  function _renderUnits(units){ var tree=_buildSchedTree(units); if(_isStaff) _dbgDumpTree(tree,0); return tree.map(_renderSchedNode).join(''); }
   // 別班併存の時間帯だけをサイドバー付き複数列に、単独班の時間帯は従来の1列に。日付見出しは日ごと。
   var sections=[], sec=null;
   if(!useG){
@@ -2608,6 +2620,7 @@ function renderSchedule(items){
       +'<div class="sc-day-body" id="sc-day-body-'+idx+'" style="display:none">'+mapHtml+gp.html+'</div>';
   }).join('');
   if(hiddenCount>0) h+='<div class="sc-hiddennote">🙈 未完了の非公開アイテムが '+hiddenCount+' 件あります（完了後に表示されます）。</div>';
+  if(_isStaff && _nestDbg.length) h+='<details style="margin-top:10px;font-size:11px;color:var(--ink2)"><summary style="cursor:pointer;color:var(--ink3)">🧪 ネスト診断（スタッフのみ・一時）</summary><pre style="white-space:pre-wrap;font-size:10.5px;line-height:1.5;background:var(--cream2);border-radius:6px;padding:8px;overflow:auto">'+esc(_nestDbg.join('\n'))+'</pre></details>';
   h+='</div>';
   el.innerHTML=h;
   var nt=g('now-top'); if(nt) nt.innerHTML=_nowHtml; // 現在のイベント／NEXTをTOPに表示
