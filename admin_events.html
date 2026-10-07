@@ -179,6 +179,11 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .se-ttl-txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto;cursor:pointer}
 .se-sub{font-size:11px;color:var(--ink3);margin-top:1px}
 .se-maplink{color:var(--teal);text-decoration:none;font-weight:600;cursor:pointer;white-space:nowrap}
+#se-rosterpop{position:fixed;z-index:320;background:#18110a;color:#fff;font-size:12px;line-height:1.7;padding:10px 13px;border-radius:8px;max-width:260px;box-shadow:0 4px 16px rgba(0,0,0,.35);display:none}
+#se-rosterpop .rp-hd{font-weight:700;color:#e8c877;margin-bottom:4px}
+#se-rosterpop .rp-body{color:#fff}
+#se-rosterpop .rp-host{display:flex;align-items:center;gap:8px;margin:5px 0}
+#se-rosterpop .rp-av{width:24px;height:24px;border-radius:50%;object-fit:cover;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;background:#5a4a30;color:#fff;font-size:10px;font-weight:700;text-transform:uppercase}
 .se-note-line{font-size:11px;color:var(--ink);line-height:1.5;margin-top:1px;white-space:pre-wrap}
 .se-cost{font-size:12px;color:var(--gold-d);font-weight:600;flex:0 0 auto}
 .cost-sec-t{font-size:13px;font-weight:700;color:var(--ink2);margin-bottom:6px}
@@ -3293,28 +3298,96 @@ function loadSchedItems(){
     renderSchedList();
   }).catch(function(e){ g('sch-list').innerHTML='<div class="ec">読込失敗: '+esc(e.message)+'</div>'; });
 }
+// ── 参加者ロスター（合流/離脱に沿った各時点の参加メンバー）＋ポップアップ ──
+var _schRosterMap={}, _schRosterSnap={}, _schRosterOn=false;
+function _siRosterOp(it){
+  if(!it||!it.showNames||!(Array.isArray(it.nameParticipants)&&it.nameParticipants.length)) return '';
+  if(it.spotOnly) return ''; // 現地ホスト（この項目だけ）は持ち越さない
+  var l=it.nameLabel||'';
+  if(l.indexOf('離脱')>=0||l.indexOf('解散')>=0) return 'leave';
+  return 'join';
+}
+function _siName(tid){ var p=_schRoster.find(function(x){ return String(x.tid)===String(tid); }); return p?(p.name||p.memberId||'（会員）'):null; }
+function _computeSchedRosters(){
+  var enr=_sortByJst(_schItems);
+  _schRosterSnap=SchedGroups.rosters(enr, function(np){
+    if(!np) return null;
+    var nm=_siName(np.id);
+    return { key:(nm?('k:'+np.id):('np:'+(np.id||np.name))), name:nm||np.name||'（会員）' };
+  }, _siRosterOp);
+  var map={};
+  enr.forEach(function(e){ var it=e.it, s=_schRosterSnap[it.id]||{}, gr=s[SchedGroups.owner(it)]||{}; map[it.id]=Object.keys(gr).map(function(k){ return gr[k]; }); });
+  _schRosterMap=map;
+  _schRosterOn=_schItems.some(function(it){ return it.showNames && !it.spotOnly; })||SchedGroups.used(_schItems);
+}
+function _schedPop(){ var p=g('se-rosterpop'); if(!p){ p=document.createElement('div'); p.id='se-rosterpop'; document.body.appendChild(p); } return p; }
+function _posSchedPop(p, btn){ p.style.display='block'; var r=btn.getBoundingClientRect(); var top=r.bottom+6; if(top+150>window.innerHeight) top=Math.max(8,r.top-150); p.style.top=top+'px'; p.style.left=Math.max(8,Math.min(r.left, window.innerWidth-270))+'px'; }
+function showSchedRoster(id, btn){
+  var it=_schItems.find(function(x){ return x.id===id; }); if(!it) return;
+  var p=_schedPop();
+  if(SchedGroups.used(_schItems)){
+    var s=_schRosterSnap[id]||{}, own=SchedGroups.owner(it), rows='';
+    for(var gn=1;gn<=SchedGroups.MAX;gn++){ var nm=Object.keys(s[gn]||{}).map(function(k){ return s[gn][k]; }); if(gn!==own&&!nm.length) continue; rows+='<div class="rp-body"><b style="color:'+SchedGroups.META[gn].color+'">'+SchedGroups.META[gn].name+'（'+nm.length+'名）</b> '+(nm.length?nm.map(esc).join('、'):'なし')+'</div>'; }
+    p.innerHTML='<div class="rp-hd">👥 この時点の参加メンバー</div>'+rows;
+  } else {
+    var names=_schRosterMap[id]||[];
+    p.innerHTML='<div class="rp-hd">👥 この時点の参加メンバー（'+names.length+'名）</div><div class="rp-body">'+(names.length?names.map(esc).join('、'):'なし')+'</div>';
+  }
+  _posSchedPop(p, btn);
+}
+function showSchedNames(id, btn){
+  var it=_schItems.find(function(x){ return x.id===id; }); if(!it) return;
+  var nms=(it.nameParticipants||[]).map(function(x){ return (x&&(x.name||x.id))||''; }).filter(Boolean);
+  var p=_schedPop();
+  p.innerHTML='<div class="rp-hd">👥 '+esc(it.nameLabel||'名前')+'</div><div class="rp-body">'+(nms.length?nms.map(esc).join('、'):'なし')+'</div>';
+  _posSchedPop(p, btn);
+}
+function showSchedHosts(id, btn){
+  var it=_schItems.find(function(x){ return x.id===id; }); if(!it) return;
+  var hosts=(it.nameParticipants||[]).map(function(np){ var h=_schRoster.find(function(x){ return String(x.tid)===String(np.id); }); return { name:(h?h.name:null)||np.name||'（ホスト）', iconUrl:(h&&h.iconUrl)||'' }; });
+  var rows=hosts.map(function(h){ var ic=h.iconUrl?('<img class="rp-av" src="'+esc(h.iconUrl)+'" alt="">'):('<span class="rp-av">'+esc((h.name||'?').slice(0,1))+'</span>'); return '<div class="rp-host">'+ic+'<span>'+esc(h.name)+'</span></div>'; }).join('');
+  var p=_schedPop();
+  p.innerHTML='<div class="rp-hd">🧑‍🤝‍🧑 現地ホスト</div>'+(rows||'<div class="rp-body">なし</div>');
+  _posSchedPop(p, btn);
+}
+function hideSchedPop(){ var p=g('se-rosterpop'); if(p) p.style.display='none'; }
+document.addEventListener('click',function(e){ var p=g('se-rosterpop'); if(p&&p.style.display==='block'&&!p.contains(e.target)&&!(e.target.classList&&e.target.classList.contains('se-maplink'))) hideSchedPop(); });
 // 地図/ルートのGoogleマップURL（会員ページと同等。クリックで開くため編集に入らない）
+function _isFlightItem(it){ return it.travelMode==='flight'||it.category==='flight'; }
 function _siMap(it){
   if(it.lat!=null&&it.lng!=null) return 'https://www.google.com/maps?q='+encodeURIComponent(it.lat+','+it.lng);
   if(it.mapUrl) return it.mapUrl;
   return '';
 }
+function _siMapTo(it){
+  if(it.toLat!=null&&it.toLng!=null) return 'https://www.google.com/maps?q='+encodeURIComponent(it.toLat+','+it.toLng);
+  if(it.toMapUrl) return it.toMapUrl;
+  return '';
+}
 function _siRoute(it){
   if(!(it.isMove&&it.lat!=null&&it.lng!=null&&it.toLat!=null&&it.toLng!=null)) return '';
+  if(_isFlightItem(it)) return ''; // 空路はGoogleマップが経路を描けない（車扱いになる）ため出さない
   var tm={driving:'driving',car:'driving',taxi:'driving',shuttle:'driving',transit:'transit',bus:'transit',train:'transit',shinkansen:'transit',walking:'walking',bicycling:'bicycling'}[it.travelMode||''];
   return 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(it.lat+','+it.lng)+'&destination='+encodeURIComponent(it.toLat+','+it.toLng)+(tm?('&travelmode='+tm):'');
 }
 function renderSchedItemRow(it){
   var ic=itemIcon(it);
-  // ルート・地図・写真・現地ホストはクリックで開く/表示（行クリックの編集に入らないよう stopPropagation）
+  // 参加者・ルート・地図・写真・現地ホスト・合流離脱はクリックで表示/開く（行クリックの編集に入らないよう stopPropagation）
   var markers=[];
+  // 参加者（合流/離脱に沿った各時点の参加メンバー・クリックでポップアップ）
+  if(_schRosterOn) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();showSchedRoster(\''+esc(it.id)+'\',this)">👥参加者</span>');
+  // 地図・ルート（空路はGoogleが経路を描けない＝車扱いになるため、出発/到着の地図ピンを表示）
+  var _fl=_isFlightItem(it);
   var _rl=_siRoute(it); if(_rl) markers.push('<a class="se-maplink" href="'+esc(_rl)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🚗ルート</a>');
-  var _mp=_siMap(it); if(_mp) markers.push('<a class="se-maplink" href="'+esc(_mp)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍地図</a>');
+  var _mp=_siMap(it); if(_mp) markers.push('<a class="se-maplink" href="'+esc(_mp)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+(_fl?'🛫出発':'📍地図')+'</a>');
+  if(_fl){ var _mpt=_siMapTo(it); if(_mpt) markers.push('<a class="se-maplink" href="'+esc(_mpt)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🛬到着</a>'); }
   var _aph=Array.isArray(it.photos)?it.photos:[];
   if(_aph.length) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();openItemLb(\''+esc(it.id)+'\',0)" title="写真を表示（左右でページ送り）">📷写真('+_aph.length+')</span>');
-  if(it.spotOnly && (it.nameParticipants||[]).length) markers.push('<span class="se-maplink" onclick="event.stopPropagation()" title="現地ホスト: '+esc((it.nameParticipants||[]).map(function(x){ return (x&&(x.name||x.id))||''; }).filter(Boolean).join('、'))+'">🧑‍🤝‍🧑現地ホスト</span>');
+  // 現地ホスト（クリックでポップアップ）
+  if(it.spotOnly && (it.nameParticipants||[]).length) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();showSchedHosts(\''+esc(it.id)+'\',this)">🧑‍🤝‍🧑現地ホスト</span>');
   if(it.hideUntilDone) markers.push('🙈完了後公開');
-  if(it.showNames&&(it.nameParticipants||[]).length&&!it.spotOnly) markers.push('👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名');
+  // 合流/離脱（クリックで名前ポップアップ）
+  if(it.showNames&&(it.nameParticipants||[]).length&&!it.spotOnly) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();showSchedNames(\''+esc(it.id)+'\',this)">👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名</span>');
   if(it.roomingEnabled&&(it.rooms||[]).length) markers.push('🛏部屋割り'+it.rooms.length);
   var noteHtml=it.note?'<div class="se-note-line">'+esc(it.note.slice(0,80))+(it.note.length>80?'…':'')+'</div>':'';
   var info=_schedCostInfo(it.id);
@@ -3688,6 +3761,7 @@ function openSchedForDay(date, grp){ _schExpandedDays[date]=true; openSchedEd(nu
 function renderSchedList(){
   if(!_schItems.length){ g('sch-list').innerHTML='<div class="ec">スケジュール項目がありません。「＋ 項目追加」から登録してください。</div>'; g('sch-total').textContent=''; return; }
   var total=0; _schItems.forEach(function(it){ total+=itemYen(it); });
+  _computeSchedRosters(); // 参加者ロスター（合流/離脱）を算出
   var enr=_sortByJst(_schItems); // 並び順はJST絶対時刻、見出しは現地日付
   var useG=SchedGroups.used(_schItems); // 班（2班・3班）を使っている場合のみ右端バー表示
   function _rowHtml(it){ return renderSchedItemRow(it)+(_idlCross(it)?'<div class="se-idl">🌐 日付変更線</div>':''); }
@@ -4317,7 +4391,7 @@ function loadDocRoster(eventId){
     });
     roster.sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
     // 現地ホスト（登録会員以外）も合流／離脱の選択対象に含める
-    (ev&&Array.isArray(ev.localHosts)?ev.localHosts:[]).forEach(function(h){ if(!h||!h.id||seen[h.id])return; seen[h.id]=true; roster.push({ tid:h.id, uid:'', name:(h.name||'現地ホスト'), memberId:'', isHost:true }); });
+    (ev&&Array.isArray(ev.localHosts)?ev.localHosts:[]).forEach(function(h){ if(!h||!h.id||seen[h.id])return; seen[h.id]=true; roster.push({ tid:h.id, uid:'', name:(h.name||'現地ホスト'), memberId:'', isHost:true, iconUrl:h.iconUrl||'', bio:h.bio||'' }); });
     return roster;
   }).catch(function(){ return roster; });
 }
