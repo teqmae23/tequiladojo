@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>テキーラ道場 — スーツケース管理</title>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="/auth-role.js?v=20260829"></script>
+
+<script>
+var FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:        "tequiladojo.firebaseapp.com",
+  projectId:         "tequiladojo",
+  storageBucket:     "tequiladojo.firebasestorage.app",
+  messagingSenderId: "56663296233",
+  appId:             "1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:     "G-KMS18946JQ"
+};
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#18110a;--ink2:#3a2c14;--ink3:#6b5a44;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --teal:#1a6e58;--teal-l:#e0f0eb;
+  --red:#8c2818;--red-l:#fae8e4;
+  --cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;
+  --border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);
+  --r:6px;--rl:12px;
+  --sans:'Noto Sans JP',sans-serif;--mono:'DM Mono',monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:14px}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+button{cursor:pointer;font-family:var(--sans)}
+input,select{font-family:var(--sans)}
+#login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center}
+.lcard{width:100%;max-width:380px;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:40px 34px;box-shadow:0 6px 36px rgba(24,17,10,.13)}
+.llogo{text-align:center;font-size:40px}
+.lbrand{font-size:22px;font-weight:700;color:var(--gold-d);text-align:center;letter-spacing:.1em;margin:4px 0}
+.lsub{text-align:center;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink3);margin-bottom:26px}
+.lcard label{display:block;font-size:10px;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin:12px 0 5px}
+.lcard input{width:100%;padding:11px 13px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.lerr{min-height:16px;font-size:12px;color:var(--red);margin-top:8px;text-align:center}
+.lbtn{width:100%;margin-top:20px;padding:13px;background:var(--gold-d);color:var(--cream);border:none;border-radius:var(--r);font-size:13px;font-weight:500}
+#app{display:none}
+.topbar{background:var(--ink);color:var(--cream);padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:30}
+.tbrand{font-weight:700;letter-spacing:.06em}
+.topbar a,.topbar .tbtn{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:rgba(255,255,255,.85);padding:5px 12px;border-radius:var(--r);font-size:12px;text-decoration:none;white-space:nowrap}
+.topbar .sp{flex:1}
+.save-ind{font-size:11px;color:rgba(255,255,255,.65)}
+.wrap{padding:14px;max-width:100%;overflow-x:auto}
+.hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.hd h1{font-size:18px;font-weight:700;color:var(--gold-d)}
+.hd .legend{font-size:11px;color:var(--ink3)}
+.btn{border:1px solid var(--border2);background:var(--white);color:var(--ink2);border-radius:var(--r);font-size:12px;font-weight:600;padding:6px 12px}
+.btn.p{background:var(--gold-d);color:#fff;border-color:var(--gold-d)}
+table.bg{border-collapse:separate;border-spacing:0;font-size:12px;background:var(--white);min-width:max-content}
+table.bg th,table.bg td{border:1px solid var(--border);padding:4px 6px;vertical-align:middle;text-align:center}
+table.bg thead th{position:sticky;top:48px;background:var(--cream2);z-index:10;font-weight:700}
+.col-h{position:sticky;left:0;background:var(--cream2);z-index:5;min-width:84px;text-align:left;font-weight:700;white-space:nowrap}
+thead .col-h{z-index:15}
+.pname{width:92px;border:1px solid var(--border2);border-radius:5px;padding:4px 5px;font-size:12px;font-weight:700;text-align:center;background:var(--white)}
+tr.sec td{background:var(--ink);color:var(--cream);text-align:left;font-weight:700;letter-spacing:.04em;position:sticky;left:0}
+tr.sec.place td{background:#2a2114}
+tr.sec.flight td{background:#1b3a30}
+tr.sec input.tlname{background:transparent;border:none;color:var(--cream);font-weight:700;font-size:12px;width:140px;border-bottom:1px dashed rgba(255,255,255,.3)}
+.tier{font-size:10.5px;color:var(--ink3);font-weight:700}
+.bagcell{min-width:118px}
+.bagcell .ln{display:flex;align-items:center;justify-content:center;gap:3px;white-space:nowrap;line-height:1.7}
+.ni{width:34px;border:1px solid var(--border2);border-radius:4px;padding:2px 3px;font-size:12px;text-align:center;font-family:var(--mono)}
+.ni.kg{width:46px}
+.ni.neg{color:var(--red)}
+.unit{font-size:10px;color:var(--ink3)}
+.disp{font-weight:700}
+.tot{font-size:10.5px;color:var(--teal);font-weight:700}
+.pbrow td{background:var(--teal-l)}
+.initrow td{background:#fbf6ea}
+.flightrow td{background:#eef5f1}
+.warn{color:var(--red);font-weight:700;font-size:11px}
+.ok{color:var(--teal);font-weight:700;font-size:11px}
+.flim{display:flex;align-items:center;justify-content:center;gap:3px;white-space:nowrap}
+.note{font-size:11px;color:var(--ink3);margin:8px 0;line-height:1.7}
+#toasts{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:100;display:flex;flex-direction:column;gap:6px}
+.toast{background:var(--ink);color:#fff;padding:8px 16px;border-radius:var(--r);font-size:12px;box-shadow:0 4px 16px rgba(0,0,0,.3)}
+.toast.terr{background:var(--red)}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="lcard">
+    <div class="llogo">🧳</div>
+    <div class="lbrand">テキーラ道場</div>
+    <div class="lsub">Suitcase Manager</div>
+    <label>メールアドレス</label>
+    <input type="email" id="lemail" placeholder="owner@example.com">
+    <label>パスワード</label>
+    <input type="password" id="lpass" placeholder="••••••••">
+    <div class="lerr" id="lerr"></div>
+    <button class="lbtn" id="lbtn">ログイン</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="topbar">
+    <div class="tbrand">🧳 スーツケース管理</div>
+    <a href="tdhome.html">← 管理メニュー</a>
+    <div class="sp"></div>
+    <span class="save-ind" id="save-ind"></span>
+    <button class="tbtn" id="btn-logout">ログアウト</button>
+  </div>
+  <div class="wrap">
+    <div class="hd">
+      <h1 id="plan-title">スーツケース管理</h1>
+      <div class="legend">📦 通常荷物(kg) ／ 🍾 ボトル(1本1.8kg・SC1個に12本) ／ 🧳 スーツケース</div>
+      <div style="flex:1"></div>
+      <button class="btn" id="btn-reset">初期値にリセット</button>
+      <button class="btn p" id="btn-save">保存</button>
+    </div>
+    <div class="note">各「場所」は 3段（<b>最初</b>＝到着時／<b>増減</b>＝ここでの積み下ろし／<b>搭乗前</b>＝次便に載せる状態）。搭乗前は次の場所の「最初」に自動で引き継がれます。空路行では各自のスーツケース個数と1個あたりの重量制限を設定し、搭乗前荷物が超過すると⚠️表示します。増減はマイナス入力も可。</div>
+    <div id="grid"></div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+if (!firebase.apps.length) { firebase.initializeApp(FIREBASE_CONFIG); }
+var auth = firebase.auth();
+var db   = firebase.firestore();
+function g(id){ return document.getElementById(id); }
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function toast(msg,type){ var el=document.createElement('div'); el.className='toast'+(type==='err'?' terr':''); el.textContent=msg; g('toasts').appendChild(el); setTimeout(function(){el.remove();},2600); }
+function r1(n){ return Math.round((+n||0)*10)/10; }
+var BOTTLE_KG=1.8, SC_BOTTLES=12;
+
+var PLAN_ID=(new URLSearchParams(location.search).get('plan'))||'tddt2026';
+function defaultPlan(){
+  var tl=['NRT','NRT-SFO','SFO','SFO-LAX','LAX','LAX-GDL','GDL','GDL-LAX','LAX','LAX-SFO','SFO','SFO-NRT','NRT'];
+  return {
+    name:'TDDT2026 スーツケース管理',
+    participants:['テキミチ','レアンドロ','ショーヘイ','ライ','スモモモ','優美子'],
+    timeline: tl.map(function(n){ return {type:(n.indexOf('-')>=0?'flight':'place'), name:n}; }),
+    place:{}, flight:{}
+  };
+}
+var plan=defaultPlan();
+var comp={}; // comp[timelineIdx][pIdx] = {init:{sc,kg,btl}, delta, pb:{sc,kg,btl}}
+
+function bagWeight(kg,btl){ return r1((+kg||0)+(+btl||0)*BOTTLE_KG); }
+
+// 計算: 最初(引き継ぎ)・搭乗前を全場所で算出
+function compute(){
+  comp={};
+  var prevPb=null;
+  plan.timeline.forEach(function(e,i){
+    if(e.type!=='place') return;
+    comp[i]={};
+    plan.participants.forEach(function(p,pi){
+      var cell=(plan.place[i]&&plan.place[i][pi])||{};
+      var init;
+      if(prevPb===null){ init={sc:+cell.initSc||0, kg:r1(cell.initKg), btl:+cell.initBtl||0}; }
+      else { init={sc:prevPb[pi].sc, kg:prevPb[pi].kg, btl:prevPb[pi].btl}; }
+      var pb={sc:init.sc+(+cell.dSc||0), kg:r1(init.kg+(+cell.dKg||0)), btl:init.btl+(+cell.dBtl||0)};
+      comp[i][pi]={init:init, delta:{sc:+cell.dSc||0,kg:r1(cell.dKg),btl:+cell.dBtl||0}, pb:pb, first:(prevPb===null)};
+    });
+    prevPb=plan.participants.map(function(p,pi){ return comp[i][pi].pb; });
+  });
+}
+
+// 直前の場所（空路行の荷物元）を返す timelineIdx
+function prevPlaceIdx(flightIdx){ for(var k=flightIdx-1;k>=0;k--){ if(plan.timeline[k].type==='place') return k; } return -1; }
+
+function niTxt(v){ return (v===0||v==null)?'':v; }
+function num(v){ v=(''+(v==null?'':v)).trim(); if(v==='') return 0; var n=parseFloat(v); return isNaN(n)?0:n; }
+
+function bagInputs(i,pi,prefix){ // prefix 'init' or 'd'
+  var cell=(plan.place[i]&&plan.place[i][pi])||{};
+  var sc=cell[prefix+'Sc'], kg=cell[prefix+'Kg'], btl=cell[prefix+'Btl'];
+  var neg=(prefix==='d')?' neg':'';
+  var st=(prefix==='d')?'any':'1';
+  return '<div class="ln">🧳<input class="ni'+neg+'" type="number" step="1" value="'+esc(niTxt(sc))+'" onchange="setPlace('+i+','+pi+',\''+prefix+'Sc\',this.value)"></div>'
+       +'<div class="ln">📦<input class="ni kg'+neg+'" type="number" step="0.1" value="'+esc(niTxt(kg))+'" onchange="setPlace('+i+','+pi+',\''+prefix+'Kg\',this.value)"><span class="unit">kg</span></div>'
+       +'<div class="ln">🍾<input class="ni'+neg+'" type="number" step="1" value="'+esc(niTxt(btl))+'" onchange="setPlace('+i+','+pi+',\''+prefix+'Btl\',this.value)"><span class="unit">本</span></div>';
+}
+function bagDisp(b){
+  return '<div class="ln disp">🧳'+b.sc+'　📦'+r1(b.kg)+'<span class="unit">kg</span>　🍾'+b.btl+'<span class="unit">本</span></div>'
+       +'<div class="tot">計 '+bagWeight(b.kg,b.btl)+' kg</div>';
+}
+
+function render(){
+  compute();
+  g('plan-title').textContent=plan.name||'スーツケース管理';
+  var P=plan.participants;
+  var h='<table class="bg"><thead><tr><th class="col-h">項目</th>';
+  P.forEach(function(p,pi){ h+='<th><input class="pname" value="'+esc(p)+'" onchange="setParticipant('+pi+',this.value)"></th>'; });
+  h+='</tr></thead><tbody>';
+  plan.timeline.forEach(function(e,i){
+    if(e.type==='place'){
+      h+='<tr class="sec place"><td colspan="'+(P.length+1)+'">📍 <input class="tlname" value="'+esc(e.name)+'" onchange="setTL('+i+',this.value)"></td></tr>';
+      var first=comp[i]&&comp[i][0]&&comp[i][0].first;
+      // 最初
+      h+='<tr class="initrow"><td class="col-h"><span class="tier">最初</span></td>';
+      P.forEach(function(p,pi){ h+='<td class="bagcell">'+(first?bagInputs(i,pi,'init'):bagDisp(comp[i][pi].init))+'</td>'; });
+      h+='</tr>';
+      // 増減
+      h+='<tr><td class="col-h"><span class="tier">増減</span></td>';
+      P.forEach(function(p,pi){ h+='<td class="bagcell">'+bagInputs(i,pi,'d')+'</td>'; });
+      h+='</tr>';
+      // 搭乗前
+      h+='<tr class="pbrow"><td class="col-h"><span class="tier">搭乗前</span></td>';
+      P.forEach(function(p,pi){ h+='<td class="bagcell">'+bagDisp(comp[i][pi].pb)+'</td>'; });
+      h+='</tr>';
+    } else {
+      h+='<tr class="sec flight"><td colspan="'+(P.length+1)+'">✈️ <input class="tlname" value="'+esc(e.name)+'" onchange="setTL('+i+',this.value)"></td></tr>';
+      var src=prevPlaceIdx(i);
+      h+='<tr class="flightrow"><td class="col-h"><span class="tier">制限/判定</span></td>';
+      P.forEach(function(p,pi){
+        var fc=(plan.flight[i]&&plan.flight[i][pi])||{};
+        var sc=(fc.sc==null?'':fc.sc), lim=(fc.limKg==null?'':fc.limKg);
+        var cell='<div class="flim">🧳<input class="ni" type="number" step="1" value="'+esc(sc)+'" onchange="setFlight('+i+','+pi+',\'sc\',this.value)">個 ×<input class="ni kg" type="number" step="0.1" value="'+esc(lim)+'" onchange="setFlight('+i+','+pi+',\'limKg\',this.value)"><span class="unit">kg</span></div>';
+        cell+=flightJudge(i,pi,src,fc);
+        h+='<td>'+cell+'</td>';
+      });
+      h+='</tr>';
+    }
+  });
+  h+='</tbody></table>';
+  g('grid').innerHTML=h;
+}
+
+function flightJudge(fi,pi,src,fc){
+  if(src<0||!comp[src]||!comp[src][pi]) return '';
+  var pb=comp[src][pi].pb;
+  var sc=+fc.sc||0, lim=+fc.limKg||0;
+  var w=bagWeight(pb.kg,pb.btl);
+  var cap=r1(sc*lim), btlCap=sc*SC_BOTTLES;
+  if(!sc||!lim) return '<div class="tier">荷重 '+w+'kg / 🍾'+pb.btl+'本（制限未設定）</div>';
+  var msgs=[], over=false;
+  if(w>cap){ over=true; msgs.push('⚠️ 重量 '+w+'/'+cap+'kg（'+r1(w-cap)+'kg超過）'); }
+  else msgs.push('重量 '+w+'/'+cap+'kg');
+  if(pb.btl>btlCap){ over=true; msgs.push('⚠️ ボトル '+pb.btl+'/'+btlCap+'本（SC不足）'); }
+  else msgs.push('🍾'+pb.btl+'/'+btlCap+'本');
+  return '<div class="'+(over?'warn':'ok')+'">'+msgs.join('<br>')+'</div>';
+}
+
+// ── 編集 ──
+function setPlace(i,pi,field,val){ plan.place[i]=plan.place[i]||{}; plan.place[i][pi]=plan.place[i][pi]||{}; plan.place[i][pi][field]=num(val); render(); scheduleSave(); }
+function setFlight(i,pi,field,val){ plan.flight[i]=plan.flight[i]||{}; plan.flight[i][pi]=plan.flight[i][pi]||{}; plan.flight[i][pi][field]=num(val); render(); scheduleSave(); }
+function setParticipant(pi,name){ plan.participants[pi]=(name||'').trim()||('参加者'+(pi+1)); render(); scheduleSave(); }
+function setTL(i,name){ plan.timeline[i].name=(name||'').trim(); render(); scheduleSave(); }
+
+// ── 保存/読込 ──
+var _saveTimer=null, _dirty=false;
+function docRef(){ return db.collection('baggagePlans').doc(PLAN_ID); }
+function scheduleSave(){ _dirty=true; g('save-ind').textContent='未保存…'; if(_saveTimer) clearTimeout(_saveTimer); _saveTimer=setTimeout(saveNow,900); }
+function saveNow(){
+  if(_saveTimer){ clearTimeout(_saveTimer); _saveTimer=null; }
+  g('save-ind').textContent='保存中…';
+  docRef().set({ name:plan.name, participants:plan.participants, timeline:plan.timeline, place:plan.place, flight:plan.flight, updatedAt:firebase.firestore.FieldValue.serverTimestamp() })
+    .then(function(){ _dirty=false; g('save-ind').textContent='保存済み '+new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}); })
+    .catch(function(e){ g('save-ind').textContent='保存失敗'; toast('保存失敗: '+e.message,'err'); });
+}
+function loadPlan(){
+  docRef().get().then(function(s){
+    if(s.exists){ var d=s.data()||{}; plan={ name:d.name||'スーツケース管理', participants:Array.isArray(d.participants)&&d.participants.length?d.participants:defaultPlan().participants, timeline:Array.isArray(d.timeline)&&d.timeline.length?d.timeline:defaultPlan().timeline, place:d.place||{}, flight:d.flight||{} }; render(); }
+    else { plan=defaultPlan(); render(); saveNow(); toast('初期データを作成しました'); }
+  }).catch(function(e){ toast('読込失敗: '+e.message,'err'); plan=defaultPlan(); render(); });
+}
+
+g('btn-save').addEventListener('click',saveNow);
+g('btn-reset').addEventListener('click',function(){ if(!confirm('初期のタイムライン・参加者に戻します（入力した荷物データは消えます）。よろしいですか？')) return; plan=defaultPlan(); render(); saveNow(); toast('初期値にリセットしました'); });
+
+// ── 認証 ──
+AuthRole.requireStaff(auth, function(user){
+  g('login-screen').style.display='none';
+  g('app').style.display='block';
+  loadPlan();
+});
+g('lbtn').addEventListener('click',function(){
+  var email=(g('lemail').value||'').trim(), pass=g('lpass').value;
+  g('lerr').textContent='';
+  if(!email||!pass){ g('lerr').textContent='メールアドレスとパスワードを入力してください'; return; }
+  g('lbtn').textContent='ログイン中...';
+  auth.signInWithEmailAndPassword(email,pass).then(function(){ g('lbtn').textContent='ログイン'; })
+    .catch(function(e){ g('lerr').textContent='ログイン失敗: '+e.message; g('lbtn').textContent='ログイン'; });
+});
+g('lpass').addEventListener('keydown',function(e){ if(e.key==='Enter') g('lbtn').click(); });
+g('btn-logout').addEventListener('click',function(){ auth.signOut(); });
+window.addEventListener('beforeunload',function(e){ if(_dirty){ saveNow(); } });
+</script>
+</body>
+</html>
