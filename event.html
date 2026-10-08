@@ -2480,11 +2480,21 @@ function debugTimeBar(){
 // ── 時間帯で自動ネスト（最大3階層）: 終了時刻を持つ項目[開始〜終了]の内側に開始する項目を子にする ──
 // units: {ms(開始JST絶対), it, canContain(容器になれるか), html(葉として描画するHTML)} の配列（時系列昇順）
 // 戻り値: ツリー（{u, children:[], isCont, endMs, depth}）。容器になれるのは canContain かつ深さ<2（＝0,1階層）。
-// 同じ日の中は「壁時計時刻（分）」で内包判定する（タイムゾーン換算した絶対msだと、
-// 片方だけ座標未設定などで基準がズレ、見た目は内側なのに入れ子にならない不具合が出るため）。
+// タイムゾーンが変わる移動（空路など）か。この移動以降は場所が変わるので容器を閉じる。
+function _tzBreakOf(L){
+  var it=L.it;
+  if(L.leg==='dep') return true;             // 日跨ぎ移動の出発レグ
+  if(!it||!it.isMove) return false;
+  if(_idlCross(it)) return true;             // 日付変更線を越える
+  var a=_itemTz(it.lat,it.lng), b=_itemTz(it.toLat,it.toLng);
+  return !!(a&&b&&a!==b);                     // 出発地と到着地のタイムゾーンが異なる
+}
+// 同じ日・同じタイムゾーンの中だけ「壁時計時刻（分）」で内包判定する。移動（空路）は容器にせず、
+// タイムゾーンが変わる移動で容器を閉じる（別の地の予定を誤って内包しないため）。
 function _buildSchedTree(units){
   var roots=[], stack=[]; // stack: 開いている容器 {node, endMin}
   units.forEach(function(u){
+    if(u.tzBreak) stack.length=0; // タイムゾーンが変わる移動で開いている容器を全て閉じる
     var startMin=(u.smin!=null?u.smin:_uStartMin(u.it));
     while(stack.length && stack[stack.length-1].endMin<=startMin) stack.pop(); // 開始前に閉じた容器を外す
     var parent=stack.length?stack[stack.length-1].node:null;
@@ -2555,7 +2565,7 @@ function renderSchedule(items){
     var it=L.it, smin;
     if(L.leg==='arr'){ smin=_hmMin(it.actualEnd); if(smin==null) smin=_hmMin(it.isMove?it.toTime:it.endTime); } // 到着レグはこの日の到着時刻で並べる
     else smin=_uStartMin(it);
-    return {ms:L.ms, it:it, canContain:(L.leg===null&&_hasEnd(it)), html:_legRow(L), smin:(smin==null?0:smin)};
+    return {ms:L.ms, it:it, canContain:(L.leg===null && !it.isMove && !!(it.endTime&&String(it.endTime).trim())), html:_legRow(L), smin:(smin==null?0:smin), tzBreak:_tzBreakOf(L)};
   }
   // ネストツリーの1ノードHTML（容器なら 見出し＋子＋下端の終了時刻、それ以外は葉HTML）
   function _renderSchedNode(node){
@@ -2593,7 +2603,7 @@ function renderSchedule(items){
       b.items.forEach(function(x){
         var L=x.L, it=L.it;
         SchedGroups.cols(it).forEach(function(c){
-          if(c.mirror){ if(L.leg!=='arr') colU[c.g].push({ms:L.ms, it:it, canContain:false, html:SchedGroups.mirrorHtml(it, esc, ''), smin:_uStartMin(it)}); }
+          if(c.mirror){ if(L.leg!=='arr') colU[c.g].push({ms:L.ms, it:it, canContain:false, html:SchedGroups.mirrorHtml(it, esc, ''), smin:_uStartMin(it), tzBreak:_tzBreakOf(L)}); }
           else colU[c.g].push(_legUnit(L));
         });
       });
