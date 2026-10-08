@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>テキーラ道場 — 写真位置管理</title>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="/auth-role.js?v=20260829"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+var FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:        "tequiladojo.firebaseapp.com",
+  projectId:         "tequiladojo",
+  storageBucket:     "tequiladojo.firebasestorage.app",
+  messagingSenderId: "56663296233",
+  appId:             "1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:     "G-KMS18946JQ"
+};
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#18110a;--ink2:#3a2c14;--ink3:#6b5a44;
+  --gold:#c8921e;--gold-l:#e8b84a;--gold-d:#7a5610;
+  --teal:#1a6e58;--teal-l:#e0f0eb;
+  --red:#8c2818;--red-l:#fae8e4;
+  --cream:#faf7f1;--cream2:#f0ebe0;--cream3:#e4ddd0;--white:#fff;
+  --border:rgba(160,130,100,.18);--border2:rgba(160,130,100,.32);
+  --r:6px;--rl:12px;
+  --sans:'Noto Sans JP',sans-serif;--mono:'DM Mono',monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:14px}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+button{cursor:pointer;font-family:var(--sans)}
+input,select{font-family:var(--sans)}
+#login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center}
+.lcard{width:100%;max-width:380px;background:var(--white);border:1px solid var(--border2);border-radius:var(--rl);padding:40px 34px;box-shadow:0 6px 36px rgba(24,17,10,.13)}
+.llogo{text-align:center;font-size:40px}
+.lbrand{font-size:22px;font-weight:700;color:var(--gold-d);text-align:center;letter-spacing:.1em;margin:4px 0}
+.lsub{text-align:center;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink3);margin-bottom:26px}
+.lcard label{display:block;font-size:10px;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;margin:12px 0 5px}
+.lcard input{width:100%;padding:11px 13px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.lerr{min-height:16px;font-size:12px;color:var(--red);margin-top:8px;text-align:center}
+.lbtn{width:100%;margin-top:20px;padding:13px;background:var(--gold-d);color:var(--cream);border:none;border-radius:var(--r);font-size:13px;font-weight:500}
+#app{display:none}
+.topbar{background:var(--ink);color:var(--cream);padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:1200}
+.tbrand{font-weight:700;letter-spacing:.06em}
+.topbar a,.topbar .tbtn{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:rgba(255,255,255,.85);padding:5px 12px;border-radius:var(--r);font-size:12px;text-decoration:none;white-space:nowrap}
+.topbar .sp{flex:1}
+.save-ind{font-size:11px;color:rgba(255,255,255,.65)}
+.wrap{padding:14px;max-width:960px;margin:0 auto}
+.hd{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.hd h1{font-size:17px;font-weight:700;color:var(--gold-d)}
+.hd .sub{font-size:12px;color:var(--ink3)}
+.note{font-size:11px;color:var(--ink3);margin:6px 0 10px;line-height:1.7}
+.btn{border:1px solid var(--border2);background:var(--white);color:var(--ink2);border-radius:var(--r);font-size:12px;font-weight:600;padding:6px 12px}
+.btn.p{background:var(--gold-d);color:#fff;border-color:var(--gold-d)}
+.btn.sm{padding:3px 9px;font-size:11px}
+#map{height:380px;border:1px solid var(--border2);border-radius:var(--rl);margin-bottom:8px}
+.pickbar{display:none;align-items:center;gap:10px;flex-wrap:wrap;background:var(--teal-l);border:1px solid var(--teal);border-radius:var(--r);padding:8px 12px;margin-bottom:10px;font-size:12px}
+.pickbar.on{display:flex}
+.pickbar img{width:40px;height:40px;object-fit:cover;border-radius:5px}
+.pickbar b{color:var(--teal)}
+.summary{font-size:12px;color:var(--ink2);margin-bottom:10px}
+.summary .warn{color:var(--red);font-weight:700}
+.grp{margin-bottom:14px}
+.grp-h{font-size:13px;font-weight:700;color:var(--ink2);background:var(--cream2);border:1px solid var(--border);border-radius:var(--r);padding:5px 10px;margin-bottom:7px}
+.grp-h.none{background:var(--red-l);color:var(--red)}
+.cards{display:flex;flex-wrap:wrap;gap:9px}
+.pc{width:218px;border:1px solid var(--border);border-radius:var(--rl);background:var(--white);padding:8px;display:flex;flex-direction:column;gap:6px}
+.pc.sel{border-color:var(--teal);box-shadow:0 0 0 2px var(--teal-l)}
+.pc-top{display:flex;gap:8px}
+.pc-thumb{width:60px;height:60px;border-radius:7px;object-fit:cover;border:1px solid var(--border);cursor:pointer;flex:0 0 auto;background:var(--cream2)}
+.pc-meta{font-size:11px;color:var(--ink3);line-height:1.4;overflow:hidden}
+.pc-meta .it{font-weight:700;color:var(--ink2);font-size:11.5px}
+.pc-cap{color:var(--ink2)}
+.badge{display:inline-block;font-size:9.5px;font-weight:700;border-radius:8px;padding:1px 6px;margin-top:2px}
+.badge.inh{background:#fbf1d6;color:#8a6a1e}
+.badge.none{background:var(--red-l);color:var(--red)}
+.badge.ok{background:var(--teal-l);color:var(--teal)}
+.pc-row{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.pc-row .lbl{font-size:10px;color:var(--ink3);width:100%;letter-spacing:.04em}
+.ci{width:82px;height:24px;border:1px solid var(--border2);border-radius:4px;padding:0 5px;font-size:11px;font-family:var(--mono);text-align:center}
+.pc .btn.sm{padding:3px 8px}
+.pc-sel-sm{max-width:100%;height:26px;border:1px solid var(--border2);border-radius:4px;font-size:11px;padding:0 4px;background:var(--white)}
+#toasts{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:2000;display:flex;flex-direction:column;gap:6px}
+.toast{background:var(--ink);color:#fff;padding:8px 16px;border-radius:var(--r);font-size:12px;box-shadow:0 4px 16px rgba(0,0,0,.3)}
+.toast.terr{background:var(--red)}
+.ph-pin-wrap{background:none;border:none}
+.ph-pin{display:inline-flex;align-items:center;gap:1px;background:var(--gold-d);color:#fff;border-radius:12px;padding:2px 7px;font-size:13px;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;cursor:pointer}
+.ph-pin.sel{background:var(--teal);box-shadow:0 0 0 3px rgba(26,110,88,.35),0 1px 4px rgba(0,0,0,.4)}
+.empty{padding:28px;text-align:center;color:var(--ink3);font-size:13px}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="lcard">
+    <div class="llogo">📍</div>
+    <div class="lbrand">テキーラ道場</div>
+    <div class="lsub">Photo Location Manager</div>
+    <label>メールアドレス</label>
+    <input type="email" id="lemail" placeholder="owner@example.com">
+    <label>パスワード</label>
+    <input type="password" id="lpass" placeholder="••••••••">
+    <div class="lerr" id="lerr"></div>
+    <button class="lbtn" id="lbtn">ログイン</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="topbar">
+    <div class="tbrand">📍 写真位置管理</div>
+    <a href="admin_events.html">← イベント管理</a>
+    <div class="sp"></div>
+    <span class="save-ind" id="save-ind"></span>
+    <button class="tbtn" id="btn-logout">ログアウト</button>
+  </div>
+  <div class="wrap">
+    <div class="hd">
+      <h1 id="plan-title">写真位置管理</h1>
+      <span class="sub" id="plan-sub"></span>
+    </div>
+    <div class="note">会員がアップロードした写真の座標を修正できます。修正方法は3つ：①各写真の緯度・経度を直接入力して「適用」、②「🔗他の写真に合わせる」で既存写真の座標をコピー、③「📍地図で指定」を押してから地図をクリック（または地図上のピンをドラッグ）。変更は自動保存されます。グレーの◯はスケジュール項目の位置（位置合わせの目安）です。</div>
+    <div class="pickbar" id="pickbar">
+      <img id="pick-thumb" src="" alt="">
+      <span>選択中: <b id="pick-name">—</b> ／ 地図をクリック、またはピンをドラッグで位置を指定</span>
+      <button class="btn sm" onclick="clearSel()">選択解除</button>
+    </div>
+    <div id="map"></div>
+    <div class="summary" id="summary"></div>
+    <div id="list"></div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+if (!firebase.apps.length) { firebase.initializeApp(FIREBASE_CONFIG); }
+var auth = firebase.auth();
+var db   = firebase.firestore();
+function g(id){ return document.getElementById(id); }
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function toast(msg,type){ var el=document.createElement('div'); el.className='toast'+(type==='err'?' terr':''); el.textContent=msg; g('toasts').appendChild(el); setTimeout(function(){el.remove();},2600); }
+function setSaving(t){ var el=g('save-ind'); if(el) el.textContent=t||''; }
+var EV=(new URLSearchParams(location.search).get('ev'))||'';
+
+var _ev={}, _items=[], _itemById={}, _photos=[], _photoById={}, _sel=null;
+var _map=null, _markers={}, _itemLayer=null;
+
+function load(){
+  if(!EV){ g('list').innerHTML='<div class="empty">イベントが指定されていません（?ev=ID が必要です）。</div>'; return; }
+  Promise.all([
+    db.collection('events').doc(EV).get(),
+    db.collection('events').doc(EV).collection('scheduleItems').get(),
+    db.collection('events').doc(EV).collection('photos').get()
+  ]).then(function(res){
+    _ev=res[0].data()||{};
+    _items=res[1].docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    _photos=res[2].docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    _items.sort(function(a,b){ return (a.date||'').localeCompare(b.date||'')||(a.time||'').localeCompare(b.time||''); });
+    _itemById={}; _items.forEach(function(it){ _itemById[it.id]=it; });
+    _photoById={}; _photos.forEach(function(p){ _photoById[p.id]=p; });
+    g('plan-title').textContent=(_ev.name||'イベント')+' — 写真位置管理';
+    g('plan-sub').textContent='写真 '+_photos.length+'枚';
+    document.title='写真位置管理 — '+(_ev.name||'');
+    initMap();
+    renderAll();
+  }).catch(function(e){ g('list').innerHTML='<div class="empty">読み込みに失敗しました: '+esc(e.message)+'</div>'; });
+}
+
+function _itemLabel(it){ if(!it) return '（項目なし）'; return ((it.date?it.date+' ':'')+(it.time?it.time+' ':'')+(it.title||'（無題）')).trim(); }
+function _photoTitle(p){ var it=_itemById[p.scheduleItemId]; return (it&&it.title)||p.caption||p.uploaderName||'写真'; }
+function _hasGeo(p){ return p.lat!=null&&p.lng!=null&&!isNaN(+p.lat)&&!isNaN(+p.lng); }
+
+/* ── 地図 ── */
+function initMap(){
+  if(_map) return;
+  var el=g('map'); if(!el||!window.L) return;
+  _map=L.map(el);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(_map);
+  _map.on('click',function(e){ if(_sel) applyCoords(_sel, e.latlng.lat, e.latlng.lng); });
+  setTimeout(function(){ try{ _map.invalidateSize(); }catch(e){} },150);
+}
+function _pinIcon(sel){ return L.divIcon({className:'ph-pin-wrap',html:'<span class="ph-pin'+(sel?' sel':'')+'">📷</span>',iconSize:[30,24],iconAnchor:[15,24]}); }
+function refreshMarkers(fit){
+  if(!_map) return;
+  // 項目の位置（参考）
+  if(_itemLayer){ try{ _map.removeLayer(_itemLayer); }catch(e){} }
+  _itemLayer=L.layerGroup();
+  _items.forEach(function(it){
+    if(it.lat!=null&&it.lng!=null){ L.circleMarker([it.lat,it.lng],{radius:5,color:'#7a5610',weight:1,fillColor:'#e8b84a',fillOpacity:.8}).bindTooltip(esc(it.title||''),{direction:'top'}).addTo(_itemLayer); }
+    if(it.isMove&&it.toLat!=null&&it.toLng!=null){ L.circleMarker([it.toLat,it.toLng],{radius:5,color:'#7a5610',weight:1,fillColor:'#e8b84a',fillOpacity:.8}).bindTooltip(esc((it.toName||it.title||'')+'（着）'),{direction:'top'}).addTo(_itemLayer); }
+  });
+  _itemLayer.addTo(_map);
+  // 写真ピン
+  Object.keys(_markers).forEach(function(k){ try{ _map.removeLayer(_markers[k]); }catch(e){} });
+  _markers={}; var bounds=[];
+  _photos.forEach(function(p){
+    if(!_hasGeo(p)) return;
+    var seld=(p.id===_sel);
+    var mk=L.marker([+p.lat,+p.lng],{icon:_pinIcon(seld),zIndexOffset:seld?2000:1000,draggable:seld});
+    mk.bindTooltip(esc(_photoTitle(p)),{direction:'top'});
+    (function(pid){
+      mk.on('click',function(){ selectPhoto(pid,false); });
+      mk.on('dragend',function(ev){ var ll=ev.target.getLatLng(); applyCoords(pid, ll.lat, ll.lng); });
+    })(p.id);
+    mk.addTo(_map); _markers[p.id]=mk; bounds.push([+p.lat,+p.lng]);
+  });
+  _items.forEach(function(it){ if(it.lat!=null&&it.lng!=null) bounds.push([it.lat,it.lng]); if(it.isMove&&it.toLat!=null&&it.toLng!=null) bounds.push([it.toLat,it.toLng]); });
+  if(fit){ if(bounds.length) _map.fitBounds(bounds,{padding:[28,28],maxZoom:14}); else _map.setView([35.68,139.76],9); }
+}
+
+/* ── 選択 ── */
+function selectPhoto(pid, pan){
+  _sel=pid; var p=_photoById[pid];
+  var pb=g('pickbar');
+  if(p){ pb.classList.add('on'); g('pick-name').textContent=_photoTitle(p); g('pick-thumb').src=p.thumbUrl||p.url||''; }
+  if(pan && p && _hasGeo(p) && _map){ _map.panTo([+p.lat,+p.lng]); }
+  refreshMarkers(false); renderList();
+  var mapEl=g('map'); if(mapEl) mapEl.scrollIntoView({behavior:'smooth',block:'center'});
+}
+function clearSel(){ _sel=null; g('pickbar').classList.remove('on'); refreshMarkers(false); renderList(); }
+function pickOnMap(pid){ selectPhoto(pid, true); }
+
+/* ── 座標の適用（3手法共通の保存経路） ── */
+function applyCoords(pid, lat, lng){
+  var p=_photoById[pid]; if(!p) return;
+  lat=parseFloat(lat); lng=parseFloat(lng);
+  if(isNaN(lat)||isNaN(lng)||lat< -90||lat>90||lng< -180||lng>180){ toast('座標が不正です（緯度-90〜90・経度-180〜180）','err'); return; }
+  lat=Math.round(lat*1e6)/1e6; lng=Math.round(lng*1e6)/1e6;
+  p.lat=lat; p.lng=lng; p.geoInherited=false;
+  setSaving('保存中…');
+  db.collection('events').doc(EV).collection('photos').doc(pid).update({ lat:lat, lng:lng, geoInherited:false })
+    .then(function(){ setSaving('保存しました ✓'); })
+    .catch(function(e){ setSaving(''); toast('保存失敗: '+e.message,'err'); });
+  refreshMarkers(false); renderList();
+}
+function applyDirect(pid){
+  var la=g('lat-'+pid), ln=g('lng-'+pid); if(!la||!ln) return;
+  applyCoords(pid, la.value, ln.value);
+}
+function matchTo(pid, srcSel){
+  var srcId=srcSel.value; if(!srcId){ return; }
+  var s=_photoById[srcId]; if(!s||!_hasGeo(s)){ toast('コピー元に座標がありません','err'); return; }
+  applyCoords(pid, s.lat, s.lng);
+}
+
+/* ── 一覧 ── */
+function renderAll(){ refreshMarkers(true); renderSummary(); renderList(); }
+function renderSummary(){
+  var none=_photos.filter(function(p){ return !_hasGeo(p); }).length;
+  var inh=_photos.filter(function(p){ return _hasGeo(p)&&p.geoInherited; }).length;
+  g('summary').innerHTML='写真 '+_photos.length+'枚'+(none?' ／ <span class="warn">座標なし '+none+'枚</span>':'')+(inh?' ／ 項目から継承 '+inh+'枚':'');
+}
+function _matchOptions(pid){
+  // 座標を持つ他の写真を選択肢に
+  var opts='<option value="">🔗 他の写真に合わせる…</option>';
+  _photos.forEach(function(s){
+    if(s.id===pid||!_hasGeo(s)) return;
+    var it=_itemById[s.scheduleItemId];
+    var lbl=((it&&it.title)||s.caption||s.uploaderName||'写真')+'  ('+(+s.lat).toFixed(3)+','+(+s.lng).toFixed(3)+')';
+    opts+='<option value="'+esc(s.id)+'">'+esc(lbl)+'</option>';
+  });
+  return opts;
+}
+function _photoCard(p){
+  var sel=(p.id===_sel);
+  var geo=_hasGeo(p);
+  var badge = !geo ? '<span class="badge none">座標なし</span>' : (p.geoInherited?'<span class="badge inh">項目から継承</span>':'<span class="badge ok">設定済み</span>');
+  var latv=geo?(+p.lat).toFixed(6):''; var lngv=geo?(+p.lng).toFixed(6):'';
+  var meta='<div class="it">'+esc((_itemById[p.scheduleItemId]&&_itemById[p.scheduleItemId].title)||'（項目なし）')+'</div>'
+    +(p.caption?'<div class="pc-cap">🏷 '+esc(p.caption)+'</div>':'')
+    +(p.uploaderName?'<div>投稿: '+esc(p.uploaderName)+'</div>':'')
+    +'<div>'+badge+'</div>';
+  return '<div class="pc'+(sel?' sel':'')+'" id="pc-'+esc(p.id)+'">'
+    +'<div class="pc-top"><img class="pc-thumb" src="'+esc(p.thumbUrl||p.url||'')+'" alt="" loading="lazy" title="クリックで選択" onclick="selectPhoto(\''+esc(p.id)+'\',true)"><div class="pc-meta">'+meta+'</div></div>'
+    +'<div class="pc-row"><span class="lbl">① 直接座標編集（緯度・経度）</span>'
+      +'<input class="ci" id="lat-'+esc(p.id)+'" value="'+latv+'" placeholder="緯度" inputmode="decimal">'
+      +'<input class="ci" id="lng-'+esc(p.id)+'" value="'+lngv+'" placeholder="経度" inputmode="decimal">'
+      +'<button class="btn sm p" onclick="applyDirect(\''+esc(p.id)+'\')">適用</button></div>'
+    +'<div class="pc-row"><span class="lbl">② 他の写真に合わせる</span>'
+      +'<select class="pc-sel-sm" onchange="matchTo(\''+esc(p.id)+'\',this)">'+_matchOptions(p.id)+'</select></div>'
+    +'<div class="pc-row"><span class="lbl">③ 地図で指定</span>'
+      +'<button class="btn sm" onclick="pickOnMap(\''+esc(p.id)+'\')">📍 '+(sel?'地図をクリック / ドラッグ中':'地図で指定')+'</button></div>'
+    +'</div>';
+}
+function renderList(){
+  renderSummary();
+  if(!_photos.length){ g('list').innerHTML='<div class="empty">この イベントに会員写真はまだありません。</div>'; return; }
+  // 座標なしを最上部、その後 項目順にグループ化
+  var html='';
+  var noneP=_photos.filter(function(p){ return !_hasGeo(p); });
+  if(noneP.length){
+    html+='<div class="grp"><div class="grp-h none">⚠️ 座標なし（'+noneP.length+'枚）— 位置を設定してください</div><div class="cards">'+noneP.map(_photoCard).join('')+'</div></div>';
+  }
+  var order=_items.map(function(it){ return it.id; });
+  var byItem={}; _photos.forEach(function(p){ if(!_hasGeo(p)) return; (byItem[p.scheduleItemId]=byItem[p.scheduleItemId]||[]).push(p); });
+  // 項目に属する写真（スケジュール順）
+  order.forEach(function(iid){
+    var arr=byItem[iid]; if(!arr||!arr.length) return;
+    html+='<div class="grp"><div class="grp-h">'+esc(_itemLabel(_itemById[iid]))+'（'+arr.length+'枚）</div><div class="cards">'+arr.map(_photoCard).join('')+'</div></div>';
+    delete byItem[iid];
+  });
+  // 項目不明（削除済み項目など）
+  Object.keys(byItem).forEach(function(iid){
+    var arr=byItem[iid]; if(!arr||!arr.length) return;
+    html+='<div class="grp"><div class="grp-h">（項目不明）（'+arr.length+'枚）</div><div class="cards">'+arr.map(_photoCard).join('')+'</div></div>';
+  });
+  g('list').innerHTML=html;
+}
+
+/* ── 認証 ── */
+AuthRole.requireStaff(auth, function(user){
+  g('login-screen').style.display='none';
+  g('app').style.display='block';
+  load();
+});
+g('lbtn').addEventListener('click',function(){
+  var email=(g('lemail').value||'').trim(), pass=g('lpass').value;
+  g('lerr').textContent='';
+  if(!email||!pass){ g('lerr').textContent='メールアドレスとパスワードを入力してください'; return; }
+  g('lbtn').textContent='ログイン中...';
+  auth.signInWithEmailAndPassword(email,pass).then(function(){ g('lbtn').textContent='ログイン'; })
+    .catch(function(e){ g('lerr').textContent='ログイン失敗: '+e.message; g('lbtn').textContent='ログイン'; });
+});
+g('lpass').addEventListener('keydown',function(e){ if(e.key==='Enter') g('lbtn').click(); });
+g('btn-logout').addEventListener('click',function(){ auth.signOut(); });
+</script>
+</body>
+</html>
