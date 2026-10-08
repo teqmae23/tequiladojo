@@ -92,6 +92,16 @@ input,select{font-family:var(--sans)}
 .ci{width:82px;height:24px;border:1px solid var(--border2);border-radius:4px;padding:0 5px;font-size:11px;font-family:var(--mono);text-align:center}
 .pc .btn.sm{padding:3px 8px}
 .pc-sel-sm{max-width:100%;height:26px;border:1px solid var(--border2);border-radius:4px;font-size:11px;padding:0 4px;background:var(--white)}
+.gpxbox{border:1px solid var(--border2);border-radius:var(--rl);background:var(--white);padding:10px 12px;margin-bottom:10px}
+.gpxhd{font-size:13px;font-weight:700;color:var(--teal);margin-bottom:6px}
+.gpxsub{font-size:11px;font-weight:700;color:var(--ink2);margin:8px 0 3px}
+.gpxrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;margin:3px 0}
+.gpxrow label{display:inline-flex;align-items:center;gap:3px}
+.gpxinfo{font-size:11px;color:var(--ink3)}
+.gpxinfo.hit{color:var(--teal);font-weight:700}
+.ci.wide{width:150px;text-align:left}
+.trk{display:flex;align-items:center;gap:8px;background:var(--cream);border:1px solid var(--border);border-radius:var(--r);padding:4px 8px;font-size:11px}
+.trk .trk-del{margin-left:auto;background:none;border:none;color:var(--red);font-size:12px}
 #toasts{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:2000;display:flex;flex-direction:column;gap:6px}
 .toast{background:var(--ink);color:#fff;padding:8px 16px;border-radius:var(--r);font-size:12px;box-shadow:0 4px 16px rgba(0,0,0,.3)}
 .toast.terr{background:var(--red)}
@@ -131,6 +141,33 @@ input,select{font-family:var(--sans)}
       <span class="sub" id="plan-sub"></span>
     </div>
     <div class="note">会員がアップロードした写真の座標を修正できます。修正方法は3つ：①各写真の緯度・経度を直接入力して「適用」、②「🔗他の写真に合わせる」で既存写真の座標をコピー、③「📍地図で指定」を押してから地図をクリック（または地図上のピンをドラッグ）。変更は自動保存されます。グレーの◯はスケジュール項目の位置（位置合わせの目安）です。</div>
+
+    <div class="gpxbox">
+      <div class="gpxhd">🛰 GPX（GPSロガーの軌跡）を読み込む</div>
+      <div class="gpxrow"><input type="file" id="gpx-file" accept=".gpx,.xml,application/gpx+xml,text/xml"> <span id="gpx-info" class="gpxinfo"></span></div>
+      <div id="gpx-tools" style="display:none">
+        <div class="gpxsub">① 写真へ一括ジオタグ（撮影時刻で軌跡と自動照合）</div>
+        <div class="gpxrow">
+          時刻オフセット <input class="ci" id="gpx-off" value="0" inputmode="numeric" onchange="gpxUpdateMatch()"> 分
+          <button class="btn sm" onclick="gpxAutoOffset()">自動推定</button>
+          ／ 許容ずれ <input class="ci" id="gpx-tol" value="3" inputmode="numeric" onchange="gpxUpdateMatch()"> 分
+          <span id="gpx-match" class="gpxinfo"></span>
+        </div>
+        <div class="gpxrow">
+          <label><input type="radio" name="gpx-tgt" value="none" checked onchange="gpxUpdateMatch()"> 座標なしの写真のみ</label>
+          <label><input type="radio" name="gpx-tgt" value="all" onchange="gpxUpdateMatch()"> 全写真を上書き</label>
+          <button class="btn p sm" onclick="gpxApplyGeotag()">写真へ一括ジオタグ</button>
+        </div>
+        <div class="gpxrow gpxinfo">撮影時刻はアップロード端末の時刻で記録されるため、GPX(UTC)とずれる場合があります。「自動推定」で最も多く一致するオフセットを探せます。</div>
+        <div class="gpxsub">② 旅の足跡として保存（会員ページの地図に軌跡表示）</div>
+        <div class="gpxrow">
+          名称 <input class="ci wide" id="gpx-name" placeholder="例: 10/2 郡山">
+          日付 <select class="pc-sel-sm" id="gpx-date"></select>
+          <button class="btn p sm" onclick="gpxSaveTrack()">足跡として保存</button>
+        </div>
+      </div>
+      <div id="track-list" style="margin-top:8px;display:flex;flex-direction:column;gap:4px"></div>
+    </div>
     <div class="pickbar" id="pickbar">
       <img id="pick-thumb" src="" alt="">
       <span>選択中: <b id="pick-name">—</b> ／ 地図をクリック、またはピンをドラッグで位置を指定</span>
@@ -156,17 +193,20 @@ var EV=(new URLSearchParams(location.search).get('ev'))||'';
 
 var _ev={}, _items=[], _itemById={}, _photos=[], _photoById={}, _sel=null;
 var _map=null, _markers={}, _itemLayer=null;
+var _tracks=[], _gpxPts=[], _gpxTimed=[], _gpxName='';
 
 function load(){
   if(!EV){ g('list').innerHTML='<div class="empty">イベントが指定されていません（?ev=ID が必要です）。</div>'; return; }
   Promise.all([
     db.collection('events').doc(EV).get(),
     db.collection('events').doc(EV).collection('scheduleItems').get(),
-    db.collection('events').doc(EV).collection('photos').get()
+    db.collection('events').doc(EV).collection('photos').get(),
+    db.collection('events').doc(EV).collection('tracks').get().catch(function(){ return {docs:[]}; })
   ]).then(function(res){
     _ev=res[0].data()||{};
     _items=res[1].docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
     _photos=res[2].docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    _tracks=(res[3]&&res[3].docs?res[3].docs:[]).map(function(d){ return Object.assign({id:d.id}, d.data()); });
     _items.sort(function(a,b){ return (a.date||'').localeCompare(b.date||'')||(a.time||'').localeCompare(b.time||''); });
     _itemById={}; _items.forEach(function(it){ _itemById[it.id]=it; });
     _photoById={}; _photos.forEach(function(p){ _photoById[p.id]=p; });
@@ -174,6 +214,8 @@ function load(){
     g('plan-sub').textContent='写真 '+_photos.length+'枚';
     document.title='写真位置管理 — '+(_ev.name||'');
     initMap();
+    fillDateSelect();
+    renderTracks();
     renderAll();
   }).catch(function(e){ g('list').innerHTML='<div class="empty">読み込みに失敗しました: '+esc(e.message)+'</div>'; });
 }
@@ -319,6 +361,141 @@ function renderList(){
   g('list').innerHTML=html;
 }
 
+/* ── GPX（ロガー軌跡）: 一括ジオタグ ＆ 足跡保存 ── */
+function _uniqDates(){ var s={}; _items.forEach(function(it){ if(it.date) s[it.date]=1; }); return Object.keys(s).sort(); }
+function fillDateSelect(){
+  var sel=g('gpx-date'); if(!sel) return;
+  var opts='<option value="">全日程</option>';
+  _uniqDates().forEach(function(d){ opts+='<option value="'+esc(d)+'">'+esc(d)+'</option>'; });
+  sel.innerHTML=opts;
+}
+function parseGpx(text){
+  var doc=new DOMParser().parseFromString(text,'application/xml');
+  if(doc.getElementsByTagName('parsererror').length) return [];
+  var nodes=doc.getElementsByTagName('trkpt');
+  if(!nodes.length) nodes=doc.getElementsByTagName('rtept');
+  if(!nodes.length) nodes=doc.getElementsByTagName('wpt');
+  var pts=[];
+  for(var i=0;i<nodes.length;i++){
+    var la=parseFloat(nodes[i].getAttribute('lat')), ln=parseFloat(nodes[i].getAttribute('lon'));
+    if(isNaN(la)||isNaN(ln)) continue;
+    var tN=nodes[i].getElementsByTagName('time')[0];
+    var t=tN?Date.parse(tN.textContent||''):NaN;
+    pts.push({lat:la,lng:ln,t:isNaN(t)?null:t});
+  }
+  return pts;
+}
+function _fmtMs(ms){ var d=new Date(ms); return d.getFullYear()+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+('0'+d.getDate()).slice(-2)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
+function _onGpxFile(file){
+  var fr=new FileReader();
+  fr.onload=function(){
+    _gpxPts=parseGpx(fr.result||'');
+    _gpxTimed=_gpxPts.filter(function(p){ return p.t!=null; }).sort(function(a,b){ return a.t-b.t; });
+    if(!_gpxPts.length){ g('gpx-info').textContent='軌跡点が見つかりませんでした（GPXファイルをご確認ください）'; g('gpx-tools').style.display='none'; return; }
+    var span=_gpxTimed.length?('　期間 '+_fmtMs(_gpxTimed[0].t)+' 〜 '+_fmtMs(_gpxTimed[_gpxTimed.length-1].t)+'（端末時刻換算）'):'　時刻情報なし（ジオタグ不可・足跡のみ可）';
+    g('gpx-info').textContent='軌跡 '+_gpxPts.length+'点'+(_gpxTimed.length?('（時刻つき '+_gpxTimed.length+'点）'):'')+span;
+    g('gpx-tools').style.display='block';
+    if(!g('gpx-name').value) g('gpx-name').value=(_gpxName||'足跡').replace(/\.(gpx|xml)$/i,'');
+    gpxUpdateMatch();
+  };
+  fr.onerror=function(){ g('gpx-info').textContent='ファイルを読み込めませんでした'; };
+  fr.readAsText(file);
+}
+// GPXのtime(UTC)は端末ローカル時刻として解釈し直す（写真のtakenAtがアップロード端末ローカル時刻のため基準を合わせる）
+function _gpxLocalT(utcMs){ var d=new Date(utcMs); return new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate(),d.getUTCHours(),d.getUTCMinutes(),d.getUTCSeconds()).getTime(); }
+function _matchAt(T){
+  // T: 写真のtakenAt(ms, 端末ローカル)+オフセット。_gpxTimedを端末ローカル換算で二分探索し補間。
+  var a=_gpxTimed; if(!a.length) return null;
+  var lo=0, hi=a.length-1;
+  var t0=_gpxLocalT(a[0].t), tN=_gpxLocalT(a[hi].t);
+  if(T<=t0) return {lat:a[0].lat,lng:a[0].lng,gap:t0-T};
+  if(T>=tN) return {lat:a[hi].lat,lng:a[hi].lng,gap:T-tN};
+  while(hi-lo>1){ var mid=(lo+hi)>>1; if(_gpxLocalT(a[mid].t)<=T) lo=mid; else hi=mid; }
+  var la=_gpxLocalT(a[lo].t), lb=_gpxLocalT(a[hi].t);
+  var f=(lb>la)?(T-la)/(lb-la):0;
+  return { lat:a[lo].lat+(a[hi].lat-a[lo].lat)*f, lng:a[lo].lng+(a[hi].lng-a[lo].lng)*f, gap:Math.min(T-la,lb-T) };
+}
+function _geotagCandidates(offMin, tolMin){
+  var offMs=(+offMin||0)*60000, tolMs=Math.max(0,(+tolMin||0))*60000;
+  var tgt=(document.querySelector('input[name="gpx-tgt"]:checked')||{}).value||'none';
+  var out=[];
+  _photos.forEach(function(p){
+    if(p.takenAt==null) return;
+    if(tgt==='none' && _hasGeo(p)) return;
+    var m=_matchAt((+p.takenAt)+offMs);
+    if(m && m.gap<=tolMs) out.push({pid:p.id, lat:m.lat, lng:m.lng});
+  });
+  return out;
+}
+function gpxUpdateMatch(){
+  if(!_gpxTimed.length){ g('gpx-match').textContent=''; return; }
+  var c=_geotagCandidates(g('gpx-off').value, g('gpx-tol').value);
+  var el=g('gpx-match'); el.textContent='→ '+c.length+'枚に付与できます'; el.className='gpxinfo hit';
+}
+function gpxAutoOffset(){
+  if(!_gpxTimed.length){ toast('時刻つきの軌跡がありません','err'); return; }
+  var tol=g('gpx-tol').value, best=0, bestN=-1;
+  // 端末時計のズレ想定: ±16時間を5分刻みで走査
+  for(var off=-16*60; off<=16*60; off+=5){
+    var n=_geotagCandidates(off, tol).length;
+    if(n>bestN){ bestN=n; best=off; }
+  }
+  g('gpx-off').value=best;
+  gpxUpdateMatch();
+  toast('オフセット '+best+'分 で最も一致（'+bestN+'枚）');
+}
+function gpxApplyGeotag(){
+  if(!_gpxTimed.length){ toast('時刻つきの軌跡がありません','err'); return; }
+  var c=_geotagCandidates(g('gpx-off').value, g('gpx-tol').value);
+  if(!c.length){ toast('一致する写真がありません（オフセット/許容ずれを調整）','err'); return; }
+  if(!confirm(c.length+'枚の写真に座標を付与します。よろしいですか？')) return;
+  setSaving('ジオタグ付与中…');
+  var i=0;
+  function chunk(){
+    var batch=db.batch(), end=Math.min(i+400, c.length);
+    for(;i<end;i++){ var x=c[i]; var ref=db.collection('events').doc(EV).collection('photos').doc(x.pid);
+      batch.update(ref,{ lat:Math.round(x.lat*1e6)/1e6, lng:Math.round(x.lng*1e6)/1e6, geoInherited:false });
+      var p=_photoById[x.pid]; if(p){ p.lat=Math.round(x.lat*1e6)/1e6; p.lng=Math.round(x.lng*1e6)/1e6; p.geoInherited=false; }
+    }
+    batch.commit().then(function(){ if(i<c.length) chunk(); else { setSaving('ジオタグ付与 完了 ✓'); toast(c.length+'枚にジオタグを付与しました'); refreshMarkers(false); renderAll(); } })
+      .catch(function(e){ setSaving(''); toast('付与失敗: '+e.message,'err'); });
+  }
+  chunk();
+}
+// 足跡保存用に点を間引き（最大maxN点・座標は小数6桁）
+function _thin(pts, maxN){
+  var ll=pts.map(function(p){ return [Math.round(p.lat*1e6)/1e6, Math.round(p.lng*1e6)/1e6]; });
+  if(ll.length<=maxN) return ll;
+  var step=Math.ceil(ll.length/maxN), out=[];
+  for(var i=0;i<ll.length;i+=step) out.push(ll[i]);
+  if(out[out.length-1]!==ll[ll.length-1]) out.push(ll[ll.length-1]);
+  return out;
+}
+function gpxSaveTrack(){
+  if(!_gpxPts.length){ toast('先にGPXを読み込んでください','err'); return; }
+  var pts=_thin(_gpxPts, 1500);
+  if(pts.length<2){ toast('軌跡点が不足しています','err'); return; }
+  var doc={ name:((g('gpx-name').value||'').trim()||'足跡'), date:(g('gpx-date').value||''), points:pts, n:pts.length, createdMs:Date.now() };
+  setSaving('足跡を保存中…');
+  db.collection('events').doc(EV).collection('tracks').add(doc)
+    .then(function(ref){ _tracks.push(Object.assign({id:ref.id}, doc)); setSaving('足跡を保存しました ✓'); toast('足跡「'+doc.name+'」を保存しました（'+pts.length+'点）'); renderTracks(); })
+    .catch(function(e){ setSaving(''); toast('保存失敗: '+e.message,'err'); });
+}
+function deleteTrack(tid){
+  if(!confirm('この足跡を削除しますか？')) return;
+  db.collection('events').doc(EV).collection('tracks').doc(tid).delete()
+    .then(function(){ _tracks=_tracks.filter(function(t){ return t.id!==tid; }); toast('削除しました'); renderTracks(); })
+    .catch(function(e){ toast('削除失敗: '+e.message,'err'); });
+}
+function renderTracks(){
+  var box=g('track-list'); if(!box) return;
+  if(!_tracks.length){ box.innerHTML='<div class="gpxinfo">保存済みの足跡はまだありません。</div>'; return; }
+  box.innerHTML='<div class="gpxinfo" style="font-weight:700">保存済みの足跡（会員ページの地図に表示）</div>'+_tracks.map(function(t){
+    return '<div class="trk">🥾 '+esc(t.name||'足跡')+'　<span class="gpxinfo">'+(t.date?esc(t.date):'全日程')+' ・ '+((t.points&&t.points.length)||0)+'点</span>'
+      +'<button class="trk-del" onclick="deleteTrack(\''+esc(t.id)+'\')">削除</button></div>';
+  }).join('');
+}
+
 /* ── 認証 ── */
 AuthRole.requireStaff(auth, function(user){
   g('login-screen').style.display='none';
@@ -335,6 +512,7 @@ g('lbtn').addEventListener('click',function(){
 });
 g('lpass').addEventListener('keydown',function(e){ if(e.key==='Enter') g('lbtn').click(); });
 g('btn-logout').addEventListener('click',function(){ auth.signOut(); });
+g('gpx-file').addEventListener('change',function(){ var f=this.files&&this.files[0]; if(f){ _gpxName=f.name||''; _onGpxFile(f); } });
 </script>
 </body>
 </html>

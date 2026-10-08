@@ -1404,20 +1404,22 @@ function itemIcon(it){
   return catIcon(it.category);
 }
 function catBg(id){ var c=catById(id); return (c&&c.bg)?c.bg:'#f5f3ee'; }
-var _schedItems=[], _photosByItem={};
+var _schedItems=[], _photosByItem={}, _tripTracks=[];
 function phSort(a,b){ var ka=(a.takenAt||a.createdMs||0), kb=(b.takenAt||b.createdMs||0); return ka-kb; }
 function loadSchedule(){
   var ref=db.collection('events').doc(eventId);
   Promise.all([
     ref.collection('scheduleItems').get(),
     ref.collection('photos').get().catch(function(){ return {docs:[]}; }),
-    loadCats()
+    loadCats(),
+    ref.collection('tracks').get().catch(function(){ return {docs:[]}; }) // 旅の足跡（GPX軌跡）
   ]).then(function(res){
     _schedItems=res[0].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
     _schedItems.sort(function(a,b){ var ka=(a.date||'')+' '+(a.time||'99:99')+' '+_endMark(a)+' '+('00'+(a.seq||0)).slice(-3), kb=(b.date||'')+' '+(b.time||'99:99')+' '+_endMark(b)+' '+('00'+(b.seq||0)).slice(-3); return ka<kb?-1:1; });
     _photosByItem={};
     res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).forEach(function(p){ (_photosByItem[p.scheduleItemId]=_photosByItem[p.scheduleItemId]||[]).push(p); });
     Object.keys(_photosByItem).forEach(function(k){ _photosByItem[k].sort(phSort); });
+    _tripTracks=(res[3]&&res[3].docs?res[3].docs:[]).map(function(d){ return Object.assign({id:d.id},d.data()); }).filter(function(t){ return Array.isArray(t.points)&&t.points.length>=2; });
     renderSchedule(_schedItems);
   }).catch(function(){ var el=g('schedule-cont'); if(el) el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">読み込みに失敗しました</div></div>'; });
 }
@@ -2267,6 +2269,16 @@ function _addPhotoCluster(map, list){
     list.forEach(function(x){ mk(x).addTo(map); });
   }
 }
+// 旅の足跡（GPX軌跡）を地図に重ねて描画。
+function _drawTripTracks(map, dayDate, bounds){
+  if(!_tripTracks||!_tripTracks.length) return;
+  _tripTracks.forEach(function(t){
+    if(dayDate && t.date && t.date!==dayDate) return;
+    var ref=null, pts=t.points.map(function(p){ var la=+p[0], ln=_unwrapLng(+p[1], ref!=null?ref:+p[1]); ref=ln; return [la,ln]; });
+    L.polyline(pts,{color:'#2563eb',weight:3,opacity:.55}).addTo(map).bindTooltip('🥾 '+esc(t.name||'足跡'),{sticky:true});
+    if(bounds){ pts.forEach(function(p){ bounds.push(p); }); }
+  });
+}
 // 2地点間の大圏（グレートサークル）経路。日付変更線をまたぐ経度は連続化。
 function _greatCircle(a,b,n){
   var R=Math.PI/180, D=180/Math.PI;
@@ -2318,6 +2330,7 @@ function initSchedMap(items){
       if(ll){ photoPts.push({ll:ll, iid:it.id, idx:pidx}); bounds.push(ll); }
     });
   });
+  _drawTripTracks(map, null, bounds); // 旅の足跡（全日程）
   _addPhotoCluster(map, photoPts); // 縮尺に応じて近接写真をまとめる
   if(bounds.length) map.fitBounds(bounds,{padding:[26,26],maxZoom:13});
   setTimeout(function(){ map.invalidateSize(); },120);
