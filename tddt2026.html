@@ -258,6 +258,13 @@ a{color:var(--gold-d)}
 .sc-meta{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:3px;font-size:12px}
 .sc-meta .sc-rosterbtn,.sc-meta .sc-hostbtn{margin-left:0}
 .sc-photo-ln{background:none;border:none;color:var(--teal);font-weight:600;font-size:16px;line-height:1;cursor:pointer;padding:0;font-family:inherit}
+#ph-existing{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.phx-wrap{width:70px;display:flex;flex-direction:column}
+.phx{position:relative;width:70px;height:70px;border-radius:8px;overflow:hidden;border:1px solid var(--border)}
+.phx img{width:100%;height:100%;object-fit:cover;display:block;cursor:pointer}
+.phx .phx-del{position:absolute;top:2px;right:2px;background:rgba(176,48,32,.92);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:12px;line-height:1;cursor:pointer;padding:0}
+.phx-head{font-size:11px;color:var(--ink3);margin-bottom:6px;width:100%}
+.phx-cap{font-size:10px;color:var(--ink2);margin-top:2px;line-height:1.3;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sc-cost{color:var(--gold-d);font-weight:600}
 .sc-cost-sub{font-size:10px;color:var(--ink3);font-weight:400;margin-left:4px}
 .sc-map{color:var(--teal);text-decoration:none;font-weight:600}
@@ -549,8 +556,9 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
 <!-- 写真アップロード -->
 <div class="mbg" id="ph-modal">
   <div class="modal">
-    <div class="mhd"><span>📷 写真を追加</span><button class="x" onclick="closePh()">閉じる</button></div>
+    <div class="mhd"><span id="ph-title">📷 写真を追加</span><button class="x" onclick="closePh()">閉じる</button></div>
     <div class="mbd">
+      <div id="ph-existing"></div>
       <div class="fg"><label class="fl">スケジュール項目</label><select class="fi" id="ph-item"></select><div id="ph-suggest"></div></div>
       <div class="fg"><label class="fl">写真（複数選択可）</label><input class="fi" id="ph-file" type="file" accept="image/*" multiple></div>
       <div id="ph-preview" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px"></div>
@@ -1971,19 +1979,19 @@ function renderSchedItem(it, leg){
     if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="'+esc(routeLink(it))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+(_flm?'✈️ ルート':'🚗 ルート')+'</a>');
   }
   var did=esc(it.id);
-  var aphotos=Array.isArray(it.photos)?it.photos:[]; // 管理者が項目に添付した写真
-  var photos=_photosByItem[it.id]||[];              // 参加者が投稿した写真
-  var gallery=photos.length?('<div class="sc-gallery">'+photos.map(function(p,idx){ return '<img class="sc-thumb" src="'+esc(p.thumbUrl||p.url)+'" alt="" loading="lazy" onclick="event.stopPropagation();openLb(\''+did+'\','+idx+')">'; }).join('')+'</div>'):'';
-  // 添付写真: 1枚目は一覧にサムネイル、2枚目以降は詳細に表示（いずれもクリックで拡大）
+  var aphotos=Array.isArray(it.photos)?it.photos:[]; // 管理者がプリセットした写真（最大10枚・右端サムネイル）
+  var photos=_photosByItem[it.id]||[];              // 会員がアップロードした写真（無制限・📷件数＋📤管理）
+  // プリセット写真: スケジュール表の右端にサムネイル表示（クリックでポップアップ＆ページ送り）
   var firstThumb=aphotos.length?('<div class="sc-rowthumb" onclick="event.stopPropagation();openItemPhotos(\''+did+'\',0)"><img src="'+esc(aphotos[0].url)+'" alt="" loading="lazy"></div>'):'';
   var moreThumbs=aphotos.length>1?('<div class="sc-gallery">'+aphotos.slice(1).map(function(p,idx){ return '<img class="sc-thumb" src="'+esc(p.url)+'" alt="" loading="lazy" onclick="event.stopPropagation();openItemPhotos(\''+did+'\','+(idx+1)+')">'; }).join('')+'</div>'):'';
-  // 写真ボタン（複数ある場合はライトボックスで左右ページ送り）
-  if(aphotos.length) meta.push('<button type="button" class="sc-photo-ln" onclick="event.stopPropagation();openItemPhotos(\''+did+'\',0)" title="写真を表示">📷('+aphotos.length+')</button>');
+  // 会員アップロード写真: 📷(件数)で閲覧ライトボックス、後ろの📤で登録・削除・閲覧の管理ポップアップ（削除は登録者/管理者のみ）
+  if(photos.length) meta.push('<button type="button" class="sc-photo-ln" onclick="event.stopPropagation();openLb(\''+did+'\',0)" title="会員写真を表示">📷('+photos.length+')</button>');
+  if(_isReal) meta.push('<button type="button" class="sc-photo-ln sc-photo-up" onclick="event.stopPropagation();openItemPhotoMgr(\''+did+'\')" title="会員写真の登録・削除・閲覧">📤</button>');
   // 参加者・現地ホスト・班バッジ・名前を費用の前に。改行せず費用・地図などと同じ行に流す。
   var rb=rosterBtnHtml(it), bdg=SchedGroups.badge(it,esc), nm=schedNamesHtml(it,true);
   var people=[]; if(rb)people.push(rb); if(bdg)people.push(bdg); if(nm)people.push(nm);
   var allMeta=people.concat(meta);
-  var inner=(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')+(allMeta.length?'<div class="sc-meta">'+allMeta.join('')+'</div>':'')+schedRoomingHtml(it)+moreThumbs+gallery;
+  var inner=(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')+(allMeta.length?'<div class="sc-meta">'+allMeta.join('')+'</div>':'')+schedRoomingHtml(it)+moreThumbs;
   var hasDetail=!!inner;
   var detail=hasDetail?'<div class="sc-detail" id="scd-'+did+'" style="display:none">'+inner+'</div>':'';
   var clickable=hasDetail||geo;
@@ -2300,10 +2308,13 @@ function focusSched(id){
 }
 
 /* ── 写真アップロード（B3a） ── */
-var _phPending=[], _phDone=0;
+var _phPending=[], _phDone=0, _phTarget=null, _phDirty=false;
 function _phItemOptions(){ return _schedItems.map(function(it){ return '<option value="'+esc(it.id)+'">'+esc((it.date||'')+' '+(it.time||'')+' '+(it.title||'')).trim()+'</option>'; }).join(''); }
 function openPh(){
   if(!_isReal){ return; }
+  _phTarget=null; _phDirty=false;
+  g('ph-title').textContent='📷 写真を追加';
+  g('ph-existing').innerHTML='';
   var opts=_phItemOptions();
   // 既定は「画像のタイムスタンプを使う」
   g('ph-item').innerHTML='<option value="__auto__">画像のタイムスタンプを使う（自動振り分け）</option>'+opts;
@@ -2313,7 +2324,44 @@ function openPh(){
   _phPending=[]; _phDone=0;
   g('ph-modal').classList.add('open');
 }
-function closePh(){ g('ph-modal').classList.remove('open'); }
+// 項目を指定して会員写真を登録・削除・閲覧する（📤ボタン）
+function openItemPhotoMgr(itemId){
+  if(!_isReal){ return; }
+  var it=_schedItems.find(function(x){return x.id===itemId;}); if(!it) return;
+  _phTarget=itemId; _phDirty=false;
+  g('ph-title').textContent='📷 '+((it.title||'項目')+' の写真');
+  g('ph-item').innerHTML='<option value="__auto__">画像のタイムスタンプを使う（自動振り分け）</option>'+_phItemOptions();
+  g('ph-item').value=itemId; // この項目に追加
+  g('ph-file').value=''; g('ph-preview').innerHTML=''; g('ph-err').textContent=''; g('ph-prog').textContent=''; g('ph-suggest').textContent='';
+  g('ph-manual').style.display='none'; g('ph-up').style.display='';
+  _phPending=[]; _phDone=0;
+  renderExisting();
+  g('ph-modal').classList.add('open');
+}
+// 項目に紐づく既存の会員写真（サムネ＋削除。削除は登録者または管理者のみ）
+function renderExisting(){
+  var box=g('ph-existing'); if(!box) return;
+  if(!_phTarget){ box.innerHTML=''; return; }
+  var list=(_photosByItem[_phTarget]||[]);
+  if(!list.length){ box.innerHTML='<div class="phx-head">この項目の会員写真はまだありません。</div>'; return; }
+  box.innerHTML='<div class="phx-head">この項目の会員写真（'+list.length+'枚）・タップで拡大</div>'+list.map(function(p){
+    var canDel=(_isStaff || (p.uploaderUid && p.uploaderUid===_uid));
+    return '<div class="phx-wrap"><div class="phx"><img src="'+esc(p.thumbUrl||p.url)+'" alt="" loading="lazy" onclick="openLb(\''+esc(_phTarget)+'\','+list.indexOf(p)+')">'
+      +(canDel?'<button class="phx-del" title="削除" onclick="deleteExistingPhoto(\''+esc(p.id)+'\')">✕</button>':'')+'</div>'
+      +(p.caption?'<div class="phx-cap" title="'+esc(p.caption)+'">'+esc(p.caption)+'</div>':'')+'</div>';
+  }).join('');
+}
+function deleteExistingPhoto(pid){
+  var list=(_photosByItem[_phTarget]||[]);
+  var p=list.find(function(x){return x.id===pid;}); if(!p) return;
+  if(!(_isStaff || (p.uploaderUid && p.uploaderUid===_uid))){ toast('削除できるのは登録者または管理者のみです'); return; }
+  if(!confirm('この写真を削除しますか？（元に戻せません）')) return;
+  db.collection('events').doc(eventId).collection('photos').doc(pid).delete().then(function(){
+    if(p.storagePath&&storage){ storage.ref(p.storagePath+'.jpg').delete().catch(function(){}); storage.ref(p.storagePath+'_thumb.jpg').delete().catch(function(){}); }
+    var i=list.indexOf(p); if(i>=0) list.splice(i,1); _phDirty=true; renderExisting(); toast('削除しました');
+  }).catch(function(e){ toast('削除失敗: '+e.message); });
+}
+function closePh(){ g('ph-modal').classList.remove('open'); var dirty=_phDirty; _phDirty=false; _phTarget=null; if(dirty) loadSchedule(); }
 g('ph-modal').addEventListener('click',function(e){ if(e.target===g('ph-modal')) closePh(); });
 g('ph-file').addEventListener('change',function(){
   var box=g('ph-preview'); box.innerHTML=''; g('ph-suggest').textContent='';
