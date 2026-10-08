@@ -1478,20 +1478,22 @@ function itemIcon(it){
   return catIcon(it.category);
 }
 function catBg(id){ var c=catById(id); return (c&&c.bg)?c.bg:'#f5f3ee'; }
-var _schedItems=[], _photosByItem={};
+var _schedItems=[], _photosByItem={}, _tripTracks=[];
 function phSort(a,b){ var ka=(a.takenAt||a.createdMs||0), kb=(b.takenAt||b.createdMs||0); return ka-kb; }
 function loadSchedule(){
   var ref=db.collection('events').doc(eventId);
   return Promise.all([
     ref.collection('scheduleItems').get(),
     ref.collection('photos').get().catch(function(){ return {docs:[]}; }),
-    loadCats()
+    loadCats(),
+    ref.collection('tracks').get().catch(function(){ return {docs:[]}; }) // 旅の足跡（GPX軌跡）
   ]).then(function(res){
     _schedItems=res[0].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
     _schedItems.sort(function(a,b){ var ka=(a.date||'')+' '+(a.time||'99:99')+' '+_endMark(a)+' '+('000000000000'+_caSec(a)).slice(-12)+' '+('00'+(a.seq||0)).slice(-3), kb=(b.date||'')+' '+(b.time||'99:99')+' '+_endMark(b)+' '+('000000000000'+_caSec(b)).slice(-12)+' '+('00'+(b.seq||0)).slice(-3); return ka<kb?-1:(ka>kb?1:0); });
     _photosByItem={};
     res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).forEach(function(p){ (_photosByItem[p.scheduleItemId]=_photosByItem[p.scheduleItemId]||[]).push(p); });
     Object.keys(_photosByItem).forEach(function(k){ _photosByItem[k].sort(phSort); });
+    _tripTracks=(res[3]&&res[3].docs?res[3].docs:[]).map(function(d){ return Object.assign({id:d.id},d.data()); }).filter(function(t){ return Array.isArray(t.points)&&t.points.length>=2; });
     renderSchedule(_schedItems);
     subscribeLive(); // ライブ位置の購読を開始（1回のみ）
   }).catch(function(){ var el=g('schedule-cont'); if(el) el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">読み込みに失敗しました</div></div>'; });
@@ -2620,7 +2622,7 @@ function renderSchedule(items){
   h+=sections.map(function(gp,idx){
     var dayItems=dayItemsMap[gp.day]||[];
     var hasMap=dayItems.some(_dayMappable);
-    if(hasMap) _daySchedItems[idx]=dayItems;
+    if(hasMap){ _daySchedItems[idx]=dayItems; _dayDateOf[idx]=gp.day; }
     var mapHtml=hasMap?('<div class="sc-daymap" id="sc-daymap-'+idx+'"></div>'):'';
     return '<div class="sc-day sc-day-toggle" onclick="toggleSchedDay('+idx+')"><span class="sc-day-caret" id="sc-day-caret-'+idx+'">▸</span> '+esc(fmtDate(gp.day))+' '+wday(gp.day)+' <span class="sc-day-count">（'+gp.n+'件）</span>'+(hasMap?'<span class="sc-day-count">🗺</span>':'')+'</div>'
       +'<div class="sc-day-body" id="sc-day-body-'+idx+'" style="display:none">'+mapHtml+gp.html+'</div>';
@@ -2634,8 +2636,8 @@ function renderSchedule(items){
 }
 function toggleSchedDay(idx){ var b=g('sc-day-body-'+idx), c=g('sc-day-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▸':'▾'; if(!open) _buildDayMap(idx); }
 /* ── その日のルートマップ（撮影場所に写真ピン・クリックで写真を表示） ── */
-var _dayMapObj={}, _daySchedItems={};
-function _dayMapsReset(){ Object.keys(_dayMapObj).forEach(function(k){ try{ _dayMapObj[k].remove(); }catch(e){} }); _dayMapObj={}; _daySchedItems={}; }
+var _dayMapObj={}, _daySchedItems={}, _dayDateOf={};
+function _dayMapsReset(){ Object.keys(_dayMapObj).forEach(function(k){ try{ _dayMapObj[k].remove(); }catch(e){} }); _dayMapObj={}; _daySchedItems={}; _dayDateOf={}; }
 // 地図に出せる項目か（位置があり伏せていない、または位置つき写真がある）
 function _dayMappable(it){
   if(_locHidden(it)) return false;
@@ -2673,6 +2675,7 @@ function _buildDayMap(idx){
       if(ll){ photoPts.push({ll:ll, iid:it.id, idx:pidx}); bounds.push(ll); }
     });
   });
+  _drawTripTracks(map, _dayDateOf[idx]||null, bounds); // 旅の足跡（該当日）
   _addPhotoCluster(map, photoPts); // 縮尺に応じて近接写真をまとめる
   if(bounds.length) map.fitBounds(bounds,{padding:[24,24],maxZoom:14}); else map.setView([35.68,139.76],9);
   setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} },140);
@@ -2697,6 +2700,16 @@ function _addPhotoCluster(map, list){
   } else {
     list.forEach(function(x){ mk(x).addTo(map); }); // プラグイン未読込時は個別表示
   }
+}
+// 旅の足跡（GPX軌跡）を地図に重ねて描画。dayDate指定時は該当日（日付なしトラックは全日）に限定。
+function _drawTripTracks(map, dayDate, bounds){
+  if(!_tripTracks||!_tripTracks.length) return;
+  _tripTracks.forEach(function(t){
+    if(dayDate && t.date && t.date!==dayDate) return;
+    var ref=null, pts=t.points.map(function(p){ var la=+p[0], ln=_unwrapLng(+p[1], ref!=null?ref:+p[1]); ref=ln; return [la,ln]; });
+    L.polyline(pts,{color:'#2563eb',weight:3,opacity:.55}).addTo(map).bindTooltip('🥾 '+esc(t.name||'足跡'),{sticky:true});
+    if(bounds){ pts.forEach(function(p){ bounds.push(p); }); }
+  });
 }
 // 2地点間の大圏（グレートサークル）経路。日付変更線をまたぐ経度は連続化。
 function _greatCircle(a,b,n){
@@ -2785,6 +2798,7 @@ function initSchedMap(items){
       if(ll){ photoPts.push({ll:ll, iid:it.id, idx:pidx}); bounds.push(ll); }
     });
   });
+  _drawTripTracks(map, null, bounds); // 旅の足跡（全日程）
   _addPhotoCluster(map, photoPts); // 縮尺に応じて近接写真をまとめる
   if(bounds.length) map.fitBounds(bounds,{padding:[26,26],maxZoom:13});
   setTimeout(function(){ map.invalidateSize(); },120);
