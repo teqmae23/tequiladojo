@@ -10,6 +10,9 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script src="/tz-lookup.js"></script>
 <script src="/sched-groups.js?v=20260925"></script>
 <script src="/member-plan.js?v=20260903"></script>
@@ -2245,6 +2248,25 @@ function renderSchedule(items){
 }
 function toggleSchedDay(idx){ var b=g('sc-day-body-'+idx), c=g('sc-day-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▸':'▾'; }
 function _unwrapLng(lng, ref){ if(ref==null) return lng; while(lng-ref>180)lng-=360; while(lng-ref<-180)lng+=360; return lng; }
+// 写真ピン用アイコン（1枚は📷、まとまりは📷N）
+function _photoPinIcon(n){ return L.divIcon({className:'ph-pin-wrap',html:'<span class="ph-pin">📷'+(n>1?'<b>'+n+'</b>':'')+'</span>',iconSize:[34,26],iconAnchor:[17,26]}); }
+// 各写真を自身の座標に配置し、縮尺に応じて近接する写真を自動でまとめる（Leaflet.markercluster）。
+function _addPhotoCluster(map, list){
+  if(!list||!list.length) return;
+  var mk=function(x){ var m=L.marker(x.ll,{icon:_photoPinIcon(1),zIndexOffset:1000}); (function(iid,idx){ m.on('click',function(){ openLb(iid,idx); }); })(x.iid,x.idx); return m; };
+  if(window.L && L.markerClusterGroup){
+    var grp=L.markerClusterGroup({
+      maxClusterRadius:42,
+      showCoverageOnHover:false,
+      spiderfyOnMaxZoom:true,
+      iconCreateFunction:function(c){ return _photoPinIcon(c.getChildCount()); }
+    });
+    list.forEach(function(x){ grp.addLayer(mk(x)); });
+    map.addLayer(grp);
+  } else {
+    list.forEach(function(x){ mk(x).addTo(map); });
+  }
+}
 // 2地点間の大圏（グレートサークル）経路。日付変更線をまたぐ経度は連続化。
 function _greatCircle(a,b,n){
   var R=Math.PI/180, D=180/Math.PI;
@@ -2269,11 +2291,12 @@ function initSchedMap(items){
   _scMarkers={}; _scItemBounds={};
   var map=L.map(mapEl,{scrollWheelZoom:false}); _scMap=map;
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
-  var bounds=[], refLng=null;
+  var bounds=[], refLng=null, photoPts=[];
   // 行程順(JST)に経度を連続化。日付変更線をまたぐと到着地は地図の右側に続けて表示される。
   items.forEach(function(it){
+    var itemPlng=null;
     if(it.lat!=null&&it.lng!=null){
-      var plng=_unwrapLng(it.lng, refLng); refLng=plng;
+      var plng=_unwrapLng(it.lng, refLng); refLng=plng; itemPlng=plng;
       var _pcm=costLineFor(it);
       var m=L.marker([it.lat,plng]).addTo(map).bindPopup('<b>'+esc((it.time?it.time+' ':'')+(it.title||''))+'</b>'+(it.date?'<br>'+esc(fmtDate(it.date)):'')+(_pcm?'<br>'+esc(_pcm):''));
       _scMarkers[it.id]=m; bounds.push([it.lat,plng]);
@@ -2286,18 +2309,16 @@ function initSchedMap(items){
         _scItemBounds[it.id]=[[it.lat,plng],[it.toLat,tplng]]; // 2点間移動: この2点にフィット
       }
     }
-    // 写真ピン（項目に写真がある場合）: 写真自身の座標(EXIF)優先、無ければ項目座標
+    // 写真: 各写真を自身の座標(EXIF)に配置。座標が無い写真のみ項目座標にフォールバック。
     var ph=_photosByItem[it.id]||[];
-    if(ph.length){
-      var withGeo=ph.filter(function(p){ return p.lat!=null&&p.lng!=null; });
-      var pc=withGeo.length?[withGeo[0].lat,_unwrapLng(withGeo[0].lng, refLng)]:((it.lat!=null&&it.lng!=null)?[it.lat,refLng]:null);
-      if(pc){
-        var icon=L.divIcon({className:'ph-pin-wrap',html:'<span class="ph-pin">📷<b>'+ph.length+'</b></span>',iconSize:[34,26],iconAnchor:[17,26]});
-        (function(iid){ L.marker(pc,{icon:icon,zIndexOffset:1000}).addTo(map).on('click',function(){ openLb(iid,0); }); })(it.id);
-        bounds.push(pc);
-      }
-    }
+    ph.forEach(function(p,pidx){
+      var ll=null;
+      if(p.lat!=null&&p.lng!=null){ ll=[p.lat, _unwrapLng(p.lng, refLng!=null?refLng:p.lng)]; refLng=ll[1]; }
+      else if(it.lat!=null&&it.lng!=null){ ll=[it.lat, (itemPlng!=null?itemPlng:_unwrapLng(it.lng, refLng!=null?refLng:it.lng))]; }
+      if(ll){ photoPts.push({ll:ll, iid:it.id, idx:pidx}); bounds.push(ll); }
+    });
   });
+  _addPhotoCluster(map, photoPts); // 縮尺に応じて近接写真をまとめる
   if(bounds.length) map.fitBounds(bounds,{padding:[26,26],maxZoom:13});
   setTimeout(function(){ map.invalidateSize(); },120);
 }
