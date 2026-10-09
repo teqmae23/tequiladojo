@@ -511,6 +511,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             </div>
             <button class="btn bp" style="width:fit-content" onclick="runVisitCountRecompute()">🔢 来場回数の不足を補正（増やすのみ）</button>
             <div id="visitcount-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+            <div id="visitcount-list" style="margin-top:6px;max-height:340px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
           </div>
 
           <!-- カクテル注文のベースボトルID補完 -->
@@ -4908,10 +4909,17 @@ async function runVisitCountRecompute(){
       // 増やす方向のみ補正（visits件数が記録より多い場合）。減らさない。
       if(actual>stored) diffs.push({id:m.id, name:(m.nickname||m.name||m.displayId||m.id), disp:(m.displayId||m.memberId||m.id), stored:stored, actual:actual});
     });
-    if(!diffs.length){ prog.textContent='増やすべきズレはありませんでした（全'+members.length+'名）'; toast('来場回数の不足はありませんでした'); return; }
+    var lb=document.getElementById('visitcount-list');
+    if(!diffs.length){ prog.textContent='増やすべきズレはありませんでした（全'+members.length+'名）'; if(lb){ lb.style.display='none'; lb.innerHTML=''; } toast('来場回数の不足はありませんでした'); return; }
     diffs.sort(function(a,b){ return (b.actual-b.stored)-(a.actual-a.stored); });
-    var sample=diffs.slice(0,20).map(function(x){ return '・'+x.name+'('+x.disp+') '+x.stored+' → '+x.actual+'（+'+(x.actual-x.stored)+'）'; }).join('\n');
-    if(!confirm(diffs.length+'名の会員で来場回数が実際の来場より少なくなっています。\nvisits件数まで増やしますか？（減らしません）\n\n'+sample+(diffs.length>20?('\n…ほか'+(diffs.length-20)+'名'):''))){ prog.textContent='キャンセル（'+diffs.length+'名の不足を検出）'; return; }
+    // 不足している会員を全員、画面に一覧表示（旧→新・+差分）
+    if(lb){
+      lb.innerHTML='<div style="padding:6px 10px;font-weight:600;background:var(--cream2);position:sticky;top:0;font-size:12px">不足している会員 '+diffs.length+'名（旧→新）</div>'
+        +diffs.map(function(x){ return '<div style="padding:4px 10px;border-top:1px solid var(--border);font-size:12px;display:flex;gap:8px;align-items:baseline"><span class="mono" style="color:var(--ink3);min-width:72px">'+escHtml(String(x.disp))+'</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(String(x.name))+'</span><span class="mono" style="white-space:nowrap">'+x.stored+' → <strong>'+x.actual+'</strong> <span style="color:var(--teal)">(+'+(x.actual-x.stored)+')</span></span></div>'; }).join('');
+      lb.style.display='block';
+    }
+    prog.textContent=diffs.length+'名の不足を検出（下に全員表示）';
+    if(!confirm(diffs.length+'名の来場回数を visits件数まで増やしますか？（減らしません・下の一覧を参照）')){ prog.textContent='キャンセル（'+diffs.length+'名の不足を検出）'; return; }
     prog.textContent='更新中... 0/'+diffs.length;
     var b=db.batch(), bc=0, done=0;
     for(var i=0;i<diffs.length;i++){
