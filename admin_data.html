@@ -506,11 +506,12 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <!-- 来場回数（visitCount）の再計算 -->
           <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
             <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
-              <strong>来場回数の再計算</strong> — 各会員の <code>visitCount</code> を、実際の来場（visits）件数に合わせて修正します。<br>
-              <span style="font-size:11px">過去に「新規ゲストの初回来場が数えられない」不具合でズレた会員を一括補正します。実行前にズレ一覧をプレビュー表示します。</span>
+              <strong>来場回数の再計算</strong> — 各会員の <code>visitCount</code> が実際の来場（visits）件数より<strong>少ない場合のみ増やします（減らしません）</strong>。<br>
+              <span style="font-size:11px">過去に「新規ゲストの初回来場が数えられない」不具合でカウント不足になった会員を一括補正します。実行前に不足一覧をプレビュー表示します。</span>
             </div>
-            <button class="btn bp" style="width:fit-content" onclick="runVisitCountRecompute()">🔢 来場回数を実数に再計算</button>
+            <button class="btn bp" style="width:fit-content" onclick="runVisitCountRecompute()">🔢 来場回数の不足を補正（増やすのみ）</button>
             <div id="visitcount-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+            <div id="visitcount-list" style="margin-top:6px;max-height:340px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
           </div>
 
           <!-- カクテル注文のベースボトルID補完 -->
@@ -4905,12 +4906,20 @@ async function runVisitCountRecompute(){
     members.forEach(function(m){
       var actual=cnt[m.id]||0;
       var stored=(typeof m.visitCount==='number')?m.visitCount:(parseInt(m.visitCount)||0);
-      if(actual!==stored) diffs.push({id:m.id, name:(m.nickname||m.name||m.displayId||m.id), disp:(m.displayId||m.memberId||m.id), stored:stored, actual:actual});
+      // 増やす方向のみ補正（visits件数が記録より多い場合）。減らさない。
+      if(actual>stored) diffs.push({id:m.id, name:(m.nickname||m.name||m.displayId||m.id), disp:(m.displayId||m.memberId||m.id), stored:stored, actual:actual});
     });
-    if(!diffs.length){ prog.textContent='ズレはありませんでした（全'+members.length+'名）'; toast('来場回数のズレはありませんでした'); return; }
-    diffs.sort(function(a,b){ return (a.actual-a.stored)-(b.actual-b.stored); });
-    var sample=diffs.slice(0,20).map(function(x){ return '・'+x.name+'('+x.disp+') '+x.stored+' → '+x.actual; }).join('\n');
-    if(!confirm(diffs.length+'名の会員で来場回数が実数とズレています。\nvisits件数に合わせて修正しますか？\n\n'+sample+(diffs.length>20?('\n…ほか'+(diffs.length-20)+'名'):''))){ prog.textContent='キャンセル（'+diffs.length+'名のズレを検出）'; return; }
+    var lb=document.getElementById('visitcount-list');
+    if(!diffs.length){ prog.textContent='増やすべきズレはありませんでした（全'+members.length+'名）'; if(lb){ lb.style.display='none'; lb.innerHTML=''; } toast('来場回数の不足はありませんでした'); return; }
+    diffs.sort(function(a,b){ return (b.actual-b.stored)-(a.actual-a.stored); });
+    // 不足している会員を全員、画面に一覧表示（旧→新・+差分）
+    if(lb){
+      lb.innerHTML='<div style="padding:6px 10px;font-weight:600;background:var(--cream2);position:sticky;top:0;font-size:12px">不足している会員 '+diffs.length+'名（旧→新）</div>'
+        +diffs.map(function(x){ return '<div style="padding:4px 10px;border-top:1px solid var(--border);font-size:12px;display:flex;gap:8px;align-items:baseline"><span class="mono" style="color:var(--ink3);min-width:72px">'+escHtml(String(x.disp))+'</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(String(x.name))+'</span><span class="mono" style="white-space:nowrap">'+x.stored+' → <strong>'+x.actual+'</strong> <span style="color:var(--teal)">(+'+(x.actual-x.stored)+')</span></span></div>'; }).join('');
+      lb.style.display='block';
+    }
+    prog.textContent=diffs.length+'名の不足を検出（下に全員表示）';
+    if(!confirm(diffs.length+'名の来場回数を visits件数まで増やしますか？（減らしません・下の一覧を参照）')){ prog.textContent='キャンセル（'+diffs.length+'名の不足を検出）'; return; }
     prog.textContent='更新中... 0/'+diffs.length;
     var b=db.batch(), bc=0, done=0;
     for(var i=0;i<diffs.length;i++){
@@ -4920,10 +4929,10 @@ async function runVisitCountRecompute(){
       if(bc>=450){ await b.commit(); b=db.batch(); bc=0; prog.textContent='更新中... '+done+'/'+diffs.length; }
     }
     if(bc>0) await b.commit();
-    try{ writeJournal('bulk-update','members','visitCount-recompute',{count:diffs.length},{updated:diffs.length, changes:diffs.slice(0,200).map(function(x){ return x.disp+':'+x.stored+'>'+x.actual; })}); }catch(e){}
+    try{ writeJournal('bulk-update','members','visitCount-topup',{count:diffs.length},{updated:diffs.length, changes:diffs.slice(0,200).map(function(x){ return x.disp+':'+x.stored+'>'+x.actual; })}); }catch(e){}
     diffs.forEach(function(x){ var m=(cache.members||[]).find(function(mm){ return mm.id===x.id; }); if(m) m.visitCount=x.actual; });
-    prog.textContent='完了: '+diffs.length+'名の来場回数を修正しました';
-    toast(diffs.length+'名の来場回数を修正しました');
+    prog.textContent='完了: '+diffs.length+'名の来場回数を増やしました';
+    toast(diffs.length+'名の来場回数を補正しました');
   }catch(e){ prog.textContent='エラー: '+(e.message||e); toast('再計算に失敗: '+(e.message||e),'err'); }
 }
 async function runFieldMigration(){
