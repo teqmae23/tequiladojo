@@ -503,6 +503,16 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div id="migration-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
           </div>
 
+          <!-- 来場回数（visitCount）の再計算 -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
+              <strong>来場回数の再計算</strong> — 各会員の <code>visitCount</code> を、実際の来場（visits）件数に合わせて修正します。<br>
+              <span style="font-size:11px">過去に「新規ゲストの初回来場が数えられない」不具合でズレた会員を一括補正します。実行前にズレ一覧をプレビュー表示します。</span>
+            </div>
+            <button class="btn bp" style="width:fit-content" onclick="runVisitCountRecompute()">🔢 来場回数を実数に再計算</button>
+            <div id="visitcount-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+          </div>
+
           <!-- カクテル注文のベースボトルID補完 -->
           <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
             <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
@@ -4878,6 +4888,44 @@ async function cleanupStep5(){
 }
 
 // 廃止フィールド一括削除マイグレーション
+// 来場回数(visitCount)を visits の実件数に合わせて一括再計算
+async function runVisitCountRecompute(){
+  var prog=document.getElementById('visitcount-progress');
+  prog.textContent='会員・来場データ読み込み中...';
+  try{
+    var memSnap=await db.collection('members').get();
+    var members=memSnap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    var visSnap=await db.collection('visits').get();
+    // 解決インデックス: realId(docID)/displayId/memberId → realId
+    var idx={};
+    members.forEach(function(m){ idx[m.id]=m.id; if(m.displayId!=null) idx[String(m.displayId)]=m.id; if(m.memberId!=null) idx[String(m.memberId)]=m.id; });
+    var cnt={};
+    visSnap.docs.forEach(function(d){ var mid=d.data().memberId; if(mid==null) return; var rid=idx[String(mid)]; if(rid) cnt[rid]=(cnt[rid]||0)+1; });
+    var diffs=[];
+    members.forEach(function(m){
+      var actual=cnt[m.id]||0;
+      var stored=(typeof m.visitCount==='number')?m.visitCount:(parseInt(m.visitCount)||0);
+      if(actual!==stored) diffs.push({id:m.id, name:(m.nickname||m.name||m.displayId||m.id), disp:(m.displayId||m.memberId||m.id), stored:stored, actual:actual});
+    });
+    if(!diffs.length){ prog.textContent='ズレはありませんでした（全'+members.length+'名）'; toast('来場回数のズレはありませんでした'); return; }
+    diffs.sort(function(a,b){ return (a.actual-a.stored)-(b.actual-b.stored); });
+    var sample=diffs.slice(0,20).map(function(x){ return '・'+x.name+'('+x.disp+') '+x.stored+' → '+x.actual; }).join('\n');
+    if(!confirm(diffs.length+'名の会員で来場回数が実数とズレています。\nvisits件数に合わせて修正しますか？\n\n'+sample+(diffs.length>20?('\n…ほか'+(diffs.length-20)+'名'):''))){ prog.textContent='キャンセル（'+diffs.length+'名のズレを検出）'; return; }
+    prog.textContent='更新中... 0/'+diffs.length;
+    var b=db.batch(), bc=0, done=0;
+    for(var i=0;i<diffs.length;i++){
+      var x=diffs[i];
+      b.update(db.collection('members').doc(x.id),{visitCount:x.actual});
+      bc++; done++;
+      if(bc>=450){ await b.commit(); b=db.batch(); bc=0; prog.textContent='更新中... '+done+'/'+diffs.length; }
+    }
+    if(bc>0) await b.commit();
+    try{ writeJournal('bulk-update','members','visitCount-recompute',{count:diffs.length},{updated:diffs.length, changes:diffs.slice(0,200).map(function(x){ return x.disp+':'+x.stored+'>'+x.actual; })}); }catch(e){}
+    diffs.forEach(function(x){ var m=(cache.members||[]).find(function(mm){ return mm.id===x.id; }); if(m) m.visitCount=x.actual; });
+    prog.textContent='完了: '+diffs.length+'名の来場回数を修正しました';
+    toast(diffs.length+'名の来場回数を修正しました');
+  }catch(e){ prog.textContent='エラー: '+(e.message||e); toast('再計算に失敗: '+(e.message||e),'err'); }
+}
 async function runFieldMigration(){
   if(!confirm('セッション（sessionId・seq）、来場（visitKey）、注文（visitId）の廃止フィールドをFirestoreから削除します。\n\n事前にCSVバックアップを取ることを推奨します。\n実行しますか？')) return;
   var prog=document.getElementById('migration-progress');
