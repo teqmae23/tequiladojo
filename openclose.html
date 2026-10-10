@@ -535,12 +535,22 @@ g("btn-break-store").addEventListener("click",function(){
           });
       }).catch(function(e){toast("休憩処理失敗: "+e.message,"err");});
   } else if(storeStatus==="break"){
-    var upd={};upd["breakEnd"+breakIndex]=t;
-    journaledUpdate("sessions",currentSessionId,upd)
-      .then(function(){
-        applyStoreStatus("open");
-        if(!currentTestMode) writePublicStatus('open',{layoutId:currentLayoutId,sessionDate:currentSessionDate});
-        toast("休憩終了（"+t+"）");
+    if(!currentSessionId){ toast("営業セッションがありません","err"); return; }
+    // in-memory の breakIndex に頼らず、未終了の休憩（breakStartN あり・breakEndN なし）を
+    // セッションから探して確実に終了させる（リロードやデータ不整合でも休憩終了できるように）
+    db.collection("sessions").doc(currentSessionId).get()
+      .then(function(doc){
+        var d=doc.data()||{};
+        var idx=0;
+        for(var n=3;n>=1;n--){ if(d["breakStart"+n] && !d["breakEnd"+n]){ idx=n; break; } }
+        if(!idx) idx=breakIndex||1; // フォールバック
+        var upd={}; upd["breakEnd"+idx]=t;
+        return journaledUpdate("sessions",currentSessionId,upd,d).then(function(){
+          breakIndex=0;
+          applyStoreStatus("open");
+          if(!currentTestMode) writePublicStatus('open',{layoutId:currentLayoutId,sessionDate:currentSessionDate});
+          toast("休憩終了（"+t+"）");
+        });
       })
       .catch(function(e){toast("休憩終了処理失敗: "+e.message,"err");});
   }
@@ -655,16 +665,17 @@ function restoreStoreState(){
       currentTestMode=!!(d.testMode);
       var tmChk=g("oc-test-mode");if(tmChk)tmChk.checked=currentTestMode;
       var memoEl=g("oc-memo");if(memoEl)memoEl.value=d.memo||"";
-      var fields=[d.breakStart1,d.breakEnd1,d.breakStart2,d.breakEnd2,d.breakStart3,d.breakEnd3];
-      var filled=fields.filter(function(f){return f;}).length;
-      if(filled===1||filled===3||filled===5){
-        if(filled>=4)breakIndex=3;
-        else if(filled>=2)breakIndex=2;
-        else breakIndex=1;
+      // 未終了の休憩（breakStartN あり・breakEndN なし）があれば休憩中。
+      // 個数の偶奇ではなく start/end の対応で判定するため、データ不整合でも誤検出しない。
+      var openBreakIdx=0;
+      for(var bn=1;bn<=3;bn++){ if(d["breakStart"+bn] && !d["breakEnd"+bn]) openBreakIdx=bn; }
+      if(openBreakIdx){
+        breakIndex=openBreakIdx;
         applyStoreStatus("break");
         var bResume=d['breakResumeTime'+breakIndex]||null;
         if(!currentTestMode) writePublicStatus('break',{breakResumeTime:bResume,sessionDate:currentSessionDate});
       } else {
+        breakIndex=0;
         applyStoreStatus("open");
         if(!currentTestMode) writePublicStatus('open',{layoutId:currentLayoutId,sessionDate:currentSessionDate});
       }
