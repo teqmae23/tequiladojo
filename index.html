@@ -199,6 +199,7 @@ body::before{
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script src="/news-read.js?v=20260810"></script>
 <script src="/i18n.js?v=20260830"></script>
 <script>
@@ -857,22 +858,28 @@ function loadStoreStatus(){
 
   render('<span style="color:#aaa;font-size:12px;letter-spacing:.02em;">'+t('ss_checking')+'</span>');
 
-  // まずFirebase RTDB（認証不要・公開読み取り）で即時表示
+  if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+  var RTDB_URL='https://tequiladojo-default-rtdb.firebaseio.com';
+  var _authoritativeDone=false, _realtimeOn=false;
+  // Firebase RTDB（認証不要・公開読み取り）をリアルタイム購読し、開店/閉店を即時反映する。
+  // （従来は読み込み時に一度だけ取得していたため、開いたままのTOPに反映されなかった）
   // RTDB側のルール: { "storeStatus": { ".read": true, ".write": false } }（書き込みはFunctions経由のみ）
-  var RTDB_URL='https://tequiladojo-default-rtdb.firebaseio.com/storeStatus.json';
-  fetch(RTDB_URL)
-  .then(function(r){ if(!r.ok) throw new Error('http '+r.status); return r.json(); })
-  .then(function(d){
-    if(!d||!d.status) throw new Error('empty');
-    renderStatus({status:d.status, breakResumeTime:d.breakResumeTime}); // RTDBで即時（楽観的）表示
-    // RTDBは書き込み失敗等で古い場合があるため、状態の正否は Functions(Firestore) を
-    // 権威として必ず上書き訂正する（RTDBが閉店中でも実際に開店中なら開店中に直る）。
-    callGetStatus();
-  })
-  .catch(function(){
-    // RTDB未設定またはエラー → Functionsにフォールバック
-    callGetStatus();
-  });
+  try{
+    if(firebase.database){
+      firebase.app().database(RTDB_URL).ref('storeStatus').on('value', function(snap){
+        var d=snap.val(); _realtimeOn=true;
+        if(d&&d.status) renderStatus({status:d.status, breakResumeTime:d.breakResumeTime});
+        else if(!_authoritativeDone) showClosedFromSchedules();
+      }, function(){ /* 購読失敗 */ if(!_authoritativeDone && !_realtimeOn) callGetStatus(); });
+    }
+  }catch(e){ /* databaseSDK不可 */ }
+  // 権威（Firestore）で一度だけ補正＋TOPアクセス記録（購読できていれば以降はRTDB購読が担当）。
+  // RTDBが書き込み失敗等で古い場合でも、実際の状態に上書き訂正する。
+  try{
+    firebase.app().functions('asia-northeast1').httpsCallable('getStoreStatus')({ logTop: true })
+      .then(function(res){ _authoritativeDone=true; renderStatus(res.data||{status:'closed'}); })
+      .catch(function(){ if(!_realtimeOn) showClosedFromSchedules(); });
+  }catch(e){ if(!_realtimeOn) showClosedFromSchedules(); }
 }
 
 // ── スケジュール（カレンダー）多言語対応 ──────────────────────
