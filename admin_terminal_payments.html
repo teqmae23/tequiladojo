@@ -70,6 +70,8 @@ tr.r-ng{background:#fdf6f4}
 .lm-pay{background:var(--cream2);border-radius:var(--r);padding:9px 12px;font-size:13px;margin-bottom:12px}
 .lm-row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
 .lm-row input[type=date]{padding:8px 10px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream);font-family:var(--sans)}
+#add-modal{position:fixed;inset:0;background:rgba(24,17,10,.45);z-index:1000;display:none;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto}
+.lm-row input[type=number],.lm-row input[type=text],.lm-row input[type=datetime-local]{padding:8px 10px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream);font-family:var(--sans);width:100%}
 .lm-visits{border:1px solid var(--border2);border-radius:var(--r);max-height:340px;overflow-y:auto}
 .vrow{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px}
 .vrow:last-child{border-bottom:none}
@@ -132,6 +134,7 @@ tr.r-ng{background:#fdf6f4}
           </select>
         </label>
         <button class="btn bp" id="btn-reload">🔄 更新</button>
+        <button class="btn bp" id="btn-add" title="WisePad単独で決済した分を手入力して来場に紐づけ">＋ 手入力で追加</button>
       </div>
       <div class="summary" id="summary" style="display:none"></div>
     </div>
@@ -164,6 +167,20 @@ tr.r-ng{background:#fdf6f4}
         <div class="sum" id="lm-sum"></div>
         <button class="btn bp sm" id="lm-commit" style="margin-left:auto" disabled>選択した伝票に紐づける</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div id="add-modal">
+  <div class="lm-card">
+    <div class="lm-head">カード決済を手入力で追加<button id="am-close">×</button></div>
+    <div class="lm-body">
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:10px;line-height:1.6">WisePad 3 単独（POSを通さず端末だけ）で決済した分を記録します。保存すると続けて「紐づけ」画面が開くので、対象の来場（現金会計など）を選ぶと、その伝票の会計方法が<b>カード</b>に変わります。</div>
+      <div class="lm-row"><label style="font-size:12px;color:var(--ink2);min-width:82px">金額(¥)</label><input type="number" id="am-amount" min="1" step="1" inputmode="numeric" placeholder="例: 5000"></div>
+      <div class="lm-row"><label style="font-size:12px;color:var(--ink2);min-width:82px">決済日時</label><input type="datetime-local" id="am-when"></div>
+      <div class="lm-row"><label style="font-size:12px;color:var(--ink2);min-width:82px">PaymentIntent</label><input type="text" id="am-pi" placeholder="pi_…（任意・Stripe画面のID。入れるとブランド/下4桁を自動取得）"></div>
+      <div class="lm-row"><label style="font-size:12px;color:var(--ink2);min-width:82px">備考</label><input type="text" id="am-note" placeholder="任意"></div>
+      <div class="lm-foot"><div class="sum" id="am-msg" style="color:var(--red)"></div><button class="btn bp sm" id="am-save" style="margin-left:auto">保存して紐づけへ</button></div>
     </div>
   </div>
 </div>
@@ -534,6 +551,58 @@ async function commitLink(){
     load();
   }catch(e){ toast("紐づけ失敗: "+e.message,"err"); g("lm-commit").disabled=false; }
 }
+
+// ── カード決済を手入力で追加（WisePad単独決済 → 来場に紐づけ） ──────────
+function openAdd(){
+  g("am-amount").value="";
+  g("am-pi").value="";
+  g("am-note").value="";
+  var d=new Date();
+  g("am-when").value=d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate())+"T"+pad2(d.getHours())+":"+pad2(d.getMinutes());
+  g("am-msg").textContent="";
+  g("add-modal").style.display="flex";
+}
+function closeAdd(){ g("add-modal").style.display="none"; }
+async function saveAdd(){
+  var amt=parseInt(g("am-amount").value,10)||0;
+  if(amt<=0){ g("am-msg").textContent="金額を入力してください"; return; }
+  if(amt>1000000){ g("am-msg").textContent="金額が上限を超えています"; return; }
+  var whenStr=gv("am-when");
+  var when=whenStr?new Date(whenStr):new Date();
+  if(isNaN(when.getTime())) when=new Date();
+  var pi=gv("am-pi")||null;
+  var note=gv("am-note")||"WisePad単独決済（手入力）";
+  g("am-save").disabled=true; g("am-msg").textContent="";
+  try{
+    var user=auth.currentUser;
+    var ref=db.collection("terminalPayments").doc();
+    await ref.set({
+      amount:amt, currency:"jpy", status:"succeeded",
+      source:"app",            // 一覧では「手入力」バッジ
+      manualWeb:true,          // Web手入力の目印（アプリ手入力と区別）
+      description:note,
+      paymentIntentId:pi,
+      visitKeys:[],
+      requestedByUid:user?user.uid:null,
+      createdAt:firebase.firestore.Timestamp.fromDate(when),
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    toast("手入力で追加しました","inf");
+    closeAdd();
+    g("f-kind").value="store";
+    await loadStore();         // 一覧を更新（新しい行を含める）
+    if(allRows.some(function(x){ return x.id===ref.id; })){ openLink(ref.id); } // そのまま紐づけへ
+    else toast("期間フィルタを広げて「🔗紐づけ」してください","inf");
+  }catch(e){
+    g("am-msg").textContent="保存失敗: "+e.message;
+  }finally{
+    g("am-save").disabled=false;
+  }
+}
+g("btn-add").addEventListener("click",openAdd);
+g("am-close").addEventListener("click",closeAdd);
+g("add-modal").addEventListener("click",function(e){ if(e.target===g("add-modal")) closeAdd(); });
+g("am-save").addEventListener("click",saveAdd);
 </script>
 </body>
 </html>
