@@ -860,26 +860,33 @@ function loadStoreStatus(){
 
   if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
   var RTDB_URL='https://tequiladojo-default-rtdb.firebaseio.com';
-  var _authoritativeDone=false, _realtimeOn=false;
-  // Firebase RTDB（認証不要・公開読み取り）をリアルタイム購読し、開店/閉店を即時反映する。
-  // （従来は読み込み時に一度だけ取得していたため、開いたままのTOPに反映されなかった）
-  // RTDB側のルール: { "storeStatus": { ".read": true, ".write": false } }（書き込みはFunctions経由のみ）
+  // 表示する営業状態は常に「権威（Firestore=getStoreStatus）」の値だけを使う。
+  // RTDBの生値は信頼しない（RTDB書き込みが失敗すると古い status が残り、以前はそれを
+  // 表示して「開店中なのに閉店」と誤表示していた）。RTDBは“変化の合図”としてのみ使う。
+  var _ssShown=false, _rtdbFirst=true;
+  function pullAuthoritative(logTop){
+    try{
+      firebase.app().functions('asia-northeast1').httpsCallable('getStoreStatus')(logTop?{ logTop:true }:{})
+        .then(function(res){ _ssShown=true; renderStatus(res.data||{status:'closed'}); })
+        .catch(function(){ if(!_ssShown) showClosedFromSchedules(); });
+    }catch(e){ if(!_ssShown) showClosedFromSchedules(); }
+  }
+  pullAuthoritative(true); // 初回: 権威取得＋TOPアクセス記録
+  // RTDB storeStatus の変化を検知したら権威を取り直して即時反映（表示値は常に権威）。
   try{
     if(firebase.database){
-      firebase.app().database(RTDB_URL).ref('storeStatus').on('value', function(snap){
-        var d=snap.val(); _realtimeOn=true;
-        if(d&&d.status) renderStatus({status:d.status, breakResumeTime:d.breakResumeTime});
-        else if(!_authoritativeDone) showClosedFromSchedules();
-      }, function(){ /* 購読失敗 */ if(!_authoritativeDone && !_realtimeOn) callGetStatus(); });
+      firebase.app().database(RTDB_URL).ref('storeStatus').on('value', function(){
+        if(_rtdbFirst){ _rtdbFirst=false; return; } // 初回(現在値)は上のpullに任せる
+        pullAuthoritative(false); // 変化時のみ再取得（アクセス記録はしない）
+      }, function(){ /* 購読不可: 無視（権威は取得済み） */ });
     }
   }catch(e){ /* databaseSDK不可 */ }
-  // 権威（Firestore）で一度だけ補正＋TOPアクセス記録（購読できていれば以降はRTDB購読が担当）。
-  // RTDBが書き込み失敗等で古い場合でも、実際の状態に上書き訂正する。
-  try{
-    firebase.app().functions('asia-northeast1').httpsCallable('getStoreStatus')({ logTop: true })
-      .then(function(res){ _authoritativeDone=true; renderStatus(res.data||{status:'closed'}); })
-      .catch(function(){ if(!_realtimeOn) showClosedFromSchedules(); });
-  }catch(e){ if(!_realtimeOn) showClosedFromSchedules(); }
+  // RTDB書き込み失敗で変化合図が来ない場合の保険: タブ復帰・フォーカス時に最新へ（リロード不要）
+  if(!window._ssVisBound){
+    window._ssVisBound=true;
+    document.addEventListener('visibilitychange',function(){ if(!document.hidden) pullAuthoritative(false); });
+    window.addEventListener('focus',function(){ pullAuthoritative(false); });
+  }
 }
 
 // ── スケジュール（カレンダー）多言語対応 ──────────────────────
