@@ -135,6 +135,7 @@ tr.r-ng{background:#fdf6f4}
         </label>
         <button class="btn bp" id="btn-reload">🔄 更新</button>
         <button class="btn bp" id="btn-add" title="WisePad単独で決済した分を手入力して来場に紐づけ">＋ 手入力で追加</button>
+        <button class="btn bs" id="btn-cancel-unprocessed" title="表示中の未処理（処理中/未処理）の決済をすべて中断にする">⛔ 未処理を一括中断</button>
       </div>
       <div class="summary" id="summary" style="display:none"></div>
     </div>
@@ -418,8 +419,11 @@ function renderStore(){
     var linkBtn="<button class='btn bs sm' data-link='"+esc(r.id)+"'>"+(hasVk?"✏️編集":"🔗紐づけ")+"</button>";
     var vks=hasVk?("<span class='mono'>"+r.visitKeys.map(esc).join(", ")+"</span> "+linkBtn)
            :(canLink?linkBtn:"<span class='dim'>—</span>");
+    var isUnprocessed=(r.status==="pending"||r.status==="processing");
     var note=r.status==="failed"?("<span class='err-txt'>"+esc(r.errorMessage||"不明なエラー")+"</span>")
-            :(r.status==="canceled"?"<span class='dim'>会計画面で中止</span>":"<span class='dim'>"+esc(r.description||"")+"</span>");
+            :(r.status==="canceled"?("<span class='dim'>"+(r.canceledByAdmin?"管理者が中断":"会計画面で中止")+"</span>")
+            :(isUnprocessed?("<span class='dim'>"+esc(r.description||"未処理")+"</span> <button class='btn bs sm' data-cancel='"+esc(r.id)+"'>⛔中断にする</button>")
+            :"<span class='dim'>"+esc(r.description||"")+"</span>"));
     return "<tr class='"+(r.status==="failed"?"r-ng":"")+"'>"+
       "<td class='mono'>"+esc(fmtTs(r.createdAt))+"</td>"+
       "<td>"+statusBadge(r.status)+"</td>"+
@@ -444,8 +448,41 @@ g("rows").addEventListener("click",function(e){
     return;
   }
   var lk=e.target.closest("[data-link]");
-  if(lk){ openLink(lk.getAttribute("data-link")); }
+  if(lk){ openLink(lk.getAttribute("data-link")); return; }
+  var cx=e.target.closest("[data-cancel]");
+  if(cx){ cancelUnprocessed(cx.getAttribute("data-cancel")); return; }
 });
+
+// ── 未処理（pending/processing）のまま放置された決済を「中断」にして無効扱いにする ──
+function _setCanceledBatch(ids){
+  var FV=firebase.firestore.FieldValue;
+  var b=db.batch();
+  ids.forEach(function(id){
+    b.set(db.collection("terminalPayments").doc(id),
+      { status:"canceled", canceledByAdmin:true, canceledAt:FV.serverTimestamp(), updatedAt:FV.serverTimestamp() },
+      { merge:true });
+  });
+  return b.commit();
+}
+async function cancelUnprocessed(payId){
+  var r=allRows.find(function(x){ return x.id===payId; }); if(!r) return;
+  if(r.status!=="pending"&&r.status!=="processing"){ toast("未処理の決済のみ中断できます","err"); return; }
+  if(!window.confirm("この未処理の決済を「中断」にして無効扱いにしますか？\n\n¥"+(Number(r.amount)||0).toLocaleString()+" ／ "+fmtTs(r.createdAt)
+    +"\n\n※端末側で処理中の場合は端末も中断されます。実際にカードへ課金されていないことを確認してください。")) return;
+  try{ await _setCanceledBatch([payId]); toast("中断にしました","inf"); load(); }
+  catch(e){ toast("中断失敗: "+e.message,"err"); }
+}
+async function cancelAllUnprocessed(){
+  if(gv("f-kind")!=="store"){ toast("店頭決済（WisePad 3）の一覧で実行してください","err"); return; }
+  var targets=allRows.filter(function(x){ return x.status==="pending"||x.status==="processing"; });
+  if(!targets.length){ toast("未処理の決済はありません","inf"); return; }
+  if(!window.confirm("表示中の未処理（処理中/未処理）の決済 "+targets.length+"件を、すべて「中断」にして無効扱いにしますか？\n\n※実際にカードへ課金されていないことを確認してください。")) return;
+  try{
+    var ids=targets.map(function(x){ return x.id; });
+    for(var i=0;i<ids.length;i+=450){ await _setCanceledBatch(ids.slice(i,i+450)); }
+    toast(targets.length+"件を中断にしました","inf"); load();
+  }catch(e){ toast("一括中断失敗: "+e.message,"err"); }
+}
 
 // ── 決済を来場（複数可）に紐づけ ─────────────────────────────
 // 1回の決済で複数人ぶんをまとめて払った場合に対応。伝票を複数選択して紐づける。
@@ -599,6 +636,7 @@ async function saveAdd(){
     g("am-save").disabled=false;
   }
 }
+g("btn-cancel-unprocessed").addEventListener("click",cancelAllUnprocessed);
 g("btn-add").addEventListener("click",openAdd);
 g("am-close").addEventListener("click",closeAdd);
 g("add-modal").addEventListener("click",function(e){ if(e.target===g("add-modal")) closeAdd(); });
