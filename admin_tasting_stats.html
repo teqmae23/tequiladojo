@@ -123,15 +123,15 @@ table.rk tr:hover td{background:var(--cream)}
       <h1>試飲ランキング</h1>
       <span class="sub" id="sub"></span>
     </div>
-    <div class="note">オンライン奢り（試飲）の記録を、<b>ストレート／ソーダ割り</b>に分けて銘柄ごとに集計します。クラス(BJRAX)・度数(通常/HP)・会員ID・期間で抽出できます。<br>※ソーダ割りは30ml固定・ストレートは選択ml。度数はHP=41%以上・通常=40%以下。</div>
+    <div class="note">実際の注文記録（<code>orders</code>）からテキーラの消費を、<b>ストレート／ソーダ割り</b>に分けて銘柄ごとに集計します。クラス(BJRAX)・度数(通常/HP)・会員ID・期間で抽出できます。<br>※ソーダ割り＝同一注文グループにソーダ代が計上されているテキーラ。金額＝テキーラ分（<code>単価×ml÷10</code>）。度数はHP=41%以上・通常=40%以下。</div>
     <div id="diag" class="note" style="color:var(--ink2)"></div>
 
     <div class="filters">
       <div class="fg"><span class="lbl">期間（注文日）</span><div style="display:flex;gap:4px;align-items:center"><input type="date" id="f-from"><span style="font-size:11px;color:var(--ink3)">〜</span><input type="date" id="f-to"></div></div>
       <div class="fg"><span class="lbl">状態</span>
         <select id="f-status">
-          <option value="valid">有効（承認待ち以降）</option>
           <option value="served" selected>提供済みのみ</option>
+          <option value="valid">有効（キャンセル除く）</option>
           <option value="all">全件（キャンセル含む）</option>
         </select>
       </div>
@@ -145,7 +145,7 @@ table.rk tr:hover td{background:var(--cream)}
       </div>
       <div class="fg"><span class="lbl">会員ID（注文者）</span><input type="text" id="f-member" placeholder="例: 260018 / 部分可"></div>
       <div class="fg"><span class="lbl">スタイル</span>
-        <select id="f-style"><option value="all">両方</option><option value="straight" selected>ストレートのみ</option><option value="soda">ソーダ割りのみ</option></select>
+        <select id="f-style"><option value="straight" selected>ストレート飲み</option><option value="soda">ソーダ割り</option><option value="all">両方</option></select>
       </div>
       <div class="fg"><span class="lbl">並び替え</span>
         <select id="f-metric"><option value="count">杯数</option><option value="ml">総量(ml)</option><option value="amount">金額</option></select>
@@ -177,8 +177,9 @@ function toast(msg,type){ var el=document.createElement('div'); el.className='to
 function yen(n){ return '¥'+Number(n||0).toLocaleString(); }
 var BJRAX_MAP={'1':'B','2':'J','3':'R','4':'A','5':'X'};
 
-var _treats=[];        // onlineTreats 全件
-var _bottles={};       // baseBottleId → bottleData（classId/abv 用）
+var _orders=[];        // orders 全件（生）
+var _bottles={};       // productCode(bottleId) → bottleData（classId/abv 用）
+var _sodaGroups={};    // orderGroupId → 1（ソーダ代が計上されているグループ）
 
 // ボトルのクラス文字（BJRAX）: classId[1] 優先、無ければ bottleId 9桁目
 function classLetter(id, b){
@@ -189,24 +190,30 @@ function classLetter(id, b){
 }
 function abvOf(b){ var v=b?parseFloat(b.abv):NaN; return isNaN(v)?null:v; }
 
-function tsMs(t){ if(t.createdAt&&t.createdAt.seconds) return t.createdAt.seconds*1000; if(t.createdAt&&t.createdAt.toDate) return t.createdAt.toDate().getTime(); return 0; }
-function dateStr(ms){ if(!ms) return ''; var d=new Date(ms); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
-
+// orderDate は YYMMDD 文字列。date入力(YYYY-MM-DD)→YYMMDD へ変換して文字列比較
+function ymd6(s){ s=String(s||''); if(!s) return ''; return s.length>=10 ? s.slice(2).replace(/-/g,'') : s; }
 function _today(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
 function setDefaultDates(){ if(!g('f-from').value) g('f-from').value='2026-05-27'; if(!g('f-to').value) g('f-to').value=_today(); }
+
+function isSodaLine(o){ return String(o.productType)==='misc' && String(o.productCode).toUpperCase()==='SODA'; }
+
 function load(){
   setDefaultDates();
   g('rows').innerHTML='<tr><td colspan="8" class="empty">読込中…</td></tr>';
-  db.collection('onlineTreats').get().then(function(snap){
-    _treats=snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
-    // 状態内訳（全件・フィルタ非依存）: データの有無と status 分布を可視化
-    var sc={created:0,paid:0,approved:0,served:0,cancelled:0,other:0};
-    _treats.forEach(function(t){ var s=t.status||'other'; if(sc[s]==null) sc.other++; else sc[s]++; });
-    g('diag').innerHTML='onlineTreats 読み込み <b>'+_treats.length+'件</b> ｜ 状態内訳: '
-      +'created '+sc.created+' / paid(承認待ち) '+sc.paid+' / approved(準備中) '+sc.approved+' / <b>served(提供済み) '+sc.served+'</b> / cancelled '+sc.cancelled+(sc.other?(' / その他 '+sc.other):'')
-      +(sc.served===0 && (sc.approved>0||sc.paid>0)?'　<span style="color:var(--red)">※提供済み(served)が0件です。「状態＝有効」で集計するか、提供処理の反映（サーバー側トリガー）をご確認ください。</span>':'');
-    // 対象ボトルの classId/abv を取得（10件ずつ documentId in）
-    var seen={}, ids=[]; _treats.forEach(function(t){ var k=t.baseBottleId||t.baseProductCode; if(k&&!seen[k]){ seen[k]=1; ids.push(k); } });
+  db.collection('orders').get().then(function(snap){
+    _orders=snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    _sodaGroups={};
+    var nTq=0, nSoda=0, sv={done:0,pending:0,blind:0,cancel:0};
+    _orders.forEach(function(o){
+      if(isSodaLine(o) && o.served!==0 && o.orderGroupId){ _sodaGroups[o.orderGroupId]=1; nSoda++; }
+      if(String(o.productType)==='tequila'){
+        nTq++;
+        if(o.served===3) sv.done++; else if(o.served===2) sv.blind++; else if(o.served===0) sv.cancel++; else sv.pending++;
+      }
+    });
+    g('diag').innerHTML='orders 読み込み <b>'+_orders.length+'件</b> ｜ テキーラ明細 <b>'+nTq+'件</b>（提供済 '+(sv.done+sv.blind)+' / 未提供 '+sv.pending+' / キャンセル '+sv.cancel+'）｜ ソーダ割りグループ '+nSoda+'件';
+    // テキーラ明細の productCode について bottleData（classId/abv）を取得（10件ずつ documentId in）
+    var seen={}, ids=[]; _orders.forEach(function(o){ if(String(o.productType)!=='tequila') return; var k=o.productCode; if(k&&!seen[k]){ seen[k]=1; ids.push(k); } });
     var chunks=[]; for(var i=0;i<ids.length;i+=10) chunks.push(ids.slice(i,i+10));
     return Promise.all(chunks.map(function(ck){
       return db.collection('bottleData').where(firebase.firestore.FieldPath.documentId(),'in',ck).get()
@@ -219,12 +226,12 @@ function load(){
 function activeClasses(){
   var s={}; Array.prototype.forEach.call(g('f-bjrax').querySelectorAll('.cb'),function(el){ if(el.classList.contains('on')) s[el.getAttribute('data-c')]=1; }); return s;
 }
-function statusPass(st, mode){
-  st=st||'';
+// served: 1=未提供, 2=ブラインド提供, 3=提供済, 0=キャンセル
+function statusPass(served, mode){
   if(mode==='all') return true;
-  if(mode==='served') return st==='served';
-  // valid: キャンセル・決済前を除く（paid/approved/served）
-  return st==='paid'||st==='approved'||st==='served';
+  if(mode==='served') return served===2||served===3;
+  // valid: キャンセル(0)以外
+  return served!==0;
 }
 
 function render(){
@@ -234,20 +241,21 @@ function render(){
   var cls=activeClasses();
   var allCls=(Object.keys(cls).length===5);
   var member=(g('f-member').value||'').trim();
-  var from=g('f-from').value, to=g('f-to').value;
+  var from=ymd6(g('f-from').value), to=ymd6(g('f-to').value);
   var metric=g('f-metric').value;
 
-  var agg={}; // key(baseBottleId) → {name,nom,id,cls,abv, cS,cO, mlS,mlO, amtS,amtO, members:Set}
+  var agg={}; // key(productCode) → {name,nom,id,cls,abv, cS,cO, mlS,mlO, amtS,amtO, members:Set}
   var tot={cS:0,cO:0,ml:0,amt:0, members:{}};
   var nMatched=0;
 
-  _treats.forEach(function(t){
-    if(!statusPass(t.status, statusMode)) return;
-    if(member && String(t.fromMemberId||'').indexOf(member)<0) return;
-    var ms=tsMs(t), ds=dateStr(ms);
-    if(from && ds && ds<from) return;
-    if(to && ds && ds>to) return;
-    var key=t.baseBottleId||t.baseProductCode||t.baseName||'?';
+  _orders.forEach(function(o){
+    if(String(o.productType)!=='tequila') return;
+    if(!statusPass(o.served, statusMode)) return;
+    if(member && String(o.customerId||'').indexOf(member)<0) return;
+    var od=String(o.orderDate||'');
+    if(from && od && od<from) return;
+    if(to && od && od>to) return;
+    var key=o.productCode||o.productName||'?';
     var b=_bottles[key];
     var cl=classLetter(key,b);
     var abv=abvOf(b);
@@ -256,14 +264,14 @@ function render(){
     // 度数フィルタ
     if(abvMode==='normal' && !(abv!=null&&abv<=40)) return;
     if(abvMode==='hp' && !(abv!=null&&abv>=41)) return;
-    var isSoda=(t.soda===true||t.style==='soda');
+    var isSoda=!!(o.orderGroupId && _sodaGroups[o.orderGroupId]);
     if(styleMode==='straight' && isSoda) return;
     if(styleMode==='soda' && !isSoda) return;
 
-    var a=agg[key]||(agg[key]={ id:key, name:t.baseName||key, nom:t.nom||'', cls:cl, abv:abv, cS:0,cO:0, mlS:0,mlO:0, amtS:0,amtO:0, members:{} });
-    var ml=Number(t.ml)||0, amt=Number(t.tequilaAmount!=null?t.tequilaAmount:t.amount)||0;
+    var a=agg[key]||(agg[key]={ id:key, name:o.productName||key, nom:(b&&b.nom)||'', cls:cl, abv:abv, cS:0,cO:0, mlS:0,mlO:0, amtS:0,amtO:0, members:{} });
+    var ml=Number(o.qty)||0, amt=Math.round((Number(o.unitPrice)||0)*ml/10);
     if(isSoda){ a.cO++; a.mlO+=ml; a.amtO+=amt; tot.cO++; } else { a.cS++; a.mlS+=ml; a.amtS+=amt; tot.cS++; }
-    if(t.fromMemberId){ a.members[t.fromMemberId]=1; tot.members[t.fromMemberId]=1; }
+    if(o.customerId){ a.members[o.customerId]=1; tot.members[o.customerId]=1; }
     tot.ml+=ml; tot.amt+=amt; nMatched++;
   });
 
@@ -276,7 +284,8 @@ function render(){
 
   // サマリ
   g('summary').innerHTML=
-    '<div class="chip"><div class="k">試飲 合計</div><div class="v">'+(tot.cS+tot.cO)+'<span style="font-size:12px"> 杯</span></div></div>'+
+    '<div class="chip"><div class="k">注文件数 / 条件一致</div><div class="v">'+_orders.length+' / '+nMatched+'</div></div>'+
+    '<div class="chip"><div class="k">テキーラ 合計</div><div class="v">'+(tot.cS+tot.cO)+'<span style="font-size:12px"> 杯</span></div></div>'+
     '<div class="chip"><div class="k">ストレート</div><div class="v s">'+tot.cS+'<span style="font-size:12px"> 杯</span></div></div>'+
     '<div class="chip"><div class="k">ソーダ割り</div><div class="v o">'+tot.cO+'<span style="font-size:12px"> 杯</span></div></div>'+
     '<div class="chip"><div class="k">総量</div><div class="v">'+tot.ml.toLocaleString()+'<span style="font-size:12px"> ml</span></div></div>'+
