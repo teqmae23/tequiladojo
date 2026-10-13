@@ -536,6 +536,39 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div id="orderdate-backfill-list" style="margin-top:6px;max-height:340px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
           </div>
 
+          <!-- 日付欠落スキャン（注文・来店・営業・予約） -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
+              <strong>日付欠落スキャン（注文・来店・営業・予約）</strong> — 各データで日付フィールドが未設定のレコード件数を一覧表示します（読み取りのみ）。<br>
+              <span style="font-size:11px">注文=orderDate / 来店=visitDate / 営業セッション=date / 予約=reservationDate。来店・営業はIDから日付復元可。予約はIDに日付を含まないため復元不可（件数のみ報告）。</span>
+            </div>
+            <button class="btn bp" style="width:fit-content" onclick="runBusinessDateScan()">🔍 日付欠落をスキャン</button>
+            <div id="bizscan-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+            <div id="bizscan-list" style="margin-top:6px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
+          </div>
+
+          <!-- 来店日(visitDate)の補完 -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
+              <strong>来店日(visitDate)の補完</strong> — <code>visitDate</code> 未設定の来店に、来店ID先頭6桁(YYMMDD)から日付を書き込みます（2026/5/29以降のみ）。
+            </div>
+            <button class="btn bp" style="width:fit-content" onclick="runDateBackfill('visits','visitDate','visit-date-progress','visit-date-list',true)">🔍 不足をプレビュー</button>
+            <button class="btn bp" style="width:fit-content;margin-left:6px" onclick="runDateBackfill('visits','visitDate','visit-date-progress','visit-date-list',false)">📅 来店日を補完する</button>
+            <div id="visit-date-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+            <div id="visit-date-list" style="margin-top:6px;max-height:340px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
+          </div>
+
+          <!-- 営業日(date)の補完 -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
+              <strong>営業日(date)の補完</strong> — <code>date</code> 未設定の営業セッションに、セッションID先頭6桁(YYMMDD)から日付を書き込みます（2026/5/29以降のみ）。
+            </div>
+            <button class="btn bp" style="width:fit-content" onclick="runDateBackfill('sessions','date','session-date-progress','session-date-list',true)">🔍 不足をプレビュー</button>
+            <button class="btn bp" style="width:fit-content;margin-left:6px" onclick="runDateBackfill('sessions','date','session-date-progress','session-date-list',false)">📅 営業日を補完する</button>
+            <div id="session-date-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+            <div id="session-date-list" style="margin-top:6px;max-height:340px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
+          </div>
+
           <!-- スタッフ来店IDの8桁正規化 -->
           <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
             <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#5a4000;margin-bottom:10px">
@@ -5119,6 +5152,123 @@ async function runOrderDateBackfill(previewOnly){
   }catch(e){
     prog.textContent='エラー: '+e.message;
     toast('補完失敗: '+e.message,'err');
+  }
+}
+
+// ── 汎用：日付フィールドの補完（ID先頭6桁から復元。2026/5/29以降のみ） ──
+// coll: コレクション名 / dateField: 補完する日付フィールド名
+async function runDateBackfill(coll, dateField, progId, listId, previewOnly){
+  var prog=document.getElementById(progId);
+  var listEl=document.getElementById(listId);
+  var FLABEL={orderDate:'注文日',visitDate:'来店日',date:'営業日',reservationDate:'予約日'};
+  var label=FLABEL[dateField]||dateField;
+  try{
+    prog.textContent='読込中...';
+    var snap=await db.collection(coll).get();
+    var targets=[], skipped=[], preCutoff=0;
+    snap.forEach(function(d){
+      var o=d.data();
+      if(o[dateField]!=null && String(o[dateField])!=='') return;
+      var id=String(d.id); var head=id.slice(0,6);
+      // 先頭6桁が妥当なYYMMDD（7桁目以降は数字/英字どちらでも可＝スタッフ来店ID等に対応）
+      if(/^\d{6}/.test(id) && _validYYMMDD(head)){
+        if(head<ORDERDATE_MIN){ preCutoff++; return; }
+        targets.push({ref:d.ref, id:id, date:head});
+      } else {
+        skipped.push(id);
+      }
+    });
+    if(!targets.length){
+      prog.textContent=label+'の補完対象はありません'
+        +(preCutoff?('（20'+ORDERDATE_MIN.slice(0,2)+'/'+ORDERDATE_MIN.slice(2,4)+'/'+ORDERDATE_MIN.slice(4,6)+'より前のため対象外: '+preCutoff+'件）'):'')
+        +(skipped.length?('（IDから日付復元不可: '+skipped.length+'件）'):'')
+        +(!preCutoff&&!skipped.length?'（すべて設定済み）':'');
+      if(listEl) listEl.style.display='none';
+      return;
+    }
+    var byDate={}; targets.forEach(function(t){ byDate[t.date]=(byDate[t.date]||0)+1; });
+    var dateRows=Object.keys(byDate).sort().map(function(dk){
+      return '<tr><td style="padding:3px 10px">20'+dk.slice(0,2)+'/'+dk.slice(2,4)+'/'+dk.slice(4,6)+'</td><td style="padding:3px 10px;text-align:right">'+byDate[dk]+'件</td></tr>';
+    }).join('');
+    if(listEl){
+      listEl.style.display='block';
+      listEl.innerHTML='<table style="width:100%;font-size:12px;border-collapse:collapse">'
+        +'<thead><tr><th style="text-align:left;padding:4px 10px;background:var(--cream2)">補完する'+label+'</th><th style="text-align:right;padding:4px 10px;background:var(--cream2)">件数</th></tr></thead>'
+        +'<tbody>'+dateRows+'</tbody></table>'
+        +(preCutoff?'<div style="padding:6px 10px;font-size:11px;color:var(--ink3)">※20'+ORDERDATE_MIN.slice(0,2)+'/'+ORDERDATE_MIN.slice(2,4)+'/'+ORDERDATE_MIN.slice(4,6)+'より前のため対象外: '+preCutoff+'件</div>':'')
+        +(skipped.length?'<div style="padding:6px 10px;font-size:11px;color:var(--ink3)">※IDから日付復元不可: '+skipped.length+'件</div>':'');
+    }
+    if(previewOnly){
+      prog.textContent='プレビュー: '+targets.length+'件が補完対象です（上の一覧を確認し「補完する」で実行）';
+      return;
+    }
+    if(!confirm(targets.length+'件に '+dateField+' を補完します（ID先頭6桁から復元）。実行しますか？')){ prog.textContent='中止しました'; return; }
+    prog.textContent=targets.length+'件を書き込み中...';
+    var done=0;
+    for(var j=0;j<targets.length;j+=400){
+      var batch=db.batch();
+      targets.slice(j,j+400).forEach(function(t){ var upd={}; upd[dateField]=t.date; batch.update(t.ref,upd); });
+      await batch.commit();
+      done=Math.min(j+400,targets.length);
+      prog.textContent='書き込み中 '+done+'/'+targets.length+'...';
+    }
+    targets.forEach(function(t){ var b={}; b[dateField]=null; var a={}; a[dateField]=t.date; writeJournal('update',coll,t.id,b,a); });
+    writeJournal('migration',coll,dateField+'-backfill',null,{updated:targets.length,skipped:skipped.length});
+    var msg='完了: '+targets.length+'件に'+label+'を補完しました'+(skipped.length?('（対象外 '+skipped.length+'件）'):'');
+    prog.textContent=msg; toast(msg);
+  }catch(e){
+    prog.textContent='エラー: '+e.message;
+    toast('補完失敗: '+e.message,'err');
+  }
+}
+
+// ── 日付欠落スキャン（読み取りのみ） ──
+async function runBusinessDateScan(){
+  var prog=document.getElementById('bizscan-progress');
+  var listEl=document.getElementById('bizscan-list');
+  var specs=[
+    {coll:'orders',field:'orderDate',idDate:true,label:'注文 (orders)'},
+    {coll:'visits',field:'visitDate',idDate:true,label:'来店 (visits)'},
+    {coll:'sessions',field:'date',idDate:true,label:'営業セッション (sessions)'},
+    {coll:'reservations',field:'reservationDate',idDate:false,label:'予約 (reservations)'}
+  ];
+  try{
+    var rows=[];
+    for(var k=0;k<specs.length;k++){
+      var s=specs[k];
+      prog.textContent='スキャン中... ('+s.coll+')';
+      var snap=await db.collection(s.coll).get();
+      var total=snap.size, miss=0, recov=0, pre=0;
+      snap.forEach(function(d){
+        var o=d.data();
+        if(o[s.field]!=null && String(o[s.field])!=='') return;
+        miss++;
+        if(s.idDate){ var head=String(d.id).slice(0,6); if(/^\d{6}/.test(String(d.id))&&_validYYMMDD(head)){ if(head<ORDERDATE_MIN) pre++; else recov++; } }
+      });
+      rows.push({label:s.label,total:total,miss:miss,recov:recov,pre:pre,idDate:s.idDate});
+    }
+    var html='<table style="width:100%;font-size:12px;border-collapse:collapse">'
+      +'<thead><tr><th style="text-align:left;padding:5px 10px;background:var(--cream2)">データ</th>'
+      +'<th style="text-align:right;padding:5px 10px;background:var(--cream2)">総数</th>'
+      +'<th style="text-align:right;padding:5px 10px;background:var(--cream2)">日付欠落</th>'
+      +'<th style="text-align:right;padding:5px 10px;background:var(--cream2)">復元可(5/29〜)</th>'
+      +'<th style="text-align:right;padding:5px 10px;background:var(--cream2)">対象外</th></tr></thead><tbody>';
+    rows.forEach(function(r){
+      var missColor=r.miss>0?'color:#8c2818;font-weight:700':'color:var(--ink3)';
+      var recovTxt=r.idDate?(r.recov+'件'):'—(ID非日付)';
+      var preTxt=r.idDate?('5/29前'+r.pre+' / 復元不可'+(r.miss-r.recov-r.pre)):(r.miss+'件');
+      html+='<tr><td style="padding:5px 10px">'+r.label+'</td>'
+        +'<td style="padding:5px 10px;text-align:right">'+r.total+'</td>'
+        +'<td style="padding:5px 10px;text-align:right;'+missColor+'">'+r.miss+'</td>'
+        +'<td style="padding:5px 10px;text-align:right">'+recovTxt+'</td>'
+        +'<td style="padding:5px 10px;text-align:right;font-size:11px;color:var(--ink3)">'+preTxt+'</td></tr>';
+    });
+    html+='</tbody></table>';
+    listEl.style.display='block'; listEl.innerHTML=html;
+    var totalMiss=rows.reduce(function(a,r){return a+r.miss;},0);
+    prog.textContent=totalMiss?('日付欠落 合計 '+totalMiss+'件。来店/営業は下の補完ツールで、注文は上の補完ツールで修正できます。'):'日付欠落はありません。';
+  }catch(e){
+    prog.textContent='エラー: '+e.message;
   }
 }
 
