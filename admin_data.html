@@ -528,7 +528,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
             <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
               <strong>注文日(orderDate)の補完</strong> — <code>orderDate</code> が未設定の注文に、注文ID先頭6桁(YYMMDD)から日付を書き込みます。<br>
-              <span style="font-size:11px">初期運用時にorderDate未付与のまま作成された注文（ID移行で連番IDへ置換済み）が対象。注文IDが日付6桁＋連番の形式のもののみ補完します。実行前に不足一覧をプレビュー表示します。</span>
+              <span style="font-size:11px">初期運用時にorderDate未付与のまま作成された注文（ID移行で連番IDへ置換済み）が対象。<b>2026/5/29以降</b>・注文IDが日付6桁＋連番の形式のもののみ補完します（5/28以前のテスト期間は対象外）。実行前に不足一覧をプレビュー表示します。</span>
             </div>
             <button class="btn bp" style="width:fit-content" onclick="runOrderDateBackfill(true)">🔍 不足をプレビュー</button>
             <button class="btn bp" style="width:fit-content;margin-left:6px" onclick="runOrderDateBackfill(false)">📅 注文日を補完する</button>
@@ -5055,13 +5055,14 @@ async function runCocktailBaseBackfill(){
 
 // ── 注文日(orderDate)の補完：ID先頭6桁(YYMMDD)から復元 ──
 function _validYYMMDD(s){ if(!/^\d{6}$/.test(s)) return false; var mm=parseInt(s.slice(2,4),10), dd=parseInt(s.slice(4,6),10); return mm>=1&&mm<=12&&dd>=1&&dd<=31; }
+var ORDERDATE_MIN='260529'; // この日(2026/5/29)以降のみ補完する（それ以前はテスト期間）
 async function runOrderDateBackfill(previewOnly){
   var prog=document.getElementById('orderdate-backfill-progress');
   var listEl=document.getElementById('orderdate-backfill-list');
   try{
     prog.textContent='注文を読込中...';
     var snap=await db.collection('orders').get();
-    var targets=[], skipped=[];
+    var targets=[], skipped=[], preCutoff=0;
     snap.forEach(function(d){
       var o=d.data();
       var has=(o.orderDate!=null && String(o.orderDate)!=='');
@@ -5070,13 +5071,17 @@ async function runOrderDateBackfill(previewOnly){
       var head=id.slice(0,6);
       // 連番ID(日付6桁+連番)のみ対象。先頭6桁が妥当なYYMMDDで、残りが数字。
       if(/^\d{6}\d+$/.test(id) && _validYYMMDD(head)){
+        if(head<ORDERDATE_MIN){ preCutoff++; return; } // 2026/5/28より前は補完しない
         targets.push({ref:d.ref, id:id, date:head, o:o});
       } else {
         skipped.push(id);
       }
     });
     if(!targets.length){
-      prog.textContent='補完対象の注文はありません'+(skipped.length?('（ID形式が連番でないため対象外: '+skipped.length+'件）'):'（すべてorderDate設定済み）');
+      prog.textContent='補完対象の注文はありません'
+        +(preCutoff?('（20'+ORDERDATE_MIN.slice(0,2)+'/'+ORDERDATE_MIN.slice(2,4)+'/'+ORDERDATE_MIN.slice(4,6)+'より前のため対象外: '+preCutoff+'件）'):'')
+        +(skipped.length?('（ID形式が連番でないため対象外: '+skipped.length+'件）'):'')
+        +(!preCutoff&&!skipped.length?'（すべてorderDate設定済み）':'');
       listEl.style.display='none';
       return;
     }
@@ -5089,6 +5094,7 @@ async function runOrderDateBackfill(previewOnly){
     listEl.innerHTML='<table style="width:100%;font-size:12px;border-collapse:collapse">'
       +'<thead><tr><th style="text-align:left;padding:4px 10px;background:var(--cream2)">補完する注文日</th><th style="text-align:right;padding:4px 10px;background:var(--cream2)">件数</th></tr></thead>'
       +'<tbody>'+dateRows+'</tbody></table>'
+      +(preCutoff?'<div style="padding:6px 10px;font-size:11px;color:var(--ink3)">※20'+ORDERDATE_MIN.slice(0,2)+'/'+ORDERDATE_MIN.slice(2,4)+'/'+ORDERDATE_MIN.slice(4,6)+'より前のため対象外: '+preCutoff+'件</div>':'')
       +(skipped.length?'<div style="padding:6px 10px;font-size:11px;color:var(--ink3)">※ID形式が連番でないため対象外: '+skipped.length+'件（'+skipped.slice(0,10).join(', ')+(skipped.length>10?' …':'')+'）</div>':'');
 
     if(previewOnly){
