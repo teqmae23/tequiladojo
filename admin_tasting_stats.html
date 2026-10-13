@@ -123,7 +123,7 @@ table.rk tr:hover td{background:var(--cream)}
       <h1>試飲ランキング</h1>
       <span class="sub" id="sub"></span>
     </div>
-    <div class="note">実際の注文記録（<code>orders</code>）からテキーラの消費を、<b>ストレート／ソーダ割り</b>に分けて銘柄ごとに集計します。クラス(BJRAX)・度数(通常/HP)・会員ID・期間で抽出できます。<br>※ソーダ割り＝同一注文グループにソーダ代が計上されているテキーラ。金額＝テキーラ分（<code>単価×ml÷10</code>）。度数はHP=41%以上・通常=40%以下。</div>
+    <div class="note">実際の注文記録（<code>orders</code>）からテキーラの消費を、<b>ストレート／ソーダ割り</b>に分けて銘柄ごとに集計します。<br>※<b>ストレート</b>＝テキーラ単品注文（<code>tequila</code>, ml=数量）。<b>ソーダ割り</b>＝テキーラベースのカクテル注文（<code>cocktail</code>, ベース=<code>baseProductCode</code>, ml=<code>baseSpiritMl</code>）＋オンライン奢りのソーダ指定。<br>※<b>注文種別</b>でオンライン奢り/試飲（10ml試飲が多い）と店舗注文を切り分けできます。金額＝テキーラ液量分（10ml単価×ml÷10）。度数HP=41%以上/通常=40%以下。</div>
     <div id="diag" class="note" style="color:var(--ink2)"></div>
 
     <div class="filters">
@@ -133,6 +133,13 @@ table.rk tr:hover td{background:var(--cream)}
           <option value="served" selected>提供済みのみ</option>
           <option value="valid">有効（キャンセル除く）</option>
           <option value="all">全件（キャンセル含む）</option>
+        </select>
+      </div>
+      <div class="fg"><span class="lbl">注文種別</span>
+        <select id="f-source">
+          <option value="store">店舗注文のみ</option>
+          <option value="online">オンライン奢り/試飲のみ</option>
+          <option value="all" selected>全て</option>
         </select>
       </div>
       <div class="fg"><span class="lbl">クラス（BJRAX）</span>
@@ -149,6 +156,9 @@ table.rk tr:hover td{background:var(--cream)}
       </div>
       <div class="fg"><span class="lbl">並び替え</span>
         <select id="f-metric"><option value="count">杯数</option><option value="ml">総量(ml)</option><option value="amount">金額</option></select>
+      </div>
+      <div class="fg"><span class="lbl">奢り受取(¥0)</span>
+        <select id="f-zero"><option value="exc" selected>除く（重複排除）</option><option value="inc">含む</option></select>
       </div>
       <div class="fg"><span class="lbl">&nbsp;</span><button class="btn" id="btn-reload">🔄 再読込</button></div>
     </div>
@@ -177,9 +187,10 @@ function toast(msg,type){ var el=document.createElement('div'); el.className='to
 function yen(n){ return '¥'+Number(n||0).toLocaleString(); }
 var BJRAX_MAP={'1':'B','2':'J','3':'R','4':'A','5':'X'};
 
+var AGG_CUTOFF='260526';  // テスト期間カットオフ（home_order と同じ）。この日以前は既定で除外
 var _orders=[];        // orders 全件（生）
-var _bottles={};       // productCode(bottleId) → bottleData（classId/abv 用）
-var _sodaGroups={};    // orderGroupId → 1（ソーダ代が計上されているグループ）
+var _bottles={};       // bottleData id → {classId,abv,price,bottleEs/En/Ja...}
+var _sodaGroups={};    // orderGroupId → 1（ソーダ代が計上されているグループ＝オンライン奢りのソーダ指定）
 
 // ボトルのクラス文字（BJRAX）: classId[1] 優先、無ければ bottleId 9桁目
 function classLetter(id, b){
@@ -189,6 +200,14 @@ function classLetter(id, b){
   return BJRAX_MAP[c]||'?';
 }
 function abvOf(b){ var v=b?parseFloat(b.abv):NaN; return isNaN(v)?null:v; }
+// 10ml単価（bottleData.price 優先）
+function price10Of(b){ if(!b) return null; var v=parseFloat(b.price!=null?b.price:(b.unitPrice!=null?b.unitPrice:b.price10)); return isNaN(v)?null:v; }
+// 表示名: 日本語を避けスペイン語優先（admin_tequila と同じ優先順の非JA版）
+function nameOf(b, fallback){
+  if(b){ var n=b.bottleEsBase||b.bottleEs||b.bottleEn||b.bottleJaBase||b.bottleJa||b.name; if(n) return n; }
+  return fallback||'';
+}
+function nomOf(b){ return (b&&(b.nom||b.brandNom))||''; }
 
 // orderDate は YYMMDD 文字列。date入力(YYYY-MM-DD)→YYMMDD へ変換して文字列比較
 function ymd6(s){ s=String(s||''); if(!s) return ''; return s.length>=10 ? s.slice(2).replace(/-/g,'') : s; }
@@ -196,6 +215,21 @@ function _today(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth
 function setDefaultDates(){ if(!g('f-from').value) g('f-from').value='2026-05-27'; if(!g('f-to').value) g('f-to').value=_today(); }
 
 function isSodaLine(o){ return String(o.productType)==='misc' && String(o.productCode).toUpperCase()==='SODA'; }
+function isOnline(o){ return o.isOnlineTreat===true || o.isGiftRecipient===true || o.source==='online'; }
+// 消費1杯としてカウントする明細か。resolved = {bottleId, ml, isSoda} / 対象外は null
+function resolveLine(o){
+  var pt=String(o.productType||'');
+  if(pt==='tequila'){
+    var bid=o.productCode; if(!bid) return null;
+    var isSoda=!!(o.orderGroupId && _sodaGroups[o.orderGroupId]); // オンライン奢りのソーダ指定
+    return { bottleId:bid, ml:Number(o.qty)||0, isSoda:isSoda, pname:o.productName };
+  }
+  if(pt==='cocktail'){
+    var base=o.baseProductCode; if(!base) return null; // ベース未補完のカクテルは集計不可
+    return { bottleId:base, ml:Number(o.baseSpiritMl)||0, isSoda:true, pname:o.productName };
+  }
+  return null;
+}
 
 function load(){
   setDefaultDates();
@@ -203,21 +237,28 @@ function load(){
   db.collection('orders').get().then(function(snap){
     _orders=snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
     _sodaGroups={};
-    var nTq=0, nSoda=0, sv={done:0,pending:0,blind:0,cancel:0};
+    _orders.forEach(function(o){ if(isSodaLine(o) && o.served!==0 && o.orderGroupId) _sodaGroups[o.orderGroupId]=1; });
+    // 診断: 種別内訳（テスト期間除外後）
+    var d={tq:0,ck:0,ckNoBase:0,online:0,store:0,blind:0,zero:0,cancel:0};
     _orders.forEach(function(o){
-      if(isSodaLine(o) && o.served!==0 && o.orderGroupId){ _sodaGroups[o.orderGroupId]=1; nSoda++; }
-      if(String(o.productType)==='tequila'){
-        nTq++;
-        if(o.served===3) sv.done++; else if(o.served===2) sv.blind++; else if(o.served===0) sv.cancel++; else sv.pending++;
-      }
+      if(String(o.orderDate||'')<=AGG_CUTOFF) return;
+      var pt=String(o.productType||'');
+      if(pt==='tequila') d.tq++;
+      else if(pt==='cocktail'){ d.ck++; if(!o.baseProductCode) d.ckNoBase++; }
+      else return;
+      if(o.served===0) d.cancel++;
+      if(isOnline(o)) d.online++; else d.store++;
+      if(o.blindId===1||o.blindId==='1') d.blind++;
+      if((Number(o.unitPrice)||0)===0) d.zero++;
     });
-    g('diag').innerHTML='orders 読み込み <b>'+_orders.length+'件</b> ｜ テキーラ明細 <b>'+nTq+'件</b>（提供済 '+(sv.done+sv.blind)+' / 未提供 '+sv.pending+' / キャンセル '+sv.cancel+'）｜ ソーダ割りグループ '+nSoda+'件';
-    // テキーラ明細の productCode について bottleData（classId/abv）を取得（10件ずつ documentId in）
-    var seen={}, ids=[]; _orders.forEach(function(o){ if(String(o.productType)!=='tequila') return; var k=o.productCode; if(k&&!seen[k]){ seen[k]=1; ids.push(k); } });
+    g('diag').innerHTML='orders 読込 <b>'+_orders.length+'件</b>（テスト期間'+AGG_CUTOFF+'以前は除外）｜ 対象明細: テキーラ <b>'+d.tq+'</b> / カクテル <b>'+d.ck+'</b>（ベース未補完 '+d.ckNoBase+'）'
+      +'｜ 店舗 '+d.store+' / オンライン奢り試飲 '+d.online+' ｜ ブラインド '+d.blind+' / ¥0受取 '+d.zero+' / キャンセル '+d.cancel;
+    // 対象ボトルの bottleData を取得（tequila.productCode と cocktail.baseProductCode）
+    var seen={}, ids=[]; _orders.forEach(function(o){ var r=resolveLine(o); if(r&&r.bottleId&&!seen[r.bottleId]){ seen[r.bottleId]=1; ids.push(r.bottleId); } });
     var chunks=[]; for(var i=0;i<ids.length;i+=10) chunks.push(ids.slice(i,i+10));
     return Promise.all(chunks.map(function(ck){
       return db.collection('bottleData').where(firebase.firestore.FieldPath.documentId(),'in',ck).get()
-        .then(function(s){ s.docs.forEach(function(d){ _bottles[d.id]=d.data(); }); })
+        .then(function(s){ s.docs.forEach(function(x){ _bottles[x.id]=x.data(); }); })
         .catch(function(){});
     })).then(render);
   }).catch(function(e){ g('rows').innerHTML='<tr><td colspan="8" class="empty">読み込みに失敗しました: '+esc(e.message)+'</td></tr>'; });
@@ -236,6 +277,8 @@ function statusPass(served, mode){
 
 function render(){
   var statusMode=g('f-status').value;
+  var sourceMode=g('f-source').value;   // store / online / all
+  var zeroMode=g('f-zero').value;       // exc / inc
   var abvMode=g('f-abv').value;
   var styleMode=g('f-style').value;
   var cls=activeClasses();
@@ -244,18 +287,22 @@ function render(){
   var from=ymd6(g('f-from').value), to=ymd6(g('f-to').value);
   var metric=g('f-metric').value;
 
-  var agg={}; // key(productCode) → {name,nom,id,cls,abv, cS,cO, mlS,mlO, amtS,amtO, members:Set}
+  var agg={}; // key(bottleId) → {name,nom,id,cls,abv, cS,cO, mlS,mlO, amtS,amtO, members:Set}
   var tot={cS:0,cO:0,ml:0,amt:0, members:{}};
   var nMatched=0;
 
   _orders.forEach(function(o){
-    if(String(o.productType)!=='tequila') return;
+    var r=resolveLine(o); if(!r) return;
     if(!statusPass(o.served, statusMode)) return;
+    var online=isOnline(o);
+    if(sourceMode==='store' && online) return;
+    if(sourceMode==='online' && !online) return;
+    if(zeroMode==='exc' && (Number(o.unitPrice)||0)===0) return; // ¥0奢り受取の重複を除外
     if(member && String(o.customerId||'').indexOf(member)<0) return;
     var od=String(o.orderDate||'');
-    if(from && od && od<from) return;
+    if(from && od && od<from) return; else if(!from && od && od<=AGG_CUTOFF) return; // 期間無指定でもテスト期間は除外
     if(to && od && od>to) return;
-    var key=o.productCode||o.productName||'?';
+    var key=r.bottleId;
     var b=_bottles[key];
     var cl=classLetter(key,b);
     var abv=abvOf(b);
@@ -264,12 +311,12 @@ function render(){
     // 度数フィルタ
     if(abvMode==='normal' && !(abv!=null&&abv<=40)) return;
     if(abvMode==='hp' && !(abv!=null&&abv>=41)) return;
-    var isSoda=!!(o.orderGroupId && _sodaGroups[o.orderGroupId]);
+    var isSoda=r.isSoda;
     if(styleMode==='straight' && isSoda) return;
     if(styleMode==='soda' && !isSoda) return;
 
-    var a=agg[key]||(agg[key]={ id:key, name:o.productName||key, nom:(b&&b.nom)||'', cls:cl, abv:abv, cS:0,cO:0, mlS:0,mlO:0, amtS:0,amtO:0, members:{} });
-    var ml=Number(o.qty)||0, amt=Math.round((Number(o.unitPrice)||0)*ml/10);
+    var a=agg[key]||(agg[key]={ id:key, name:nameOf(b,r.pname||key), nom:nomOf(b), cls:cl, abv:abv, cS:0,cO:0, mlS:0,mlO:0, amtS:0,amtO:0, members:{} });
+    var ml=r.ml, p10=price10Of(b), amt=Math.round((p10!=null?p10:(Number(o.unitPrice)||0))*ml/10);
     if(isSoda){ a.cO++; a.mlO+=ml; a.amtO+=amt; tot.cO++; } else { a.cS++; a.mlS+=ml; a.amtS+=amt; tot.cS++; }
     if(o.customerId){ a.members[o.customerId]=1; tot.members[o.customerId]=1; }
     tot.ml+=ml; tot.amt+=amt; nMatched++;
@@ -311,7 +358,7 @@ function render(){
 
 /* ── フィルタ操作 ── */
 g('f-bjrax').addEventListener('click',function(e){ var cb=e.target.closest('.cb'); if(cb){ cb.classList.toggle('on'); render(); } });
-['f-status','f-abv','f-style','f-metric'].forEach(function(id){ g(id).addEventListener('change',render); });
+['f-status','f-source','f-zero','f-abv','f-style','f-metric'].forEach(function(id){ g(id).addEventListener('change',render); });
 ['f-from','f-to'].forEach(function(id){ g(id).addEventListener('change',render); });
 g('f-member').addEventListener('input',render);
 g('btn-reload').addEventListener('click',load);
