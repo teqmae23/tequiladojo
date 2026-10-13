@@ -524,6 +524,18 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div id="cocktail-backfill-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
           </div>
 
+          <!-- 注文日(orderDate)の補完 -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
+              <strong>注文日(orderDate)の補完</strong> — <code>orderDate</code> が未設定の注文に、注文ID先頭6桁(YYMMDD)から日付を書き込みます。<br>
+              <span style="font-size:11px">初期運用時にorderDate未付与のまま作成された注文（ID移行で連番IDへ置換済み）が対象。注文IDが日付6桁＋連番の形式のもののみ補完します。実行前に不足一覧をプレビュー表示します。</span>
+            </div>
+            <button class="btn bp" style="width:fit-content" onclick="runOrderDateBackfill(true)">🔍 不足をプレビュー</button>
+            <button class="btn bp" style="width:fit-content;margin-left:6px" onclick="runOrderDateBackfill(false)">📅 注文日を補完する</button>
+            <div id="orderdate-backfill-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+            <div id="orderdate-backfill-list" style="margin-top:6px;max-height:340px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
+          </div>
+
           <!-- スタッフ来店IDの8桁正規化 -->
           <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
             <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#5a4000;margin-bottom:10px">
@@ -5034,6 +5046,69 @@ async function runCocktailBaseBackfill(){
     updates.forEach(function(u){ writeJournal('update','orders',u.id,{baseProductCode:null},u.data); });
     writeJournal('migration','orders','cocktail-base-backfill',null,{updated:updates.length,skipped:skipped});
     var msg='完了: '+updates.length+'件を補完しました'+(skipped?'（cocktailOrders欠損などで'+skipped+'件スキップ）':'');
+    prog.textContent=msg; toast(msg);
+  }catch(e){
+    prog.textContent='エラー: '+e.message;
+    toast('補完失敗: '+e.message,'err');
+  }
+}
+
+// ── 注文日(orderDate)の補完：ID先頭6桁(YYMMDD)から復元 ──
+function _validYYMMDD(s){ if(!/^\d{6}$/.test(s)) return false; var mm=parseInt(s.slice(2,4),10), dd=parseInt(s.slice(4,6),10); return mm>=1&&mm<=12&&dd>=1&&dd<=31; }
+async function runOrderDateBackfill(previewOnly){
+  var prog=document.getElementById('orderdate-backfill-progress');
+  var listEl=document.getElementById('orderdate-backfill-list');
+  try{
+    prog.textContent='注文を読込中...';
+    var snap=await db.collection('orders').get();
+    var targets=[], skipped=[];
+    snap.forEach(function(d){
+      var o=d.data();
+      var has=(o.orderDate!=null && String(o.orderDate)!=='');
+      if(has) return;
+      var id=String(d.id);
+      var head=id.slice(0,6);
+      // 連番ID(日付6桁+連番)のみ対象。先頭6桁が妥当なYYMMDDで、残りが数字。
+      if(/^\d{6}\d+$/.test(id) && _validYYMMDD(head)){
+        targets.push({ref:d.ref, id:id, date:head, o:o});
+      } else {
+        skipped.push(id);
+      }
+    });
+    if(!targets.length){
+      prog.textContent='補完対象の注文はありません'+(skipped.length?('（ID形式が連番でないため対象外: '+skipped.length+'件）'):'（すべてorderDate設定済み）');
+      listEl.style.display='none';
+      return;
+    }
+    // 日付別件数サマリ
+    var byDate={}; targets.forEach(function(t){ byDate[t.date]=(byDate[t.date]||0)+1; });
+    var dateRows=Object.keys(byDate).sort().map(function(dk){
+      return '<tr><td style="padding:3px 10px">20'+dk.slice(0,2)+'/'+dk.slice(2,4)+'/'+dk.slice(4,6)+'</td><td style="padding:3px 10px;text-align:right">'+byDate[dk]+'件</td></tr>';
+    }).join('');
+    listEl.style.display='block';
+    listEl.innerHTML='<table style="width:100%;font-size:12px;border-collapse:collapse">'
+      +'<thead><tr><th style="text-align:left;padding:4px 10px;background:var(--cream2)">補完する注文日</th><th style="text-align:right;padding:4px 10px;background:var(--cream2)">件数</th></tr></thead>'
+      +'<tbody>'+dateRows+'</tbody></table>'
+      +(skipped.length?'<div style="padding:6px 10px;font-size:11px;color:var(--ink3)">※ID形式が連番でないため対象外: '+skipped.length+'件（'+skipped.slice(0,10).join(', ')+(skipped.length>10?' …':'')+'）</div>':'');
+
+    if(previewOnly){
+      prog.textContent='プレビュー: '+targets.length+'件が補完対象です（上の一覧を確認し「補完する」で実行）';
+      return;
+    }
+    if(!confirm(targets.length+'件の注文に orderDate を補完します（ID先頭6桁から復元）。実行しますか？')) { prog.textContent='中止しました'; return; }
+
+    prog.textContent=targets.length+'件を書き込み中...';
+    var done=0;
+    for(var j=0;j<targets.length;j+=400){
+      var batch=db.batch();
+      targets.slice(j,j+400).forEach(function(t){ batch.update(t.ref,{orderDate:t.date}); });
+      await batch.commit();
+      done=Math.min(j+400,targets.length);
+      prog.textContent='書き込み中 '+done+'/'+targets.length+'...';
+    }
+    targets.forEach(function(t){ writeJournal('update','orders',t.id,{orderDate:null},{orderDate:t.date}); });
+    writeJournal('migration','orders','orderdate-backfill',null,{updated:targets.length,skipped:skipped.length});
+    var msg='完了: '+targets.length+'件に注文日を補完しました'+(skipped.length?('（対象外 '+skipped.length+'件）'):'');
     prog.textContent=msg; toast(msg);
   }catch(e){
     prog.textContent='エラー: '+e.message;
