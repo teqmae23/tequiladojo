@@ -168,6 +168,23 @@ input,select{font-family:var(--sans)}
       </div>
       <div id="track-list" style="margin-top:8px;display:flex;flex-direction:column;gap:4px"></div>
     </div>
+
+    <div class="gpxbox">
+      <div class="gpxhd">📱 スマホで足跡を記録（GPSロガーのバックアップ）</div>
+      <div class="gpxinfo" style="margin-bottom:8px;line-height:1.6">GPSロガーが使えない時の保険。この画面を<b>開いたまま</b>、スマホのGPSで軌跡を記録します（記録中は自動で画面スリープを抑止。アプリ切替や画面オフで止まることがあるので、長時間はロガー併用推奨）。保存すると足跡として地図に表示でき、写真ジオタグにも使えます。リロードしても記録は継続（端末内に自動保存）。</div>
+      <div class="gpxrow">
+        <button class="btn p sm" id="rec-start" onclick="recToggle()">▶ 記録開始</button>
+        <button class="btn sm" id="rec-clear" onclick="recClear()">クリア</button>
+        <span id="rec-status" class="gpxinfo"></span>
+      </div>
+      <div class="gpxrow" id="rec-actions" style="display:none">
+        名称 <input class="ci wide" id="rec-name" placeholder="例: スマホ記録 10/2">
+        日付 <select class="pc-sel-sm" id="rec-date"></select>
+        <button class="btn p sm" onclick="recSaveTrack()">足跡として保存</button>
+        <button class="btn sm" onclick="recDownloadGpx()">GPXダウンロード</button>
+        <button class="btn sm" onclick="recUseForGeotag()">この記録で写真ジオタグ</button>
+      </div>
+    </div>
     <div class="pickbar" id="pickbar">
       <img id="pick-thumb" src="" alt="">
       <span>選択中: <b id="pick-name">—</b> ／ 地図をクリック、またはピンをドラッグで位置を指定</span>
@@ -194,6 +211,7 @@ var EV=(new URLSearchParams(location.search).get('ev'))||'';
 var _ev={}, _items=[], _itemById={}, _photos=[], _photoById={}, _sel=null;
 var _map=null, _markers={}, _itemLayer=null;
 var _tracks=[], _gpxPts=[], _gpxTimed=[], _gpxName='';
+var _recPts=[], _recWatch=null, _recWake=null;
 
 function load(){
   if(!EV){ g('list').innerHTML='<div class="empty">イベントが指定されていません（?ev=ID が必要です）。</div>'; return; }
@@ -216,6 +234,7 @@ function load(){
     initMap();
     fillDateSelect();
     renderTracks();
+    recLoad(); recStatus();   // 端末内に残っているスマホ記録を復元・表示
     renderAll();
   }).catch(function(e){ g('list').innerHTML='<div class="empty">読み込みに失敗しました: '+esc(e.message)+'</div>'; });
 }
@@ -364,10 +383,9 @@ function renderList(){
 /* ── GPX（ロガー軌跡）: 一括ジオタグ ＆ 足跡保存 ── */
 function _uniqDates(){ var s={}; _items.forEach(function(it){ if(it.date) s[it.date]=1; }); return Object.keys(s).sort(); }
 function fillDateSelect(){
-  var sel=g('gpx-date'); if(!sel) return;
   var opts='<option value="">全日程</option>';
   _uniqDates().forEach(function(d){ opts+='<option value="'+esc(d)+'">'+esc(d)+'</option>'; });
-  sel.innerHTML=opts;
+  ['gpx-date','rec-date'].forEach(function(id){ var sel=g(id); if(sel) sel.innerHTML=opts; });
 }
 function parseGpx(text){
   var doc=new DOMParser().parseFromString(text,'application/xml');
@@ -495,6 +513,89 @@ function renderTracks(){
       +'<button class="trk-del" onclick="deleteTrack(\''+esc(t.id)+'\')">削除</button></div>';
   }).join('');
 }
+
+// ── スマホGPSで足跡をバックアップ記録（GPSロガー故障時の保険） ──
+var REC_KEY='tdphoto_rec_'+EV;
+function recLoad(){ try{ var s=localStorage.getItem(REC_KEY); _recPts=s?JSON.parse(s):[]; if(!Array.isArray(_recPts)) _recPts=[]; }catch(e){ _recPts=[]; } }
+function recPersist(){ try{ localStorage.setItem(REC_KEY, JSON.stringify(_recPts)); }catch(e){} }
+function _recDist(a,b){ var R=6371000, R1=Math.PI/180; var dLa=(b.lat-a.lat)*R1, dLo=(b.lng-a.lng)*R1, la1=a.lat*R1, la2=b.lat*R1; var x=Math.sin(dLa/2)*Math.sin(dLa/2)+Math.cos(la1)*Math.cos(la2)*Math.sin(dLo/2)*Math.sin(dLo/2); return 2*R*Math.asin(Math.sqrt(x)); }
+function recStatus(){
+  var el=g('rec-status'); if(!el) return;
+  var n=_recPts.length, on=!!_recWatch, last=n?_recPts[n-1]:null, dur='';
+  if(n>1){ var sec=Math.round((_recPts[n-1].t-_recPts[0].t)/1000), h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60); dur=(h?h+'h':'')+m+'m'; }
+  el.innerHTML=(on?'<b style="color:var(--teal)">● 記録中</b> ':'■ 停止中 ')+n+'点'+(dur?' / '+dur:'')+(last&&last.acc!=null?' / 精度±'+Math.round(last.acc)+'m':'');
+  el.className='gpxinfo'+(on?' hit':'');
+  var sb=g('rec-start'); if(sb) sb.textContent=on?'■ 記録停止':'▶ 記録開始';
+  var ra=g('rec-actions'); if(ra) ra.style.display=(n>=2)?'flex':'none';
+}
+function _recOnPos(pos){
+  var c=pos.coords, now=Date.now();
+  var pt={lat:c.latitude, lng:c.longitude, t:now, acc:(c.accuracy!=null?c.accuracy:null)};
+  var last=_recPts[_recPts.length-1];
+  // 約10秒ごと、または8m以上移動したら記録（停止中は増やさない）
+  if(!last || (now-last.t>=10000) || _recDist(last,pt)>=8){
+    _recPts.push(pt);
+    if(_recPts.length>40000){ _recPts=_recPts.filter(function(p,i){ return i%2===0; }); } // 上限超過時は間引き（時刻は保持）
+    recPersist();
+  }
+  recStatus();
+}
+function _recOnErr(e){ var el=g('rec-status'); if(el){ el.textContent='位置取得エラー: '+((e&&e.message)||e)+'（設定で位置情報の許可を確認）'; el.className='gpxinfo'; } }
+async function _recWakeLock(on){
+  try{
+    if(on){ if(navigator.wakeLock && !_recWake){ _recWake=await navigator.wakeLock.request('screen'); if(_recWake&&_recWake.addEventListener) _recWake.addEventListener('release',function(){ _recWake=null; }); } }
+    else { if(_recWake){ try{ await _recWake.release(); }catch(e){} _recWake=null; } }
+  }catch(e){}
+}
+function recToggle(){ if(_recWatch) recStop(); else recStart(); }
+function recStart(){
+  if(!navigator.geolocation){ toast('この端末では位置情報を利用できません','err'); return; }
+  recLoad(); // 既存の記録に続けて追記（リロード後も継続）
+  _recWatch=navigator.geolocation.watchPosition(_recOnPos,_recOnErr,{enableHighAccuracy:true, maximumAge:4000, timeout:30000});
+  _recWakeLock(true);
+  recStatus();
+  toast('記録を開始しました（画面を消さないでください）','inf');
+}
+function recStop(){
+  if(_recWatch!=null){ try{ navigator.geolocation.clearWatch(_recWatch); }catch(e){} _recWatch=null; }
+  _recWakeLock(false);
+  recStatus();
+}
+function recClear(){
+  if(!_recPts.length){ return; }
+  if(!confirm('記録中の軌跡（'+_recPts.length+'点）を消去しますか？')) return;
+  _recPts=[]; recPersist(); recStatus();
+}
+function recSaveTrack(){
+  if(_recPts.length<2){ toast('記録が不足しています','err'); return; }
+  var pts=_thin(_recPts, 1500);
+  var d=new Date(), defName='スマホ記録 '+(d.getMonth()+1)+'/'+d.getDate();
+  var doc={ name:((g('rec-name').value||'').trim()||defName), date:(g('rec-date').value||''), points:pts, n:pts.length, source:'phone', createdMs:Date.now() };
+  setSaving('足跡を保存中…');
+  db.collection('events').doc(EV).collection('tracks').add(doc)
+    .then(function(ref){ _tracks.push(Object.assign({id:ref.id}, doc)); setSaving('足跡を保存しました ✓'); toast('スマホ記録を足跡として保存（'+pts.length+'点）','inf'); renderTracks(); })
+    .catch(function(e){ setSaving(''); toast('保存失敗: '+e.message,'err'); });
+}
+function recDownloadGpx(){
+  if(!_recPts.length){ toast('記録がありません','err'); return; }
+  var body=_recPts.map(function(p){ return '<trkpt lat="'+p.lat.toFixed(6)+'" lon="'+p.lng.toFixed(6)+'"><time>'+new Date(p.t).toISOString()+'</time></trkpt>'; }).join('');
+  var gpx='<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="tequiladojo-phone"><trk><name>phone backup</name><trkseg>'+body+'</trkseg></trk></gpx>';
+  var blob=new Blob([gpx],{type:'application/gpx+xml'}), a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='phone_track_'+Date.now()+'.gpx'; document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+function recUseForGeotag(){
+  if(_recPts.length<2){ toast('記録が不足しています','err'); return; }
+  _gpxPts=_recPts.map(function(p){ return {lat:p.lat, lng:p.lng, t:p.t}; });
+  _gpxTimed=_gpxPts.slice().sort(function(a,b){ return a.t-b.t; });
+  g('gpx-info').textContent='スマホ記録を使用: '+_gpxPts.length+'点';
+  g('gpx-tools').style.display='block';
+  if(!g('gpx-name').value) g('gpx-name').value='スマホ記録';
+  gpxUpdateMatch();
+  try{ g('gpx-tools').scrollIntoView({behavior:'smooth',block:'center'}); }catch(e){}
+}
+// タブに戻った時、記録中ならWake Lockを取り直す（OSが解放するため）
+document.addEventListener('visibilitychange',function(){ if(!document.hidden && _recWatch) _recWakeLock(true); });
 
 /* ── 認証 ── */
 AuthRole.requireStaff(auth, function(user){
