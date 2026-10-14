@@ -541,6 +541,17 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div id="cktname-list" style="margin-top:6px;max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
           </div>
 
+          <!-- 注文データ 全件 健全性スキャン（全種別・読み取りのみ） -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#5a4000;margin-bottom:10px">
+              <strong>注文データ 全件 健全性スキャン（全種別）</strong> — <b>読み取り専用・原因究明用</b>。<code>orders</code> を<b>全件・全productType</b>で読み込み、測定可能な不整合を<b>各項目ごとにカウント</b>します。自動修正はしません。<br>
+              <span style="font-size:11px">チェック項目（1レコードが複数項目に該当しうる）＋各該当レコードの全フィールドを表示。最後に <b>正常件数＋異常件数＝総件数</b> の突合を必ず表示します。<b>どの項目が「くそデータ」か</b>はこの一覧で確定できます。チェックの前提が実態と違う場合は教えてください（固定観念を外して調整します）。</span>
+            </div>
+            <button class="btn bp" style="width:fit-content" onclick="runOrderHealthScan()">🩺 全件 健全性スキャン</button>
+            <div id="healthscan-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+            <div id="healthscan-list" style="margin-top:6px;max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
+          </div>
+
           <!-- カクテル構造異常の検出（読み取りのみ・原因究明用） -->
           <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
             <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#5a4000;margin-bottom:10px">
@@ -5516,6 +5527,96 @@ async function runCocktailNameRefreshApply(){
     prog.textContent='完了: '+cands.length+'件の商品名を更新しました'; toast('完了: '+cands.length+'件');
     _cktNameCands=null;
   }catch(e){ prog.textContent='エラー: '+e.message; toast('更新失敗: '+e.message,'err'); if(applyBtn) applyBtn.disabled=false; }
+}
+
+// ── 注文データ 全件 健全性スキャン（全種別・読み取りのみ） ───────────────
+// orders を全件・全productTypeで読み、測定可能な不整合を項目ごとにカウント。
+// 固定観念を入れず、各チェックは独立（1レコードが複数該当しうる）。
+async function runOrderHealthScan(){
+  var prog=document.getElementById('healthscan-progress');
+  var listEl=document.getElementById('healthscan-list');
+  try{
+    prog.textContent='cocktailMaster・全注文を読込中...';
+    var res=await Promise.all([
+      db.collection('cocktailMaster').get(),
+      db.collection('orders').get()
+    ]);
+    var ckMaster={}; res[0].forEach(function(d){ ckMaster[d.id]=d.data(); });
+    var docs=res[1].docs;
+    var total=docs.length;
+    var KNOWN=['tequila','cocktail','other','misc','set','keep','keepbuy'];
+    // 重複検出: 非ブラインドで 同一 visitKey|productCode|orderTime|orderDate|qty|served が複数
+    var dupMap={};
+    docs.forEach(function(d){ var o=d.data(); if(o.blindId===1||o.blindId==='1') return; var k=[o.visitKey||'',o.productCode||'',o.orderTime||'',o.orderDate||'',o.qty||'',o.served].join('|'); (dupMap[k]||(dupMap[k]=[])).push(d.id); });
+
+    var checks=[
+      {k:'pt_unknown',label:'productType が未知/空',test:function(o){ var pt=String(o.productType||''); return !pt||KNOWN.indexOf(pt)<0; }},
+      {k:'pc_empty',label:'productCode が空',test:function(o){ return !o.productCode; }},
+      {k:'od_empty',label:'orderDate が空',test:function(o){ return !(o.orderDate!=null&&String(o.orderDate)!==''); }},
+      {k:'od_bad',label:'orderDate が不正(YYMMDD妥当でない)',test:function(o){ var s=String(o.orderDate||''); return !!s && !_validYYMMDD(s); }},
+      {k:'id_date_bad',label:'注文ID先頭6桁が日付として不正',test:function(o,c){ return c.idHead!=='' && !_validYYMMDD(c.idHead); }},
+      {k:'id_date_ne',label:'注文ID先頭6桁の日付 ≠ orderDate',test:function(o,c){ var s=String(o.orderDate||''); return c.idHead!=='' && _validYYMMDD(c.idHead) && _validYYMMDD(s) && c.idHead!==s; }},
+      {k:'served_bad',label:'served が 0〜3 以外',test:function(o){ return [0,1,2,3].indexOf(Number(o.served))<0; }},
+      {k:'qty_bad',label:'qty(数量/ml) が0以下/非数（tequila/cocktail/other）',test:function(o){ var pt=String(o.productType||''); if(['tequila','cocktail','other'].indexOf(pt)<0) return false; var q=Number(o.qty); return !(q>0); }},
+      {k:'teq_hasbase',label:'テキーラ/他酒なのに base(ProductCode/BottleId) が入っている',test:function(o){ var pt=String(o.productType||''); if(pt!=='tequila'&&pt!=='other') return false; return !!(o.baseProductCode||o.baseBottleId); }},
+      {k:'teq_pc_notbottle',label:'テキーラなのに productCode がボトル個体(T#####)でない',test:function(o){ if(String(o.productType||'')!=='tequila') return false; return !/^T\d/i.test(String(o.productCode||'')); }},
+      {k:'ck_nobase',label:'カクテルで baseProductCode も baseBottleId も空',test:function(o){ if(String(o.productType||'')!=='cocktail') return false; return !o.baseProductCode && !o.baseBottleId; }},
+      {k:'ck_pc_notck',label:'カクテルで productCode がカクテルIDでない',test:function(o){ if(String(o.productType||'')!=='cocktail') return false; var pc=String(o.productCode||''); return !(ckMaster[pc]||pc==='cocktail_soda_wari'||/^C/i.test(pc)); }},
+      {k:'ck_bsm_empty',label:'カクテルで baseSpiritMl が空',test:function(o){ if(String(o.productType||'')!=='cocktail') return false; return o.baseSpiritMl==null||String(o.baseSpiritMl)===''; }},
+      {k:'ck_bsm_ne',label:'カクテルで baseSpiritMl ≠ 商品名ml×数量',test:function(o){ if(String(o.productType||'')!=='cocktail') return false; var m=String(o.productName||'').match(/[×x]\s*([0-9.]+)\s*ml/i); var bsm=Number(o.baseSpiritMl); if(!m||isNaN(bsm)) return false; return bsm!==parseFloat(m[1])*(parseInt(o.qty,10)||1); }},
+      {k:'soda_not_ck',label:'商品名に「ソーダ」を含むのに productType≠cocktail',test:function(o){ return String(o.productName||'').indexOf('ソーダ')>=0 && String(o.productType||'')!=='cocktail'; }},
+      {k:'dup',label:'重複の疑い（同一 visitKey/商品/時刻/日付/数量/状態 が複数・非ブラインド）',test:function(o,c){ return c.dupN>1; }}
+    ];
+    var hits={}; checks.forEach(function(c){ hits[c.k]=[]; });
+    var dirty=0, scanned=0;
+    docs.forEach(function(d){
+      scanned++;
+      var o=d.data(), id=d.id;
+      var idHead=/^\d{6}/.test(id)?id.slice(0,6):'';
+      var dupKey=(o.blindId===1||o.blindId==='1')?null:[o.visitKey||'',o.productCode||'',o.orderTime||'',o.orderDate||'',o.qty||'',o.served].join('|');
+      var ctx={idHead:idHead, dupN: dupKey?(dupMap[dupKey]||[]).length:0};
+      var row={id:id,pt:o.productType,pc:o.productCode,base:o.baseProductCode,bb:o.baseBottleId,qty:o.qty,bsm:o.baseSpiritMl,name:o.productName,date:o.orderDate,served:o.served,vk:o.visitKey,otime:o.orderTime};
+      var any=false;
+      checks.forEach(function(c){ try{ if(c.test(o,ctx)){ hits[c.k].push(row); any=true; } }catch(e){} });
+      if(any) dirty++;
+    });
+    var clean=total-dirty;
+
+    var esc=function(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); };
+    var th='padding:3px 7px;background:var(--cream2);text-align:left;position:sticky;top:0;white-space:nowrap';
+    function tbl(rows){
+      var cap=rows.slice(0,20);
+      return '<div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:10px"><thead><tr>'
+        +['注文ID','種別','productCode','base','baseBottleId','qty','baseSpiritMl','商品名','日付','状態','visitKey','時刻'].map(function(h){return '<th style="'+th+'">'+h+'</th>';}).join('')
+        +'</tr></thead><tbody>'+cap.map(function(r){
+          return '<tr style="background:#fdecea">'
+            +'<td style="padding:2px 7px;font-family:var(--mono)">'+esc(r.id)+'</td>'
+            +'<td style="padding:2px 7px">'+esc(r.pt)+'</td>'
+            +'<td style="padding:2px 7px;font-family:var(--mono)">'+esc(r.pc)+'</td>'
+            +'<td style="padding:2px 7px;font-family:var(--mono)">'+esc(r.base||'—')+'</td>'
+            +'<td style="padding:2px 7px;font-family:var(--mono)">'+esc(r.bb||'—')+'</td>'
+            +'<td style="padding:2px 7px;text-align:right">'+esc(r.qty)+'</td>'
+            +'<td style="padding:2px 7px;text-align:right">'+esc(r.bsm==null?'—':r.bsm)+'</td>'
+            +'<td style="padding:2px 7px">'+esc(r.name)+'</td>'
+            +'<td style="padding:2px 7px">'+esc(r.date||'—')+'</td>'
+            +'<td style="padding:2px 7px">'+esc(r.served)+'</td>'
+            +'<td style="padding:2px 7px;font-family:var(--mono)">'+esc(r.vk||'—')+'</td>'
+            +'<td style="padding:2px 7px">'+esc(r.otime||'—')+'</td></tr>';
+        }).join('')+'</tbody></table></div>'+(rows.length>20?'<div style="font-size:11px;color:var(--ink3);padding:3px 7px">…他 '+(rows.length-20)+'件</div>':'');
+    }
+    // サマリ（全チェックの件数一覧）
+    var sumRows=checks.map(function(c){ var n=hits[c.k].length; return '<tr'+(n>0?' style="background:#fdecea"':'')+'><td style="padding:3px 8px">'+esc(c.label)+'</td><td style="padding:3px 8px;text-align:right;font-weight:'+(n>0?'700':'400')+';color:'+(n>0?'#8c2818':'var(--ink3)')+'">'+n+'</td></tr>'; }).join('');
+    var banner='<div style="padding:8px 10px;background:#e8f5e9;border:1px solid #66bb6a;border-radius:var(--r);font-size:12px;color:#1b5e20;margin-bottom:8px">'
+      +'✅ 件数突合: 総件数 <b>'+total+'</b> ＝ 走査 <b>'+scanned+'</b> ＝ 正常(0項目) <b>'+clean+'</b> ＋ 異常(1項目以上) <b>'+dirty+'</b>'
+      +(scanned===total&&(clean+dirty)===total?'（整合OK）':' <span style="color:#8c2818;font-weight:700">❌ 不整合</span>')+'</div>';
+    var html=banner
+      +'<div style="font-weight:600;font-size:12px;padding:4px 8px">チェック項目別 件数</div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr><th style="'+th+'">チェック項目</th><th style="'+th+';text-align:right">件数</th></tr></thead><tbody>'+sumRows+'</tbody></table>';
+    // 件数>0 の項目だけ詳細テーブル
+    checks.forEach(function(c){ var n=hits[c.k].length; if(n>0){ html+='<div style="font-weight:600;font-size:11px;color:#8c2818;padding:6px 8px;border-top:1px solid var(--border)">'+esc(c.label)+'（'+n+'件）</div>'+tbl(hits[c.k]); } });
+    listEl.style.display='block'; listEl.innerHTML=html;
+    prog.textContent='スキャン完了: 総 '+total+'件 ／ 異常(1項目以上) '+dirty+'件 ／ 正常 '+clean+'件';
+  }catch(e){ prog.textContent='エラー: '+e.message; toast('スキャン失敗: '+e.message,'err'); }
 }
 
 // ── カクテル構造異常の検出（読み取りのみ・原因究明用） ─────────────────
