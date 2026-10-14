@@ -541,6 +541,17 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div id="cktname-list" style="margin-top:6px;max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
           </div>
 
+          <!-- カクテル構造異常の検出（読み取りのみ・原因究明用） -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#5a4000;margin-bottom:10px">
+              <strong>カクテル構造異常の検出（読み取りのみ）</strong> — <b>原因究明用</b>。カクテル注文の構造的な異常を洗い出します。自動修正はしません。<br>
+              <span style="font-size:11px">検出対象: ①<b>productCodeがカクテルIDでない</b>（ベース個体ID T##### 等が入っている）／②<b>baseProductCode も baseBottleId も空</b>／③<b>baseSpiritMl が商品名の「×NNml」と不一致</b>。各レコードの全フィールド（productType・productCode・baseProductCode・baseBottleId・qty・baseSpiritMl・商品名・batchId・日付・状態）を表示し、発生時期/経路を特定できるようにします。</span>
+            </div>
+            <button class="btn bp" style="width:fit-content" onclick="runCocktailAnomalyScan()">🔍 カクテル構造異常をスキャン</button>
+            <div id="cktanom-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+            <div id="cktanom-list" style="margin-top:6px;max-height:460px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
+          </div>
+
           <!-- 注文日(orderDate)の補完 -->
           <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
             <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
@@ -5505,6 +5516,74 @@ async function runCocktailNameRefreshApply(){
     prog.textContent='完了: '+cands.length+'件の商品名を更新しました'; toast('完了: '+cands.length+'件');
     _cktNameCands=null;
   }catch(e){ prog.textContent='エラー: '+e.message; toast('更新失敗: '+e.message,'err'); if(applyBtn) applyBtn.disabled=false; }
+}
+
+// ── カクテル構造異常の検出（読み取りのみ・原因究明用） ─────────────────
+// 分類は排他（1レコード=1分類）とし、元件数＝分類件数の突合を必ず表示する。
+async function runCocktailAnomalyScan(){
+  var prog=document.getElementById('cktanom-progress');
+  var listEl=document.getElementById('cktanom-list');
+  try{
+    prog.textContent='cocktailMaster・注文を読込中...';
+    var res=await Promise.all([
+      db.collection('cocktailMaster').get(),
+      db.collection('orders').where('productType','==','cocktail').get()
+    ]);
+    var ckMaster={}; res[0].forEach(function(d){ ckMaster[d.id]=d.data(); });
+    var docs=res[1].docs;
+    var total=docs.length;
+    var A=[], B=[], C=[], normal=0, seen=0;
+    docs.forEach(function(d){
+      seen++;
+      var o=d.data();
+      var pc=String(o.productCode||'');
+      var base=String(o.baseProductCode||'');
+      var bb=String(o.baseBottleId||'');
+      var qty=parseInt(o.qty,10)||1;
+      var bsm=Number(o.baseSpiritMl);
+      var nm=String(o.productName||'');
+      var row={id:d.id,pc:pc,base:base,bb:bb,qty:qty,bsm:(o.baseSpiritMl==null?'':o.baseSpiritMl),name:nm,batch:String(o.batchId||''),date:String(o.orderDate||''),served:o.served};
+      // 排他分類（上から順に1つだけに振り分け）
+      var isCkId = !!ckMaster[pc] || pc==='cocktail_soda_wari' || /^C/i.test(pc);
+      if(!isCkId){ row.kind='productCodeがカクテルIDでない'; A.push(row); return; }
+      if(!base && !bb){ row.kind='ベース(baseProductCode/baseBottleId)が両方空'; B.push(row); return; }
+      var m=nm.match(/[×x]\s*([0-9.]+)\s*ml/i);
+      if(m && !isNaN(bsm)){ var expected=parseFloat(m[1])*qty; if(bsm!==expected){ row.kind='baseSpiritMl≠商品名ml×数量'; row.expected=expected; C.push(row); return; } }
+      normal++;
+    });
+    var classified=A.length+B.length+C.length+normal;
+    var reconOK=(classified===total && seen===total);
+
+    var esc=function(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); };
+    var th='padding:3px 7px;background:var(--cream2);text-align:left;position:sticky;top:0;white-space:nowrap';
+    function tbl(rows,extraCol){
+      if(!rows.length) return '<div style="padding:6px 10px;font-size:11px;color:var(--ink3)">該当なし</div>';
+      return '<table style="width:100%;border-collapse:collapse;font-size:10px"><thead><tr>'
+        +['注文ID','productCode','baseProductCode','baseBottleId','qty','baseSpiritMl'+(extraCol?'／期待':''),'商品名','batchId','日付','状態'].map(function(h){return '<th style="'+th+'">'+h+'</th>';}).join('')
+        +'</tr></thead><tbody>'+rows.map(function(r){
+          return '<tr style="background:#fdecea">'
+            +'<td style="padding:2px 7px;font-family:var(--mono)">'+esc(r.id)+'</td>'
+            +'<td style="padding:2px 7px;font-family:var(--mono)">'+esc(r.pc)+'</td>'
+            +'<td style="padding:2px 7px;font-family:var(--mono)">'+esc(r.base||'—')+'</td>'
+            +'<td style="padding:2px 7px;font-family:var(--mono)">'+esc(r.bb||'—')+'</td>'
+            +'<td style="padding:2px 7px;text-align:right">'+esc(r.qty)+'</td>'
+            +'<td style="padding:2px 7px;text-align:right">'+esc(r.bsm)+(extraCol&&r.expected!=null?' / '+r.expected:'')+'</td>'
+            +'<td style="padding:2px 7px">'+esc(r.name)+'</td>'
+            +'<td style="padding:2px 7px;font-family:var(--mono)">'+esc(r.batch||'—')+'</td>'
+            +'<td style="padding:2px 7px">'+esc(r.date||'—')+'</td>'
+            +'<td style="padding:2px 7px">'+esc(r.served)+'</td></tr>';
+        }).join('')+'</tbody></table>';
+    }
+    var banner=reconOK
+      ? '<div style="padding:8px 10px;background:#e8f5e9;border:1px solid #66bb6a;border-radius:var(--r);font-size:12px;color:#1b5e20;margin-bottom:8px">✅ 件数突合OK: 元レコード <b>'+total+'</b>件 ＝ 分類合計 <b>'+classified+'</b>件（A '+A.length+' ＋ B '+B.length+' ＋ C '+C.length+' ＋ 正常 '+normal+'）</div>'
+      : '<div style="padding:8px 10px;background:#fdecea;border:1px solid #e57373;border-radius:var(--r);font-size:12px;color:#8c2818;font-weight:700;margin-bottom:8px">❌ 件数不一致: 元レコード '+total+'件 / 走査 '+seen+'件 / 分類合計 '+classified+'件（A '+A.length+'+B '+B.length+'+C '+C.length+'+正常 '+normal+'）— 分類ロジックに漏れがあります</div>';
+    var html=banner
+      +'<div style="padding:6px 10px;font-size:11px;font-weight:600;color:#8c2818">A: productCodeがカクテルIDでない（'+A.length+'件）</div>'+tbl(A,false)
+      +'<div style="padding:6px 10px;font-size:11px;font-weight:600;color:#8c2818;border-top:1px solid var(--border)">B: ベースが両方空（'+B.length+'件）</div>'+tbl(B,false)
+      +'<div style="padding:6px 10px;font-size:11px;font-weight:600;color:#8c2818;border-top:1px solid var(--border)">C: baseSpiritMl≠商品名ml×数量（'+C.length+'件）</div>'+tbl(C,true);
+    listEl.style.display='block'; listEl.innerHTML=html;
+    prog.textContent='スキャン完了: 異常 A'+A.length+' / B'+B.length+' / C'+C.length+'（正常 '+normal+' ／ 元 '+total+'件）'+(reconOK?'':' ※件数不一致');
+  }catch(e){ prog.textContent='エラー: '+e.message; toast('スキャン失敗: '+e.message,'err'); }
 }
 
 // ── 注文日(orderDate)の補完：ID先頭6桁(YYMMDD)から復元 ──
