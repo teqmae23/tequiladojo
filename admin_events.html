@@ -819,7 +819,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
   <div class="modal" style="max-width:640px">
     <div class="mhd"><span id="sch-mgr-title">スケジュール</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeSchedMgr()">✕</button></div>
     <div class="mbd">
-      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm ca-only-hide" onclick="openCatMgr()">🏷 種別管理</button><button class="btn bs sm" onclick="openGpxImport()" title="GPSロガーのGPX/CSVを取り込み、2点間移動の実ルートを登録">🛰 GPXルート取込</button><a class="btn bs sm" id="sch-live-link" href="#" target="_blank" rel="noopener" style="text-decoration:none" title="イベント中の現在地をリアルタイム中継（スタッフ端末で実行）">🔴 ライブ中継</a><span class="cnt" id="sch-total"></span></div>
+      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm ca-only-hide" onclick="openCatMgr()">🏷 種別管理</button><button class="btn bs sm" onclick="openGpxImport()" title="GPSロガーのGPX/CSVを取り込み、2点間移動の実ルートを登録">🛰 GPXルート取込</button><button class="btn bs sm" onclick="schedAllToNameMode()" title="この日程の全項目の地図表示方法を「名称で検索」に切り替えます（座標固定を解除）">🔤 全場所を名称検索に</button><a class="btn bs sm" id="sch-live-link" href="#" target="_blank" rel="noopener" style="text-decoration:none" title="イベント中の現在地をリアルタイム中継（スタッフ端末で実行）">🔴 ライブ中継</a><span class="cnt" id="sch-total"></span></div>
       <div id="sch-list"><div class="ec">読み込み中…</div></div>
     </div>
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeSchedMgr()">閉じる</button></div>
@@ -2794,14 +2794,15 @@ function applyPlace(pid, nameId, latId, lngId, mapId, modeId){
   if(g(latId)) g(latId).value=(p.lat!=null?p.lat:'');
   if(g(lngId)) g(lngId).value=(p.lng!=null?p.lng:'');
   if(g(mapId)) g(mapId).value=p.mapUrl||'';
-  if(modeId&&g(modeId)) g(modeId).value=(p.mapMode==='name')?'name':'coord';
+  // 既定は「名称で検索」。マスタ側で座標固定(coord)が明示されている場合のみ coord。
+  if(modeId&&g(modeId)) g(modeId).value=(p.mapMode==='coord')?'coord':'name';
 }
 function savePlaceIfNew(name, lat, lng, mapUrl, mapMode, schedCatId, title){
   name=(name||'').trim(); if(!name || lat==null || lng==null) return Promise.resolve();
   // 同一イベント内で同名/近接座標が既にあれば追加しない（イベント単位で登録）
   var exists=_places.find(function(p){ return p.eventId===_schEventId && ((p.name||'').trim()===name || (p.lat!=null&&p.lng!=null&&Math.abs(p.lat-lat)<0.0005&&Math.abs(p.lng-lng)<0.0005)); });
   if(exists) return Promise.resolve();
-  return db.collection('places').add({ name:name, lat:lat, lng:lng, mapUrl:(mapUrl||'').trim(), mapMode:(mapMode==='name'?'name':'coord'), eventId:_schEventId, category:autoPlaceCat(schedCatId, title||name), createdAt:firebase.firestore.FieldValue.serverTimestamp() }).then(function(){ return loadPlaces(); }).catch(function(){});
+  return db.collection('places').add({ name:name, lat:lat, lng:lng, mapUrl:(mapUrl||'').trim(), mapMode:(mapMode==='coord'?'coord':'name'), eventId:_schEventId, category:autoPlaceCat(schedCatId, title||name), createdAt:firebase.firestore.FieldValue.serverTimestamp() }).then(function(){ return loadPlaces(); }).catch(function(){});
 }
 // 場所管理
 function _evName(id){ var ev=(events||[]).find(function(x){return x.id===id;}); return ev?(ev.name||id):(id?'(不明なイベント)':'(イベント未設定)'); }
@@ -2844,8 +2845,8 @@ function editPlace(pid){
   var p=_places.find(function(x){return x.id===pid;}); if(!p) return;
   var name=prompt('地点名', p.name||''); if(name==null) return;
   var mapUrl=prompt('Google Map URL（@緯度,経度 を含むURL。空欄可）', p.mapUrl||''); if(mapUrl==null) return;
-  var modeIn=prompt('地図の表示方法：coord=座標を固定（既定） / name=名称で検索', (p.mapMode==='name')?'name':'coord'); if(modeIn==null) return;
-  var mapMode=((modeIn||'').trim().toLowerCase()==='name')?'name':'coord';
+  var modeIn=prompt('地図の表示方法：name=名称で検索（既定） / coord=座標を固定', (p.mapMode==='coord')?'coord':'name'); if(modeIn==null) return;
+  var mapMode=((modeIn||'').trim().toLowerCase()==='coord')?'coord':'name';
   var c=parseLatLng(mapUrl); var lat=c?c.lat:p.lat, lng=c?c.lng:p.lng;
   db.collection('places').doc(pid).set({ name:(name||'').trim(), mapUrl:(mapUrl||'').trim(), mapMode:mapMode, lat:lat, lng:lng, updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
     .then(function(){ toast('更新しました'); renderPlaceMgr(); }).catch(function(e){ toast('更新失敗: '+e.message); });
@@ -3363,7 +3364,8 @@ function _isFlightItem(it){ return it.travelMode==='flight'||it.category==='flig
 // 地図リンク。表示方法(mapMode)を尊重：name=名称で検索（実在の場所ページ）／coord=座標ピン。
 function _siMap(it){
   var label=(it.placeName||it.title||'').trim();
-  if(it.mapMode==='name' && label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
+  // 既定は「名称で検索」。座標固定(coord)が明示されたときだけ座標ピン。
+  if(it.mapMode!=='coord' && label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
   if(it.lat!=null&&it.lng!=null) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(it.lat+','+it.lng);
   if(it.mapUrl) return it.mapUrl;
   if(label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
@@ -3371,18 +3373,30 @@ function _siMap(it){
 }
 function _siMapTo(it){
   var label=(it.toName||'').trim();
-  if(it.toMapMode==='name' && label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
+  if(it.toMapMode!=='coord' && label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
   if(it.toLat!=null&&it.toLng!=null) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(it.toLat+','+it.toLng);
   if(it.toMapUrl) return it.toMapUrl;
   if(label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
   return '';
 }
+// 経路の端点。表示方法が「名称で検索」なら名称を、そうでなければ座標を使う（地図リンクと基準を揃える）。
+function _siRouteEndp(name, lat, lng, mode){
+  name=(name==null?'':String(name)).trim();
+  // 既定は名称優先。座標固定(coord)が明示されたときだけ座標。
+  if(mode!=='coord' && name) return encodeURIComponent(name);
+  if(lat!=null && lng!=null) return encodeURIComponent(lat+','+lng);
+  if(name) return encodeURIComponent(name);
+  return '';
+}
 function _siRoute(it){
-  if(!(it.isMove&&it.lat!=null&&it.lng!=null&&it.toLat!=null&&it.toLng!=null)) return '';
+  if(!it.isMove) return '';
+  var o=_siRouteEndp(it.placeName, it.lat, it.lng, it.mapMode);
+  var d=_siRouteEndp(it.toName, it.toLat, it.toLng, it.toMapMode);
+  if(!o||!d) return '';
   // 空路は !3e4（フライト）指定で経路画面を直接フライトモードで開く（Google非公式: 0=車/1=自転車/2=徒歩/3=公共交通/4=空路）
-  if(_isFlightItem(it)) return 'https://www.google.com/maps/dir/'+encodeURIComponent(it.lat+','+it.lng)+'/'+encodeURIComponent(it.toLat+','+it.toLng)+'/data=!4m2!4m1!3e4';
+  if(_isFlightItem(it)) return 'https://www.google.com/maps/dir/'+o+'/'+d+'/data=!4m2!4m1!3e4';
   var tm={driving:'driving',car:'driving',taxi:'driving',shuttle:'driving',transit:'transit',bus:'transit',train:'transit',shinkansen:'transit',walking:'walking',bicycling:'bicycling'}[it.travelMode||''];
-  return 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(it.lat+','+it.lng)+'&destination='+encodeURIComponent(it.toLat+','+it.toLng)+(tm?('&travelmode='+tm):'');
+  return 'https://www.google.com/maps/dir/?api=1&origin='+o+'&destination='+d+(tm?('&travelmode='+tm):'');
 }
 function renderSchedItemRow(it){
   var ic=itemIcon(it);
@@ -3771,6 +3785,32 @@ g('gpx-modal').addEventListener('click',function(e){ if(e.target===g('gpx-modal'
 var _schExpandedDays={}; // 展開中の日付を記憶（追加・編集後も維持）
 function toggleDay(idx, date){ var b=g('se-day-body-'+idx), c=g('se-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▶':'▼'; _schExpandedDays[date]=!open; }
 function openSchedForDay(date, grp){ _schExpandedDays[date]=true; openSchedEd(null, date, grp); }
+// この日程の全項目の地図表示方法を「名称で検索」に切り替える（座標固定(coord)を name に一括変更）。
+async function schedAllToNameMode(){
+  if(!_schEventId){ alert('イベントが選択されていません'); return; }
+  var itemTargets=(_schItems||[]).filter(function(it){ return it.mapMode==='coord' || it.toMapMode==='coord'; });
+  // 場所マスタ側も変換（再選択で coord が復活しないように）
+  var placeTargets=(_places||[]).filter(function(p){ return p.eventId===_schEventId && p.mapMode==='coord'; });
+  if(!itemTargets.length && !placeTargets.length){ alert('座標固定の項目はありません（すべて名称検索です）'); return; }
+  if(!confirm('この日程の地図表示方法を「名称で検索」に切り替えます。\n・スケジュール項目: '+itemTargets.length+' 件\n・場所マスタ: '+placeTargets.length+' 件\n（地図・ルートが座標ではなく地点名で開くようになります）\nよろしいですか？')) return;
+  try{
+    var batch=db.batch(), n=0;
+    var icol=db.collection('events').doc(_schEventId).collection('scheduleItems');
+    itemTargets.forEach(function(it){
+      var upd={};
+      if(it.mapMode==='coord') upd.mapMode='name';
+      if(it.toMapMode==='coord') upd.toMapMode='name';
+      if(Object.keys(upd).length){ batch.update(icol.doc(it.id), upd); n++; }
+    });
+    placeTargets.forEach(function(p){ batch.update(db.collection('places').doc(p.id), {mapMode:'name'}); n++; });
+    await batch.commit();
+    // ローカルも即時反映
+    itemTargets.forEach(function(it){ if(it.mapMode==='coord') it.mapMode='name'; if(it.toMapMode==='coord') it.toMapMode='name'; });
+    placeTargets.forEach(function(p){ p.mapMode='name'; });
+    renderSchedList();
+    alert('スケジュール項目 '+itemTargets.length+' 件・場所マスタ '+placeTargets.length+' 件を「名称で検索」に切り替えました。');
+  }catch(e){ alert('切替に失敗しました: '+((e&&e.message)||e)); }
+}
 // ── スケジュールの時間内包ネスト（会員画面と同じ考え方で、ある項目の時間帯に収まる項目を入れ子表示） ──
 // 移動(isMove)も toTime を終了とみなして容器化（例: 12:00-13:00のタクシー中に 12:30の車内飯 を入れ子）。
 function _schHmMin(s){ var v=_normHM(s); if(v==null||v==='') return null; var p=String(v).split(':'); return (+p[0])*60+(+p[1]); }
@@ -3887,8 +3927,9 @@ function openSchedEd(id, presetDate, presetGroup){
   g('se-lat').value=(it&&it.lat!=null)?it.lat:'';
   g('se-lng').value=(it&&it.lng!=null)?it.lng:'';
   g('se-place').value=it?(it.placeName||''):'';
-  g('se-mapmode').value=(it&&it.mapMode==='name')?'name':'coord';
-  g('se-tomapmode').value=(it&&it.toMapMode==='name')?'name':'coord';
+  // 既定は「名称で検索」。座標固定(coord)が明示保存されている項目のみ coord。
+  g('se-mapmode').value=(it&&it.mapMode==='coord')?'coord':'name';
+  g('se-tomapmode').value=(it&&it.toMapMode==='coord')?'coord':'name';
   g('se-move').checked=!!(it&&it.isMove);
   g('se-tomap').value=it?(it.toMapUrl||''):'';
   g('se-tolat').value=(it&&it.toLat!=null)?it.toLat:'';
