@@ -5100,6 +5100,22 @@ function _sodaTeqName(b){ try{ return AuthRole.bdName(b,'es'); }catch(e){ return
 // 他酒の表示名（発注時 spiritName = bottleEn||bottleName||name||bottleEs||id）
 function _sodaOtherName(b){ return b.bottleEn||b.bottleName||b.name||b.bottleEs||b.id||''; }
 function _sodaBrand(b){ var bid=b&&b.bottleId?String(b.bottleId):''; return bid.length>=7?bid.slice(0,7):''; }
+// 発注時の表示名からサフィックス（例「 (76BE)」）を除いた基底名。
+// 商品名に銘柄名だけ(サフィックス未付与)で保存された注文の照合に使う。
+function _sodaTeqBaseName(b){
+  var base=b.bottleEsBase||b.bottleEs||b.bottleJaBase||b.bottleJa||b.bottleEn||b.name||b.id||'';
+  return String(base).replace(/\s*[（(][^（）()]*[）)]\s*$/,'').trim();
+}
+// 手動対応表: 商品名の基底銘柄 → 紐付けるべき bottleData ID（同名ロット複数のため確定できないもの）。
+// ユーザー指定。exact照合に失敗した基底名はここを最優先で参照する。
+var SODABASE_ALIAS={
+  'G4 Blanco':'T00010',
+  'Casa Real Blanco':'T00144',
+  'Tapatio Blanco':'T00049',
+  'Tapatio 110 Blanco':'T00052',
+  'Tapatio Excelencia Extra Añejo':'T00055',
+  'Arette Clásico Blanco':'T00028'
+};
 // 商品名から「（ベース銘柄×ml ml）」を抽出。全角/半角括弧・×どちらも許容。
 function _parseSodaName(name){
   var m=String(name||'').match(/[（(]\s*(.+?)\s*[×x]\s*([0-9]+(?:\.[0-9]+)?)\s*ml\s*[）)]\s*$/i);
@@ -5119,8 +5135,12 @@ async function runSodaBaseNamePreview(){
       db.collection('orders').where('productType','==','cocktail').get()
     ]);
     // 名称インデックス（同名複数に対応して配列で保持）
-    var teqIdx={}, otherIdx={};
-    res[0].forEach(function(d){ var b=d.data(); b=Object.assign({id:d.id},b); var k=_sodaTeqName(b); if(!k) return; (teqIdx[k]||(teqIdx[k]=[])).push(b); });
+    var teqIdx={}, otherIdx={}, teqBaseIdx={}, teqById={};
+    res[0].forEach(function(d){
+      var b=d.data(); b=Object.assign({id:d.id},b); teqById[d.id]=b;
+      var k=_sodaTeqName(b); if(k) (teqIdx[k]||(teqIdx[k]=[])).push(b);
+      var bk=_sodaTeqBaseName(b); if(bk) (teqBaseIdx[bk]||(teqBaseIdx[bk]=[])).push(b);
+    });
     res[1].forEach(function(d){ var b=d.data(); b=Object.assign({id:d.id},b); var k=_sodaOtherName(b); if(!k) return; (otherIdx[k]||(otherIdx[k]=[])).push(b); });
 
     var writable=[], ambiguous=[], unmatched=[], unparsed=[], already=0, hasBase=0;
@@ -5132,9 +5152,16 @@ async function runSodaBaseNamePreview(){
       if(!p){ unparsed.push({id:d.id,name:o.productName||''}); return; }
       var qty=parseInt(o.qty,10)||1;
       var row={ref:d.ref,id:d.id,name:o.productName||'',base:p.base,ml:p.ml,qty:qty};
+      var aliasId=SODABASE_ALIAS[p.base];
       var teqHits=teqIdx[p.base]||[], otherHits=otherIdx[p.base]||[];
-      if(teqHits.length){
-        // テキーラ一致。同名複数は「同一ブランド＆同一クラス」なら書込可、異なれば要確認。
+      if(aliasId){
+        // 手動対応表を最優先（同名ロット複数で確定できないものをユーザー指定IDへ紐付け）
+        var ab=teqById[aliasId];
+        row.matchType='tequila'; row.bottleId=aliasId; row.baseType='tequila';
+        if(ab){ row.bottleName=_sodaTeqName(ab); row.cls=_sodaBaseClass(aliasId,ab); row.kind='一致(手動対応)'; writable.push(row); }
+        else { row.bottleName='(ID未検出)'; row.cls='?'; row.kind='要確認(手動対応IDが bottleData に無い: '+aliasId+')'; ambiguous.push(row); }
+      } else if(teqHits.length){
+        // テキーラ一致（表示名 exact）。同名複数は「同一ブランド＆同一クラス」なら書込可、異なれば要確認。
         var brands={}, classes={};
         teqHits.forEach(function(b){ brands[_sodaBrand(b)]=1; classes[_sodaBaseClass(b.id,b)]=1; });
         var b0=teqHits[0];
@@ -5150,7 +5177,21 @@ async function runSodaBaseNamePreview(){
         if(otherHits.length===1){ row.kind='一致(他酒)'; writable.push(row); }
         else { var obr={}; otherHits.forEach(function(b){ obr[b.id]=1; }); if(Object.keys(obr).length===1){ row.kind='一致(他酒)'; writable.push(row); } else { row.kind='要確認(他酒・同名複数 '+otherHits.length+'件)'; row.hitIds=otherHits.map(function(b){return b.id;}).join(', '); ambiguous.push(row); } }
       } else {
-        row.kind='不一致(マスタに該当名なし)'; unmatched.push(row);
+        // exact照合に失敗。サフィックス(例「(76BE)」)付与前の基底名で保存された注文を救済。
+        var baseHits=teqBaseIdx[p.base]||[];
+        if(baseHits.length===1){
+          var bb=baseHits[0];
+          row.matchType='tequila'; row.bottleId=bb.id; row.bottleName=_sodaTeqName(bb);
+          row.cls=_sodaBaseClass(bb.id,bb); row.baseType='tequila'; row.kind='一致(追記名を補完)'; writable.push(row);
+        } else if(baseHits.length>1){
+          // 同じ基底名でロット複数 → 確定できない。候補IDを提示（手動対応表に追記してもらう）
+          row.cls='?'; row.matchType='tequila';
+          row.kind='要確認(追記違いで同名ロット複数 '+baseHits.length+'件→手動対応表へ)';
+          row.hitIds=baseHits.map(function(b){return b.id+' '+_sodaTeqName(b)+'['+_sodaBaseClass(b.id,b)+']';}).join(' / ');
+          ambiguous.push(row);
+        } else {
+          row.kind='不一致(マスタに該当名なし)'; unmatched.push(row);
+        }
       }
     });
 
