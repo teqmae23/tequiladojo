@@ -527,8 +527,8 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
           <!-- カクテル商品名を最新のベース銘柄名に更新（確認式） -->
           <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
             <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
-              <strong>カクテル商品名を最新のベース銘柄名に更新</strong> — 「ソーダ割り（<i>ベース銘柄</i>×30ml）」の<b>ベース銘柄名</b>を、現在のマスタ名（テキーラ＝<code>bottles.bottleEs</code>／他酒＝<code>otherBottles</code>）に揃えます。<br>
-              <span style="font-size:11px">発注時の個体名（旧名・日本語表記ゆれ等）で保存された商品名を、最新の銘柄名に統一表示するためのツール。<code>baseBottleId</code>（無ければ <code>baseProductCode</code>）からベースを解決します。自動修正はせず、プレビュー→確認→更新の2段階。</span>
+              <strong>カクテル商品名を最新のベースボトル名に更新</strong> — 「ソーダ割り（<i>ベース銘柄</i>×30ml）」の<b>ベース名</b>を、現在の<b>ボトル名（追記つき）</b>に揃えます（テキーラ＝個体 <code>bottleData</code> の <code>bdName</code>＝ロット追記込み／他酒＝<code>otherBottles</code>）。<br>
+              <span style="font-size:11px">発注時の旧名・日本語表記ゆれ等で保存された商品名を、最新のボトル名（例「Cascahuin Blanco (76BE)」）に統一表示するためのツール。個体が現存すればその追記つき名、欠落時は同一銘柄の現個体（最新）の追記つき名、無ければ銘柄マスタ名。自動修正はせず、プレビュー→確認→更新の2段階。</span>
             </div>
             <button class="btn bp" style="width:fit-content" onclick="runCocktailNameRefreshPreview()">🔍 更新候補をプレビュー</button>
             <button class="btn bd" style="width:fit-content;margin-left:6px" id="btn-cktname-apply" onclick="runCocktailNameRefreshApply()" disabled>✅ 確認済みを更新する</button>
@@ -5433,15 +5433,20 @@ async function runCocktailNameRefreshPreview(){
     var bdById={};  res[0].forEach(function(d){ bdById[d.id]=Object.assign({id:d.id},d.data()); });
     var mById={};   res[1].forEach(function(d){ mById[d.id]=Object.assign({id:d.id},d.data()); });
     var otherById={}; res[2].forEach(function(d){ otherById[d.id]=Object.assign({id:d.id},d.data()); });
-    // ベースの「最新銘柄名」を解決（テキーラ=bottles.bottleEs / 他酒=otherBottles）
+    // 銘柄マスタ → 個体リスト（個体欠落時に最新個体へフォールバックするため）
+    var bdByMaster={}; Object.keys(bdById).forEach(function(k){ var b=bdById[k]; if(b.bottleId){ (bdByMaster[String(b.bottleId)]||(bdByMaster[String(b.bottleId)]=[])).push(b); } });
+    function _pickInd(list){ if(!list||!list.length) return null; var vis=list.filter(function(b){ return b.visibility==='0'||b.visibility===0; }); var pool=vis.length?vis:list; return pool.slice().sort(function(a,b){ return String(a.id)<String(b.id)?1:-1; })[0]; }
+    function _teqBottleName(b){ try{ return AuthRole.bdName(b,'es'); }catch(e){ return _bbEsName(b); } }
+    // ベースの「最新ボトル名（追記つき）」を解決。テキーラ=個体(bottleData)の bdName(suffix込) / 他酒=otherBottles。
+    // 個体が現存すればその bdName、欠落時は銘柄マスタの現個体(最新)の bdName、無ければマスタ clean名。
     function latestBaseName(o){
-      var bb=o.baseBottleId?String(o.baseBottleId):'';
-      if(bb){ if(mById[bb]) return mById[bb].bottleEs||mById[bb].bottleJa||''; if(otherById[bb]) { var ob=otherById[bb]; return ob.bottleEn||ob.bottleName||ob.name||ob.bottleEs||''; } }
       var base=o.baseProductCode?String(o.baseProductCode):'';
-      if(!base) return '';
-      if(String(o.baseProductType||'')==='other' || base.charAt(0).toUpperCase()!=='T'){ var o2=otherById[base]; return o2?(o2.bottleEn||o2.bottleName||o2.name||o2.bottleEs||''):''; }
-      var bd=bdById[base]; if(bd && bd.bottleId && mById[bd.bottleId]) return mById[bd.bottleId].bottleEs||mById[bd.bottleId].bottleJa||'';
-      if(bd) return _bbEsName(bd); return '';
+      var isOther = String(o.baseProductType||'')==='other' || /^\d{7}$/.test(base) || /^\d{7}$/.test(String(o.baseBottleId||''));
+      if(isOther){ var oid=/^\d{7}$/.test(base)?base:String(o.baseBottleId||''); var ob=otherById[oid]; return ob?(ob.bottleEn||ob.bottleName||ob.name||ob.bottleEs||''):''; }
+      if(base && bdById[base]) return _teqBottleName(bdById[base]);        // 個体現存 → 追記つきボトル名
+      var mid = (o.baseBottleId&&/^\d{12}$/.test(String(o.baseBottleId)))?String(o.baseBottleId):'';
+      if(mid){ var pick=_pickInd(bdByMaster[mid]); if(pick) return _teqBottleName(pick); if(mById[mid]) return mById[mid].bottleEs||mById[mid].bottleJa||''; }
+      return '';
     }
     var writable=[], unresolved=[], unchanged=0;
     res[3].forEach(function(d){
