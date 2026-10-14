@@ -360,7 +360,12 @@ function load(){
     // 対象ボトルを取得。キーは T#####(個体=bottleData) または 12桁(銘柄マスタ=bottles)。
     // どちらも _bottles に格納（nameOf/classLetter/abvOf は bottleEs/classId/abv を見るため共通で解決可）。
     var seen={}, tIds=[], mIds=[];
-    _orders.forEach(function(o){ var r=resolveLine(o); if(r&&r.bottleId&&!seen[r.bottleId]){ seen[r.bottleId]=1; if(/^T/i.test(r.bottleId)) tIds.push(r.bottleId); else if(/^\d{12}$/.test(r.bottleId)) mIds.push(r.bottleId); } });
+    function _addId(id){ id=id&&String(id); if(!id||seen[id]) return; seen[id]=1; if(/^T/i.test(id)) tIds.push(id); else if(/^\d{12}$/.test(id)) mIds.push(id); }
+    _orders.forEach(function(o){
+      var r=resolveLine(o); if(r&&r.bottleId) _addId(r.bottleId);      // 集計キー（カクテルは銘柄マスタ優先）
+      // 個体も必ず読み込む（診断・個体解決用）。集計キーがマスタ(12桁)でも個体(T#####)を取りこぼさない。
+      if(String(o.productType)==='cocktail' && o.baseProductCode) _addId(o.baseProductCode);
+    });
     function _chunk(a){ var c=[]; for(var i=0;i<a.length;i+=10) c.push(a.slice(i,i+10)); return c; }
     var tasks=[];
     _chunk(tIds).forEach(function(ck){ tasks.push(db.collection('bottleData').where(firebase.firestore.FieldPath.documentId(),'in',ck).get().then(function(s){ s.docs.forEach(function(x){ _bottles[x.id]=x.data(); }); }).catch(function(){})); });
