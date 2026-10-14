@@ -74,6 +74,8 @@ input,select{font-family:var(--sans)}
 .btn.p{background:var(--gold-d);color:#fff;border-color:var(--gold-d)}
 .summary{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
 .chip{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);padding:10px 14px;min-width:110px}
+.chip-click{cursor:pointer}
+.chip-click:hover{background:var(--cream2);border-color:var(--border2)}
 .chip .k{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
 .chip .v{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
 .chip .v.s{color:var(--gold-d)}
@@ -175,7 +177,17 @@ tr.okrow td{background:#eef7f1}
     </div>
     <div class="note">実際の注文記録（<code>orders</code>）からテキーラの消費を、<b>ストレート／ソーダ割り</b>に分けて銘柄・会員ごとに集計します。<br>※<b>ストレート</b>＝テキーラ単品注文（<code>tequila</code>, ml=数量）。<b>ソーダ割り</b>＝テキーラベースのカクテル注文（<code>cocktail</code>, ベース=<code>baseProductCode</code>, ml=<code>baseSpiritMl</code>）＋オンライン奢りのソーダ指定。<br>※集計対象は<b>提供済み（キャンセル除く）・全注文種別</b>。支払のみの奢り行(<code>isGiftPayer</code>)は本人未飲のため除外、奢られ受取(¥0)は実飲として計上。<code>orderDate</code>が無いレコードは無視。期間は<b>指定した日付範囲</b>で絞り込みます（既定2026/5/27〜）。<br>※集計は<b>商品(ボトルマスタ)単位</b>で、開栓ごとの個体(bottleData)を束ねます。金額＝テキーラ液量分（10ml単価×ml÷10）。度数HP=41%以上/通常=40%以下。<br>※<b>杯数</b>＝合計／10ml(ストレート)／ソーダ、<b>銘柄数(会員別)・会員数(銘柄別)</b>も同様に合計／10ml／ソーダに分けて表示します。<br>※ランキングは<b>列見出しをクリック</b>で並び替え（クリックごとに ▼降順 → ▲昇順 → 解除）。数値の<b>合計</b>をクリックで全件明細、<b>10ml／ソーダ</b>をクリックでそのスタイルだけの明細を表示します。<b>会員名クリック</b>でその会員のマイページ（別タブ）、<b>銘柄名クリック</b>でその銘柄の全件明細を開きます。グラフは常にストレートのみ。</div>
     <div id="diag" class="note" style="color:var(--ink2)"></div>
+    <div id="reconcile" class="note" style="color:var(--ink2)"></div>
     <div id="soda-diag" class="note" style="color:var(--ink2)"></div>
+    <div class="note" style="color:var(--ink2)">
+      <b>🔎 銘柄トレース</b>（商品名・ベースID・注文IDを部分一致で検索し、記録のされ方を時系列で確認）
+      <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
+        <input id="trace-q" type="text" placeholder="例: Cascahuin" style="padding:5px 8px;border:1px solid var(--border2);border-radius:var(--r);font-size:12px;min-width:200px">
+        <button id="trace-btn" style="padding:5px 12px;border:1px solid var(--border2);border-radius:var(--r);background:var(--cream2);font-size:12px">トレース</button>
+        <span style="font-size:11px;color:var(--ink3)">※全注文(tequila/cocktail/misc等)対象・期間フィルタ無視。ベース個体が bottleData に在るかも表示。</span>
+      </div>
+      <div id="trace-out" style="margin-top:6px"></div>
+    </div>
 
     <div class="filters">
       <div class="fg"><span class="lbl">期間（注文日）</span><div style="display:flex;gap:4px;align-items:center"><input type="date" id="f-from"><span style="font-size:11px;color:var(--ink3)">〜</span><input type="date" id="f-to"></div></div>
@@ -503,9 +515,9 @@ function render(){
   // サマリ
   g('summary').innerHTML=
     '<div class="chip"><div class="k">注文件数 / 条件一致</div><div class="v">'+_orders.length+' / '+nMatched+'</div></div>'+
-    '<div class="chip"><div class="k">テキーラ 合計</div><div class="v">'+(tot.cS+tot.cO)+'<span style="font-size:12px"> 杯</span></div></div>'+
-    '<div class="chip"><div class="k">ストレート</div><div class="v s">'+tot.cS+'<span style="font-size:12px"> 杯</span></div></div>'+
-    '<div class="chip"><div class="k">ソーダ割り</div><div class="v o">'+tot.cO+'<span style="font-size:12px"> 杯</span></div></div>'+
+    '<div class="chip chip-click" data-style="all" title="全銘柄・全会員の明細を表示"><div class="k">テキーラ 合計</div><div class="v">'+(tot.cS+tot.cO)+'<span style="font-size:12px"> 杯</span></div></div>'+
+    '<div class="chip chip-click" data-style="straight" title="ストレート(10ml)の全明細を表示"><div class="k">ストレート</div><div class="v s">'+tot.cS+'<span style="font-size:12px"> 杯</span></div></div>'+
+    '<div class="chip chip-click" data-style="soda" title="ソーダ割りの全明細を表示"><div class="k">ソーダ割り</div><div class="v o">'+tot.cO+'<span style="font-size:12px"> 杯</span></div></div>'+
     '<div class="chip"><div class="k">総量</div><div class="v">'+tot.ml.toLocaleString()+'<span style="font-size:12px"> ml</span></div></div>'+
     '<div class="chip"><div class="k">金額(テキーラ)</div><div class="v">'+yen(tot.amt)+'</div></div>'+
     '<div class="chip"><div class="k">銘柄数 / 会員数</div><div class="v">'+rows.length+' / '+mrows.length+'</div></div>';
@@ -514,6 +526,7 @@ function render(){
   else renderBottleTable(rows, nMatched);
 
   renderCharts(F);
+  reconcileDiag();
   sodaDiag();
 }
 
@@ -600,6 +613,122 @@ function sodaDiag(){
   el.innerHTML='<b style="color:var(--gold-d)">🫧 ソーダ割り診断（5/29以降・「ソーダ」を含む注文を網羅）</b>：合計 <b>'+tot+'杯</b> ｜ productType内訳: '+esc(ptStr)
     +'<br><span style="font-size:10px">※テキーラのみ本集計の対象。<b>赤行</b>＝要確認（productType不正/ベース未補完/bottleData未登録/クラス不明）。他酒はテキーラ集計から除外。クラスが実態と違うベースは bottleData の classId を修正してください。</span>'
     +srcHtml+tbl;
+}
+
+// ── 突合診断：全注文(productType別)が集計でどこへ行ったかを全期間で突合 ──
+// 他ページの「テキーラ◯◯/カクテル◯◯」件数と、本集計の計上数の差分の内訳を出す。
+function reconcileDiag(){
+  var el=g('reconcile'); if(!el) return;
+  var teq={total:0,counted:0,noDate:0,notServed:0,gift:0,pre529:0,soda:0,ml:{}};
+  var ck={total:0,counted:0,noBase:0,otherBase:0,noDate:0,notServed:0,gift:0,pre529:0,ml:{}};
+  _orders.forEach(function(o){
+    var pt=String(o.productType||'');
+    var od=String(o.orderDate||'');
+    if(pt==='tequila'){
+      teq.total++;
+      var q=Number(o.qty)||0; teq.ml[q]=(teq.ml[q]||0)+1;
+      if(o.isGiftPayer===true){teq.gift++;return;}
+      if(!(o.served===2||o.served===3)){teq.notServed++;return;}
+      if(!od){teq.noDate++;return;}
+      if(od<'260529'){teq.pre529++;return;}
+      if(o.orderGroupId && _sodaGroups[o.orderGroupId]) teq.soda++;
+      teq.counted++;
+    } else if(pt==='cocktail'){
+      ck.total++;
+      var bm=Number(o.baseSpiritMl)||0; ck.ml[bm]=(ck.ml[bm]||0)+1;
+      if(o.isGiftPayer===true){ck.gift++;return;}
+      if(!(o.served===2||o.served===3)){ck.notServed++;return;}
+      if(!od){ck.noDate++;return;}
+      if(od<'260529'){ck.pre529++;return;}
+      var base=o.baseProductCode;
+      if(!base){ck.noBase++;return;}
+      var isTeq=(String(o.baseProductType||'')!=='other') && (String(base).charAt(0).toUpperCase()==='T');
+      if(!isTeq){ck.otherBase++;return;}
+      ck.counted++;
+    }
+  });
+  function mlStr(m){ return Object.keys(m).map(function(k){return {k:+k,v:m[k]};}).sort(function(a,b){return b.v-a.v;}).slice(0,6).map(function(x){return x.k+'ml×'+x.v;}).join(' / '); }
+  el.innerHTML='<b style="color:var(--gold-d)">🧮 全注文の突合（全期間・productType別）</b>'
+    +'<br><b>テキーラ単品 '+teq.total+'件</b> ＝ 集計(ストレート候補) <b style="color:var(--teal)">'+teq.counted+'</b>'
+      +' ＋ 5/29より前 '+teq.pre529+' ＋ 日付なし '+teq.noDate+' ＋ 未提供/キャンセル '+teq.notServed+' ＋ 奢り支払 '+teq.gift
+      +'（うちSODA兄弟ありでソーダ扱い '+teq.soda+'）'
+    +'<br><span style="font-size:10px;color:var(--ink3)">テキーラ単品の数量(ml)内訳: '+esc(mlStr(teq.ml))+'</span>'
+    +'<br><b>カクテル '+ck.total+'件</b> ＝ 集計(ソーダ) <b style="color:var(--teal)">'+ck.counted+'</b>'
+      +' ＋ ベース未補完 '+ck.noBase+' ＋ 他酒ベース '+ck.otherBase+' ＋ 5/29より前 '+ck.pre529+' ＋ 日付なし '+ck.noDate+' ＋ 未提供/キャンセル '+ck.notServed+' ＋ 奢り支払 '+ck.gift
+    +'<br><span style="font-size:10px;color:var(--ink3)">カクテルのbaseSpiritMl内訳: '+esc(mlStr(ck.ml))+'</span>'
+    +'<br><span style="font-size:10px;color:var(--ink3)">※本集計の「テキーラ合計」は期間フィルタ(既定5/27〜)・クラス/度数フィルタ適用後の数。ここは全期間・フィルタ無しの突合。</span>';
+}
+
+// ── 銘柄トレース：記録のされ方を時系列で確認（原因調査用） ──
+function _fmtD(od){ od=String(od||''); return od.length>=6?('20'+od.slice(0,2)+'/'+od.slice(2,4)+'/'+od.slice(4,6)):'—'; }
+function traceBrand(){
+  var q=(g('trace-q').value||'').trim().toLowerCase();
+  var out=g('trace-out');
+  if(!q){ out.innerHTML='<span style="color:var(--ink3)">検索語を入力してください</span>'; return; }
+  var rows=_orders.filter(function(o){
+    var hay=[o.productName,o.baseProductCode,o.productCode,o.id,o.baseProductType].map(function(x){return String(x==null?'':x).toLowerCase();}).join(' ');
+    return hay.indexOf(q)>=0;
+  });
+  if(!rows.length){ out.innerHTML='<span style="color:var(--ink3)">「'+esc(q)+'」に該当する注文はありません</span>'; return; }
+  // 個体/商品別サマリ
+  var grp={};
+  rows.forEach(function(o){
+    var pt=String(o.productType||'(無)');
+    var id = pt==='cocktail' ? String(o.baseProductCode||'(ベース無)') : String(o.productCode||'(無)');
+    var k=pt+'|'+id;
+    var gg=grp[k]||(grp[k]={pt:pt,id:id,cnt:0,served:0,minD:'',maxD:'',ml:{}});
+    gg.cnt++; if(o.served===2||o.served===3) gg.served++;
+    var od=String(o.orderDate||''); if(od){ if(!gg.minD||od<gg.minD) gg.minD=od; if(od>gg.maxD) gg.maxD=od; }
+    var mlv = pt==='cocktail'?(Number(o.baseSpiritMl)||0):(Number(o.qty)||0);
+    gg.ml[mlv]=(gg.ml[mlv]||0)+1;
+  });
+  var glist=Object.keys(grp).map(function(k){return grp[k];}).sort(function(a,b){ return (a.minD||'999999')<(b.minD||'999999')?-1:1; });
+  var sumHtml='<div style="overflow:auto;margin-top:4px"><table style="border-collapse:collapse;font-size:11px;width:100%">'
+    +'<thead><tr>'
+    +['種別','個体/商品ID','bottleData','解決名','クラス','件数(提供済)','期間','ml内訳'].map(function(h){return '<th style="text-align:left;padding:3px 8px;background:var(--cream2);white-space:nowrap">'+h+'</th>';}).join('')
+    +'</tr></thead><tbody>'
+    +glist.map(function(gg){
+      var inBD = /^T/i.test(gg.id)&&_bottles[gg.id];
+      var bd = /^T/i.test(gg.id) ? (_bottles[gg.id]?'<span style="color:var(--teal)">✓在</span>':'<span style="color:#8c2818;font-weight:700">✗無</span>') : '—';
+      var nm = _bottles[gg.id]?nameOf(_bottles[gg.id],''):(_others[gg.id]?otherName(_others[gg.id]):'—');
+      var cls = /^T/i.test(gg.id)?classLetter(gg.id,_bottles[gg.id]):'—';
+      var mlStr=Object.keys(gg.ml).sort(function(a,b){return a-b;}).map(function(m){return m+'ml×'+gg.ml[m];}).join(' / ');
+      return '<tr'+((/^T/i.test(gg.id)&&!_bottles[gg.id])?' style="background:var(--red-l)"':'')+'>'
+        +'<td style="padding:3px 8px">'+esc(gg.pt)+'</td>'
+        +'<td style="padding:3px 8px;font-family:var(--mono)">'+esc(gg.id)+'</td>'
+        +'<td style="padding:3px 8px;text-align:center">'+bd+'</td>'
+        +'<td style="padding:3px 8px">'+esc(nm||'—')+'</td>'
+        +'<td style="padding:3px 8px;text-align:center;font-weight:700">'+esc(cls)+'</td>'
+        +'<td style="padding:3px 8px;text-align:right">'+gg.cnt+' ('+gg.served+')</td>'
+        +'<td style="padding:3px 8px;white-space:nowrap">'+_fmtD(gg.minD)+' 〜 '+_fmtD(gg.maxD)+'</td>'
+        +'<td style="padding:3px 8px;color:var(--ink3)">'+esc(mlStr)+'</td></tr>';
+    }).join('')+'</tbody></table></div>';
+  // 明細（最大200件）
+  var det=rows.slice().sort(function(a,b){ return (String(a.orderDate||'')+String(a.orderTime||'')).localeCompare(String(b.orderDate||'')+String(b.orderTime||'')); });
+  var more=det.length>200?('<div style="font-size:11px;color:var(--ink3);padding:4px">…他 '+(det.length-200)+' 件（先頭200件を表示）</div>'):'';
+  var detHtml='<div style="overflow:auto;max-height:340px;margin-top:6px;border-top:1px dashed var(--border)"><table style="border-collapse:collapse;font-size:10px;width:100%">'
+    +'<thead><tr>'
+    +['注文日時','種別','productCode','baseProductCode','baseType','ml','状態','baseBD','商品名','注文ID'].map(function(h){return '<th style="text-align:left;padding:2px 6px;background:var(--cream2);position:sticky;top:0;white-space:nowrap">'+h+'</th>';}).join('')
+    +'</tr></thead><tbody>'
+    +det.slice(0,200).map(function(o){
+      var pt=String(o.productType||'');
+      var ml = pt==='cocktail'?(Number(o.baseSpiritMl)||0):(Number(o.qty)||0);
+      var base=o.baseProductCode?String(o.baseProductCode):'';
+      var baseBD = base? (/^T/i.test(base)?(_bottles[base]?'✓':'<span style="color:#8c2818;font-weight:700">✗</span>'):'(他酒)') : '';
+      var dt=_fmtD(o.orderDate); var ot=String(o.orderTime||''); if(ot.length>=4) dt+=' '+ot.slice(0,2)+':'+ot.slice(2,4);
+      return '<tr>'
+        +'<td style="padding:2px 6px;white-space:nowrap">'+dt+'</td>'
+        +'<td style="padding:2px 6px">'+esc(pt)+'</td>'
+        +'<td style="padding:2px 6px;font-family:var(--mono)">'+esc(String(o.productCode||''))+'</td>'
+        +'<td style="padding:2px 6px;font-family:var(--mono)">'+esc(base)+'</td>'
+        +'<td style="padding:2px 6px">'+esc(String(o.baseProductType||''))+'</td>'
+        +'<td style="padding:2px 6px;text-align:right">'+ml+'</td>'
+        +'<td style="padding:2px 6px">'+esc(servedLabel(o.served))+'</td>'
+        +'<td style="padding:2px 6px;text-align:center">'+baseBD+'</td>'
+        +'<td style="padding:2px 6px">'+esc(String(o.productName||''))+'</td>'
+        +'<td style="padding:2px 6px;font-family:var(--mono);color:var(--ink3)">'+esc(String(o.id||''))+'</td></tr>';
+    }).join('')+'</tbody></table></div>'+more;
+  out.innerHTML='<div style="font-size:12px;margin-top:4px"><b>「'+esc(q)+'」に該当 '+rows.length+'件</b> ｜ 個体/商品別 '+glist.length+'種</div>'+sumHtml+detHtml;
 }
 
 // ── グラフ（月別BJRAX積み上げ棒 / 5-29以来のBJRAX円） ──
@@ -758,7 +887,7 @@ function _dtDatetime(v){ return String(v.o.orderDate||'')+String(v.o.orderTime||
 function _dtName(v){ return String(nameOf(v.b, v.pname||v.productId)||'').toLowerCase(); }
 function _dtNom(v){ return String(nomOf(v.b)||'').toLowerCase(); }
 function dtHeadHtml(kind){
-  var varCol = kind==='bottle' ? '<th>会員</th>' : '<th>スタイル</th>';
+  var varCol = kind==='member' ? '<th>スタイル</th>' : '<th>会員</th>';
   return '<th>判定</th>'
     +'<th class="sortable" data-sort="date">注文日時<span class="sarr"></span></th>'
     +'<th class="sortable" data-sort="name">銘柄<span class="sarr"></span></th>'
@@ -782,7 +911,8 @@ function openDetail(kind, key, styleOnly){
   _orders.forEach(function(o){
     var v=lineVerdict(o,F); if(!v) return;
     if(kind==='bottle'){ if(v.productId!==key) return; }
-    else { if(String(o.customerId||'')!==key) return; }
+    else if(kind==='member'){ if(String(o.customerId||'')!==key) return; }
+    // kind==='all': 全銘柄・全会員（キー絞り込みなし）
     if(_dtStyleOnly==='straight' && v.isSoda) return;   // 10ml(ストレート)のみ
     if(_dtStyleOnly==='soda' && !v.isSoda) return;       // ソーダ割りのみ
     v._hr=_dtHiddenReason(v, F);   // 非表示理由（空＝表示対象）
@@ -799,7 +929,8 @@ function openDetail(kind, key, styleOnly){
   vis.forEach(function(v){ if(v.counted){ okN++; mlOk+=v.ml; prods[v.productId]=1; } else { exBy[v.reason]=(exBy[v.reason]||0)+1; } });
   var nProd=Object.keys(prods).length;
   var styTxt=_dtStyleOnly==='straight'?'（ストレート/10ml）':_dtStyleOnly==='soda'?'（ソーダ割り）':'';
-  if(kind==='bottle'){ var name=vis.length?nameOf(vis[0].b, vis[0].pname||key):(items.length?nameOf(items[0].b,items[0].pname||key):key); g('dt-title').textContent=name+styTxt; }
+  if(kind==='all'){ g('dt-title').textContent='全銘柄・全会員'+styTxt; }
+  else if(kind==='bottle'){ var name=vis.length?nameOf(vis[0].b, vis[0].pname||key):(items.length?nameOf(items[0].b,items[0].pname||key):key); g('dt-title').textContent=name+styTxt; }
   else { var nm=memberName(key); g('dt-title').textContent=(nm?nm+' ':'')+'会員 '+memberDisp(key)+styTxt; }
   var exHtml=Object.keys(exBy).map(function(k){ return '<span class="c">除外: '+esc(k)+' <b>'+exBy[k]+'</b></span>'; }).join('');
   g('dt-stat').innerHTML='<span class="c">明細(杯) <b>'+vis.length+'</b></span>'
@@ -832,15 +963,15 @@ function renderDtRows(){
     var ar=th.querySelector('.sarr'); if(!ar) return;
     ar.textContent=(th.getAttribute('data-sort')===key)?(_dtSort.dir==='asc'?'▲':'▼'):'';
   });
-  var isBottle=(_dtKind==='bottle');
+  var showMember=(_dtKind!=='member');  // 会員別ビュー以外(銘柄別/全件)は会員列、会員別はスタイル列
   g('dt-rows').innerHTML=items.map(function(v){
     var o=v.o;
     var dd=String(o.orderDate||''); var dstr=dd.length>=6?('20'+dd.slice(0,2)+'/'+dd.slice(2,4)+'/'+dd.slice(4,6)):(dd||'—');
     var ot=String(o.orderTime||''); if(ot.length>=4) dstr+=' '+ot.slice(0,2)+':'+ot.slice(2,4);
     var d6=dd.slice(0,6);
-    // 可変列: 銘柄別ビュー=会員(ID＋ニックネーム) / 会員別ビュー=スタイル
+    // 可変列: 全件/銘柄別=会員(ID＋ニックネーム) / 会員別=スタイル
     var varCell;
-    if(isBottle){ var nm=memberName(o.customerId); varCell='<td>'+esc(memberDisp(o.customerId)||'—')+(nm?' <span style="color:var(--ink3)">'+esc(nm)+'</span>':'')+'</td>'; }
+    if(showMember){ var nm=memberName(o.customerId); varCell='<td>'+esc(memberDisp(o.customerId)||'—')+(nm?' <span style="color:var(--ink3)">'+esc(nm)+'</span>':'')+'</td>'; }
     else { varCell='<td>'+(v.isSoda?'ソーダ割り':'ストレート')+'</td>'; }
     var verdict = v._hr ? ('<span class="rz ex">非表示</span> <span class="rz">'+esc(v._hr)+'</span>')
       : (v.counted?'<span class="rz ok">集計</span>':'<span class="rz ex">除外</span>'+(v.reason?' <span class="rz">'+esc(v.reason)+'</span>':''));
@@ -897,6 +1028,15 @@ g('thead').addEventListener('click',function(e){
 g('dt-toggle-hidden').addEventListener('click',function(){ _dtShowHidden=!_dtShowHidden; updateHiddenBtn(); renderDtRows(); });
 g('dt-close').addEventListener('click',function(){ g('detail').classList.remove('on'); });
 g('detail').addEventListener('click',function(e){ if(e.target===g('detail')) g('detail').classList.remove('on'); });
+// サマリのチップ（テキーラ合計/ストレート/ソーダ割り）クリックで全銘柄・全会員の明細
+g('summary').addEventListener('click',function(e){
+  var c=e.target.closest('.chip-click'); if(!c) return;
+  var st=c.getAttribute('data-style');
+  openDetail('all','', st==='all'?null:st);
+});
+// 銘柄トレース
+g('trace-btn').addEventListener('click', traceBrand);
+g('trace-q').addEventListener('keydown',function(e){ if(e.key==='Enter') traceBrand(); });
 
 /* ── 表示切替（銘柄別/会員別） ── */
 function applyViewUI(){
