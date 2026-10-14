@@ -570,9 +570,10 @@ body.popup-mode .modal-panel{border-radius:0;max-width:100%;box-shadow:none;min-
           <div style="font-size:10px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:5px">過去日付への注文 — 注文時間を指定</div>
           <div style="font-size:11px;color:var(--ink3);margin-bottom:8px" id="confirm-time-range"></div>
           <div style="display:flex;align-items:center;gap:8px">
-            <label style="font-size:12px;color:var(--ink2);white-space:nowrap">注文時間</label>
-            <input type="time" id="confirm-order-time" style="font-size:13px;padding:5px 8px;border:1px solid var(--border2);border-radius:var(--r);background:var(--white)">
+            <label style="font-size:12px;color:var(--ink2);white-space:nowrap">注文時間（HHMMSS）</label>
+            <input type="text" id="confirm-order-time" maxlength="6" inputmode="numeric" placeholder="例 243500" style="font-size:13px;padding:5px 8px;border:1px solid var(--border2);border-radius:var(--r);background:var(--white);font-family:var(--mono);width:110px">
           </div>
+          <div style="font-size:10px;color:var(--ink3);margin-top:4px">※深夜は営業時間表記（例 0:35→<b>003500</b>ではなく <b>243500</b>）。時・分・秒の6桁。</div>
         </div>
         <div id="confirm-gift-info" style="display:none;background:#fdf0d0;border-radius:var(--r);padding:8px 12px;margin:6px 0;font-size:12px;color:var(--gold-d)"></div>
         <div class="confirm-total">
@@ -2602,15 +2603,15 @@ async function goStep2(){
       document.getElementById('confirm-time-range').textContent=`来場: ${fmtT(vis.visitTime)} ～ 退場: ${fmtT(vis.checkoutTime)}`;
       const timeInp=document.getElementById('confirm-order-time');
       if(timeInp){
-        // visitTimeをデフォルトとしてセット
+        // visitTimeをデフォルトとしてセット（HHMMSS・6桁。秒が無ければ00埋め）
+        const _to6=s=>(String(s||'').replace(/[^0-9]/g,'')+'000000').slice(0,6);
         const defT=vis.visitTime||'';
-        if(defT.length>=4) timeInp.value=defT.slice(0,2)+':'+defT.slice(2,4);
+        if(String(defT).replace(/[^0-9]/g,'').length>=4) timeInp.value=_to6(defT);
         // Firestoreから当該visitの最終注文時間を取得してプリセット上書き
         const vkSnap=await db.collection('orders').where('visitKey','==',vis.id).get().catch(()=>({docs:[]}));
-        const times=vkSnap.docs.map(d=>d.data().orderTime||'').filter(t=>t.length>=4).sort();
+        const times=vkSnap.docs.map(d=>d.data().orderTime||'').filter(t=>String(t).length>=4).sort();
         if(times.length>0){
-          const lastT=times[times.length-1];
-          timeInp.value=lastT.slice(0,2)+':'+lastT.slice(2,4);
+          timeInp.value=_to6(times[times.length-1]);
         }
       }
     }
@@ -2660,8 +2661,21 @@ async function confirmOrder(){
   //           （nowBusinessTimeは開店が午後で現在が午前なら24h+表記で日跨ぎ対応）
   let orderTime;
   if(isHistorical){
-    const tv=(document.getElementById('confirm-order-time')||{}).value||'';
-    orderTime=tv.length===5?tv.replace(':','')+'00':AuthRole.nowBusinessTime(currentSessionBT&&currentSessionBT.openTime);
+    // HHMMSS（6桁）。深夜は営業時間表記(24:xx以降)も許可＝HH範囲はクランプしない。分・秒のみ00-59を検証。
+    const tvRaw=(document.getElementById('confirm-order-time')||{}).value||'';
+    const tv=String(tvRaw).replace(/[^0-9]/g,'');
+    let t6='';
+    if(/^\d{6}$/.test(tv)) t6=tv;
+    else if(/^\d{4}$/.test(tv)) t6=tv+'00';          // HHMM入力は秒00で補完
+    if(t6){
+      const mm=parseInt(t6.slice(2,4),10), ss=parseInt(t6.slice(4,6),10);
+      if(mm>59||ss>59){ showToast('注文時間は HHMMSS（分・秒は00〜59）で入力してください','error'); return; }
+      orderTime=t6;                                   // HHはクランプせずそのまま（例 243500=24:35:00）
+    } else if(!tv){
+      orderTime=AuthRole.nowBusinessTime(currentSessionBT&&currentSessionBT.openTime); // 空ならnow
+    } else {
+      showToast('注文時間は HHMMSS（6桁）で入力してください','error'); return;
+    }
   }else{
     orderTime=AuthRole.nowBusinessTime(currentSessionBT&&currentSessionBT.openTime);
   }
