@@ -177,6 +177,7 @@ tr.okrow td{background:#eef7f1}
     </div>
     <div class="note">実際の注文記録（<code>orders</code>）からテキーラの消費を、<b>ストレート／ソーダ割り</b>に分けて銘柄・会員ごとに集計します。<br>※<b>ストレート</b>＝テキーラ単品注文（<code>tequila</code>, ml=数量）。<b>ソーダ割り</b>＝テキーラベースのカクテル注文（<code>cocktail</code>, ベース=<code>baseProductCode</code>, ml=<code>baseSpiritMl</code>）＋オンライン奢りのソーダ指定。<br>※集計対象は<b>提供済み（キャンセル除く）・全注文種別</b>。支払のみの奢り行(<code>isGiftPayer</code>)は本人未飲のため除外、奢られ受取(¥0)は実飲として計上。<code>orderDate</code>が無いレコードは無視。期間は<b>指定した日付範囲</b>で絞り込みます（既定2026/5/27〜）。<br>※集計は<b>商品(ボトルマスタ)単位</b>で、開栓ごとの個体(bottleData)を束ねます。金額＝テキーラ液量分（10ml単価×ml÷10）。度数HP=41%以上/通常=40%以下。<br>※<b>杯数</b>＝合計／10ml(ストレート)／ソーダ、<b>銘柄数(会員別)・会員数(銘柄別)</b>も同様に合計／10ml／ソーダに分けて表示します。<br>※ランキングは<b>列見出しをクリック</b>で並び替え（クリックごとに ▼降順 → ▲昇順 → 解除）。数値の<b>合計</b>をクリックで全件明細、<b>10ml／ソーダ</b>をクリックでそのスタイルだけの明細を表示します。<b>会員名クリック</b>でその会員のマイページ（別タブ）、<b>銘柄名クリック</b>でその銘柄の全件明細を開きます。グラフは常にストレートのみ。</div>
     <div id="diag" class="note" style="color:var(--ink2)"></div>
+    <div id="reconcile" class="note" style="color:var(--ink2)"></div>
     <div id="soda-diag" class="note" style="color:var(--ink2)"></div>
     <div class="note" style="color:var(--ink2)">
       <b>🔎 銘柄トレース</b>（商品名・ベースID・注文IDを部分一致で検索し、記録のされ方を時系列で確認）
@@ -525,6 +526,7 @@ function render(){
   else renderBottleTable(rows, nMatched);
 
   renderCharts(F);
+  reconcileDiag();
   sodaDiag();
 }
 
@@ -611,6 +613,50 @@ function sodaDiag(){
   el.innerHTML='<b style="color:var(--gold-d)">🫧 ソーダ割り診断（5/29以降・「ソーダ」を含む注文を網羅）</b>：合計 <b>'+tot+'杯</b> ｜ productType内訳: '+esc(ptStr)
     +'<br><span style="font-size:10px">※テキーラのみ本集計の対象。<b>赤行</b>＝要確認（productType不正/ベース未補完/bottleData未登録/クラス不明）。他酒はテキーラ集計から除外。クラスが実態と違うベースは bottleData の classId を修正してください。</span>'
     +srcHtml+tbl;
+}
+
+// ── 突合診断：全注文(productType別)が集計でどこへ行ったかを全期間で突合 ──
+// 他ページの「テキーラ◯◯/カクテル◯◯」件数と、本集計の計上数の差分の内訳を出す。
+function reconcileDiag(){
+  var el=g('reconcile'); if(!el) return;
+  var teq={total:0,counted:0,noDate:0,notServed:0,gift:0,pre529:0,soda:0,ml:{}};
+  var ck={total:0,counted:0,noBase:0,otherBase:0,noDate:0,notServed:0,gift:0,pre529:0,ml:{}};
+  _orders.forEach(function(o){
+    var pt=String(o.productType||'');
+    var od=String(o.orderDate||'');
+    if(pt==='tequila'){
+      teq.total++;
+      var q=Number(o.qty)||0; teq.ml[q]=(teq.ml[q]||0)+1;
+      if(o.isGiftPayer===true){teq.gift++;return;}
+      if(!(o.served===2||o.served===3)){teq.notServed++;return;}
+      if(!od){teq.noDate++;return;}
+      if(od<'260529'){teq.pre529++;return;}
+      if(o.orderGroupId && _sodaGroups[o.orderGroupId]) teq.soda++;
+      teq.counted++;
+    } else if(pt==='cocktail'){
+      ck.total++;
+      var bm=Number(o.baseSpiritMl)||0; ck.ml[bm]=(ck.ml[bm]||0)+1;
+      if(o.isGiftPayer===true){ck.gift++;return;}
+      if(!(o.served===2||o.served===3)){ck.notServed++;return;}
+      if(!od){ck.noDate++;return;}
+      if(od<'260529'){ck.pre529++;return;}
+      var base=o.baseProductCode;
+      if(!base){ck.noBase++;return;}
+      var isTeq=(String(o.baseProductType||'')!=='other') && (String(base).charAt(0).toUpperCase()==='T');
+      if(!isTeq){ck.otherBase++;return;}
+      ck.counted++;
+    }
+  });
+  function mlStr(m){ return Object.keys(m).map(function(k){return {k:+k,v:m[k]};}).sort(function(a,b){return b.v-a.v;}).slice(0,6).map(function(x){return x.k+'ml×'+x.v;}).join(' / '); }
+  el.innerHTML='<b style="color:var(--gold-d)">🧮 全注文の突合（全期間・productType別）</b>'
+    +'<br><b>テキーラ単品 '+teq.total+'件</b> ＝ 集計(ストレート候補) <b style="color:var(--teal)">'+teq.counted+'</b>'
+      +' ＋ 5/29より前 '+teq.pre529+' ＋ 日付なし '+teq.noDate+' ＋ 未提供/キャンセル '+teq.notServed+' ＋ 奢り支払 '+teq.gift
+      +'（うちSODA兄弟ありでソーダ扱い '+teq.soda+'）'
+    +'<br><span style="font-size:10px;color:var(--ink3)">テキーラ単品の数量(ml)内訳: '+esc(mlStr(teq.ml))+'</span>'
+    +'<br><b>カクテル '+ck.total+'件</b> ＝ 集計(ソーダ) <b style="color:var(--teal)">'+ck.counted+'</b>'
+      +' ＋ ベース未補完 '+ck.noBase+' ＋ 他酒ベース '+ck.otherBase+' ＋ 5/29より前 '+ck.pre529+' ＋ 日付なし '+ck.noDate+' ＋ 未提供/キャンセル '+ck.notServed+' ＋ 奢り支払 '+ck.gift
+    +'<br><span style="font-size:10px;color:var(--ink3)">カクテルのbaseSpiritMl内訳: '+esc(mlStr(ck.ml))+'</span>'
+    +'<br><span style="font-size:10px;color:var(--ink3)">※本集計の「テキーラ合計」は期間フィルタ(既定5/27〜)・クラス/度数フィルタ適用後の数。ここは全期間・フィルタ無しの突合。</span>';
 }
 
 // ── 銘柄トレース：記録のされ方を時系列で確認（原因調査用） ──
