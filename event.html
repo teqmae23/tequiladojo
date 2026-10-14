@@ -1527,18 +1527,30 @@ function _normalizeMoveDest(items){
 // Google Maps リンク。表示方法(mapMode)で切替:
 //  name … 名称で検索（実在の場所。名称・情報が正しく出る。座標があれば近辺を中心表示）
 //  coord … 座標を固定（名称は付けず、純粋な座標クエリで確実にその地点へピン）
+// 地図リンクの共通組み立て。
+//  既定(名称で検索): ①保存済みGoogleマップURL ②名称＋座標(その場所にズームして特定店舗を開く) ③名称のみ ④座標
+//  座標固定(coord): ①座標 ②URL ③名称
+function _mapLink(label, lat, lng, mapUrl, mode){
+  label=(label==null?'':String(label)).trim();
+  mapUrl=(mapUrl==null?'':String(mapUrl)).trim();
+  var la=_geoNum(lat), ln=_geoNum(lng), hasC=(la!=null&&ln!=null);
+  function _q(s){ return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(s); }
+  if(mode==='coord'){
+    if(hasC) return _q(la+','+ln);
+    if(mapUrl) return mapUrl;
+    if(label) return _q(label);
+    return '';
+  }
+  if(mapUrl) return mapUrl;
+  if(label && hasC) return 'https://www.google.com/maps/search/'+encodeURIComponent(label)+'/@'+la+','+ln+',17z';
+  if(label) return _q(label);
+  if(hasC) return _q(la+','+ln);
+  return '';
+}
 function gmapLink(it){
-  var label=(it.placeName||it.title||'').trim();
-  var la=_geoNum(it.lat), ln=_geoNum(it.lng);
-  var hasGeo=(la!=null&&ln!=null);
   // 既定は「名称で検索」。座標固定(coord)が明示されたときだけ座標。
   var mode=(it.mapMode==='coord')?'coord':'name';
-  // 名称で検索: 名称だけでクエリ（座標を付けると座標ピン扱いになり名称ページが出ないため）
-  if(mode==='name' && label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
-  if(hasGeo) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(la+','+ln);
-  if(it.mapUrl) return it.mapUrl;
-  if(label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
-  return '';
+  return _mapLink(it.placeName||it.title, it.lat, it.lng, it.mapUrl, mode);
 }
 // 2地点ルート。座標があれば常に座標を使用（名称だと Google が見つけられずルートが引けないため）。
 // 座標が無い端点のみ名称でフォールバック。
