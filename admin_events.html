@@ -141,7 +141,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .se-nest-body{margin:-2px 0 0 14px;padding-left:10px;border-left:2px solid var(--gold-l)}
 .se-nest-body .se-item:last-child{margin-bottom:0}
 .se-t{min-width:52px;font-family:var(--mono);font-size:16px;font-weight:700;color:var(--ink);flex:0 0 auto;text-align:center;line-height:1.1}
-.se-move-arrow{display:block;font-size:14px;color:var(--gold-d);line-height:1}
+.se-move-arrow{display:block;width:2px;height:14px;margin:3px auto;background:var(--gold-d);border-radius:1px;font-size:0;line-height:0;overflow:hidden}
 .se-t .se-actual{color:#1a6e58;font-size:16px}
 .se-t .se-sched-strike{display:block;font-size:10px;color:var(--ink3);text-decoration:line-through;font-weight:400;line-height:1}
 .se-cico{display:flex;flex-direction:column;gap:4px;flex:0 0 auto;margin-left:auto}
@@ -3783,16 +3783,26 @@ function _schEndMin(it){
   if(s!=null && m<s) m+=1440; // 日跨ぎ
   return m;
 }
+// 日付変更線/タイムゾーンをまたぐ移動か（壁時計の分での内包判定が破綻するため、容器にせず・前の容器も閉じる）
+function _schMoveBreak(it){
+  if(!it||!it.isMove) return false;
+  if(_idlCross(it)) return true;                       // 日付変更線をまたぐ（例: NRT→SFO）
+  var a=_safeTz(it.lat,it.lng), b=_safeTz(it.toLat,it.toLng);
+  return !!(a&&b&&a!==b);                              // 出発地と到着地のタイムゾーンが異なる
+}
 function _schBuildTree(items){
   var roots=[], stack=[]; // stack: 開いている容器 {node, endMin}
   items.forEach(function(it){
+    var brk=_schMoveBreak(it);
+    if(brk) stack.length=0; // 日付変更線/TZ境界の移動で、開いている容器を全て閉じる
     var startMin=_schStartMin(it);
     while(stack.length && stack[stack.length-1].endMin<=startMin) stack.pop();
     var parent=stack.length?stack[stack.length-1].node:null;
     var node={it:it, children:[], isCont:false, depth:parent?parent.depth+1:0};
     if(parent) parent.children.push(node); else roots.push(node);
     var ce=it&&(it.isMove?it.toTime:it.endTime);
-    if(!!(ce&&String(ce).trim()) && node.depth<2){
+    // 境界移動(brk)は容器にしない。別の地・別の日の予定を壁時計の数字だけで誤って内包しないため。
+    if(!brk && !!(ce&&String(ce).trim()) && node.depth<2){
       var em=_schEndMin(it);
       if(em!=null && em>startMin){ node.isCont=true; stack.push({node:node, endMin:em}); }
     }
