@@ -115,6 +115,18 @@ tr.okrow td{background:#eef7f1}
 #toasts{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:100;display:flex;flex-direction:column;gap:6px}
 .toast{background:var(--ink);color:#fff;padding:8px 16px;border-radius:var(--r);font-size:12px;box-shadow:0 4px 16px rgba(0,0,0,.3)}
 .toast.terr{background:var(--red)}
+/* ── グラフエリア ── */
+.charts{display:grid;grid-template-columns:1.6fr 1fr;gap:12px;margin-bottom:14px}
+@media(max-width:720px){.charts{grid-template-columns:1fr}}
+.chcard{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);padding:12px 14px}
+.chcard h3{font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:2px}
+.chcard .chsub{font-size:10px;color:var(--ink3);margin-bottom:8px}
+.chlegend{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:8px}
+.chlegend .it{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink2);font-variant-numeric:tabular-nums}
+.chlegend .sw{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
+.chsvg{width:100%;height:auto;display:block;overflow:visible}
+.chsvg text{font-family:var(--sans)}
+.chempty{font-size:12px;color:var(--ink3);text-align:center;padding:24px 0}
 </style>
 </head>
 <body>
@@ -179,7 +191,7 @@ tr.okrow td{background:#eef7f1}
         <select id="f-style"><option value="all" selected>両方</option><option value="straight">ストレート飲み</option><option value="soda">ソーダ割り</option></select>
       </div>
       <div class="fg"><span class="lbl">並び替え</span>
-        <select id="f-metric"><option value="count">杯数</option><option value="ml">総量(ml)</option><option value="amount">金額</option></select>
+        <select id="f-metric"><option value="count">杯数</option><option value="ml">総量(ml)</option><option value="amount">金額</option><option value="people">試飲人数(銘柄別)</option><option value="bottles">試飲ボトル数(会員別)</option></select>
       </div>
       <div class="fg"><span class="lbl">ブラインド</span>
         <select id="f-blind"><option value="inc" selected>含む</option><option value="exc">除く</option><option value="only">ブラインドのみ</option></select>
@@ -188,6 +200,22 @@ tr.okrow td{background:#eef7f1}
     </div>
 
     <div class="summary" id="summary"></div>
+
+    <div class="charts" id="charts">
+      <div class="chcard">
+        <h3>月別 クラス別 杯数（BJRAX積み上げ）</h3>
+        <div class="chsub" id="ch-bar-sub">選択中の期間・条件（クラス除く）／クラス不明は除外</div>
+        <div id="ch-bar"></div>
+        <div class="chlegend" id="ch-bar-legend"></div>
+      </div>
+      <div class="chcard">
+        <h3>BJRAX割合（2026/5/29以来）</h3>
+        <div class="chsub" id="ch-pie-sub">期間フィルタに関わらず5/29〜当日／条件は反映</div>
+        <div id="ch-pie"></div>
+        <div class="chlegend" id="ch-pie-legend"></div>
+      </div>
+    </div>
+
     <div class="tw"><table class="rk" id="tbl">
       <thead><tr id="thead-row"></tr></thead>
       <tbody id="rows"><tr><td colspan="8" class="empty">読込中…</td></tr></tbody>
@@ -219,6 +247,9 @@ function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,
 function toast(msg,type){ var el=document.createElement('div'); el.className='toast'+(type==='err'?' terr':''); el.textContent=msg; g('toasts').appendChild(el); setTimeout(function(){el.remove();},2600); }
 function yen(n){ return '¥'+Number(n||0).toLocaleString(); }
 var BJRAX_MAP={'1':'B','2':'J','3':'R','4':'A','5':'X'};
+var BJRAX_ORDER=['B','J','R','A','X'];
+// 検証済みカテゴリカル配色（validate_palette.js: light / 全チェックPASS）
+var BJRAX_COLOR={B:'#2a78d6',J:'#eb6834',R:'#1baf7a',A:'#eda100',X:'#e87ba4'};
 
 var _orders=[];        // orders 全件（生）
 var _bottles={};       // bottleData id → {classId,abv,price,bottleEs/En/Ja...}
@@ -333,7 +364,8 @@ function curFilters(){
     member:(g('f-member').value||'').trim(), from:ymd6(g('f-from').value), to:ymd6(g('f-to').value) };
 }
 // 1明細の判定: 対象外(null) / {bottleId,ml,isSoda,b,cl,abv,amt,counted,reason}
-function lineVerdict(o, F){
+function lineVerdict(o, F, opts){
+  opts=opts||{};
   var r=resolveLine(o); if(!r) return null;   // テキーラ/カクテル(ベース有)以外は集計対象ですらない
   var b=_bottles[r.bottleId], cl=classLetter(r.bottleId,b), abv=abvOf(b);
   // 集計キーは「商品(ボトルマスタ)」単位。bottleData は開栓ごとの個体なので、同一商品の個体を束ねる。
@@ -351,14 +383,16 @@ function lineVerdict(o, F){
   var bl=isBlind(o);
   if(F.blindMode==='exc' && bl){ v.reason='ブラインド除外'; return v; }
   if(F.blindMode==='only' && !bl){ v.reason='非ブラインド除外'; return v; }
-  if(!F.allCls && !F.cls[cl]){ v.reason='クラス外('+cl+')'; return v; }
+  if(!opts.skipClass && !F.allCls && !F.cls[cl]){ v.reason='クラス外('+cl+')'; return v; }
   if(F.abvMode==='normal' && !(abv!=null&&abv<=40)){ v.reason='度数外'; return v; }
   if(F.abvMode==='hp' && !(abv!=null&&abv>=41)){ v.reason='度数外'; return v; }
   if(F.styleMode==='straight' && r.isSoda){ v.reason='スタイル外(ソーダ)'; return v; }
   if(F.styleMode==='soda' && !r.isSoda){ v.reason='スタイル外(ストレート)'; return v; }
   if(F.member && String(o.customerId||'').indexOf(F.member)<0){ v.reason='会員外'; return v; }
-  if(F.from && od<F.from){ v.reason='期間前'; return v; }
-  if(F.to && od>F.to){ v.reason='期間後'; return v; }
+  if(!opts.skipDate){
+    if(F.from && od<F.from){ v.reason='期間前'; return v; }
+    if(F.to && od>F.to){ v.reason='期間後'; return v; }
+  }
   v.counted=true; return v;
 }
 
@@ -389,7 +423,14 @@ function render(){
     tot.ml+=v.ml; tot.amt+=v.amt; nMatched++;
   });
 
-  var byMetric=function(x,y){ if(metric==='ml') return y.ml-x.ml; if(metric==='amount') return y.amt-x.amt; return (y.cnt-x.cnt)||(y.ml-x.ml); };
+  var mval=function(a){
+    if(metric==='ml') return a.ml;
+    if(metric==='amount') return a.amt;
+    if(metric==='people') return a.nMem!=null?a.nMem:a.cnt;    // 銘柄別の試飲人数
+    if(metric==='bottles') return a.nProd!=null?a.nProd:a.cnt; // 会員別の試飲ボトル数
+    return a.cnt;
+  };
+  var byMetric=function(x,y){ return (mval(y)-mval(x))||(y.cnt-x.cnt)||(y.ml-x.ml); };
   var rows=Object.keys(agg).map(function(k){ var a=agg[k]; a.cnt=a.cS+a.cO; a.ml=a.mlS+a.mlO; a.amt=a.amtS+a.amtO; a.nMem=Object.keys(a.members).length; a.nBot=Object.keys(a.nbottles).length; return a; }).sort(byMetric);
   var mrows=Object.keys(magg).map(function(k){ var a=magg[k]; a.cnt=a.cS+a.cO; a.ml=a.mlS+a.mlO; a.amt=a.amtS+a.amtO; a.nProd=Object.keys(a.prods).length; return a; }).sort(byMetric);
 
@@ -405,6 +446,110 @@ function render(){
 
   if(_view==='member') renderMemberTable(mrows, nMatched);
   else renderBottleTable(rows, nMatched);
+
+  renderCharts(F);
+}
+
+// ── グラフ（月別BJRAX積み上げ棒 / 5-29以来のBJRAX円） ──
+function renderCharts(F){
+  // クラス・日付を除いた判定で全BJRAXを集計（他フィルタは反映）
+  var byMonth={}; // 'YYMM' → {B,J,R,A,X}
+  var sincePie={B:0,J:0,R:0,A:0,X:0};
+  var from=F.from, to=F.to;
+  _orders.forEach(function(o){
+    var v=lineVerdict(o, F, {skipClass:true, skipDate:true}); if(!v||!v.counted) return;
+    var cl=v.cl; if(BJRAX_ORDER.indexOf(cl)<0) return; // クラス不明は除外
+    var od=String(o.orderDate||''); if(od.length<4) return;
+    var mo=od.slice(0,4);
+    // 棒グラフ: 選択期間に限定
+    if((!from||od>=from) && (!to||od<=to)){
+      var m=byMonth[mo]||(byMonth[mo]={B:0,J:0,R:0,A:0,X:0}); m[cl]++;
+    }
+    // 円グラフ: 5/29以来（期間フィルタ無視）
+    if(od>='260529') sincePie[cl]++;
+  });
+  renderStackedBar(byMonth);
+  renderPie(sincePie);
+}
+function _legendHtml(counts){
+  var tot=BJRAX_ORDER.reduce(function(a,c){return a+(counts[c]||0);},0)||1;
+  return BJRAX_ORDER.map(function(c){
+    var n=counts[c]||0, p=Math.round(n/tot*100);
+    return '<span class="it"><span class="sw" style="background:'+BJRAX_COLOR[c]+'"></span>'+c+' '+n+'杯 ('+p+'%)</span>';
+  }).join('');
+}
+function renderStackedBar(byMonth){
+  var months=Object.keys(byMonth).sort();
+  var host=g('ch-bar'), leg=g('ch-bar-legend');
+  if(!months.length){ host.innerHTML='<div class="chempty">該当データがありません</div>'; leg.innerHTML=''; return; }
+  var totals={B:0,J:0,R:0,A:0,X:0};
+  var maxV=0;
+  months.forEach(function(mo){ var m=byMonth[mo]; var s=0; BJRAX_ORDER.forEach(function(c){ s+=m[c]; totals[c]+=m[c]; }); if(s>maxV) maxV=s; });
+  // レイアウト
+  var W=520,H=240, padL=38,padR=10,padT=12,padB=28;
+  var pw=W-padL-padR, ph=H-padT-padB;
+  var n=months.length, gap=10, bw=Math.max(6, Math.min(48,(pw-gap*(n))/n));
+  var step=pw/n;
+  var niceMax=niceCeil(maxV);
+  var y=function(val){ return padT+ph-(val/niceMax)*ph; };
+  var svg='<svg class="chsvg" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" role="img">';
+  // Y グリッド + 目盛り
+  var ticks=4;
+  for(var t=0;t<=ticks;t++){ var val=niceMax*t/ticks; var yy=y(val);
+    svg+='<line x1="'+padL+'" y1="'+yy+'" x2="'+(W-padR)+'" y2="'+yy+'" stroke="#e1e0d9" stroke-width="1"/>';
+    svg+='<text x="'+(padL-5)+'" y="'+(yy+3)+'" text-anchor="end" font-size="9" fill="#898781">'+Math.round(val)+'</text>';
+  }
+  // 棒
+  months.forEach(function(mo,i){
+    var m=byMonth[mo]; var cx=padL+step*i+(step-bw)/2; var acc=0;
+    var sTot=BJRAX_ORDER.reduce(function(a,c){return a+m[c];},0);
+    BJRAX_ORDER.forEach(function(c){
+      var val=m[c]; if(val<=0) return;
+      var y0=y(acc), y1=y(acc+val); var h=Math.max(0,y0-y1);
+      svg+='<rect x="'+cx+'" y="'+y1+'" width="'+bw+'" height="'+h+'" fill="'+BJRAX_COLOR[c]+'">'
+        +'<title>'+moLabel(mo)+' '+c+'：'+val+'杯</title></rect>';
+      acc+=val;
+    });
+    // 合計ラベル
+    svg+='<text x="'+(cx+bw/2)+'" y="'+(y(sTot)-4)+'" text-anchor="middle" font-size="9" fill="#52514e" font-weight="700">'+sTot+'</text>';
+    // X ラベル（月）
+    svg+='<text x="'+(cx+bw/2)+'" y="'+(H-padB+14)+'" text-anchor="middle" font-size="9" fill="#898781">'+moLabel(mo)+'</text>';
+  });
+  // baseline
+  svg+='<line x1="'+padL+'" y1="'+(padT+ph)+'" x2="'+(W-padR)+'" y2="'+(padT+ph)+'" stroke="#c3c2b7" stroke-width="1"/>';
+  svg+='</svg>';
+  host.innerHTML=svg;
+  leg.innerHTML=_legendHtml(totals);
+}
+function renderPie(counts){
+  var host=g('ch-pie'), leg=g('ch-pie-legend');
+  var tot=BJRAX_ORDER.reduce(function(a,c){return a+(counts[c]||0);},0);
+  if(!tot){ host.innerHTML='<div class="chempty">該当データがありません</div>'; leg.innerHTML=''; return; }
+  var W=200,H=200, cx=100,cy=100, rO=82, rI=44;
+  var svg='<svg class="chsvg" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" role="img" style="max-width:220px;margin:0 auto">';
+  var ang=-Math.PI/2;
+  BJRAX_ORDER.forEach(function(c){
+    var val=counts[c]||0; if(val<=0) return;
+    var frac=val/tot, a0=ang, a1=ang+frac*Math.PI*2; ang=a1;
+    svg+='<path d="'+donutArc(cx,cy,rO,rI,a0,a1)+'" fill="'+BJRAX_COLOR[c]+'" stroke="#fff" stroke-width="2"><title>'+c+'：'+val+'杯 ('+Math.round(frac*100)+'%)</title></path>';
+    // 直接ラベル（割合5%以上）
+    if(frac>=0.05){ var am=(a0+a1)/2, lr=(rO+rI)/2; var lx=cx+Math.cos(am)*lr, ly=cy+Math.sin(am)*lr;
+      svg+='<text x="'+lx+'" y="'+(ly+3)+'" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">'+Math.round(frac*100)+'%</text>'; }
+  });
+  svg+='<text x="'+cx+'" y="'+(cy-2)+'" text-anchor="middle" font-size="11" fill="#898781">合計</text>';
+  svg+='<text x="'+cx+'" y="'+(cy+14)+'" text-anchor="middle" font-size="15" font-weight="700" fill="#18110a">'+tot+'</text>';
+  svg+='</svg>';
+  host.innerHTML=svg;
+  leg.innerHTML=_legendHtml(counts);
+}
+// ── グラフ補助 ──
+function niceCeil(v){ if(v<=5) return 5; var p=Math.pow(10,Math.floor(Math.log10(v))); var n=v/p; var m=n<=1?1:n<=2?2:n<=5?5:10; return m*p; }
+function moLabel(yymm){ return parseInt(yymm.slice(0,2),10)+'/'+parseInt(yymm.slice(2,4),10); }
+function donutArc(cx,cy,rO,rI,a0,a1){
+  var large=(a1-a0)>Math.PI?1:0;
+  var x0o=cx+Math.cos(a0)*rO, y0o=cy+Math.sin(a0)*rO, x1o=cx+Math.cos(a1)*rO, y1o=cy+Math.sin(a1)*rO;
+  var x0i=cx+Math.cos(a1)*rI, y0i=cy+Math.sin(a1)*rI, x1i=cx+Math.cos(a0)*rI, y1i=cy+Math.sin(a0)*rI;
+  return 'M'+x0o+' '+y0o+' A'+rO+' '+rO+' 0 '+large+' 1 '+x1o+' '+y1o+' L'+x0i+' '+y0i+' A'+rI+' '+rI+' 0 '+large+' 0 '+x1i+' '+y1i+' Z';
 }
 
 function renderBottleTable(rows, nMatched){
