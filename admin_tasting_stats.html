@@ -169,6 +169,7 @@ tr.okrow td{background:#eef7f1}
     </div>
     <div class="note">実際の注文記録（<code>orders</code>）からテキーラの消費を、<b>ストレート／ソーダ割り</b>に分けて銘柄・会員ごとに集計します。<br>※<b>ストレート</b>＝テキーラ単品注文（<code>tequila</code>, ml=数量）。<b>ソーダ割り</b>＝テキーラベースのカクテル注文（<code>cocktail</code>, ベース=<code>baseProductCode</code>, ml=<code>baseSpiritMl</code>）＋オンライン奢りのソーダ指定。<br>※集計対象は<b>提供済み（キャンセル除く）・全注文種別</b>。支払のみの奢り行(<code>isGiftPayer</code>)は本人未飲のため除外、奢られ受取(¥0)は実飲として計上。<code>orderDate</code>が無いレコードは無視。期間は<b>指定した日付範囲</b>で絞り込みます（既定2026/5/27〜）。<br>※集計は<b>商品(ボトルマスタ)単位</b>で、開栓ごとの個体(bottleData)を束ねます。金額＝テキーラ液量分（10ml単価×ml÷10）。度数HP=41%以上/通常=40%以下。<br>※ランキングは<b>列見出しをクリック</b>で並び替え（クリックごとに ▼降順 → ▲昇順 → 解除）。<b>行クリック</b>でその明細と集計/除外理由を確認できます。グラフは常にストレートのみ。</div>
     <div id="diag" class="note" style="color:var(--ink2)"></div>
+    <div id="soda-diag" class="note" style="color:var(--ink2)"></div>
 
     <div class="filters">
       <div class="fg"><span class="lbl">期間（注文日）</span><div style="display:flex;gap:4px;align-items:center"><input type="date" id="f-from"><span style="font-size:11px;color:var(--ink3)">〜</span><input type="date" id="f-to"></div></div>
@@ -461,6 +462,30 @@ function render(){
   else renderBottleTable(rows, nMatched);
 
   renderCharts(F);
+  sodaDiag();
+}
+
+// ── ソーダ割りデータ診断（5/29以降・UIフィルタ非依存でソーダの実態を可視化） ──
+function sodaDiag(){
+  var el=g('soda-diag'); if(!el) return;
+  var cls={B:0,J:0,R:0,A:0,X:0,'?':0}, totalSoda=0, srcCk=0, srcOnline=0, ckNoBase=0, noBottle=0, noMl=0;
+  _orders.forEach(function(o){
+    var od=String(o.orderDate||''); if(od<'260529') return;
+    if(o.served===0 || o.isGiftPayer===true) return;
+    var pt=String(o.productType||'');
+    if(pt==='cocktail' && !o.baseProductCode){ ckNoBase++; return; }
+    var r=resolveLine(o); if(!r || !r.isSoda) return;   // ソーダ割りのみ
+    totalSoda++; if(pt==='cocktail') srcCk++; else srcOnline++;
+    var b=_bottles[r.bottleId]; if(!b) noBottle++;
+    if(pt==='cocktail' && (o.baseSpiritMl==null||o.baseSpiritMl==='')) noMl++;
+    var cl=classLetter(r.bottleId,b);
+    if(cls[cl]==null) cls['?']++; else cls[cl]++;
+  });
+  var clsStr=BJRAX_ORDER.map(function(c){ return c+' <b>'+cls[c]+'</b>'; }).join(' / ')+' / 不明 '+cls['?'];
+  el.innerHTML='<b style="color:var(--gold-d)">🫧 ソーダ割り診断（5/29以降・フィルタ非依存）</b>：ソーダ割り合計 <b>'+totalSoda+'杯</b>'
+    +'（カクテル '+srcCk+' ＋ オンライン奢りソーダ '+srcOnline+'）｜ クラス内訳: '+clsStr
+    +' ｜ ベース個体がbottleData未登録 '+noBottle+' / baseSpiritMl欠落 '+noMl
+    +(ckNoBase>0?'<br><span style="color:var(--red)">※カクテルでベース未補完(baseProductCode無し) '+ckNoBase+'件は銘柄不明で集計対象外。管理→営業データ→バックアップ→「カクテルのベースボトルID補完」で補完してください。</span>':'');
 }
 
 // ── グラフ（月別BJRAX積み上げ棒 / 5-29以来のBJRAX円） ──
