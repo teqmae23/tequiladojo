@@ -81,7 +81,7 @@ input,select{font-family:var(--sans)}
 .tw{overflow-x:auto;border:1px solid var(--border);border-radius:var(--rl);background:var(--white)}
 table.rk{border-collapse:collapse;width:100%;font-size:13px;min-width:720px}
 table.rk th,table.rk td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:right;white-space:nowrap}
-table.rk th{background:var(--cream2);font-size:11px;color:var(--ink2);font-weight:700;position:sticky;top:0}
+table.rk th{background:var(--cream2);font-size:11px;color:var(--ink2);font-weight:700;position:sticky;top:var(--tbh,0px);z-index:5}
 table.rk td.l,table.rk th.l{text-align:left}
 table.rk tr:hover td{background:var(--cream)}
 table.rk th.rksort{cursor:pointer;user-select:none;white-space:nowrap}
@@ -89,7 +89,7 @@ table.rk th.rksort:hover{background:var(--cream3)}
 table.rk th.rksort.on{color:var(--gold-d)}
 table.rk th .sa{margin-left:2px}
 table.rk th.grp{text-align:center;font-size:10px;color:var(--ink3);letter-spacing:.04em;border-bottom:1px solid var(--border2)}
-table.rk th.sub{font-size:10px;font-weight:600;top:30px}
+table.rk th.sub{font-size:10px;font-weight:600;top:calc(var(--tbh,0px) + 29px)}
 table.rk td.stcell{cursor:pointer}
 table.rk td.stcell:hover{background:var(--cream3);text-decoration:underline}
 table.rk td.namecell{cursor:pointer}
@@ -109,13 +109,13 @@ tr.rrow{cursor:pointer}
 .mhd{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--white);border-radius:var(--rl) var(--rl) 0 0}
 .mhd .mt{font-size:15px;font-weight:700;color:var(--gold-d)}
 .mhd .mx{margin-left:auto;background:var(--cream2);border:1px solid var(--border2);border-radius:var(--r);font-size:14px;padding:3px 10px;white-space:nowrap}
-.mbody{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 16px}
+.mbody{flex:1 1 auto;min-height:0;overflow:auto;padding:0 16px 12px}
 .mstat{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
 .mstat .c{background:var(--cream);border:1px solid var(--border);border-radius:var(--r);padding:6px 12px;font-size:12px}
 .mstat .c b{font-size:15px}
 table.dt{border-collapse:collapse;width:100%;font-size:12px}
 table.dt th,table.dt td{border-bottom:1px solid var(--border);padding:5px 8px;text-align:left;white-space:nowrap}
-table.dt th{background:var(--cream2);font-size:10px;color:var(--ink2);position:sticky;top:0;z-index:1}
+table.dt th{background:var(--cream2);font-size:10px;color:var(--ink2);position:sticky;top:0;z-index:3}
 table.dt th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
 table.dt th.sortable:hover{background:var(--cream3)}
 table.dt th .sarr{margin-left:3px;color:var(--gold-d);font-weight:700}
@@ -219,7 +219,7 @@ tr.okrow td{background:#eef7f1}
   <div class="mpanel">
     <div class="mhd"><span class="mt" id="dt-title">明細内訳</span><button class="mx" id="dt-close" style="margin-left:auto">✕ 閉じる</button></div>
     <div class="mbody">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px;margin:12px 0 10px;flex-wrap:wrap">
         <div class="mstat" id="dt-stat" style="margin-bottom:0;flex:1 1 auto"></div>
         <button class="mx" id="dt-toggle-hidden" style="flex:0 0 auto">非表示データを表示</button>
       </div>
@@ -566,9 +566,40 @@ function sodaDiag(){
         +'<td style="padding:3px 8px;font-family:var(--mono);font-size:10px">'+esc(b.baseId)+'</td>'
         +'<td style="padding:3px 8px;color:var(--ink3)">'+esc(b.pname)+'</td></tr>';
     }).join('')+'</tbody></table></div>';
+  // ── ソーダ計上元の内訳（ランキングがどの経路でソーダを拾っているか／どこで落ちているか） ──
+  // ランキングのソーダ = ①テキーラベースのカクテル(isSoda) ＋ ②SODA兄弟を持つテキーラ単品注文。
+  // 商品名に「ソーダ」を含むのに未計上になる主因（ベース未補完/他酒）を定量化する。
+  var src={ckBase:0, teqSib:0, ckNoBase:0, ckOther:0, miscSoda:0, miscOrphan:0, teqTotal:0};
+  var teqByGroup={}; // orderGroupId → テキーラ単品あり
+  _orders.forEach(function(o){ if(String(o.productType)==='tequila' && o.orderGroupId && o.served!==0) teqByGroup[o.orderGroupId]=1; });
+  _orders.forEach(function(o){
+    var od=String(o.orderDate||''); if(od<'260529') return;
+    if(o.served===0 || o.isGiftPayer===true) return;
+    var pt=String(o.productType||''), nm=String(o.productName||'');
+    if(pt==='cocktail'){
+      var base=o.baseProductCode;
+      if(!base){ if(nm.indexOf('ソーダ')>=0) src.ckNoBase++; return; }
+      var isTeq=(String(o.baseProductType||'')!=='other') && (String(base).charAt(0).toUpperCase()==='T');
+      if(isTeq) src.ckBase++; else if(nm.indexOf('ソーダ')>=0) src.ckOther++;
+    } else if(pt==='tequila'){
+      src.teqTotal++;
+      if(o.orderGroupId && _sodaGroups[o.orderGroupId]) src.teqSib++;
+    } else if(isSodaLine(o)){
+      src.miscSoda++;
+      if(!(o.orderGroupId && teqByGroup[o.orderGroupId])) src.miscOrphan++;
+    }
+  });
+  var rankSoda=src.ckBase+src.teqSib;
+  var srcHtml='<div style="margin-top:8px;padding:8px 10px;background:var(--cream2);border-radius:var(--r);font-size:11px">'
+    +'<b>ソーダ計上元の内訳（5/29以降・提供済・奢り支払除く）</b><br>'
+    +'ランキングがソーダ計上 <b style="color:var(--teal)">'+rankSoda+'杯</b> ＝ カクテル(テキーラベース) <b>'+src.ckBase+'</b> ＋ テキーラ単品+SODA兄弟 <b>'+src.teqSib+'</b><br>'
+    +'<span style="color:#8c2818">未計上（ソーダのはずが落ちている）: カクテルのベース未補完 <b>'+src.ckNoBase+'</b> ＋ 他酒ベース(対象外) <b>'+src.ckOther+'</b></span><br>'
+    +'<span style="font-size:10px;color:var(--ink3)">参考: 単品SODA明細(misc) '+src.miscSoda+'件（うち同グループにテキーラ単品なし '+src.miscOrphan+'件）／ テキーラ単品注文 '+src.teqTotal+'件。'
+    +(src.ckNoBase>0?'<br><b style="color:#8c2818">→ ベース未補完 '+src.ckNoBase+'件は admin_data の「バックアップ→カクテルのベースを商品名から補完（確認式）」で補完するとソーダに計上されます。</b>':'')
+    +'</span></div>';
   el.innerHTML='<b style="color:var(--gold-d)">🫧 ソーダ割り診断（5/29以降・「ソーダ」を含む注文を網羅）</b>：合計 <b>'+tot+'杯</b> ｜ productType内訳: '+esc(ptStr)
     +'<br><span style="font-size:10px">※テキーラのみ本集計の対象。<b>赤行</b>＝要確認（productType不正/ベース未補完/bottleData未登録/クラス不明）。他酒はテキーラ集計から除外。クラスが実態と違うベースは bottleData の classId を修正してください。</span>'
-    +tbl;
+    +srcHtml+tbl;
 }
 
 // ── グラフ（月別BJRAX積み上げ棒 / 5-29以来のBJRAX円） ──
@@ -880,6 +911,9 @@ g('vtab').addEventListener('click',function(e){ var b=e.target.closest('.vt'); i
   render();
 });
 applyViewUI();
+// 固定ヘッダ(トップバー)の高さを測り、ランキング表の sticky 見出しをその下に貼り付ける
+function _syncTopbar(){ var tb=document.querySelector('.topbar'); var h=tb?tb.offsetHeight:0; document.documentElement.style.setProperty('--tbh', h+'px'); }
+_syncTopbar(); window.addEventListener('resize', _syncTopbar); window.addEventListener('load', _syncTopbar);
 
 /* ── フィルタ操作 ── */
 g('f-bjrax').addEventListener('click',function(e){ var cb=e.target.closest('.cb'); if(cb){ cb.classList.toggle('on'); render(); } });
