@@ -2809,14 +2809,9 @@ function _evName(id){ var ev=(events||[]).find(function(x){return x.id===id;}); 
 function openPlaceMgr(){ g('pl-mgr-modal').classList.add('open'); _ensurePlaceFilterDefault(); renderPlaceFilterBars(); loadPlaces().then(renderPlaceList); }
 function closePlaceMgr(){ g('pl-mgr-modal').classList.remove('open'); }
 function renderPlaceMgr(){ loadPlaces().then(renderPlaceList); }
-// 場所マスタ1件の地図リンク（表示方法を尊重：名称で検索 / 座標固定）。_siMap と同じ基準。
+// 場所マスタ1件の地図リンク（_siMap と同じ基準）。
 function _placeMapLink(p){
-  var label=(p.name||'').trim();
-  if(p.mapMode!=='coord' && label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
-  if(p.lat!=null&&p.lng!=null) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(p.lat+','+p.lng);
-  if(p.mapUrl) return p.mapUrl;
-  if(label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
-  return '';
+  return _mapLink(p.name, p.lat, p.lng, p.mapUrl, p.mapMode);
 }
 function renderPlaceList(){
   _ensurePlaceFilterDefault();
@@ -3373,23 +3368,33 @@ function hideSchedPop(){ var p=g('se-rosterpop'); if(p) p.style.display='none'; 
 document.addEventListener('click',function(e){ var p=g('se-rosterpop'); if(p&&p.style.display==='block'&&!p.contains(e.target)&&!(e.target.classList&&e.target.classList.contains('se-maplink'))) hideSchedPop(); });
 // 地図/ルートのGoogleマップURL（会員ページと同等。クリックで開くため編集に入らない）
 function _isFlightItem(it){ return it.travelMode==='flight'||it.category==='flight'; }
-// 地図リンク。表示方法(mapMode)を尊重：name=名称で検索（実在の場所ページ）／coord=座標ピン。
-function _siMap(it){
-  var label=(it.placeName||it.title||'').trim();
-  // 既定は「名称で検索」。座標固定(coord)が明示されたときだけ座標ピン。
-  if(it.mapMode!=='coord' && label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
-  if(it.lat!=null&&it.lng!=null) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(it.lat+','+it.lng);
-  if(it.mapUrl) return it.mapUrl;
-  if(label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
+// 地図リンクの共通組み立て。
+//  既定(名称で検索): ①保存済みGoogleマップURL ②名称＋座標(その場所にズームして特定店舗を開く) ③名称のみ ④座標
+//  座標固定(coord): ①座標 ②URL ③名称
+// ②の「名称/@緯度,経度,17z」は、同名店が世界中にあっても座標でその場所に寄せて“特定の店舗ページ”を開くための形。
+function _mapLink(label, lat, lng, mapUrl, mode){
+  label=(label==null?'':String(label)).trim();
+  mapUrl=(mapUrl==null?'':String(mapUrl)).trim();
+  var hasC=(lat!=null && lng!=null && lat!=='' && lng!=='');
+  function _q(s){ return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(s); }
+  if(mode==='coord'){
+    if(hasC) return _q(lat+','+lng);
+    if(mapUrl) return mapUrl;
+    if(label) return _q(label);
+    return '';
+  }
+  if(mapUrl) return mapUrl;
+  if(label && hasC) return 'https://www.google.com/maps/search/'+encodeURIComponent(label)+'/@'+lat+','+lng+',17z';
+  if(label) return _q(label);
+  if(hasC) return _q(lat+','+lng);
   return '';
 }
+// 地図リンク。表示方法(mapMode)を尊重：name=名称で検索（実在の場所ページ）／coord=座標ピン。
+function _siMap(it){
+  return _mapLink(it.placeName||it.title, it.lat, it.lng, it.mapUrl, it.mapMode);
+}
 function _siMapTo(it){
-  var label=(it.toName||'').trim();
-  if(it.toMapMode!=='coord' && label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
-  if(it.toLat!=null&&it.toLng!=null) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(it.toLat+','+it.toLng);
-  if(it.toMapUrl) return it.toMapUrl;
-  if(label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
-  return '';
+  return _mapLink(it.toName, it.toLat, it.toLng, it.toMapUrl, it.toMapMode);
 }
 // 経路の端点。表示方法が「名称で検索」なら名称を、そうでなければ座標を使う（地図リンクと基準を揃える）。
 function _siRouteEndp(name, lat, lng, mode){
