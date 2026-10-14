@@ -500,6 +500,18 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div id="cocktail-backfill-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
           </div>
 
+          <!-- ソーダ割り等カクテルのベースを商品名から補完（確認式） -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
+              <strong>カクテルのベースを商品名から補完（確認式）</strong> — <code>baseProductCode</code> が未設定のカクテル注文のうち、商品名が <code>○○（ベース銘柄×30ml）</code> 形式のものを対象に、<b>商品名のベース銘柄</b>を bottleData（テキーラ）／otherBottles（他酒）と名称照合して補完します。<br>
+              <span style="font-size:11px">baseProductCode の実装前（2026/9/28以前）に作成され、cocktailOrders 側にもベース情報が無いためカクテルベースID補完では復元できない注文の<b>最後の手段</b>です。<b>自動修正はしません</b>：まず「🔍 補完候補をプレビュー」で一覧（照合結果・解決クラス）を表示し、内容を確認のうえ「✅ 確認済みを補完する」で<b>一致した候補のみ</b>書き込みます。照合できなかったものは別枠に表示し、書き込みません。</span>
+            </div>
+            <button class="btn bp" style="width:fit-content" onclick="runSodaBaseNamePreview()">🔍 補完候補をプレビュー</button>
+            <button class="btn bd" style="width:fit-content;margin-left:6px" id="btn-sodabase-apply" onclick="runSodaBaseNameApply()" disabled>✅ 確認済みを補完する</button>
+            <div id="sodabase-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+            <div id="sodabase-list" style="margin-top:6px;max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
+          </div>
+
           <!-- 注文日(orderDate)の補完 -->
           <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
             <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
@@ -5067,6 +5079,143 @@ async function runCocktailBaseBackfill(){
   }catch(e){
     prog.textContent='エラー: '+e.message;
     toast('補完失敗: '+e.message,'err');
+  }
+}
+
+// ── カクテルのベースを「商品名」から補完（確認式・最後の手段） ──
+// baseProductCode 実装前(2026/9/28以前)の注文は cocktailOrders 側にもベースが無く、
+// 「ソーダ割り（<ベース銘柄>×<ml>ml）」という商品名にだけベース情報が残っている。
+// 商品名のベース銘柄を bottleData/otherBottles と名称照合し、一致した候補のみ補完する。
+var _sodaBaseCandidates=null; // プレビューで確定した「書き込み可能」候補を保持
+var SODABASE_BJRAX={'1':'B','2':'J','3':'R','4':'A','5':'X'};
+// bottleData のクラス文字（admin_tasting_stats の classLetter と同一ロジック）
+function _sodaBaseClass(id, b){
+  var c='';
+  if(b && b.classId!=null && b.classId!==''){ var s=String(b.classId); c=s.length>=2?s.charAt(1):s; }
+  else { var s2=String(id||''); c=s2.length>=9?s2.charAt(8):''; }
+  return SODABASE_BJRAX[c]||'?';
+}
+// テキーラの表示名（発注時 spiritName = AuthRole.bdName(b,'es')）
+function _sodaTeqName(b){ try{ return AuthRole.bdName(b,'es'); }catch(e){ return b.bottleEs||b.bottleEn||b.bottleJa||b.id||''; } }
+// 他酒の表示名（発注時 spiritName = bottleEn||bottleName||name||bottleEs||id）
+function _sodaOtherName(b){ return b.bottleEn||b.bottleName||b.name||b.bottleEs||b.id||''; }
+function _sodaBrand(b){ var bid=b&&b.bottleId?String(b.bottleId):''; return bid.length>=7?bid.slice(0,7):''; }
+// 商品名から「（ベース銘柄×ml ml）」を抽出。全角/半角括弧・×どちらも許容。
+function _parseSodaName(name){
+  var m=String(name||'').match(/[（(]\s*(.+?)\s*[×x]\s*([0-9]+(?:\.[0-9]+)?)\s*ml\s*[）)]\s*$/i);
+  if(!m) return null;
+  return { base:m[1].trim(), ml:parseFloat(m[2]) };
+}
+async function runSodaBaseNamePreview(){
+  var prog=document.getElementById('sodabase-progress');
+  var listEl=document.getElementById('sodabase-list');
+  var applyBtn=document.getElementById('btn-sodabase-apply');
+  _sodaBaseCandidates=null; if(applyBtn) applyBtn.disabled=true;
+  try{
+    prog.textContent='マスタ・注文を読込中...';
+    var res=await Promise.all([
+      db.collection('bottleData').get(),
+      db.collection('otherBottles').get(),
+      db.collection('orders').where('productType','==','cocktail').get()
+    ]);
+    // 名称インデックス（同名複数に対応して配列で保持）
+    var teqIdx={}, otherIdx={};
+    res[0].forEach(function(d){ var b=d.data(); b=Object.assign({id:d.id},b); var k=_sodaTeqName(b); if(!k) return; (teqIdx[k]||(teqIdx[k]=[])).push(b); });
+    res[1].forEach(function(d){ var b=d.data(); b=Object.assign({id:d.id},b); var k=_sodaOtherName(b); if(!k) return; (otherIdx[k]||(otherIdx[k]=[])).push(b); });
+
+    var writable=[], ambiguous=[], unmatched=[], unparsed=[], already=0, hasBase=0;
+    res[2].forEach(function(d){
+      var o=d.data();
+      // baseProductCode 未設定のもののみ対象
+      if(o.baseProductCode!=null && String(o.baseProductCode)!==''){ hasBase++; return; }
+      var p=_parseSodaName(o.productName);
+      if(!p){ unparsed.push({id:d.id,name:o.productName||''}); return; }
+      var qty=parseInt(o.qty,10)||1;
+      var row={ref:d.ref,id:d.id,name:o.productName||'',base:p.base,ml:p.ml,qty:qty};
+      var teqHits=teqIdx[p.base]||[], otherHits=otherIdx[p.base]||[];
+      if(teqHits.length){
+        // テキーラ一致。同名複数は「同一ブランド＆同一クラス」なら書込可、異なれば要確認。
+        var brands={}, classes={};
+        teqHits.forEach(function(b){ brands[_sodaBrand(b)]=1; classes[_sodaBaseClass(b.id,b)]=1; });
+        var b0=teqHits[0];
+        row.matchType='tequila'; row.bottleId=b0.id; row.bottleName=_sodaTeqName(b0);
+        row.cls=_sodaBaseClass(b0.id,b0); row.baseType='tequila'; row.hits=teqHits.length;
+        if(teqHits.length===1){ row.kind='一致'; writable.push(row); }
+        else if(Object.keys(brands).length===1 && Object.keys(classes).length===1){ row.kind='一致(複数・同一銘柄)'; writable.push(row); }
+        else { row.kind='要確認(同名で銘柄/クラス相違 '+teqHits.length+'件)'; row.hitIds=teqHits.map(function(b){return b.id+'['+_sodaBaseClass(b.id,b)+']';}).join(', '); ambiguous.push(row); }
+      } else if(otherHits.length){
+        var o0=otherHits[0];
+        row.matchType='other'; row.bottleId=o0.id; row.bottleName=_sodaOtherName(o0);
+        row.cls='他酒'; row.baseType='other'; row.hits=otherHits.length;
+        if(otherHits.length===1){ row.kind='一致(他酒)'; writable.push(row); }
+        else { var obr={}; otherHits.forEach(function(b){ obr[b.id]=1; }); if(Object.keys(obr).length===1){ row.kind='一致(他酒)'; writable.push(row); } else { row.kind='要確認(他酒・同名複数 '+otherHits.length+'件)'; row.hitIds=otherHits.map(function(b){return b.id;}).join(', '); ambiguous.push(row); } }
+      } else {
+        row.kind='不一致(マスタに該当名なし)'; unmatched.push(row);
+      }
+    });
+
+    // 描画
+    var esc=function(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); };
+    var th='padding:4px 8px;background:var(--cream2);text-align:left;position:sticky;top:0';
+    function rowsHtml(rows,writ){
+      return rows.map(function(r){
+        var bg=writ?'':'background:#fdecea';
+        return '<tr style="'+bg+'">'
+          +'<td style="padding:3px 8px;font-size:10px;font-family:var(--mono)">'+esc(r.id)+'</td>'
+          +'<td style="padding:3px 8px;font-size:11px">'+esc(r.name)+'</td>'
+          +'<td style="padding:3px 8px;font-size:11px">'+esc(r.base)+'</td>'
+          +'<td style="padding:3px 8px;text-align:right;font-size:11px">'+(r.ml||'?')+'ml'+(r.qty>1?'×'+r.qty:'')+'</td>'
+          +'<td style="padding:3px 8px;font-size:11px">'+esc(r.bottleName||'—')+(r.bottleId?' <span style="color:var(--ink3);font-size:10px;font-family:var(--mono)">'+esc(r.bottleId)+'</span>':'')+'</td>'
+          +'<td style="padding:3px 8px;text-align:center;font-weight:700">'+esc(r.cls||'—')+'</td>'
+          +'<td style="padding:3px 8px;font-size:11px;'+(writ?'color:var(--teal)':'color:#8c2818')+'">'+esc(r.kind)+(r.hitIds?' <span style="font-size:10px;color:var(--ink3)">'+esc(r.hitIds)+'</span>':'')+'</td>'
+          +'</tr>';
+      }).join('');
+    }
+    var html='';
+    html+='<div style="padding:8px 10px;font-size:12px;border-bottom:1px solid var(--border)">'
+      +'<b>書き込み対象（一致）: '+writable.length+'件</b> ／ 要確認（同名複数で相違）: '+ambiguous.length+'件 ／ 不一致: '+unmatched.length+'件 ／ 商品名が形式外: '+unparsed.length+'件'
+      +'<br><span style="font-size:11px;color:var(--ink3)">※ baseProductCode 設定済み（対象外）: '+hasBase+'件。クラスは照合したボトルの bottleData.classId（他酒はBJRAX対象外）。</span></div>';
+    var thead='<thead><tr><th style="'+th+'">注文ID</th><th style="'+th+'">商品名</th><th style="'+th+'">パース銘柄</th><th style="'+th+';text-align:right">ml</th><th style="'+th+'">照合ボトル</th><th style="'+th+';text-align:center">クラス</th><th style="'+th+'">判定</th></tr></thead>';
+    if(writable.length) html+='<div style="padding:6px 10px;font-size:11px;font-weight:600;color:var(--teal)">✅ 書き込み候補</div><table style="width:100%;border-collapse:collapse">'+thead+'<tbody>'+rowsHtml(writable,true)+'</tbody></table>';
+    if(ambiguous.length) html+='<div style="padding:6px 10px;font-size:11px;font-weight:600;color:#8c2818;border-top:1px solid var(--border)">⚠ 要確認（書き込みません）</div><table style="width:100%;border-collapse:collapse">'+thead+'<tbody>'+rowsHtml(ambiguous,false)+'</tbody></table>';
+    if(unmatched.length) html+='<div style="padding:6px 10px;font-size:11px;font-weight:600;color:#8c2818;border-top:1px solid var(--border)">✕ 不一致（書き込みません）</div><table style="width:100%;border-collapse:collapse">'+thead+'<tbody>'+rowsHtml(unmatched,false)+'</tbody></table>';
+    if(unparsed.length) html+='<div style="padding:6px 10px;font-size:11px;color:var(--ink3);border-top:1px solid var(--border)">商品名が「（銘柄×mlml）」形式でないため対象外: '+unparsed.length+'件（'+unparsed.slice(0,8).map(function(u){return esc(u.name);}).join(' / ')+(unparsed.length>8?' …':'')+'）</div>';
+    listEl.style.display='block'; listEl.innerHTML=html;
+
+    _sodaBaseCandidates=writable;
+    if(writable.length && applyBtn) applyBtn.disabled=false;
+    prog.textContent='プレビュー完了: 書き込み候補 '+writable.length+'件。内容を確認し「✅ 確認済みを補完する」で実行してください'+(writable.length?'':'（書き込み候補なし）');
+  }catch(e){
+    prog.textContent='エラー: '+e.message; toast('プレビュー失敗: '+e.message,'err');
+  }
+}
+async function runSodaBaseNameApply(){
+  var prog=document.getElementById('sodabase-progress');
+  var applyBtn=document.getElementById('btn-sodabase-apply');
+  if(!_sodaBaseCandidates||!_sodaBaseCandidates.length){ toast('先にプレビューを実行してください','err'); return; }
+  var cands=_sodaBaseCandidates;
+  if(!confirm('プレビューで「一致」と判定された '+cands.length+'件のカクテル注文に、商品名から照合したベース（baseProductCode / baseProductType / baseSpiritMl）を補完します。\n\nこの内容で書き込みますか？')) { prog.textContent='中止しました'; return; }
+  try{
+    if(applyBtn) applyBtn.disabled=true;
+    prog.textContent=cands.length+'件を書き込み中...';
+    var done=0;
+    for(var j=0;j<cands.length;j+=400){
+      var batch=db.batch();
+      cands.slice(j,j+400).forEach(function(c){
+        batch.update(c.ref,{ baseProductCode:c.bottleId, baseProductType:c.baseType, baseSpiritMl:(c.ml||0)*(c.qty||1) });
+      });
+      await batch.commit();
+      done=Math.min(j+400,cands.length);
+      prog.textContent='書き込み中 '+done+'/'+cands.length+'...';
+    }
+    cands.forEach(function(c){ writeJournal('update','orders',c.id,{baseProductCode:null},{baseProductCode:c.bottleId,baseProductType:c.baseType,baseSpiritMl:(c.ml||0)*(c.qty||1)}); });
+    writeJournal('migration','orders','soda-base-name-backfill',null,{updated:cands.length});
+    var msg='完了: '+cands.length+'件に商品名からベースを補完しました';
+    prog.textContent=msg; toast(msg);
+    _sodaBaseCandidates=null; // 二重実行防止（再プレビューで更新）
+  }catch(e){
+    prog.textContent='エラー: '+e.message; toast('補完失敗: '+e.message,'err');
+    if(applyBtn) applyBtn.disabled=false;
   }
 }
 
