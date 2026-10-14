@@ -819,7 +819,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
   <div class="modal" style="max-width:640px">
     <div class="mhd"><span id="sch-mgr-title">スケジュール</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeSchedMgr()">✕</button></div>
     <div class="mbd">
-      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm ca-only-hide" onclick="openCatMgr()">🏷 種別管理</button><button class="btn bs sm" onclick="openGpxImport()" title="GPSロガーのGPX/CSVを取り込み、2点間移動の実ルートを登録">🛰 GPXルート取込</button><button class="btn bs sm" onclick="schedAllToNameMode()" title="この日程の全項目の地図表示方法を「名称で検索」に切り替えます（座標固定を解除）">🔤 全場所を名称検索に</button><a class="btn bs sm" id="sch-live-link" href="#" target="_blank" rel="noopener" style="text-decoration:none" title="イベント中の現在地をリアルタイム中継（スタッフ端末で実行）">🔴 ライブ中継</a><span class="cnt" id="sch-total"></span></div>
+      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm ca-only-hide" onclick="openCatMgr()">🏷 種別管理</button><button class="btn bs sm" onclick="openGpxImport()" title="GPSロガーのGPX/CSVを取り込み、2点間移動の実ルートを登録">🛰 GPXルート取込</button><a class="btn bs sm" id="sch-live-link" href="#" target="_blank" rel="noopener" style="text-decoration:none" title="イベント中の現在地をリアルタイム中継（スタッフ端末で実行）">🔴 ライブ中継</a><span class="cnt" id="sch-total"></span></div>
       <div id="sch-list"><div class="ec">読み込み中…</div></div>
     </div>
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeSchedMgr()">閉じる</button></div>
@@ -3802,32 +3802,6 @@ g('gpx-modal').addEventListener('click',function(e){ if(e.target===g('gpx-modal'
 var _schExpandedDays={}; // 展開中の日付を記憶（追加・編集後も維持）
 function toggleDay(idx, date){ var b=g('se-day-body-'+idx), c=g('se-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▶':'▼'; _schExpandedDays[date]=!open; }
 function openSchedForDay(date, grp){ _schExpandedDays[date]=true; openSchedEd(null, date, grp); }
-// この日程の全項目の地図表示方法を「名称で検索」に切り替える（座標固定(coord)を name に一括変更）。
-async function schedAllToNameMode(){
-  if(!_schEventId){ alert('イベントが選択されていません'); return; }
-  var itemTargets=(_schItems||[]).filter(function(it){ return it.mapMode==='coord' || it.toMapMode==='coord'; });
-  // 場所マスタ側も変換（再選択で coord が復活しないように）
-  var placeTargets=(_places||[]).filter(function(p){ return p.eventId===_schEventId && p.mapMode==='coord'; });
-  if(!itemTargets.length && !placeTargets.length){ alert('座標固定の項目はありません（すべて名称検索です）'); return; }
-  if(!confirm('この日程の地図表示方法を「名称で検索」に切り替えます。\n・スケジュール項目: '+itemTargets.length+' 件\n・場所マスタ: '+placeTargets.length+' 件\n（地図・ルートが座標ではなく地点名で開くようになります）\nよろしいですか？')) return;
-  try{
-    var batch=db.batch(), n=0;
-    var icol=db.collection('events').doc(_schEventId).collection('scheduleItems');
-    itemTargets.forEach(function(it){
-      var upd={};
-      if(it.mapMode==='coord') upd.mapMode='name';
-      if(it.toMapMode==='coord') upd.toMapMode='name';
-      if(Object.keys(upd).length){ batch.update(icol.doc(it.id), upd); n++; }
-    });
-    placeTargets.forEach(function(p){ batch.update(db.collection('places').doc(p.id), {mapMode:'name'}); n++; });
-    await batch.commit();
-    // ローカルも即時反映
-    itemTargets.forEach(function(it){ if(it.mapMode==='coord') it.mapMode='name'; if(it.toMapMode==='coord') it.toMapMode='name'; });
-    placeTargets.forEach(function(p){ p.mapMode='name'; });
-    renderSchedList();
-    alert('スケジュール項目 '+itemTargets.length+' 件・場所マスタ '+placeTargets.length+' 件を「名称で検索」に切り替えました。');
-  }catch(e){ alert('切替に失敗しました: '+((e&&e.message)||e)); }
-}
 // ── スケジュールの時間内包ネスト（会員画面と同じ考え方で、ある項目の時間帯に収まる項目を入れ子表示） ──
 // 移動(isMove)も toTime を終了とみなして容器化（例: 12:00-13:00のタクシー中に 12:30の車内飯 を入れ子）。
 function _schHmMin(s){ var v=_normHM(s); if(v==null||v==='') return null; var p=String(v).split(':'); return (+p[0])*60+(+p[1]); }
