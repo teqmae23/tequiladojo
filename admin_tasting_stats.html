@@ -263,22 +263,6 @@ function classLetter(id, b){
   else { var s2=String(id||''); c=s2.length>=9?s2.charAt(8):''; }
   return BJRAX_MAP[c]||'?';
 }
-// 商品名からクラスを推定（bottleData未登録でクラス解決できない時のフォールバック）
-function classFromName(name){
-  var s=String(name||'').toLowerCase();
-  if(/extra\s*a[ñn]ejo|a[ñn]ejo\s*extra|cristalino/.test(s)) return 'X';
-  if(/a[ñn]ejo/.test(s)) return 'A';
-  if(/reposado|resposado/.test(s)) return 'R';
-  if(/joven|oro\b|gold|abocado/.test(s)) return 'J';
-  if(/blanco|plata|silver|white/.test(s)) return 'B';
-  return '';
-}
-// クラス解決（bottleData優先、ダメなら商品名から補完）
-function classOf(id, b, pname){
-  var cl=classLetter(id, b);
-  if(cl==='?' && pname){ var cn=classFromName(pname); if(cn) return cn; }
-  return cl;
-}
 function abvOf(b){ var v=b?parseFloat(b.abv):NaN; return isNaN(v)?null:v; }
 // 10ml単価（bottleData.price 優先）
 function price10Of(b){ if(!b) return null; var v=parseFloat(b.price!=null?b.price:(b.unitPrice!=null?b.unitPrice:b.price10)); return isNaN(v)?null:v; }
@@ -308,10 +292,7 @@ function resolveLine(o){
   }
   if(pt==='cocktail'){
     var base=o.baseProductCode; if(!base) return null; // ベース未補完のカクテルは集計不可
-    // 「ソーダ割り（<ベース銘柄>×30ml）」から ベース銘柄名 を抽出（表示・名寄せ・クラス推定用）
-    var pn=String(o.productName||''); var mm=/[（(]\s*([\s\S]+?)\s*[×x]\s*\d+\s*ml/i.exec(pn);
-    var baseName=mm?mm[1].trim():pn;
-    return { bottleId:base, ml:Number(o.baseSpiritMl)||0, isSoda:true, pname:baseName };
+    return { bottleId:base, ml:Number(o.baseSpiritMl)||0, isSoda:true, pname:o.productName };
   }
   return null;
 }
@@ -386,7 +367,7 @@ function curFilters(){
 function lineVerdict(o, F, opts){
   opts=opts||{};
   var r=resolveLine(o); if(!r) return null;   // テキーラ/カクテル(ベース有)以外は集計対象ですらない
-  var b=_bottles[r.bottleId], cl=classOf(r.bottleId,b,r.pname), abv=abvOf(b);
+  var b=_bottles[r.bottleId], cl=classLetter(r.bottleId,b), abv=abvOf(b);
   // 集計キーは「商品(ボトルマスタ)」単位。bottleData は開栓ごとの個体なので、同一商品の個体を束ねる。
   var pid=masterKey(r.bottleId, b, r.pname);
   var p10=price10Of(b), amt=Math.round((p10!=null?p10:(Number(o.unitPrice)||0))*r.ml/10);
@@ -484,10 +465,12 @@ function render(){
   sodaDiag();
 }
 
-// ── ソーダ割りデータ診断（5/29以降・UIフィルタ非依存でソーダの実態を可視化） ──
+// ── ソーダ割りデータ診断（5/29以降）。bottleDataを正として、ベース別にクラス/登録状況を列挙し、
+//    「どのベース個体のbottleDataを直すべきか」を特定できるようにする。 ──
 function sodaDiag(){
   var el=g('soda-diag'); if(!el) return;
-  var cls={B:0,J:0,R:0,A:0,X:0,'?':0}, totalSoda=0, srcCk=0, srcOnline=0, ckNoBase=0, noBottle=0, noMl=0;
+  var cls={B:0,J:0,R:0,A:0,X:0,'?':0}, totalSoda=0, srcCk=0, srcOnline=0, ckNoBase=0, noBottle=0;
+  var bases={}; // baseProductCode → {count, name, inBottle, cls, pname, baseId}
   _orders.forEach(function(o){
     var od=String(o.orderDate||''); if(od<'260529') return;
     if(o.served===0 || o.isGiftPayer===true) return;
@@ -496,15 +479,38 @@ function sodaDiag(){
     var r=resolveLine(o); if(!r || !r.isSoda) return;   // ソーダ割りのみ
     totalSoda++; if(pt==='cocktail') srcCk++; else srcOnline++;
     var b=_bottles[r.bottleId]; if(!b) noBottle++;
-    if(pt==='cocktail' && (o.baseSpiritMl==null||o.baseSpiritMl==='')) noMl++;
-    var cl=classOf(r.bottleId,b,r.pname);
+    var cl=classLetter(r.bottleId,b);    // bottleData の classId を正として判定
     if(cls[cl]==null) cls['?']++; else cls[cl]++;
+    var bid=String(r.bottleId);
+    var ba=bases[bid]||(bases[bid]={count:0, name:(b&&nameOf(b,''))||'', inBottle:!!b, cls:cl, pname:String(o.productName||''), baseId:bid});
+    ba.count++;
   });
   var clsStr=BJRAX_ORDER.map(function(c){ return c+' <b>'+cls[c]+'</b>'; }).join(' / ')+' / 不明 '+cls['?'];
-  el.innerHTML='<b style="color:var(--gold-d)">🫧 ソーダ割り診断（5/29以降・フィルタ非依存）</b>：ソーダ割り合計 <b>'+totalSoda+'杯</b>'
-    +'（カクテル '+srcCk+' ＋ オンライン奢りソーダ '+srcOnline+'）｜ クラス内訳: '+clsStr
-    +' ｜ ベース個体がbottleData未登録 '+noBottle+' / baseSpiritMl欠落 '+noMl
-    +(ckNoBase>0?'<br><span style="color:var(--red)">※カクテルでベース未補完(baseProductCode無し) '+ckNoBase+'件は銘柄不明で集計対象外。管理→営業データ→バックアップ→「カクテルのベースボトルID補完」で補完してください。</span>':'');
+  var list=Object.keys(bases).map(function(k){return bases[k];}).sort(function(a,b){ return b.count-a.count; });
+  var nBad=list.filter(function(b){ return !b.inBottle||b.cls==='?'; }).length;
+  var tbl='<div style="overflow:auto;max-height:300px;margin-top:6px"><table style="border-collapse:collapse;font-size:11px;width:100%">'
+    +'<thead><tr>'
+    +'<th style="text-align:left;padding:3px 8px;background:var(--cream2);position:sticky;top:0">ベース銘柄(bottleData名)</th>'
+    +'<th style="padding:3px 8px;background:var(--cream2);position:sticky;top:0">クラス</th>'
+    +'<th style="padding:3px 8px;background:var(--cream2);position:sticky;top:0">杯</th>'
+    +'<th style="padding:3px 8px;background:var(--cream2);position:sticky;top:0">bottleData</th>'
+    +'<th style="text-align:left;padding:3px 8px;background:var(--cream2);position:sticky;top:0">ベースID</th>'
+    +'<th style="text-align:left;padding:3px 8px;background:var(--cream2);position:sticky;top:0">注文上の商品名</th></tr></thead><tbody>'
+    +list.map(function(b){ var bad=(!b.inBottle||b.cls==='?');
+      return '<tr'+(bad?' style="background:var(--red-l)"':'')+'>'
+        +'<td style="padding:3px 8px">'+esc(b.name||'—')+'</td>'
+        +'<td style="padding:3px 8px;text-align:center;font-weight:700">'+esc(b.cls)+'</td>'
+        +'<td style="padding:3px 8px;text-align:right">'+b.count+'</td>'
+        +'<td style="padding:3px 8px;text-align:center">'+(b.inBottle?'有':'<b style="color:var(--red)">未登録</b>')+'</td>'
+        +'<td style="padding:3px 8px;font-family:var(--mono);font-size:10px">'+esc(b.baseId)+'</td>'
+        +'<td style="padding:3px 8px;color:var(--ink3)">'+esc(b.pname)+'</td></tr>';
+    }).join('')+'</tbody></table></div>';
+  el.innerHTML='<b style="color:var(--gold-d)">🫧 ソーダ割り診断（5/29以降・フィルタ非依存）</b>：合計 <b>'+totalSoda+'杯</b>'
+    +'（カクテル '+srcCk+' ＋ オンライン奢り '+srcOnline+'）｜ クラス内訳: '+clsStr
+    +' ｜ ベース銘柄 '+list.length+'種（うち未登録/不明 <b style="color:var(--red)">'+nBad+'</b>）'
+    +(ckNoBase>0?' ｜ ベース未補完 '+ckNoBase:'')
+    +'<br><span style="font-size:10px">※bottleDataのclassIdを正として判定。赤行＝<b>bottleData未登録</b>、またはクラス解決不可。クラスが実態と違うベース（例: Añejoなのに表示がB）があれば、そのベースIDのbottleDataのclassIdを修正してください。</span>'
+    +tbl;
 }
 
 // ── グラフ（月別BJRAX積み上げ棒 / 5-29以来のBJRAX円） ──
