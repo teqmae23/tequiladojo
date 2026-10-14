@@ -136,6 +136,10 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .se-day:first-child{margin-top:0}
 .se-item{display:flex;align-items:center;gap:9px;background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:8px 11px;margin-bottom:6px}
 .se-item.ov{background:#f6f1e6;border-style:dashed}
+/* 時間内包ネスト（会員画面と同様に、ある項目の時間帯に収まる項目を入れ子表示） */
+.se-nest{margin-bottom:6px}
+.se-nest-body{margin:-2px 0 0 14px;padding-left:10px;border-left:2px solid var(--gold-l)}
+.se-nest-body .se-item:last-child{margin-bottom:0}
 .se-t{min-width:52px;font-family:var(--mono);font-size:16px;font-weight:700;color:var(--ink);flex:0 0 auto;text-align:center;line-height:1.1}
 .se-move-arrow{display:block;font-size:14px;color:var(--gold-d);line-height:1}
 .se-t .se-actual{color:#1a6e58;font-size:16px}
@@ -3760,6 +3764,43 @@ g('gpx-modal').addEventListener('click',function(e){ if(e.target===g('gpx-modal'
 var _schExpandedDays={}; // 展開中の日付を記憶（追加・編集後も維持）
 function toggleDay(idx, date){ var b=g('se-day-body-'+idx), c=g('se-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▶':'▼'; _schExpandedDays[date]=!open; }
 function openSchedForDay(date, grp){ _schExpandedDays[date]=true; openSchedEd(null, date, grp); }
+// ── スケジュールの時間内包ネスト（会員画面と同じ考え方で、ある項目の時間帯に収まる項目を入れ子表示） ──
+// 移動(isMove)も toTime を終了とみなして容器化（例: 12:00-13:00のタクシー中に 12:30の車内飯 を入れ子）。
+function _schHmMin(s){ var v=_normHM(s); if(v==null||v==='') return null; var p=String(v).split(':'); return (+p[0])*60+(+p[1]); }
+function _schStartMin(it){ var m=_schHmMin(it&&it.actualStart); if(m==null) m=_schHmMin(it&&it.time); return m==null?0:m; }
+function _schEndMin(it){
+  var raw=it&&(it.isMove?it.toTime:it.endTime);
+  var m=_schHmMin(it&&it.actualEnd); if(m==null) m=_schHmMin(raw);
+  if(m==null) return null;
+  var s=_schHmMin(it&&it.actualStart); if(s==null) s=_schHmMin(it&&it.time);
+  if(s!=null && m<s) m+=1440; // 日跨ぎ
+  return m;
+}
+function _schBuildTree(items){
+  var roots=[], stack=[]; // stack: 開いている容器 {node, endMin}
+  items.forEach(function(it){
+    var startMin=_schStartMin(it);
+    while(stack.length && stack[stack.length-1].endMin<=startMin) stack.pop();
+    var parent=stack.length?stack[stack.length-1].node:null;
+    var node={it:it, children:[], isCont:false, depth:parent?parent.depth+1:0};
+    if(parent) parent.children.push(node); else roots.push(node);
+    var ce=it&&(it.isMove?it.toTime:it.endTime);
+    if(!!(ce&&String(ce).trim()) && node.depth<2){
+      var em=_schEndMin(it);
+      if(em!=null && em>startMin){ node.isCont=true; stack.push({node:node, endMin:em}); }
+    }
+  });
+  return roots;
+}
+function _schNodeHtml(node){
+  var it=node.it;
+  var leaf=renderSchedItemRow(it)+(_idlCross(it)?'<div class="se-idl">🌐 日付変更線</div>':'');
+  if(node.isCont && node.children.length){
+    return '<div class="se-nest">'+leaf+'<div class="se-nest-body">'+node.children.map(_schNodeHtml).join('')+'</div></div>';
+  }
+  return leaf;
+}
+function _renderSchedUnits(items){ return _schBuildTree(items).map(_schNodeHtml).join(''); }
 function renderSchedList(){
   if(!_schItems.length){ g('sch-list').innerHTML='<div class="ec">スケジュール項目がありません。「＋ 項目追加」から登録してください。</div>'; g('sch-total').textContent=''; return; }
   var total=0; _schItems.forEach(function(it){ total+=itemYen(it); });
@@ -3770,12 +3811,16 @@ function renderSchedList(){
   // 別班併存の時間帯だけをサイドバー付き複数列に、単独班の時間帯は従来の1列に。
   var sections=[], sec=null;
   if(!useG){
-    enr.forEach(function(e){ var it=e.it, d=it.date||''; if(!sec||sec.day!==d){ sec={day:d, html:'', n:0}; sections.push(sec); } sec.html+=_rowHtml(it); sec.n++; });
+    // 日ごとにまとめ、時間帯の内包関係で自動ネストして描画（会員画面と同じ挙動）
+    var _byDay={}, _dayOrder=[];
+    enr.forEach(function(e){ var d=e.it.date||''; if(!_byDay[d]){ _byDay[d]=[]; _dayOrder.push(d); } _byDay[d].push(e.it); });
+    _dayOrder.forEach(function(d){ var its=_byDay[d]; sections.push({day:d, html:_renderSchedUnits(its), n:its.length}); });
   } else {
     SchedGroups.segment(enr.map(function(e){ return {it:e.it, day:e.it.date||''}; })).forEach(function(b){
       if(!sec||sec.day!==b.day){ sec={day:b.day, html:'', n:0}; sections.push(sec); }
       sec.n+=b.items.length;
-      if(!b.multi){ b.items.forEach(function(x){ sec.html+=_rowHtml(x.it); }); return; }
+      // 単独班ブロックはネスト描画。別班併存（複数列）は従来どおりフラット。
+      if(!b.multi){ sec.html+=_renderSchedUnits(b.items.map(function(x){ return x.it; })); return; }
       var colsH={1:'',2:'',3:''};
       b.items.forEach(function(x){
         var it=x.it, row=_rowHtml(it);
