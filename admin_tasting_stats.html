@@ -99,13 +99,16 @@ tr.rrow{cursor:pointer}
 .mhd{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--white);border-radius:var(--rl) var(--rl) 0 0}
 .mhd .mt{font-size:15px;font-weight:700;color:var(--gold-d)}
 .mhd .mx{margin-left:auto;background:var(--cream2);border:1px solid var(--border2);border-radius:var(--r);font-size:14px;padding:3px 10px;white-space:nowrap}
-.mbody{flex:1 1 auto;overflow:auto;padding:12px 16px}
+.mbody{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 16px}
 .mstat{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
 .mstat .c{background:var(--cream);border:1px solid var(--border);border-radius:var(--r);padding:6px 12px;font-size:12px}
 .mstat .c b{font-size:15px}
 table.dt{border-collapse:collapse;width:100%;font-size:12px}
 table.dt th,table.dt td{border-bottom:1px solid var(--border);padding:5px 8px;text-align:left;white-space:nowrap}
 table.dt th{background:var(--cream2);font-size:10px;color:var(--ink2);position:sticky;top:0;z-index:1}
+table.dt th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+table.dt th.sortable:hover{background:var(--cream3)}
+table.dt th .sarr{margin-left:3px;color:var(--gold-d);font-weight:700}
 table.dt td.r{text-align:right;font-family:var(--mono)}
 tr.exrow td{color:var(--ink3);background:var(--red-l)}
 tr.okrow td{background:#eef7f1}
@@ -229,7 +232,13 @@ tr.okrow td{background:#eef7f1}
     <div class="mbody">
       <div class="mstat" id="dt-stat"></div>
       <table class="dt">
-        <thead><tr><th>判定</th><th>注文日</th><th>銘柄</th><th>種別</th><th>スタイル</th><th>ml</th><th>状態</th><th>注文元</th><th>会員</th><th>個体ID</th><th>注文ID</th></tr></thead>
+        <thead><tr id="dt-head">
+          <th>判定</th>
+          <th class="sortable" data-sort="date">注文日時<span class="sarr"></span></th>
+          <th class="sortable" data-sort="name">銘柄<span class="sarr"></span></th>
+          <th class="sortable" data-sort="nom">NOM<span class="sarr"></span></th>
+          <th>種別</th><th>スタイル</th><th>ml</th><th>状態</th><th>注文元</th><th>会員</th><th>個体ID</th><th>注文ID</th>
+        </tr></thead>
         <tbody id="dt-rows"></tbody>
       </table>
     </div>
@@ -610,6 +619,11 @@ function badge(o){
   if(isBlind(o)) t.push('ﾌﾞﾗｲﾝﾄﾞ');
   return t.join('・');
 }
+var _dtItems=[];
+var _dtSort={key:'date', dir:'desc'};
+function _dtDatetime(v){ return String(v.o.orderDate||'')+String(v.o.orderTime||''); }
+function _dtName(v){ return String(nameOf(v.b, v.pname||v.productId)||'').toLowerCase(); }
+function _dtNom(v){ return String(nomOf(v.b)||'').toLowerCase(); }
 function openDetail(kind, key){
   var F=curFilters();
   var items=[];
@@ -619,24 +633,47 @@ function openDetail(kind, key){
     else { if(String(o.customerId||'')!==key) return; }
     items.push(v);
   });
-  // 並び: 集計済み→除外、日付降順
-  items.sort(function(a,b){ if(a.counted!==b.counted) return a.counted?-1:1; return String(b.o.orderDate||'').localeCompare(String(a.o.orderDate||'')); });
-  var okN=0, mlOk=0, exBy={};
-  items.forEach(function(v){ if(v.counted){ okN++; mlOk+=v.ml; } else { exBy[v.reason]=(exBy[v.reason]||0)+1; } });
-  if(kind==='bottle'){ var name=items.length?nameOf(items[0].b, items[0].pname||key):key; g('dt-title').textContent=name+'（商品ID '+key+'）'; }
+  _dtItems=items;
+  _dtSort={key:'date', dir:'desc'};   // 既定は注文日時の降順
+  // 集計サマリ（銘柄＝商品マスタの重複を除いた種類数も表示）
+  var okN=0, mlOk=0, exBy={}, prods={};
+  items.forEach(function(v){ if(v.counted){ okN++; mlOk+=v.ml; prods[v.productId]=1; } else { exBy[v.reason]=(exBy[v.reason]||0)+1; } });
+  var nProd=Object.keys(prods).length;
+  if(kind==='bottle'){ var name=items.length?nameOf(items[0].b, items[0].pname||key):key; g('dt-title').textContent=name+'（商品キー '+esc(key)+'）'; }
   else { var nm=memberName(key); g('dt-title').textContent=(nm?nm+' ':'')+'会員 '+memberDisp(key); }
   var exHtml=Object.keys(exBy).map(function(k){ return '<span class="c">除外: '+esc(k)+' <b>'+exBy[k]+'</b></span>'; }).join('');
-  g('dt-stat').innerHTML='<span class="c">明細総数 <b>'+items.length+'</b></span>'
-    +'<span class="c">集計済み <b style="color:var(--teal)">'+okN+'</b> 杯</span>'
+  g('dt-stat').innerHTML='<span class="c">明細(杯) <b>'+items.length+'</b></span>'
+    +'<span class="c">集計 <b style="color:var(--teal)">'+okN+'</b> 杯</span>'
+    +'<span class="c">銘柄 <b style="color:var(--gold-d)">'+nProd+'</b> 種</span>'
     +'<span class="c">集計ml <b>'+mlOk.toLocaleString()+'</b></span>'
-    +'<span class="c">除外 <b style="color:var(--red)">'+(items.length-okN)+'</b></span>'+exHtml;
+    +(items.length-okN?'<span class="c">除外 <b style="color:var(--red)">'+(items.length-okN)+'</b></span>'+exHtml:'');
+  renderDtRows();
+  g('detail').classList.add('on');
+  g('detail').querySelector('.mbody').scrollTop=0;
+}
+function renderDtRows(){
+  var key=_dtSort.key, dir=_dtSort.dir==='asc'?1:-1;
+  var getv = key==='name'?_dtName : key==='nom'?_dtNom : _dtDatetime;
+  var items=_dtItems.slice().sort(function(a,b){
+    var va=getv(a), vb=getv(b);
+    if(va<vb) return -1*dir; if(va>vb) return 1*dir;
+    // 同値は注文日時降順で安定化
+    return String(_dtDatetime(b)).localeCompare(String(_dtDatetime(a)));
+  });
+  // ヘッダの矢印表示
+  Array.prototype.forEach.call(g('dt-head').querySelectorAll('th.sortable'),function(th){
+    var ar=th.querySelector('.sarr'); if(!ar) return;
+    ar.textContent=(th.getAttribute('data-sort')===key)?(_dtSort.dir==='asc'?'▲':'▼'):'';
+  });
   g('dt-rows').innerHTML=items.map(function(v){
     var o=v.o;
-    var dd=String(o.orderDate||''); dd=dd.length>=6?('20'+dd.slice(0,2)+'/'+dd.slice(2,4)+'/'+dd.slice(4,6)):(dd||'—');
+    var dd=String(o.orderDate||''); var dstr=dd.length>=6?('20'+dd.slice(0,2)+'/'+dd.slice(2,4)+'/'+dd.slice(4,6)):(dd||'—');
+    var ot=String(o.orderTime||''); if(ot.length>=4) dstr+=' '+ot.slice(0,2)+':'+ot.slice(2,4);
     return '<tr class="'+(v.counted?'okrow':'exrow')+'">'+
       '<td>'+(v.counted?'<span class="rz ok">集計</span>':'<span class="rz ex">除外</span>')+(v.counted?'':' <span class="rz">'+esc(v.reason)+'</span>')+'</td>'+
-      '<td>'+esc(dd)+'</td>'+
+      '<td>'+esc(dstr)+'</td>'+
       '<td>'+esc(nameOf(v.b, v.pname||v.productId))+'</td>'+
+      '<td>'+esc(nomOf(v.b)||'—')+'</td>'+
       '<td>'+esc(String(o.productType||''))+'</td>'+
       '<td>'+(v.isSoda?'ソーダ割り':'ストレート')+'</td>'+
       '<td class="r">'+v.ml+'</td>'+
@@ -646,9 +683,15 @@ function openDetail(kind, key){
       '<td class="r" style="font-size:10px">'+esc(String(v.bottleId||''))+'</td>'+
       '<td class="r" style="font-size:10px">'+esc(String(o.id||''))+'</td>'+
     '</tr>';
-  }).join('')||'<tr><td colspan="11" class="empty">明細がありません</td></tr>';
-  g('detail').classList.add('on');
+  }).join('')||'<tr><td colspan="12" class="empty">明細がありません</td></tr>';
 }
+g('dt-head').addEventListener('click',function(e){
+  var th=e.target.closest('th.sortable'); if(!th) return;
+  var k=th.getAttribute('data-sort');
+  if(_dtSort.key===k){ _dtSort.dir=(_dtSort.dir==='asc'?'desc':'asc'); }
+  else { _dtSort.key=k; _dtSort.dir=(k==='date'?'desc':'asc'); }
+  renderDtRows();
+});
 g('rows').addEventListener('click',function(e){ var tr=e.target.closest('tr.rrow'); if(tr) openDetail(tr.getAttribute('data-kind'), tr.getAttribute('data-key')); });
 g('dt-close').addEventListener('click',function(){ g('detail').classList.remove('on'); });
 g('detail').addEventListener('click',function(e){ if(e.target===g('detail')) g('detail').classList.remove('on'); });
