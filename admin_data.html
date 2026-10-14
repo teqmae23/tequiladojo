@@ -512,6 +512,30 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div id="sodabase-list" style="margin-top:6px;max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
           </div>
 
+          <!-- カクテルのベース銘柄マスタID(baseBottleId)補完（確認式） -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
+              <strong>カクテルのベース銘柄マスタID（baseBottleId）補完</strong> — カクテル注文に、ベースの<b>銘柄マスタID</b>を保持させます（テキーラ＝<code>bottles</code> の12桁 <code>bottleId</code>／他酒＝<code>otherBottles</code> の7桁ID）。<br>
+              <span style="font-size:11px">これまでベースは<b>開栓個体ID（<code>bottleData</code> の T#####）</b>のみを保持しており、個体が削除・改番されると銘柄に束ねられず集計から分離していました。本ツールで各注文に安定した<b>銘柄マスタID</b>を付与します。個体が現存すればそのマスタ、無ければ<b>商品名のベース銘柄</b>を <code>bottles</code> と名称照合して解決。自動修正はせず、プレビュー→確認→補完の2段階。</span>
+            </div>
+            <button class="btn bp" style="width:fit-content" onclick="runBaseBottleIdPreview()">🔍 補完候補をプレビュー</button>
+            <button class="btn bd" style="width:fit-content;margin-left:6px" id="btn-basebottle-apply" onclick="runBaseBottleIdApply()" disabled>✅ 確認済みを補完する</button>
+            <div id="basebottle-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+            <div id="basebottle-list" style="margin-top:6px;max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
+          </div>
+
+          <!-- カクテル商品名を最新のベース銘柄名に更新（確認式） -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
+              <strong>カクテル商品名を最新のベース銘柄名に更新</strong> — 「ソーダ割り（<i>ベース銘柄</i>×30ml）」の<b>ベース銘柄名</b>を、現在のマスタ名（テキーラ＝<code>bottles.bottleEs</code>／他酒＝<code>otherBottles</code>）に揃えます。<br>
+              <span style="font-size:11px">発注時の個体名（旧名・日本語表記ゆれ等）で保存された商品名を、最新の銘柄名に統一表示するためのツール。<code>baseBottleId</code>（無ければ <code>baseProductCode</code>）からベースを解決します。自動修正はせず、プレビュー→確認→更新の2段階。</span>
+            </div>
+            <button class="btn bp" style="width:fit-content" onclick="runCocktailNameRefreshPreview()">🔍 更新候補をプレビュー</button>
+            <button class="btn bd" style="width:fit-content;margin-left:6px" id="btn-cktname-apply" onclick="runCocktailNameRefreshApply()" disabled>✅ 確認済みを更新する</button>
+            <div id="cktname-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-top:6px"></div>
+            <div id="cktname-list" style="margin-top:6px;max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:var(--r);display:none"></div>
+          </div>
+
           <!-- 注文日(orderDate)の補完 -->
           <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
             <div style="background:#e3f2fd;border:1px solid #64b5f6;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#0a3d62;margin-bottom:10px">
@@ -5298,6 +5322,171 @@ async function runSodaBaseNameApply(){
     prog.textContent='エラー: '+e.message; toast('補完失敗: '+e.message,'err');
     if(applyBtn) applyBtn.disabled=false;
   }
+}
+
+// ── カクテルのベース銘柄マスタID(baseBottleId)補完（確認式） ───────────────
+// 個体ID(baseProductCode=T#####)が消えても銘柄で束ねられるよう、銘柄マスタIDを付与。
+// テキーラ: bottleData[個体].bottleId(12桁)。個体が無ければ商品名を bottles と名称照合。
+// 他酒: otherBottles ID(7桁) がそのまま銘柄マスタ。
+var _baseBottleCands=null;
+function _bbEsName(b){ return (b&&(b.bottleEs||b.bottleEsBase||b.bottleJa||b.bottleJaBase||b.bottleEn||b.name))||''; }
+async function runBaseBottleIdPreview(){
+  var prog=document.getElementById('basebottle-progress');
+  var listEl=document.getElementById('basebottle-list');
+  var applyBtn=document.getElementById('btn-basebottle-apply');
+  _baseBottleCands=null; if(applyBtn) applyBtn.disabled=true;
+  try{
+    prog.textContent='マスタ・注文を読込中...';
+    var res=await Promise.all([
+      db.collection('bottleData').get(),   // 個体 → bottleId(マスタ)
+      db.collection('bottles').get(),      // 銘柄マスタ(12桁)
+      db.collection('otherBottles').get(), // 他酒(7桁=マスタ)
+      db.collection('orders').where('productType','==','cocktail').get()
+    ]);
+    var bdById={};  res[0].forEach(function(d){ bdById[d.id]=Object.assign({id:d.id},d.data()); });
+    var mById={};   res[1].forEach(function(d){ mById[d.id]=Object.assign({id:d.id},d.data()); });
+    var otherById={}; res[2].forEach(function(d){ otherById[d.id]=Object.assign({id:d.id},d.data()); });
+    // 銘柄マスタの名称インデックス（名称照合フォールバック用）
+    var mByName={}; res[1].forEach(function(d){ var b=d.data(); [b.bottleEs,b.bottleJa].forEach(function(n){ if(n){ var k=String(n).trim(); if(!mByName[k]) mByName[k]=d.id; } }); });
+
+    var writable=[], already=0, unresolved=[];
+    res[3].forEach(function(d){
+      var o=d.data();
+      if(o.baseBottleId!=null && String(o.baseBottleId)!==''){ already++; return; }
+      var base=o.baseProductCode;
+      var row={ref:d.ref,id:d.id,name:o.productName||'',base:base?String(base):'',baseType:o.baseProductType||''};
+      if(!base){ row.reason='baseProductCode無（先にソーダ割りベース補完を実行）'; unresolved.push(row); return; }
+      var isOther=(String(o.baseProductType||'')==='other') || (String(base).charAt(0).toUpperCase()!=='T');
+      if(isOther){
+        var ob=otherById[String(base)];
+        row.masterId=String(base); row.masterName=ob?(ob.bottleEn||ob.bottleName||ob.name||ob.bottleEs||''):'(otherBottles未登録)';
+        row.kind='他酒(ID=マスタ)'; row.method='other'; writable.push(row); return;
+      }
+      // テキーラ: 個体→マスタ
+      var bd=bdById[String(base)];
+      if(bd && bd.bottleId){ row.masterId=String(bd.bottleId); var mm=mById[row.masterId]; row.masterName=mm?_bbEsName(mm):_bbEsName(bd); row.kind='個体から解決'; row.method='individual'; writable.push(row); return; }
+      // 個体が無い → 商品名のベース銘柄を bottles と名称照合
+      var m=String(o.productName||'').match(/[（(]\s*(.+?)\s*[×x]\s*[0-9.]+\s*ml\s*[）)]\s*$/i);
+      var pn=m?m[1].trim():'';
+      if(pn && mByName[pn]){ row.masterId=mByName[pn]; var m2=mById[row.masterId]; row.masterName=m2?_bbEsName(m2):pn; row.kind='名称照合'; row.method='name'; row.parsed=pn; writable.push(row); return; }
+      row.reason='マスタ未解決（個体欠落＋商品名「'+pn+'」が bottles に無し）'; unresolved.push(row);
+    });
+
+    var esc=function(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); };
+    var th='padding:4px 8px;background:var(--cream2);text-align:left;position:sticky;top:0';
+    function rows(arr,w){ return arr.map(function(r){
+      return '<tr'+(w?'':' style="background:#fdecea"')+'>'
+        +'<td style="padding:3px 8px;font-size:10px;font-family:var(--mono)">'+esc(r.id)+'</td>'
+        +'<td style="padding:3px 8px;font-size:11px">'+esc(r.name)+'</td>'
+        +'<td style="padding:3px 8px;font-size:11px;font-family:var(--mono)">'+esc(r.base)+'</td>'
+        +'<td style="padding:3px 8px;font-size:11px;font-family:var(--mono)">'+esc(r.masterId||'—')+'</td>'
+        +'<td style="padding:3px 8px;font-size:11px">'+esc(r.masterName||'—')+'</td>'
+        +'<td style="padding:3px 8px;font-size:11px;'+(w?'color:var(--teal)':'color:#8c2818')+'">'+esc(r.kind||r.reason||'')+'</td></tr>';
+    }).join(''); }
+    var thead='<thead><tr><th style="'+th+'">注文ID</th><th style="'+th+'">商品名</th><th style="'+th+'">現base(個体)</th><th style="'+th+'">→ 銘柄マスタID</th><th style="'+th+'">マスタ名</th><th style="'+th+'">判定</th></tr></thead>';
+    var html='<div style="padding:8px 10px;font-size:12px;border-bottom:1px solid var(--border)"><b>補完対象（解決済）: '+writable.length+'件</b> ／ 未解決: '+unresolved.length+'件 ／ 既にbaseBottleId有: '+already+'件</div>';
+    if(writable.length) html+='<div style="padding:6px 10px;font-size:11px;font-weight:600;color:var(--teal)">✅ 補完候補</div><table style="width:100%;border-collapse:collapse">'+thead+'<tbody>'+rows(writable,true)+'</tbody></table>';
+    if(unresolved.length) html+='<div style="padding:6px 10px;font-size:11px;font-weight:600;color:#8c2818;border-top:1px solid var(--border)">⚠ 未解決（補完しません）</div><table style="width:100%;border-collapse:collapse">'+thead+'<tbody>'+rows(unresolved,false)+'</tbody></table>';
+    listEl.style.display='block'; listEl.innerHTML=html;
+    _baseBottleCands=writable;
+    if(writable.length && applyBtn) applyBtn.disabled=false;
+    prog.textContent='プレビュー完了: 補完候補 '+writable.length+'件。確認して「✅ 確認済みを補完する」で実行'+(writable.length?'':'（候補なし）');
+  }catch(e){ prog.textContent='エラー: '+e.message; toast('プレビュー失敗: '+e.message,'err'); }
+}
+async function runBaseBottleIdApply(){
+  var prog=document.getElementById('basebottle-progress');
+  var applyBtn=document.getElementById('btn-basebottle-apply');
+  if(!_baseBottleCands||!_baseBottleCands.length){ toast('先にプレビューを実行してください','err'); return; }
+  var cands=_baseBottleCands;
+  if(!confirm(cands.length+'件のカクテル注文に baseBottleId（銘柄マスタID）を補完します。\n\nこの内容で書き込みますか？')){ prog.textContent='中止しました'; return; }
+  try{
+    if(applyBtn) applyBtn.disabled=true;
+    var done=0;
+    for(var j=0;j<cands.length;j+=400){
+      var batch=db.batch();
+      cands.slice(j,j+400).forEach(function(c){ batch.update(c.ref,{ baseBottleId:c.masterId }); });
+      await batch.commit();
+      done=Math.min(j+400,cands.length); prog.textContent='書き込み中 '+done+'/'+cands.length+'...';
+    }
+    cands.forEach(function(c){ writeJournal('update','orders',c.id,{baseBottleId:null},{baseBottleId:c.masterId}); });
+    writeJournal('migration','orders','basebottleid-backfill',null,{updated:cands.length});
+    prog.textContent='完了: '+cands.length+'件に baseBottleId を補完しました'; toast('完了: '+cands.length+'件');
+    _baseBottleCands=null;
+  }catch(e){ prog.textContent='エラー: '+e.message; toast('補完失敗: '+e.message,'err'); if(applyBtn) applyBtn.disabled=false; }
+}
+
+// ── カクテル商品名を最新のベース銘柄名に更新（確認式） ──────────────────
+var _cktNameCands=null;
+async function runCocktailNameRefreshPreview(){
+  var prog=document.getElementById('cktname-progress');
+  var listEl=document.getElementById('cktname-list');
+  var applyBtn=document.getElementById('btn-cktname-apply');
+  _cktNameCands=null; if(applyBtn) applyBtn.disabled=true;
+  try{
+    prog.textContent='マスタ・注文を読込中...';
+    var res=await Promise.all([
+      db.collection('bottleData').get(),
+      db.collection('bottles').get(),
+      db.collection('otherBottles').get(),
+      db.collection('orders').where('productType','==','cocktail').get()
+    ]);
+    var bdById={};  res[0].forEach(function(d){ bdById[d.id]=Object.assign({id:d.id},d.data()); });
+    var mById={};   res[1].forEach(function(d){ mById[d.id]=Object.assign({id:d.id},d.data()); });
+    var otherById={}; res[2].forEach(function(d){ otherById[d.id]=Object.assign({id:d.id},d.data()); });
+    // ベースの「最新銘柄名」を解決（テキーラ=bottles.bottleEs / 他酒=otherBottles）
+    function latestBaseName(o){
+      var bb=o.baseBottleId?String(o.baseBottleId):'';
+      if(bb){ if(mById[bb]) return mById[bb].bottleEs||mById[bb].bottleJa||''; if(otherById[bb]) { var ob=otherById[bb]; return ob.bottleEn||ob.bottleName||ob.name||ob.bottleEs||''; } }
+      var base=o.baseProductCode?String(o.baseProductCode):'';
+      if(!base) return '';
+      if(String(o.baseProductType||'')==='other' || base.charAt(0).toUpperCase()!=='T'){ var o2=otherById[base]; return o2?(o2.bottleEn||o2.bottleName||o2.name||o2.bottleEs||''):''; }
+      var bd=bdById[base]; if(bd && bd.bottleId && mById[bd.bottleId]) return mById[bd.bottleId].bottleEs||mById[bd.bottleId].bottleJa||'';
+      if(bd) return _bbEsName(bd); return '';
+    }
+    var writable=[], unresolved=[], unchanged=0;
+    res[3].forEach(function(d){
+      var o=d.data(); var cur=String(o.productName||'');
+      var mm=cur.match(/^(.*?)[（(]\s*(.+?)\s*([×x])\s*([0-9.]+)\s*ml\s*[）)]\s*$/i);
+      if(!mm){ return; } // 「（銘柄×mlml）」形式でない → 対象外
+      var prefix=mm[1], ml=mm[4];
+      var newBase=latestBaseName(o);
+      if(!newBase){ unresolved.push({id:d.id,name:cur,reason:'ベース名未解決'}); return; }
+      var newName=prefix+'（'+newBase+'×'+ml+'ml）';
+      if(newName===cur){ unchanged++; return; }
+      writable.push({ref:d.ref,id:d.id,oldName:cur,newName:newName});
+    });
+    var esc=function(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); };
+    var th='padding:4px 8px;background:var(--cream2);text-align:left;position:sticky;top:0';
+    var html='<div style="padding:8px 10px;font-size:12px;border-bottom:1px solid var(--border)"><b>更新対象: '+writable.length+'件</b> ／ 変更なし: '+unchanged+'件 ／ ベース名未解決: '+unresolved.length+'件</div>';
+    if(writable.length) html+='<table style="width:100%;border-collapse:collapse"><thead><tr><th style="'+th+'">注文ID</th><th style="'+th+'">現商品名</th><th style="'+th+'">→ 新商品名</th></tr></thead><tbody>'
+      +writable.map(function(r){ return '<tr><td style="padding:3px 8px;font-size:10px;font-family:var(--mono)">'+esc(r.id)+'</td><td style="padding:3px 8px;font-size:11px;color:#8c2818">'+esc(r.oldName)+'</td><td style="padding:3px 8px;font-size:11px;color:var(--teal)">'+esc(r.newName)+'</td></tr>'; }).join('')+'</tbody></table>';
+    if(unresolved.length) html+='<div style="padding:6px 10px;font-size:11px;color:#8c2818">ベース名未解決（更新しません）: '+unresolved.length+'件（先にbaseBottleId補完を推奨）</div>';
+    listEl.style.display='block'; listEl.innerHTML=html;
+    _cktNameCands=writable;
+    if(writable.length && applyBtn) applyBtn.disabled=false;
+    prog.textContent='プレビュー完了: 更新候補 '+writable.length+'件。確認して「✅ 確認済みを更新する」で実行'+(writable.length?'':'（候補なし）');
+  }catch(e){ prog.textContent='エラー: '+e.message; toast('プレビュー失敗: '+e.message,'err'); }
+}
+async function runCocktailNameRefreshApply(){
+  var prog=document.getElementById('cktname-progress');
+  var applyBtn=document.getElementById('btn-cktname-apply');
+  if(!_cktNameCands||!_cktNameCands.length){ toast('先にプレビューを実行してください','err'); return; }
+  var cands=_cktNameCands;
+  if(!confirm(cands.length+'件のカクテル注文の商品名を最新のベース銘柄名に更新します。\n\nこの内容で書き込みますか？')){ prog.textContent='中止しました'; return; }
+  try{
+    if(applyBtn) applyBtn.disabled=true;
+    var done=0;
+    for(var j=0;j<cands.length;j+=400){
+      var batch=db.batch();
+      cands.slice(j,j+400).forEach(function(c){ batch.update(c.ref,{ productName:c.newName }); });
+      await batch.commit();
+      done=Math.min(j+400,cands.length); prog.textContent='書き込み中 '+done+'/'+cands.length+'...';
+    }
+    cands.forEach(function(c){ writeJournal('update','orders',c.id,{productName:c.oldName},{productName:c.newName}); });
+    writeJournal('migration','orders','cocktail-name-refresh',null,{updated:cands.length});
+    prog.textContent='完了: '+cands.length+'件の商品名を更新しました'; toast('完了: '+cands.length+'件');
+    _cktNameCands=null;
+  }catch(e){ prog.textContent='エラー: '+e.message; toast('更新失敗: '+e.message,'err'); if(applyBtn) applyBtn.disabled=false; }
 }
 
 // ── 注文日(orderDate)の補完：ID先頭6桁(YYMMDD)から復元 ──

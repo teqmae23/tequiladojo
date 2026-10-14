@@ -175,7 +175,7 @@ tr.okrow td{background:#eef7f1}
       <div class="vtab" id="vtab"><button class="vt on" data-v="bottle">🥃 銘柄別</button><button class="vt" data-v="member">👤 会員別</button></div>
       <span class="sub" id="sub"></span>
     </div>
-    <div class="note">実際の注文記録（<code>orders</code>）からテキーラの消費を、<b>ストレート／ソーダ割り</b>に分けて銘柄・会員ごとに集計します。<br>※<b>ストレート</b>＝テキーラ単品注文（<code>tequila</code>, ml=数量）。<b>ソーダ割り</b>＝テキーラベースのカクテル注文（<code>cocktail</code>, ベース=<code>baseProductCode</code>, ml=<code>baseSpiritMl</code>）＋オンライン奢りのソーダ指定。<br>※集計対象は<b>提供済み（キャンセル除く）・全注文種別</b>。支払のみの奢り行(<code>isGiftPayer</code>)は本人未飲のため除外、奢られ受取(¥0)は実飲として計上。<code>orderDate</code>が無いレコードは無視。期間は<b>指定した日付範囲</b>で絞り込みます（既定2026/5/27〜）。<br>※集計は<b>商品(ボトルマスタ)単位</b>で、開栓ごとの個体(bottleData)を束ねます。金額＝テキーラ液量分（10ml単価×ml÷10）。度数HP=41%以上/通常=40%以下。<br>※<b>杯数</b>＝合計／10ml(ストレート)／ソーダ、<b>銘柄数(会員別)・会員数(銘柄別)</b>も同様に合計／10ml／ソーダに分けて表示します。<br>※ランキングは<b>列見出しをクリック</b>で並び替え（クリックごとに ▼降順 → ▲昇順 → 解除）。数値の<b>合計</b>をクリックで全件明細、<b>10ml／ソーダ</b>をクリックでそのスタイルだけの明細を表示します。<b>会員名クリック</b>でその会員のマイページ（別タブ）、<b>銘柄名クリック</b>でその銘柄の全件明細を開きます。グラフは常にストレートのみ。</div>
+    <div class="note">実際の注文記録（<code>orders</code>）からテキーラの消費を、<b>ストレート／ソーダ割り</b>に分けて銘柄・会員ごとに集計します。<br>※<b>ストレート</b>＝テキーラ単品注文（<code>tequila</code>, ml=数量）。<b>ソーダ割り</b>＝テキーラベースのカクテル注文（<code>cocktail</code>）。ベースは<b>銘柄マスタID（<code>baseBottleId</code>, 12桁）優先</b>、無ければ開栓個体ID（<code>baseProductCode</code>, T#####）で解決し、ml=<code>baseSpiritMl</code>。＋オンライン奢りのソーダ指定。<br>※集計対象は<b>提供済み（キャンセル除く）・全注文種別</b>。支払のみの奢り行(<code>isGiftPayer</code>)は本人未飲のため除外、奢られ受取(¥0)は実飲として計上。<code>orderDate</code>が無いレコードは無視。期間は<b>指定した日付範囲</b>で絞り込みます（既定2026/5/27〜）。<br>※集計は<b>商品(ボトルマスタ)単位</b>で、開栓ごとの個体(bottleData)を束ねます。金額＝テキーラ液量分（10ml単価×ml÷10）。度数HP=41%以上/通常=40%以下。<br>※<b>杯数</b>＝合計／10ml(ストレート)／ソーダ、<b>銘柄数(会員別)・会員数(銘柄別)</b>も同様に合計／10ml／ソーダに分けて表示します。<br>※ランキングは<b>列見出しをクリック</b>で並び替え（クリックごとに ▼降順 → ▲昇順 → 解除）。数値の<b>合計</b>をクリックで全件明細、<b>10ml／ソーダ</b>をクリックでそのスタイルだけの明細を表示します。<b>会員名クリック</b>でその会員のマイページ（別タブ）、<b>銘柄名クリック</b>でその銘柄の全件明細を開きます。グラフは常にストレートのみ。</div>
     <div id="diag" class="note" style="color:var(--ink2)"></div>
     <div id="reconcile" class="note" style="color:var(--ink2)"></div>
     <div id="soda-diag" class="note" style="color:var(--ink2)"></div>
@@ -311,11 +311,15 @@ function resolveLine(o){
     return { bottleId:bid, ml:Number(o.qty)||0, isSoda:isSoda, pname:o.productName };
   }
   if(pt==='cocktail'){
-    var base=o.baseProductCode; if(!base) return null; // ベース未補完のカクテルは集計不可
-    // テキーラ以外(他酒)のベースは本集計(テキーラ)の対象外。
-    // ベースがテキーラ＝baseProductType!=='other' かつ bottleData個体ID(T始まり)。他酒(otherBottles)は数値ID。
-    if(String(o.baseProductType||'')==='other' || String(base).charAt(0).toUpperCase()!=='T') return null;
-    return { bottleId:base, ml:Number(o.baseSpiritMl)||0, isSoda:true, pname:o.productName };
+    if(String(o.baseProductType||'')==='other') return null; // 他酒ベースは対象外
+    // 銘柄マスタID(baseBottleId)を優先（個体欠落に強い）。無ければ個体ID(baseProductCode)。
+    var bb=(o.baseBottleId!=null&&String(o.baseBottleId)!=='')?String(o.baseBottleId):'';
+    var base=o.baseProductCode?String(o.baseProductCode):'';
+    var key=bb||base; if(!key) return null;        // ベース未補完は集計不可
+    // キー種別: T#####=テキーラ個体 / 12桁数字=テキーラ銘柄マスタ / 7桁数字=他酒(otherBottles)→対象外
+    if(/^\d{7}$/.test(key)) return null;            // 他酒(銘柄7桁)
+    if(!(/^T/i.test(key) || /^\d{12}$/.test(key))) return null;
+    return { bottleId:key, ml:Number(o.baseSpiritMl)||0, isSoda:true, pname:o.productName };
   }
   return null;
 }
@@ -353,14 +357,14 @@ function load(){
     g('diag').innerHTML='orders 読込 <b>'+_orders.length+'件</b> ｜ 対象明細(日付有): テキーラ <b>'+d.tq+'</b> / カクテル <b>'+d.ck+'</b>（ベース未補完 '+d.ckNoBase+'）'
       +'｜ オンライン奢り '+d.online+' / 店内奢り(支払行) '+d.giftPayer+' / 奢られ受取 '+d.giftRecv+' ｜ ブラインド '+d.blind+' / キャンセル '+d.cancel
       +'<br><span style="font-size:10px">※支払のみの奢り行(isGiftPayer)は本人未飲のため常に除外。奢られ受取(¥0)は実飲として計上。期間は指定した日付範囲で絞り込みます。</span>';
-    // 対象ボトルの bottleData を取得（tequila.productCode と cocktail.baseProductCode）
-    var seen={}, ids=[]; _orders.forEach(function(o){ var r=resolveLine(o); if(r&&r.bottleId&&!seen[r.bottleId]){ seen[r.bottleId]=1; ids.push(r.bottleId); } });
-    var chunks=[]; for(var i=0;i<ids.length;i+=10) chunks.push(ids.slice(i,i+10));
-    var tasks=chunks.map(function(ck){
-      return db.collection('bottleData').where(firebase.firestore.FieldPath.documentId(),'in',ck).get()
-        .then(function(s){ s.docs.forEach(function(x){ _bottles[x.id]=x.data(); }); })
-        .catch(function(){});
-    });
+    // 対象ボトルを取得。キーは T#####(個体=bottleData) または 12桁(銘柄マスタ=bottles)。
+    // どちらも _bottles に格納（nameOf/classLetter/abvOf は bottleEs/classId/abv を見るため共通で解決可）。
+    var seen={}, tIds=[], mIds=[];
+    _orders.forEach(function(o){ var r=resolveLine(o); if(r&&r.bottleId&&!seen[r.bottleId]){ seen[r.bottleId]=1; if(/^T/i.test(r.bottleId)) tIds.push(r.bottleId); else if(/^\d{12}$/.test(r.bottleId)) mIds.push(r.bottleId); } });
+    function _chunk(a){ var c=[]; for(var i=0;i<a.length;i+=10) c.push(a.slice(i,i+10)); return c; }
+    var tasks=[];
+    _chunk(tIds).forEach(function(ck){ tasks.push(db.collection('bottleData').where(firebase.firestore.FieldPath.documentId(),'in',ck).get().then(function(s){ s.docs.forEach(function(x){ _bottles[x.id]=x.data(); }); }).catch(function(){})); });
+    _chunk(mIds).forEach(function(ck){ tasks.push(db.collection('bottles').where(firebase.firestore.FieldPath.documentId(),'in',ck).get().then(function(s){ s.docs.forEach(function(x){ _bottles[x.id]=x.data(); }); }).catch(function(){})); });
     tasks.push(loadMembers());
     tasks.push(db.collection('otherBottles').get().then(function(s){ s.docs.forEach(function(x){ _others[x.id]=x.data(); }); }).catch(function(){}));
     return Promise.all(tasks).then(render);

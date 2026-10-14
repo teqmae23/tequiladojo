@@ -2102,12 +2102,16 @@ function commitCocktailToCart(){
   const cocktail=_selCocktail,spirit=_pendingSpirit;
   const{total}=calcCocktailTotal(cocktail,spirit);
   const spiritName=spirit.type==='tequila'?AuthRole.bdName(spirit,'es'):(spirit.bottleEn||spirit.bottleName||spirit.name||spirit.bottleEs||spirit.id);
+  // ベースの「銘柄マスタID」。テキーラ＝個体(bottleData)が持つ bottleId(12桁マスタ)、他酒＝otherBottles ID(7桁=銘柄)。
+  // 個体(baseProductCode)が後で削除されても銘柄で確実に束ねられるよう、注文に保持する。
+  const baseBottleId=spirit.type==='tequila'?(spirit.bottleId||''):(spirit.id||'');
   flow.cart.push({
     productId:cocktail.id,
     productName:cocktail.name+'（'+spiritName+'×'+(cocktail.spiritMl||'?')+'ml）',
     productType:'cocktail',
     qty:1,unit:'杯',unitPrice:total,blindMarkId:null,
     _cocktailId:cocktail.id,_baseProductCode:spirit.id,_baseProductType:spirit.type||null,_baseSpiritMl:cocktail.spiritMl||0,
+    _baseBottleId:baseBottleId||null,
     _baseUnitPrice10ml:spirit.price||spirit.unitPrice||spirit.price10||0,_totalAmount:total,_spiritName:spiritName
   });
   document.getElementById('cocktail-spirit-picker').style.display='none';
@@ -2751,7 +2755,7 @@ async function confirmOrder(){
           itemSeq:i+1,productCode:item.productId,productName:saveName,productType:item.productType,
           qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,
           blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:1,
-          ...(isCocktail?{baseProductCode:item._baseProductCode,baseProductType:item._baseProductType||null,baseSpiritMl:(item._baseSpiritMl||0)*(item.qty||1)}:{}),
+          ...(isCocktail?{baseProductCode:item._baseProductCode,baseBottleId:item._baseBottleId||null,baseProductType:item._baseProductType||null,baseSpiritMl:(item._baseSpiritMl||0)*(item.qty||1)}:{}),
           ...(isGift?{isGiftPayer:true,giftCount,giftTo:flow.giftTo,giftIncludeSelf}:{}),
           ...(item.setGroupId?{setGroupId:item.setGroupId,setName:item.setName,setId:item.setId}:{}),
           ...(item.keepBottleId?{keepBottleId:item.keepBottleId}:{})
@@ -2762,6 +2766,7 @@ async function confirmOrder(){
           const _cktData={
             orderId:docId,cocktailId:item._cocktailId,
             baseProductCode:item._baseProductCode||null,
+            baseBottleId:item._baseBottleId||null,
             baseUnitPrice10ml:item._baseUnitPrice10ml||0,
             totalAmount:item._totalAmount||0
           };
@@ -2782,7 +2787,7 @@ async function confirmOrder(){
             qty:item.qty,unit:item.unit,unitPrice:0,
             blindId:0,blindMarkId:null,served:1,
             // 奢り受取人が実際に飲むため、ベースのお酒の消費は受取人側に計上する
-            ...(isCocktail?{baseProductCode:item._baseProductCode,baseProductType:item._baseProductType||null,baseSpiritMl:(item._baseSpiritMl||0)*(item.qty||1)}:{}),
+            ...(isCocktail?{baseProductCode:item._baseProductCode,baseBottleId:item._baseBottleId||null,baseProductType:item._baseProductType||null,baseSpiritMl:(item._baseSpiritMl||0)*(item.qty||1)}:{}),
             isGiftRecipient:true,giftFromVisitKey:visit.id,giftFromName:giftPayerName
           };
           fsBatch.set(db.collection('orders').doc(recDocId),recData);
@@ -2798,7 +2803,7 @@ async function confirmOrder(){
             productCode:item.productId,productName:saveName,productType:item.productType,
             qty:item.qty,unit:item.unit,unitPrice:item.unitPrice,
             blindId:isBlind?1:0,blindMarkId:isBlind?(item.blindMarkId||null):null,served:1,
-            ...(isCocktail?{baseProductCode:item._baseProductCode,baseProductType:item._baseProductType||null,baseSpiritMl:(item._baseSpiritMl||0)*(item.qty||1)}:{}),
+            ...(isCocktail?{baseProductCode:item._baseProductCode,baseBottleId:item._baseBottleId||null,baseProductType:item._baseProductType||null,baseSpiritMl:(item._baseSpiritMl||0)*(item.qty||1)}:{}),
             isGiftSelf:true
           };
           fsBatch.set(db.collection('orders').doc(selfDocId),selfData);
