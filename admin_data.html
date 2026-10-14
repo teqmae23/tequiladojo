@@ -655,6 +655,46 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <div id="nodate-status" style="font-size:12px;color:var(--ink3);min-height:20px;margin-bottom:6px"></div>
             <div id="nodate-report" style="max-height:340px;overflow:auto"></div>
           </div>
+
+          <!-- 5/28以前データのアーカイブ削除（復元可） -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px" id="archdel-tool-section">
+            <div style="font-size:11px;color:var(--ink3);margin-bottom:6px;font-weight:500;letter-spacing:.06em;text-transform:uppercase">5/28以前データのアーカイブ削除（復元可）</div>
+            <div style="background:#fdecea;border:1px solid #e57373;border-radius:var(--r);padding:10px 14px;font-size:12px;color:#5a0000;margin-bottom:10px">
+              <strong>日付が「確実に 2026/5/28 以前」のレコードのみ削除</strong>します（＝有効なYYMMDDが <code>260529</code> 未満）。日付フィールドが無く、IDからも日付が復元できない<strong>日付不明のレコードは削除しません（残します）</strong>。<br>
+              <span style="font-size:11px">削除データは <code>deletedArchive</code> コレクションに全フィールド保存し、<strong>いつでもレコード指定で復元可能</strong>。実行時にJSONバックアップも端末へ保存します。対象＝テキーラ分析・集計を歪めるテスト期間データの除去。</span>
+            </div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:12px">
+              <span style="color:var(--ink3)">対象コレクション:</span>
+              <label><input type="checkbox" id="arc-col-orders" checked> orders</label>
+              <label><input type="checkbox" id="arc-col-visits" checked> visits</label>
+              <label><input type="checkbox" id="arc-col-sessions" checked> sessions</label>
+              <label><input type="checkbox" id="arc-col-cocktailOrders" checked> cocktailOrders</label>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+              <button class="btn bp sm" onclick="runArchiveDeletePreview()">🔍 対象をプレビュー</button>
+              <button class="btn bd sm" onclick="runArchiveDelete()" id="btn-archdel-run" disabled>🗄 アーカイブして削除</button>
+            </div>
+            <div id="archdel-progress" style="font-size:12px;color:var(--ink3);min-height:20px;margin-bottom:6px"></div>
+            <div id="archdel-list" style="max-height:340px;overflow:auto;display:none;border:1px solid var(--border);border-radius:var(--r)"></div>
+
+            <!-- 復元 -->
+            <div style="margin-top:12px;background:var(--cream2);border:1px solid var(--border2);border-radius:var(--r);padding:10px 14px">
+              <div style="font-size:12px;font-weight:600;color:var(--ink2);margin-bottom:6px">↩ アーカイブからの復元</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+                <select id="arc-restore-coll" class="fsel" style="width:150px">
+                  <option value="orders">orders</option>
+                  <option value="visits">visits</option>
+                  <option value="sessions">sessions</option>
+                  <option value="cocktailOrders">cocktailOrders</option>
+                </select>
+                <input type="text" id="arc-restore-id" placeholder="元のドキュメントID" style="padding:5px 8px;border:1px solid var(--border2);border-radius:var(--r);font-size:12px;min-width:200px">
+                <button class="btn bs sm" onclick="restoreArchivedById()">↩ このレコードを復元</button>
+                <button class="btn bs sm" onclick="listArchived()">🗂 アーカイブ一覧</button>
+              </div>
+              <div id="arc-restore-status" style="font-size:12px;color:var(--ink3);min-height:18px"></div>
+              <div id="arc-restore-list" style="max-height:300px;overflow:auto;margin-top:6px"></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -5444,6 +5484,163 @@ async function runBusinessDateScan(){
   }catch(e){
     prog.textContent='エラー: '+e.message;
   }
+}
+
+// ── 5/28以前データのアーカイブ削除（復元可） ─────────────────────────
+// 「確実に5/28以前(=有効YYMMDD<260529)」のレコードのみ削除。日付不明は残す。
+// 削除分は deletedArchive コレクションに全フィールド保存し、レコード指定で復元可能。
+var ARCDEL_CUTOFF='260529';               // この値未満 = 5/28以前
+var ARCDEL_COLLS=['orders','visits','sessions','cocktailOrders'];
+var _arcTargets=null;                     // プレビューで確定した削除対象 {coll,id,date,data,ref}
+// コレクション別に「確実な日付(YYMMDD)」を求める。無ければ '' (=不明→残す)。
+function _arcDateOf(coll, id, data){
+  var cand=[];
+  if(coll==='orders') cand=[data.orderDate];
+  else if(coll==='visits') cand=[data.visitDate];
+  else if(coll==='sessions') cand=[data.date, data.openDate];
+  // cocktailOrders は日付フィールドを持たないため ID 先頭6桁のみで判定
+  for(var i=0;i<cand.length;i++){ var s=String(cand[i]==null?'':cand[i]); if(_validYYMMDD(s)) return s; }
+  var h=String(id||'').slice(0,6); if(/^\d{6}/.test(String(id)) && _validYYMMDD(h)) return h;
+  return '';
+}
+function _arcSelectedColls(){ return ARCDEL_COLLS.filter(function(c){ var el=document.getElementById('arc-col-'+c); return el && el.checked; }); }
+function _arcFmtD(d){ d=String(d||''); return d.length>=6?('20'+d.slice(0,2)+'/'+d.slice(2,4)+'/'+d.slice(4,6)):'—'; }
+function _jsonDownload(filename, obj){
+  var blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json;charset=utf-8'});
+  var url=URL.createObjectURL(blob); var a=document.createElement('a'); a.href=url; a.download=filename; a.click();
+  setTimeout(function(){URL.revokeObjectURL(url);},1000);
+}
+
+async function runArchiveDeletePreview(){
+  var prog=document.getElementById('archdel-progress');
+  var listEl=document.getElementById('archdel-list');
+  var runBtn=document.getElementById('btn-archdel-run');
+  _arcTargets=null; if(runBtn) runBtn.disabled=true;
+  var colls=_arcSelectedColls();
+  if(!colls.length){ prog.textContent='対象コレクションを1つ以上選択してください'; return; }
+  try{
+    var targets=[], summary={};
+    for(var ci=0; ci<colls.length; ci++){
+      var coll=colls[ci];
+      prog.textContent='読込中... ('+coll+')';
+      var snap=await db.collection(coll).get();
+      var s=summary[coll]={total:snap.size, del:0, keepUnknown:0, keepAfter:0};
+      snap.forEach(function(d){
+        var data=d.data();
+        var dt=_arcDateOf(coll, d.id, data);
+        if(!dt){ s.keepUnknown++; return; }           // 日付不明 → 残す
+        if(dt<ARCDEL_CUTOFF){ s.del++; targets.push({coll:coll, id:d.id, date:dt, data:data, ref:d.ref}); }
+        else s.keepAfter++;
+      });
+    }
+    // サマリ表
+    var esc=function(x){ return String(x==null?'':x).replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); };
+    var rowsH=colls.map(function(c){ var s=summary[c];
+      return '<tr><td style="padding:4px 10px">'+c+'</td>'
+        +'<td style="padding:4px 10px;text-align:right">'+s.total+'</td>'
+        +'<td style="padding:4px 10px;text-align:right;color:#8c2818;font-weight:700">'+s.del+'</td>'
+        +'<td style="padding:4px 10px;text-align:right">'+s.keepUnknown+'</td>'
+        +'<td style="padding:4px 10px;text-align:right">'+s.keepAfter+'</td></tr>';
+    }).join('');
+    // 削除対象のサンプル（先頭30件）を日付順に
+    var sample=targets.slice().sort(function(a,b){ return a.date<b.date?-1:a.date>b.date?1:0; }).slice(0,30);
+    var sampleH=sample.map(function(t){
+      return '<tr><td style="padding:3px 10px">'+t.coll+'</td><td style="padding:3px 10px">'+_arcFmtD(t.date)+'</td><td style="padding:3px 10px;font-family:var(--mono);font-size:11px">'+esc(t.id)+'</td></tr>';
+    }).join('');
+    listEl.style.display='block';
+    listEl.innerHTML='<table style="width:100%;font-size:12px;border-collapse:collapse">'
+      +'<thead><tr><th style="text-align:left;padding:4px 10px;background:var(--cream2)">コレクション</th><th style="text-align:right;padding:4px 10px;background:var(--cream2)">総数</th><th style="text-align:right;padding:4px 10px;background:var(--cream2)">削除(5/28以前)</th><th style="text-align:right;padding:4px 10px;background:var(--cream2)">残す(日付不明)</th><th style="text-align:right;padding:4px 10px;background:var(--cream2)">残す(5/29以降)</th></tr></thead>'
+      +'<tbody>'+rowsH+'</tbody></table>'
+      +(sample.length?('<div style="padding:6px 10px;font-size:11px;color:var(--ink3)">削除対象サンプル（先頭'+sample.length+'件）</div><table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:3px 10px;background:var(--cream2)">コレクション</th><th style="text-align:left;padding:3px 10px;background:var(--cream2)">日付</th><th style="text-align:left;padding:3px 10px;background:var(--cream2)">ドキュメントID</th></tr></thead><tbody>'+sampleH+'</tbody></table>'):'');
+    _arcTargets=targets;
+    if(targets.length && runBtn) runBtn.disabled=false;
+    prog.textContent='プレビュー: 削除対象 '+targets.length+'件（日付不明は残します）。内容を確認し「🗄 アーカイブして削除」で実行してください'+(targets.length?'':'（対象なし）');
+  }catch(e){ prog.textContent='エラー: '+e.message; toast('プレビュー失敗: '+e.message,'err'); }
+}
+
+async function runArchiveDelete(){
+  var prog=document.getElementById('archdel-progress');
+  var runBtn=document.getElementById('btn-archdel-run');
+  if(!_arcTargets || !_arcTargets.length){ toast('先にプレビューを実行してください','err'); return; }
+  var targets=_arcTargets;
+  if(!confirm('「確実に2026/5/28以前」の '+targets.length+'件を削除します。\n\n削除分は deletedArchive に全フィールド保存され、後からレコード指定で復元できます。\n（JSONバックアップも端末に保存します）\n\n実行しますか？')) { prog.textContent='中止しました'; return; }
+  try{
+    if(runBtn) runBtn.disabled=true;
+    // 先に端末へJSONバックアップ
+    var stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+    _jsonDownload('deleted_before_260529_'+stamp+'.json', targets.map(function(t){ return {collection:t.coll, id:t.id, date:t.date, data:t.data}; }));
+    var batchId='arcdel-'+stamp;
+    var done=0;
+    // 2操作/件（archive set + 元削除）。1バッチ=400操作(=200件)に抑える。
+    for(var j=0;j<targets.length;j+=200){
+      var chunk=targets.slice(j,j+200);
+      var batch=db.batch();
+      chunk.forEach(function(t){
+        var arcRef=db.collection('deletedArchive').doc(t.coll+'__'+t.id);
+        batch.set(arcRef, { srcCollection:t.coll, srcId:t.id, date:t.date, data:t.data, cutoff:ARCDEL_CUTOFF, batchId:batchId, deletedAt:firebase.firestore.FieldValue.serverTimestamp() });
+        batch.delete(t.ref);
+      });
+      await batch.commit();
+      done=Math.min(j+200,targets.length);
+      prog.textContent='削除中 '+done+'/'+targets.length+'...';
+    }
+    targets.forEach(function(t){ writeJournal('delete', t.coll, t.id, t.data, null); });
+    writeJournal('migration','deletedArchive','archive-delete-before-260529',null,{deleted:targets.length,batchId:batchId});
+    var msg='完了: '+targets.length+'件をアーカイブして削除しました（batchId: '+batchId+'）。復元は下の欄から可能です。';
+    prog.textContent=msg; toast(msg);
+    _arcTargets=null;
+  }catch(e){ prog.textContent='エラー: '+e.message; toast('削除失敗: '+e.message,'err'); if(runBtn) runBtn.disabled=false; }
+}
+
+// 元のコレクション＋IDを指定して1件復元
+async function restoreArchivedById(){
+  var coll=document.getElementById('arc-restore-coll').value;
+  var id=(document.getElementById('arc-restore-id').value||'').trim();
+  var st=document.getElementById('arc-restore-status');
+  if(!id){ st.textContent='元のドキュメントIDを入力してください'; return; }
+  await _restoreArchiveDoc(coll+'__'+id, st);
+}
+// アーカイブドキュメント(docId=coll__id)を復元
+async function _restoreArchiveDoc(arcDocId, statusEl){
+  var st=statusEl||document.getElementById('arc-restore-status');
+  try{
+    st.textContent='復元中... ('+arcDocId+')';
+    var arcRef=db.collection('deletedArchive').doc(arcDocId);
+    var snap=await arcRef.get();
+    if(!snap.exists){ st.textContent='アーカイブに該当がありません: '+arcDocId; toast('該当なし','err'); return; }
+    var a=snap.data();
+    if(!a.srcCollection || !a.srcId || a.data===undefined){ st.textContent='アーカイブデータが不正です: '+arcDocId; return; }
+    // 元の場所に書き戻し（既存があれば上書きしない安全確認）
+    var dstRef=db.collection(a.srcCollection).doc(a.srcId);
+    var exists=await dstRef.get();
+    if(exists.exists){ if(!confirm('復元先に同じIDのレコードが既に存在します（'+a.srcCollection+'/'+a.srcId+'）。上書きしますか？')){ st.textContent='中止しました'; return; } }
+    await dstRef.set(a.data);
+    await arcRef.delete();
+    writeJournal('create', a.srcCollection, a.srcId, null, a.data);
+    writeJournal('delete','deletedArchive',arcDocId,a,null);
+    st.textContent='✅ 復元しました: '+a.srcCollection+'/'+a.srcId;
+    toast('復元しました: '+a.srcCollection+'/'+a.srcId,'success');
+  }catch(e){ st.textContent='エラー: '+e.message; toast('復元失敗: '+e.message,'err'); }
+}
+// アーカイブ一覧を表示（各行に復元ボタン）
+async function listArchived(){
+  var out=document.getElementById('arc-restore-list');
+  var st=document.getElementById('arc-restore-status');
+  try{
+    st.textContent='アーカイブ読込中...';
+    var snap=await db.collection('deletedArchive').limit(500).get();
+    if(snap.empty){ out.innerHTML='<div style="padding:8px;font-size:12px;color:var(--ink3)">アーカイブは空です</div>'; st.textContent=''; return; }
+    var esc=function(x){ return String(x==null?'':x).replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); };
+    var docs=snap.docs.map(function(d){ var a=d.data(); return {arcId:d.id, coll:a.srcCollection, sid:a.srcId, date:a.date, batchId:a.batchId}; });
+    docs.sort(function(a,b){ return String(a.date)<String(b.date)?-1:1; });
+    var rows=docs.map(function(r){
+      return '<tr><td style="padding:3px 8px">'+esc(r.coll)+'</td><td style="padding:3px 8px">'+_arcFmtD(r.date)+'</td>'
+        +'<td style="padding:3px 8px;font-family:var(--mono);font-size:11px">'+esc(r.sid)+'</td>'
+        +'<td style="padding:3px 8px"><button class="btn bs sm" onclick="_restoreArchiveDoc(\''+esc(r.arcId).replace(/'/g,"\\'")+'\')">↩ 復元</button></td></tr>';
+    }).join('');
+    out.innerHTML='<table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;background:var(--cream2)">コレクション</th><th style="text-align:left;padding:4px 8px;background:var(--cream2)">日付</th><th style="text-align:left;padding:4px 8px;background:var(--cream2)">元ID</th><th style="padding:4px 8px;background:var(--cream2)"></th></tr></thead><tbody>'+rows+'</tbody></table>';
+    st.textContent='アーカイブ '+docs.length+'件'+(snap.size>=500?'（先頭500件）':'');
+  }catch(e){ st.textContent='エラー: '+e.message; }
 }
 
 // ── スタッフ来店IDの8桁正規化（旧 YYMMDD+S+会員ID → YYMMDD+2桁英数） ──
