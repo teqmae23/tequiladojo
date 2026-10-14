@@ -306,6 +306,15 @@ function resolveLine(o){
   }
   return null;
 }
+// 商品(ボトルマスタ)単位のキー。bottleData は開栓ごとの個体(ID=T#####)なので同一商品で束ねる。
+// bottleData.bottleId が未設定/無効な個体が混在するため、まず商品名で束ねる（同一商品=同一名）。
+// 名前が取れなければ有効な商品ID、最後に個体IDへフォールバック。
+function masterKey(bottleDataId, b, pname){
+  var nm=(b&&(b.bottleEsBase||b.bottleEs||b.bottleEn||b.bottleJaBase||b.bottleJa))||pname;
+  if(nm){ var s=String(nm).trim().toLowerCase().replace(/\s+/g,' '); if(s) return 'N:'+s; }
+  if(b && b.bottleId){ var bid=String(b.bottleId); if(bid && bid.charAt(0).toUpperCase()!=='T' && bid.length>=8) return bid; }
+  var id=String(bottleDataId||''); return id.charAt(0).toUpperCase()==='T' ? ('I:'+id) : (id.slice(0,12)||id);
+}
 
 function load(){
   setDefaultDates();
@@ -369,8 +378,7 @@ function lineVerdict(o, F, opts){
   var r=resolveLine(o); if(!r) return null;   // テキーラ/カクテル(ベース有)以外は集計対象ですらない
   var b=_bottles[r.bottleId], cl=classLetter(r.bottleId,b), abv=abvOf(b);
   // 集計キーは「商品(ボトルマスタ)」単位。bottleData は開栓ごとの個体なので、同一商品の個体を束ねる。
-  // bottleData.bottleId(12桁の商品ID) 優先、無ければデータIDの先頭12桁。
-  var pid=(b&&b.bottleId)||String(r.bottleId).slice(0,12)||r.bottleId;
+  var pid=masterKey(r.bottleId, b, r.pname);
   var p10=price10Of(b), amt=Math.round((p10!=null?p10:(Number(o.unitPrice)||0))*r.ml/10);
   var v={ bottleId:r.bottleId, productId:pid, ml:r.ml, isSoda:r.isSoda, pname:r.pname, b:b, cl:cl, abv:abv, amt:amt, o:o, counted:false, reason:'' };
   if(o.isGiftPayer===true){ v.reason='支払のみの奢り(未飲)'; return v; }
