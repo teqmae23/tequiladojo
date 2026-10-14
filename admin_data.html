@@ -427,6 +427,11 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <option value="">全件（削除済み含む）</option>
             <option value="1">削除済みのみ</option>
           </select>
+          <select class="fsel" id="f-ord-cancel" title="キャンセル(served=0)で抽出">
+            <option value="">全件（キャンセル含む）</option>
+            <option value="active">キャンセル以外</option>
+            <option value="cancel">キャンセルのみ</option>
+          </select>
           <div style="margin-left:auto;display:flex;gap:4px;align-items:center">
             <select id="sort-key-orders" class="fsel"><option value="id">注文ID</option><option value="orderDate">日付</option><option value="orderTime">時間</option><option value="customerId">顧客ID</option><option value="productType">種別</option><option value="qty">数量</option><option value="unitPrice">単価</option></select>
             <select id="sort-dir-orders" class="fsel"><option value="desc">降順 ▼</option><option value="asc">昇順 ▲</option></select>
@@ -3340,12 +3345,12 @@ function loadOrders(){
 
 function ordUpdateStats(list){
   if(!list) list=cache.orders.filter(function(r){return !r.deleted;});
-  var tqList  =list.filter(function(r){return r.productType==="tequila";});
-  var tqCount =tqList.length;
-  var otCount =list.filter(function(r){return r.productType==="other";}).length;
-  var ctCount =list.filter(function(r){return r.productType==="cocktail";}).length;
-  var msCount =list.filter(function(r){return r.productType==="misc";}).length;
-  var tqMl    =tqList.reduce(function(s,r){return s+(parseFloat(r.qty)||0);},0);
+  function _isCancel(r){ return Number(r.served)===0; }
+  var tqList =list.filter(function(r){return r.productType==="tequila";});
+  var otList =list.filter(function(r){return r.productType==="other";});
+  var ctList =list.filter(function(r){return r.productType==="cocktail";});
+  var msList =list.filter(function(r){return r.productType==="misc";});
+  var tqMl   =tqList.reduce(function(s,r){return s+(parseFloat(r.qty)||0);},0);
   var totalAmt=list.reduce(function(s,r){
     if(r.served===0||r.unitPrice==null) return s;
     var price=parseFloat(r.unitPrice)||0;
@@ -3354,16 +3359,19 @@ function ordUpdateStats(list){
     var mult=r.isGiftPayer?(r.giftCount||0):1;
     return s+Math.round(isMl?price*qty/10:price*qty)*mult;
   },0);
-  var els={
-    "ord-stat-count":list.length,
-    "ord-stat-tequila":tqCount,
-    "ord-stat-other":otCount,
-    "ord-stat-cocktail":ctCount,
-    "ord-stat-misc":msCount,
-    "ord-stat-ml":tqMl+"ml",
-    "ord-stat-amount":"¥"+totalAmt.toLocaleString()
-  };
-  Object.keys(els).forEach(function(k){ var el=g(k); if(el) el.textContent=els[k]; });
+  function cc(arr){ return arr.filter(_isCancel).length; }
+  // 種別ごとの件数＋()内にキャンセル数を表示
+  function setChip(id, num, cancelN){
+    var el=g(id); if(!el) return;
+    el.innerHTML=String(num)+'<span style="font-size:11px;font-weight:400;color:'+(cancelN>0?'#8c2818':'var(--ink3)')+';margin-left:5px">(ｷｬﾝｾﾙ '+(cancelN||0)+')</span>';
+  }
+  setChip("ord-stat-count", list.length, cc(list));
+  setChip("ord-stat-tequila", tqList.length, cc(tqList));
+  setChip("ord-stat-other", otList.length, cc(otList));
+  setChip("ord-stat-cocktail", ctList.length, cc(ctList));
+  setChip("ord-stat-misc", msList.length, cc(msList));
+  var mlEl=g("ord-stat-ml"); if(mlEl) mlEl.textContent=tqMl+"ml";
+  var amtEl=g("ord-stat-amount"); if(amtEl) amtEl.textContent="¥"+totalAmt.toLocaleString();
 }
 
 function renderOrders(){
@@ -3371,9 +3379,12 @@ function renderOrders(){
   var q=(g("s-ord")||{value:""}).value.toLowerCase();
   var dateS=gv("f-ord-date-start"), dateE=gv("f-ord-date-end"), typeF=gv("f-ord-type"), blindF=gv("f-ord-blind");
   var showDel=g("f-ord-deleted"); var showDelVal=showDel?showDel.value:"0";
+  var cancelEl=g("f-ord-cancel"); var cancelVal=cancelEl?cancelEl.value:"";
   list=list.filter(function(r){
     if(showDelVal==="0"&&r.deleted) return false;
     if(showDelVal==="1"&&!r.deleted) return false;
+    if(cancelVal==="cancel" && Number(r.served)!==0) return false;    // キャンセルのみ
+    if(cancelVal==="active" && Number(r.served)===0) return false;    // キャンセル以外
     if(q&&(r.id||"").toLowerCase().indexOf(q)<0&&(r.productCode||"").toLowerCase().indexOf(q)<0&&(r.productName||"").toLowerCase().indexOf(q)<0&&(r.customerId||"").indexOf(q)<0) return false;
     if(dateS||dateE){
       // IDが日付ベース(先頭6桁が数字)でない場合はorderDateかvisitKeyの日付で判定
@@ -3430,7 +3441,7 @@ function renderOrders(){
 
 // フィルター・ソート・CSV
 (function(){
-  ["s-ord","f-ord-date-start","f-ord-date-end","f-ord-type","f-ord-blind","f-ord-deleted"].forEach(function(id){
+  ["s-ord","f-ord-date-start","f-ord-date-end","f-ord-type","f-ord-blind","f-ord-deleted","f-ord-cancel"].forEach(function(id){
     var el=g(id); if(!el) return;
     el.addEventListener("input",renderOrders);
     el.addEventListener("change",renderOrders);

@@ -633,16 +633,17 @@ function sodaDiag(){
 // 他ページの「テキーラ◯◯/カクテル◯◯」件数と、本集計の計上数の差分の内訳を出す。
 function reconcileDiag(){
   var el=g('reconcile'); if(!el) return;
-  var teq={total:0,counted:0,noDate:0,notServed:0,gift:0,pre529:0,soda:0,ml:{}};
-  var ck={total:0,counted:0,noBase:0,otherBase:0,noDate:0,notServed:0,gift:0,pre529:0,ml:{}};
+  var teq={total:0,counted:0,noDate:0,notServed:0,cancel:0,gift:0,pre529:0,soda:0,ml:{}};
+  var ck={total:0,counted:0,noBase:0,otherBase:0,noDate:0,notServed:0,cancel:0,gift:0,pre529:0,ml:{}};
   _orders.forEach(function(o){
     var pt=String(o.productType||'');
     var od=String(o.orderDate||'');
     if(pt==='tequila'){
       teq.total++;
       var q=Number(o.qty)||0; teq.ml[q]=(teq.ml[q]||0)+1;
+      if(o.served===0){teq.cancel++;return;}            // キャンセルは集計対象外（別枠）
       if(o.isGiftPayer===true){teq.gift++;return;}
-      if(!(o.served===2||o.served===3)){teq.notServed++;return;}
+      if(!(o.served===2||o.served===3)){teq.notServed++;return;}  // 未提供(1)
       if(!od){teq.noDate++;return;}
       if(od<'260529'){teq.pre529++;return;}
       if(o.orderGroupId && _sodaGroups[o.orderGroupId]) teq.soda++;
@@ -650,8 +651,9 @@ function reconcileDiag(){
     } else if(pt==='cocktail'){
       ck.total++;
       var bm=Number(o.baseSpiritMl)||0; ck.ml[bm]=(ck.ml[bm]||0)+1;
+      if(o.served===0){ck.cancel++;return;}             // キャンセルは集計対象外（別枠）
       if(o.isGiftPayer===true){ck.gift++;return;}
-      if(!(o.served===2||o.served===3)){ck.notServed++;return;}
+      if(!(o.served===2||o.served===3)){ck.notServed++;return;}   // 未提供(1)
       if(!od){ck.noDate++;return;}
       if(od<'260529'){ck.pre529++;return;}
       var base=o.baseProductCode;
@@ -664,11 +666,11 @@ function reconcileDiag(){
   function mlStr(m){ return Object.keys(m).map(function(k){return {k:+k,v:m[k]};}).sort(function(a,b){return b.v-a.v;}).slice(0,6).map(function(x){return x.k+'ml×'+x.v;}).join(' / '); }
   el.innerHTML='<b style="color:var(--gold-d)">🧮 全注文の突合（全期間・productType別）</b>'
     +'<br><b>テキーラ単品 '+teq.total+'件</b> ＝ 集計(ストレート候補) <b style="color:var(--teal)">'+teq.counted+'</b>'
-      +' ＋ 5/29より前 '+teq.pre529+' ＋ 日付なし '+teq.noDate+' ＋ 未提供/キャンセル '+teq.notServed+' ＋ 奢り支払 '+teq.gift
+      +' ＋ 5/29より前 '+teq.pre529+' ＋ 日付なし '+teq.noDate+' ＋ 未提供 '+teq.notServed+' ＋ <span style="color:#8c2818">キャンセル(集計外) '+teq.cancel+'</span> ＋ 奢り支払(集計外) '+teq.gift
       +'（うちSODA兄弟ありでソーダ扱い '+teq.soda+'）'
     +'<br><span style="font-size:10px;color:var(--ink3)">テキーラ単品の数量(ml)内訳: '+esc(mlStr(teq.ml))+'</span>'
     +'<br><b>カクテル '+ck.total+'件</b> ＝ 集計(ソーダ) <b style="color:var(--teal)">'+ck.counted+'</b>'
-      +' ＋ ベース未補完 '+ck.noBase+' ＋ 他酒ベース '+ck.otherBase+' ＋ 5/29より前 '+ck.pre529+' ＋ 日付なし '+ck.noDate+' ＋ 未提供/キャンセル '+ck.notServed+' ＋ 奢り支払 '+ck.gift
+      +' ＋ ベース未補完 '+ck.noBase+' ＋ 他酒ベース '+ck.otherBase+' ＋ 5/29より前 '+ck.pre529+' ＋ 日付なし '+ck.noDate+' ＋ 未提供 '+ck.notServed+' ＋ <span style="color:#8c2818">キャンセル(集計外) '+ck.cancel+'</span> ＋ 奢り支払(集計外) '+ck.gift
     +'<br><span style="font-size:10px;color:var(--ink3)">カクテルのbaseSpiritMl内訳: '+esc(mlStr(ck.ml))+'</span>'
     +'<br><span style="font-size:10px;color:var(--ink3)">※本集計の「テキーラ合計」は期間フィルタ(既定5/27〜)・クラス/度数フィルタ適用後の数。ここは全期間・フィルタ無しの突合。</span>';
 }
@@ -912,7 +914,7 @@ function _dtHiddenReason(v, F){
   var o=v.o, od=String(o.orderDate||'');
   if(!od) return '日付なし';
   if(od<'260529') return '5/29より前';
-  if(o.isGiftPayer===true) return '奢り支払';
+  // 奢り支払・未提供・キャンセルは「除外(集計しない)」だが、リストには表示する（隠さない）
   if(F.styleMode==='straight' && v.isSoda) return 'スタイル外';
   if(F.styleMode==='soda' && !v.isSoda) return 'スタイル外';
   return '';
