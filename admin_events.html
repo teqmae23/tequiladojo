@@ -2794,14 +2794,15 @@ function applyPlace(pid, nameId, latId, lngId, mapId, modeId){
   if(g(latId)) g(latId).value=(p.lat!=null?p.lat:'');
   if(g(lngId)) g(lngId).value=(p.lng!=null?p.lng:'');
   if(g(mapId)) g(mapId).value=p.mapUrl||'';
-  if(modeId&&g(modeId)) g(modeId).value=(p.mapMode==='name')?'name':'coord';
+  // 既定は「名称で検索」。マスタ側で座標固定(coord)が明示されている場合のみ coord。
+  if(modeId&&g(modeId)) g(modeId).value=(p.mapMode==='coord')?'coord':'name';
 }
 function savePlaceIfNew(name, lat, lng, mapUrl, mapMode, schedCatId, title){
   name=(name||'').trim(); if(!name || lat==null || lng==null) return Promise.resolve();
   // 同一イベント内で同名/近接座標が既にあれば追加しない（イベント単位で登録）
   var exists=_places.find(function(p){ return p.eventId===_schEventId && ((p.name||'').trim()===name || (p.lat!=null&&p.lng!=null&&Math.abs(p.lat-lat)<0.0005&&Math.abs(p.lng-lng)<0.0005)); });
   if(exists) return Promise.resolve();
-  return db.collection('places').add({ name:name, lat:lat, lng:lng, mapUrl:(mapUrl||'').trim(), mapMode:(mapMode==='name'?'name':'coord'), eventId:_schEventId, category:autoPlaceCat(schedCatId, title||name), createdAt:firebase.firestore.FieldValue.serverTimestamp() }).then(function(){ return loadPlaces(); }).catch(function(){});
+  return db.collection('places').add({ name:name, lat:lat, lng:lng, mapUrl:(mapUrl||'').trim(), mapMode:(mapMode==='coord'?'coord':'name'), eventId:_schEventId, category:autoPlaceCat(schedCatId, title||name), createdAt:firebase.firestore.FieldValue.serverTimestamp() }).then(function(){ return loadPlaces(); }).catch(function(){});
 }
 // 場所管理
 function _evName(id){ var ev=(events||[]).find(function(x){return x.id===id;}); return ev?(ev.name||id):(id?'(不明なイベント)':'(イベント未設定)'); }
@@ -2844,8 +2845,8 @@ function editPlace(pid){
   var p=_places.find(function(x){return x.id===pid;}); if(!p) return;
   var name=prompt('地点名', p.name||''); if(name==null) return;
   var mapUrl=prompt('Google Map URL（@緯度,経度 を含むURL。空欄可）', p.mapUrl||''); if(mapUrl==null) return;
-  var modeIn=prompt('地図の表示方法：coord=座標を固定（既定） / name=名称で検索', (p.mapMode==='name')?'name':'coord'); if(modeIn==null) return;
-  var mapMode=((modeIn||'').trim().toLowerCase()==='name')?'name':'coord';
+  var modeIn=prompt('地図の表示方法：name=名称で検索（既定） / coord=座標を固定', (p.mapMode==='coord')?'coord':'name'); if(modeIn==null) return;
+  var mapMode=((modeIn||'').trim().toLowerCase()==='coord')?'coord':'name';
   var c=parseLatLng(mapUrl); var lat=c?c.lat:p.lat, lng=c?c.lng:p.lng;
   db.collection('places').doc(pid).set({ name:(name||'').trim(), mapUrl:(mapUrl||'').trim(), mapMode:mapMode, lat:lat, lng:lng, updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
     .then(function(){ toast('更新しました'); renderPlaceMgr(); }).catch(function(e){ toast('更新失敗: '+e.message); });
@@ -3787,24 +3788,27 @@ function openSchedForDay(date, grp){ _schExpandedDays[date]=true; openSchedEd(nu
 // この日程の全項目の地図表示方法を「名称で検索」に切り替える（座標固定(coord)を name に一括変更）。
 async function schedAllToNameMode(){
   if(!_schEventId){ alert('イベントが選択されていません'); return; }
-  if(!_schItems||!_schItems.length){ alert('スケジュール項目がありません'); return; }
-  var targets=_schItems.filter(function(it){ return it.mapMode==='coord' || it.toMapMode==='coord'; });
-  if(!targets.length){ alert('座標固定の項目はありません（すべて名称検索です）'); return; }
-  if(!confirm('この日程の '+targets.length+' 項目の地図表示方法を「名称で検索」に切り替えます。\n（地図・ルートが座標ではなく地点名で開くようになります）\nよろしいですか？')) return;
+  var itemTargets=(_schItems||[]).filter(function(it){ return it.mapMode==='coord' || it.toMapMode==='coord'; });
+  // 場所マスタ側も変換（再選択で coord が復活しないように）
+  var placeTargets=(_places||[]).filter(function(p){ return p.eventId===_schEventId && p.mapMode==='coord'; });
+  if(!itemTargets.length && !placeTargets.length){ alert('座標固定の項目はありません（すべて名称検索です）'); return; }
+  if(!confirm('この日程の地図表示方法を「名称で検索」に切り替えます。\n・スケジュール項目: '+itemTargets.length+' 件\n・場所マスタ: '+placeTargets.length+' 件\n（地図・ルートが座標ではなく地点名で開くようになります）\nよろしいですか？')) return;
   try{
-    var col=db.collection('events').doc(_schEventId).collection('scheduleItems');
     var batch=db.batch(), n=0;
-    targets.forEach(function(it){
+    var icol=db.collection('events').doc(_schEventId).collection('scheduleItems');
+    itemTargets.forEach(function(it){
       var upd={};
       if(it.mapMode==='coord') upd.mapMode='name';
       if(it.toMapMode==='coord') upd.toMapMode='name';
-      if(Object.keys(upd).length){ batch.update(col.doc(it.id), upd); n++; }
+      if(Object.keys(upd).length){ batch.update(icol.doc(it.id), upd); n++; }
     });
+    placeTargets.forEach(function(p){ batch.update(db.collection('places').doc(p.id), {mapMode:'name'}); n++; });
     await batch.commit();
     // ローカルも即時反映
-    targets.forEach(function(it){ if(it.mapMode==='coord') it.mapMode='name'; if(it.toMapMode==='coord') it.toMapMode='name'; });
+    itemTargets.forEach(function(it){ if(it.mapMode==='coord') it.mapMode='name'; if(it.toMapMode==='coord') it.toMapMode='name'; });
+    placeTargets.forEach(function(p){ p.mapMode='name'; });
     renderSchedList();
-    alert(n+'項目を「名称で検索」に切り替えました。');
+    alert('スケジュール項目 '+itemTargets.length+' 件・場所マスタ '+placeTargets.length+' 件を「名称で検索」に切り替えました。');
   }catch(e){ alert('切替に失敗しました: '+((e&&e.message)||e)); }
 }
 // ── スケジュールの時間内包ネスト（会員画面と同じ考え方で、ある項目の時間帯に収まる項目を入れ子表示） ──
