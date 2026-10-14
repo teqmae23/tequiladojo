@@ -334,6 +334,93 @@ var AuthRole = (function() {
     }catch(e){ return []; }
   }
 
+  // ───────────────────────────────────────────────────────────
+  // 集計・分類処理の件数突合（元レコード数 = 分類後の総件数）
+  //   使い方: AuthRole.reconcile('試飲分析/render', srcCount, {集計:n1, 集計外:n2, ...})
+  //   前提: 「元レコードは必ずどれかのバケツに入れる」。キャンセル/日付なし/集計外等の
+  //         除外も必ず明示バケツとして数える。Σbuckets ≠ srcCount の残差＝どこかで黙って
+  //         レコードを落としている＝バグ、として検知する。
+  //   Σbuckets ≠ srcCount のとき: 画面上部に赤い警告バナーを出し console.error。
+  //   戻り値: {ok, label, src, sum, diff, buckets}
+  //   opts.silent===true でバナー抑止（コンソールのみ）。
+  // ───────────────────────────────────────────────────────────
+  function reconcile(label, srcCount, buckets, opts){
+    opts = opts || {};
+    var src = Number(srcCount) || 0;
+    var sum = 0, parts = [];
+    if(buckets && typeof buckets === 'object'){
+      Object.keys(buckets).forEach(function(k){
+        var v = Number(buckets[k]) || 0;
+        sum += v; parts.push(k + '=' + v);
+      });
+    } else {
+      sum = Number(buckets) || 0;
+    }
+    var diff = src - sum;
+    var ok = (diff === 0);
+    var res = { ok: ok, label: label, src: src, sum: sum, diff: diff, buckets: buckets };
+    try{
+      if(!ok) console.error('[件数突合NG] ' + label + ': 元' + src + '件 ≠ 分類合計' + sum + '件 (差' + diff + ') / ' + parts.join(', '));
+      else    console.log('[件数突合OK] ' + label + ': ' + src + '件 = ' + sum + '件');
+    }catch(e){}
+    if(opts.silent !== true){
+      if(!ok) showReconcileError(res, parts);
+      else    clearReconcileError(label);   // 解消したラベルは既存のバナー行を消す
+    }
+    return res;
+  }
+
+  // 解消したラベルのバナー行を除去（全消えたらバナーごと閉じる）
+  function clearReconcileError(label){
+    try{
+      var list = document.getElementById('auth-role-reconcile-banner-list');
+      if(!list) return;
+      var prev = list.querySelector('[data-rc-label="' + CSS.escape(label) + '"]');
+      if(prev) prev.remove();
+      if(!list.children.length){
+        var box = document.getElementById('auth-role-reconcile-banner');
+        if(box) box.remove();
+      }
+    }catch(e){}
+  }
+
+  // 突合NGを画面に表示（固定バナー・複数件は蓄積して一覧表示）
+  function showReconcileError(res, parts){
+    try{
+      if(!document.body) return;
+      var id = 'auth-role-reconcile-banner';
+      var box = document.getElementById(id);
+      if(!box){
+        box = document.createElement('div');
+        box.id = id;
+        box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#b91c1c;color:#fff;font:13px/1.5 sans-serif;padding:10px 40px 10px 14px;box-shadow:0 2px 8px rgba(0,0,0,.3);max-height:45vh;overflow:auto';
+        var btn = document.createElement('button');
+        btn.textContent = '×';
+        btn.setAttribute('aria-label','閉じる');
+        btn.style.cssText = 'position:absolute;top:6px;right:10px;background:transparent;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1';
+        btn.onclick = function(){ box.remove(); };
+        box.appendChild(btn);
+        var title = document.createElement('div');
+        title.style.cssText = 'font-weight:700;margin-bottom:4px';
+        title.textContent = '⚠ 集計件数の不整合を検出（データかロジックに問題があります）';
+        box.appendChild(title);
+        var list = document.createElement('div');
+        list.id = id + '-list';
+        box.appendChild(list);
+        document.body.appendChild(box);
+      }
+      var list2 = document.getElementById(id + '-list');
+      if(!list2) return;
+      // 同一ラベルの既存行は置き換え（再集計のたびに重複行が溜まるのを防ぐ）
+      var prev = list2.querySelector('[data-rc-label="' + CSS.escape(res.label) + '"]');
+      var line = prev || document.createElement('div');
+      line.setAttribute('data-rc-label', res.label);
+      line.style.cssText = 'padding:3px 0;border-top:1px solid rgba(255,255,255,.25)';
+      line.textContent = '● ' + res.label + ': 元' + res.src + '件 ≠ 分類合計' + res.sum + '件 （差 ' + (res.diff>0?'+':'') + res.diff + '）' + (parts && parts.length ? ' / ' + parts.join(', ') : '');
+      if(!prev) list2.appendChild(line);
+    }catch(e){}
+  }
+
   return { requireStaff: requireStaff, requireStaffOrCoAdmin: requireStaffOrCoAdmin,
            requireOwner: requireOwner, requireMember: requireMember,
            getActiveSession: getActiveSession, businessDate: businessDate,
@@ -342,5 +429,6 @@ var AuthRole = (function() {
            businessSortValue: businessSortValue,
            isVisitInSession: isVisitInSession, bdName: bdName,
            getSessionByDate: getSessionByDate, getSessionVisits: getSessionVisits,
-           bumpMeta: bumpMeta, getMeta: getMeta };
+           bumpMeta: bumpMeta, getMeta: getMeta,
+           reconcile: reconcile };
 })();

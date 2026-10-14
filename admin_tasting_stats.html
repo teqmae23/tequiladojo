@@ -8,7 +8,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-<script src="/auth-role.js?v=20260829"></script>
+<script src="/auth-role.js?v=20261014"></script>
 
 <script>
 var FIREBASE_CONFIG = {
@@ -502,8 +502,12 @@ function render(){
   var tot={cS:0,cO:0,ml:0,amt:0, members:{}};
   var nMatched=0;
 
+  var _rc={};  // 件数突合用: 全注文を「対象外 / 各除外理由 / 集計」のいずれかに必ず分類
   _orders.forEach(function(o){
-    var v=lineVerdict(o, F); if(!v || !v.counted) return;
+    var v=lineVerdict(o, F);
+    if(!v){ _rc['対象外(非テキーラ/ベース無)']=(_rc['対象外(非テキーラ/ベース無)']||0)+1; return; }
+    if(!v.counted){ var _rsn=v.reason||'理由不明'; _rc[_rsn]=(_rc[_rsn]||0)+1; return; }
+    _rc['集計']=(_rc['集計']||0)+1;
     // 銘柄別
     var key=v.productId;
     var a=agg[key]||(agg[key]={ id:key, name:nameOf(v.b,v.pname||key), nom:nomOf(v.b), cls:v.cl, abv:v.abv, cS:0,cO:0, mlS:0,mlO:0, amtS:0,amtO:0, members:{}, membersS:{}, membersO:{}, nbottles:{} });
@@ -520,6 +524,8 @@ function render(){
     }
     tot.ml+=v.ml; tot.amt+=v.amt; nMatched++;
   });
+  // 件数突合: 元の注文件数と、分類した総件数（集計＋全除外理由＋対象外）が一致するか検証
+  AuthRole.reconcile('試飲分析/render 注文分類', _orders.length, _rc);
 
   var rows=Object.keys(agg).map(function(k){ var a=agg[k]; a.cnt=a.cS+a.cO; a.ml=a.mlS+a.mlO; a.amt=a.amtS+a.amtO; a.nMem=Object.keys(a.members).length; a.nMemS=Object.keys(a.membersS).length; a.nMemO=Object.keys(a.membersO).length; a.nBot=Object.keys(a.nbottles).length; return a; }).sort(rankCompare);
   var mrows=Object.keys(magg).map(function(k){ var a=magg[k]; a.cnt=a.cS+a.cO; a.ml=a.mlS+a.mlO; a.amt=a.amtS+a.amtO; a.nProd=Object.keys(a.prods).length; a.nProdS=Object.keys(a.prodsS).length; a.nProdO=Object.keys(a.prodsO).length; return a; }).sort(rankCompare);
@@ -549,6 +555,7 @@ function sodaDiag(){
   var el=g('soda-diag'); if(!el) return;
   var byPT={};                 // productType → 杯
   var map={};                  // 分類+ベース → {cat,name,cls,count,baseId,pname,bad}
+  var _sdCat={};               // 件数突合用: 分類(cat)ごとの件数
   var tot=0;
   _orders.forEach(function(o){
     var od=String(o.orderDate||''); if(od<'260529') return;
@@ -573,10 +580,13 @@ function sodaDiag(){
       } else { var ob=_others[key]; name=otherName(ob)||nm;
         cat=ob?'他酒(集計対象外)':'他酒(otherBottles未登録)'; if(!ob) bad=true; }
     }
+    _sdCat[cat]=(_sdCat[cat]||0)+1;
     var key=cat+'|'+(baseId||name);
     var rec=map[key]||(map[key]={cat:cat,name:name,cls:cls,count:0,baseId:baseId,pname:nm,bad:bad});
     rec.count++;
   });
+  // 件数突合: ソーダ対象(tot) = 各分類(cat)件数の合計
+  AuthRole.reconcile('試飲分析/sodaDiag ソーダ分類', tot, _sdCat);
   var list=Object.keys(map).map(function(k){return map[k];}).sort(function(a,b){ return (a.cat<b.cat?-1:a.cat>b.cat?1:0)||(b.count-a.count); });
   var ptStr=Object.keys(byPT).sort().map(function(p){return p+' '+byPT[p];}).join(' / ');
   var tbl='<div style="overflow:auto;max-height:320px;margin-top:6px"><table style="border-collapse:collapse;font-size:11px;width:100%">'
@@ -666,6 +676,11 @@ function reconcileDiag(){
       ck.counted++;
     }
   });
+  // 件数突合: 種別ごとに「総数 = 集計 + 全除外理由」が一致するか検証（各productTypeの内部分割）
+  AuthRole.reconcile('試飲分析/reconcileDiag テキーラ単品', teq.total,
+    {集計:teq.counted, '5/29前':teq.pre529, 日付なし:teq.noDate, 未提供:teq.notServed, キャンセル:teq.cancel, 奢り支払:teq.gift});
+  AuthRole.reconcile('試飲分析/reconcileDiag カクテル', ck.total,
+    {集計:ck.counted, ベース未補完:ck.noBase, 他酒ベース:ck.otherBase, '5/29前':ck.pre529, 日付なし:ck.noDate, 未提供:ck.notServed, キャンセル:ck.cancel, 奢り支払:ck.gift});
   function mlStr(m){ return Object.keys(m).map(function(k){return {k:+k,v:m[k]};}).sort(function(a,b){return b.v-a.v;}).slice(0,6).map(function(x){return x.k+'ml×'+x.v;}).join(' / '); }
   el.innerHTML='<b style="color:var(--gold-d)">🧮 全注文の突合（全期間・productType別）</b>'
     +'<br><b>テキーラ単品 '+teq.total+'件</b> ＝ 集計(ストレート候補) <b style="color:var(--teal)">'+teq.counted+'</b>'
