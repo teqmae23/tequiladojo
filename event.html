@@ -1531,8 +1531,8 @@ function gmapLink(it){
   var label=(it.placeName||it.title||'').trim();
   var la=_geoNum(it.lat), ln=_geoNum(it.lng);
   var hasGeo=(la!=null&&ln!=null);
-  // 既定は座標優先。「名称で検索」を明示した場合のみ名称。
-  var mode=(it.mapMode==='name')?'name':'coord';
+  // 既定は「名称で検索」。座標固定(coord)が明示されたときだけ座標。
+  var mode=(it.mapMode==='coord')?'coord':'name';
   // 名称で検索: 名称だけでクエリ（座標を付けると座標ピン扱いになり名称ページが出ないため）
   if(mode==='name' && label) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(label);
   if(hasGeo) return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(la+','+ln);
@@ -1543,14 +1543,16 @@ function gmapLink(it){
 // 2地点ルート。座標があれば常に座標を使用（名称だと Google が見つけられずルートが引けないため）。
 // 座標が無い端点のみ名称でフォールバック。
 function routeLink(it){
-  function endp(name, lat, lng){
+  // 表示方法が「名称で検索」なら名称を優先（地図リンクと基準を揃える）。それ以外は座標優先・座標が無ければ名称。
+  function endp(name, lat, lng, mode){
+    name=(name&&name.trim())?name.trim():'';
+    if(mode!=='coord' && name) return encodeURIComponent(name); // 既定は名称優先
     var la=_geoNum(lat), ln=_geoNum(lng);
     if(la!=null&&ln!=null) return encodeURIComponent(la+','+ln);
-    name=(name&&name.trim())?name.trim():'';
     return name?encodeURIComponent(name):'';
   }
-  var o=endp(it.placeName, it.lat, it.lng);
-  var d=endp(it.toName, it.toLat, it.toLng);
+  var o=endp(it.placeName, it.lat, it.lng, it.mapMode);
+  var d=endp(it.toName, it.toLat, it.toLng, it.toMapMode);
   // 空路は !3e4（フライト）指定で経路画面を直接フライトモードで開く（Google非公式: 0=車/1=自転車/2=徒歩/3=公共交通/4=空路）
   if(it.travelMode==='flight'||it.category==='flight') return 'https://www.google.com/maps/dir/'+o+'/'+d+'/data=!4m2!4m1!3e4';
   // 具体的な手段をGoogleマップの travelmode に対応付け（自家用車/タクシー/シャトル→driving、バス/電車/新幹線→transit）
