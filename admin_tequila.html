@@ -1690,13 +1690,44 @@ document.addEventListener("click",function(e){
   if(btn.dataset.copyBdata)   { copyBdataModal(btn.dataset.copyBdata); return; }
   if(btn.dataset.del){
     var col=btn.dataset.del,id=btn.dataset.delId,label=btn.dataset.delLabel;
-    confirmDel("「"+id+"」の"+label+"データを削除しますか？",function(){
-      db.collection(col).doc(id).delete()
-        .then(function(){ toast(label+"を削除しました"); bumpAndRender(col); if(col==="bottleData"){ cache.bdata=cache.bdata.filter(function(d){return d.id!==id;}); renderBdata(); } else { loadCol(col); } })
-        .catch(function(e){ toast("削除失敗: "+e.message,"err"); });
-    });
+    // ボトルデータ(個体)/ボトルマスタは、注文から参照されていると削除で集計が壊れるため参照チェック
+    if(col==="bottleData"||col==="bottles"){ _checkRefsBeforeDelete(col,id,label); return; }
+    confirmDel("「"+id+"」の"+label+"データを削除しますか？",function(){ _doColDelete(col,id,label); });
   }
 });
+function _doColDelete(col,id,label){
+  db.collection(col).doc(id).delete()
+    .then(function(){ toast(label+"を削除しました"); bumpAndRender(col); if(col==="bottleData"){ cache.bdata=cache.bdata.filter(function(d){return d.id!==id;}); renderBdata(); } else { loadCol(col); } })
+    .catch(function(e){ toast("削除失敗: "+e.message,"err"); });
+}
+// 削除前に注文/下位データからの参照を確認。参照があれば警告付きで確認（集計の銘柄・クラス解決が壊れるのを防ぐ）
+async function _checkRefsBeforeDelete(col,id,label){
+  try{
+    var refs=0, detail=[];
+    if(col==="bottleData"){
+      var r1=await db.collection('orders').where('productCode','==',id).get().catch(function(){return{size:0};});
+      var r2=await db.collection('orders').where('baseProductCode','==',id).get().catch(function(){return{size:0};});
+      refs=(r1.size||0)+(r2.size||0);
+      if(r1.size) detail.push('ストレート注文 '+r1.size+'件');
+      if(r2.size) detail.push('カクテルのベース(baseProductCode) '+r2.size+'件');
+    } else { // bottles(銘柄マスタ)
+      var r3=await db.collection('orders').where('baseBottleId','==',id).get().catch(function(){return{size:0};});
+      var r4=await db.collection('bottleData').where('bottleId','==',id).get().catch(function(){return{size:0};});
+      refs=(r3.size||0)+(r4.size||0);
+      if(r3.size) detail.push('カクテルの銘柄マスタ参照(baseBottleId) '+r3.size+'件');
+      if(r4.size) detail.push('この銘柄の個体(bottleData) '+r4.size+'件');
+    }
+    if(refs>0){
+      var msg='⚠ 「'+id+'」の'+label+'は '+refs+'件 から参照されています（'+detail.join(' / ')+'）。\n'
+        +'削除すると集計で銘柄・クラスが解決できなくなる恐れがあります。\n'
+        +(col==="bottleData"?'※この個体を参照するカクテル注文は、先に試飲分析/データ管理の「baseBottleId 補完（銘柄マスタID付与）」を実行してから削除してください。\n':'')
+        +'それでも削除しますか？';
+      confirmDel(msg, function(){ _doColDelete(col,id,label); });
+    } else {
+      confirmDel("「"+id+"」の"+label+"データを削除しますか？", function(){ _doColDelete(col,id,label); });
+    }
+  }catch(e){ toast("参照チェック失敗: "+e.message,"err"); }
+}
 
 // ── クラス ────────────────────────────────────────────────────
 function updateClassKey(){
