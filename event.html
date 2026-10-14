@@ -1489,6 +1489,7 @@ function loadSchedule(){
     ref.collection('tracks').get().catch(function(){ return {docs:[]}; }) // 旅の足跡（GPX軌跡）
   ]).then(function(res){
     _schedItems=res[0].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    _normalizeMoveDest(_schedItems); // 移動の到着座標はGoogleマップURLを優先
     _schedItems.sort(function(a,b){ var ka=(a.date||'')+' '+(a.time||'99:99')+' '+_endMark(a)+' '+('000000000000'+_caSec(a)).slice(-12)+' '+('00'+(a.seq||0)).slice(-3), kb=(b.date||'')+' '+(b.time||'99:99')+' '+_endMark(b)+' '+('000000000000'+_caSec(b)).slice(-12)+' '+('00'+(b.seq||0)).slice(-3); return ka<kb?-1:(ka>kb?1:0); });
     _photosByItem={};
     res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).forEach(function(p){ (_photosByItem[p.scheduleItemId]=_photosByItem[p.scheduleItemId]||[]).push(p); });
@@ -1500,6 +1501,29 @@ function loadSchedule(){
 }
 // 緯度・経度を数値に正規化（文字列や余分な空白でも安全に）
 function _geoNum(v){ if(v==null) return null; var n=parseFloat(String(v).trim()); return isFinite(n)?n:null; }
+// 緯度経度の妥当性チェック（範囲内のみ採用）
+function _mkLL(la,ln){ return (isFinite(la)&&isFinite(ln)&&la>=-90&&la<=90&&ln>=-180&&ln<=180)?{lat:la,lng:ln}:null; }
+// GoogleマップURLから座標を抽出（ピン実座標 !3d!4d > q=/destination= > @中心 > dir内 lat,lng の順）。
+// 短縮リンク(goo.gl等)は座標を含まないため null。
+function _coordsFromGmapUrl(url){
+  if(!url) return null;
+  var s=String(url), m;
+  m=s.match(/!3d(-?\d{1,2}(?:\.\d+)?)!4d(-?\d{1,3}(?:\.\d+)?)/); if(m){ var a=_mkLL(+m[1],+m[2]); if(a) return a; }
+  m=s.match(/[?&](?:q|query|destination|daddr|ll|sll|center)=(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/i); if(m){ var b=_mkLL(+m[1],+m[2]); if(b) return b; }
+  m=s.match(/@(-?\d{1,2}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/); if(m){ var c=_mkLL(+m[1],+m[2]); if(c) return c; }
+  m=s.match(/\/(-?\d{1,2}\.\d{3,}),(-?\d{1,3}\.\d{3,})/); if(m){ var d=_mkLL(+m[1],+m[2]); if(d) return d; }
+  return null;
+}
+// 移動項目の到着座標は「座標データ(toLat/toLng)」ではなくGoogleマップURL(toMapUrl)を正とする。
+// 読み込み時に toMapUrl から座標が取れれば toLat/toLng を上書きし、以降の時刻帯・地図・ルート計算を揃える。
+function _normalizeMoveDest(items){
+  (items||[]).forEach(function(it){
+    if(it && it.isMove && it.toMapUrl){
+      var g=_coordsFromGmapUrl(it.toMapUrl);
+      if(g){ it.toLat=g.lat; it.toLng=g.lng; }
+    }
+  });
+}
 // Google Maps リンク。表示方法(mapMode)で切替:
 //  name … 名称で検索（実在の場所。名称・情報が正しく出る。座標があれば近辺を中心表示）
 //  coord … 座標を固定（名称は付けず、純粋な座標クエリで確実にその地点へピン）
