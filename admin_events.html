@@ -819,10 +819,25 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
   <div class="modal" style="max-width:640px">
     <div class="mhd"><span id="sch-mgr-title">スケジュール</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeSchedMgr()">✕</button></div>
     <div class="mbd">
-      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm ca-only-hide" onclick="openCatMgr()">🏷 種別管理</button><button class="btn bs sm" onclick="openGpxImport()" title="GPSロガーのGPX/CSVを取り込み、2点間移動の実ルートを登録">🛰 GPXルート取込</button><a class="btn bs sm" id="sch-live-link" href="#" target="_blank" rel="noopener" style="text-decoration:none" title="イベント中の現在地をリアルタイム中継（スタッフ端末で実行）">🔴 ライブ中継</a><span class="cnt" id="sch-total"></span></div>
+      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm ca-only-hide" onclick="openCatMgr()">🏷 種別管理</button><button class="btn bs sm" onclick="openGpxImport()" title="GPSロガーのGPX/CSVを取り込み、2点間移動の実ルートを登録">🛰 GPXルート取込</button><button class="btn bs sm" onclick="openSchedTextOut()" title="スケジュールを日時・タイトル・場所のテキストで出力（日本語/英語）">📄 テキスト出力</button><a class="btn bs sm" id="sch-live-link" href="#" target="_blank" rel="noopener" style="text-decoration:none" title="イベント中の現在地をリアルタイム中継（スタッフ端末で実行）">🔴 ライブ中継</a><span class="cnt" id="sch-total"></span></div>
       <div id="sch-list"><div class="ec">読み込み中…</div></div>
     </div>
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeSchedMgr()">閉じる</button></div>
+  </div>
+</div>
+
+<!-- スケジュール テキスト出力モーダル -->
+<div class="mbg" id="sch-text-modal">
+  <div class="modal" style="max-width:720px">
+    <div class="mhd"><span>📄 スケジュール テキスト出力</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="document.getElementById('sch-text-modal').classList.remove('open')">✕</button></div>
+    <div class="mbd">
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">日時・タイトル・場所を一覧出力します。英語版は日付/曜日/種別・移動手段を英語化します（地点名・固有名詞は入力のまま）。</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><label class="fl" style="margin:0;flex:1">日本語版</label><button class="btn bs sm" onclick="copySchedText('ja')">📋 コピー</button></div>
+      <textarea id="sch-text-ja" rows="12" readonly style="width:100%;box-sizing:border-box;font-family:var(--mono);font-size:12px;white-space:pre"></textarea>
+      <div style="display:flex;align-items:center;gap:8px;margin:12px 0 4px"><label class="fl" style="margin:0;flex:1">English</label><button class="btn bs sm" onclick="copySchedText('en')">📋 Copy</button></div>
+      <textarea id="sch-text-en" rows="12" readonly style="width:100%;box-sizing:border-box;font-family:var(--mono);font-size:12px;white-space:pre"></textarea>
+    </div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="document.getElementById('sch-text-modal').classList.remove('open')">閉じる</button></div>
   </div>
 </div>
 
@@ -3802,6 +3817,71 @@ g('gpx-modal').addEventListener('click',function(e){ if(e.target===g('gpx-modal'
 var _schExpandedDays={}; // 展開中の日付を記憶（追加・編集後も維持）
 function toggleDay(idx, date){ var b=g('se-day-body-'+idx), c=g('se-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▶':'▼'; _schExpandedDays[date]=!open; }
 function openSchedForDay(date, grp){ _schExpandedDays[date]=true; openSchedEd(null, date, grp); }
+
+// ── スケジュールのテキスト出力（日時・タイトル・場所／日本語・英語） ──
+var _SCH_CAT_EN={flight:'Flight', move:'Transfer', hotel:'Hotel', checkin:'Check-in', meal:'Meal', distillery:'Distillery', distillery_tour:'Distillery Tour', activity:'Activity', free:'Free time', other:'Event'};
+var _SCH_TRAVEL_EN={walk:'Walk', car:'Car', taxi:'Taxi', shuttle:'Shuttle', bus:'Bus', train:'Train', shinkansen:'Shinkansen', flight:'Flight', bicycling:'Bike', driving:'Car', transit:'Transit'};
+function _schDayText(d, lang){
+  var p=String(d||'').split('-'); if(p.length<3) return String(d||'（日付未設定）');
+  var dt=new Date(+p[0], +p[1]-1, +p[2]); if(isNaN(dt.getTime())) return String(d);
+  if(lang==='en'){
+    var wd=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.getDay()];
+    var mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dt.getMonth()];
+    return wd+', '+mo+' '+(+p[2])+', '+p[0];
+  }
+  var wj=['日','月','火','水','木','金','土'][dt.getDay()];
+  return p[0]+'年'+(+p[1])+'月'+(+p[2])+'日（'+wj+'）';
+}
+function _schTimeRange(it){
+  var s=(it.time||'').trim(), e=(it.isMove?(it.toTime||''):(it.endTime||'')).trim();
+  if(s&&e) return s+'–'+e;
+  return s||'';
+}
+function _schActText(it, lang){
+  if(lang!=='en') return (it.title||'（無題）');
+  if(it.isMove) return (_SCH_TRAVEL_EN[it.travelMode]||_SCH_CAT_EN[it.category]||'Transfer');
+  var cat=(_cats||[]).find(function(c){return c.id===it.category;});
+  return (_SCH_CAT_EN[it.category]||(cat&&cat.name)||'Event');
+}
+function _schPlaceText(it){
+  var o=(it.placeName||'').trim();
+  if(it.isMove){ var d=(it.toName||'').trim(); if(o||d) return (o||'?')+' → '+(d||'?'); return ''; }
+  return o;
+}
+function _buildSchedText(lang){
+  var ev=(events||[]).find(function(x){return x.id===_schEventId;});
+  var evName=(ev&&ev.name)||'';
+  var enr=_sortByJst(_schItems||[]);
+  var byDay={}, order=[];
+  enr.forEach(function(e){ var d=e.it.date||''; if(!byDay[d]){ byDay[d]=[]; order.push(d); } byDay[d].push(e.it); });
+  var L=[];
+  L.push(evName+(lang==='en'?' | Schedule':' ｜ スケジュール'));
+  order.forEach(function(d){
+    L.push('');
+    L.push('── '+_schDayText(d, lang)+' ──');
+    byDay[d].forEach(function(it){
+      var tm=_schTimeRange(it), act=_schActText(it, lang), pl=_schPlaceText(it);
+      L.push((tm?tm+'  ':'')+(it.overnight?'(泊) ':'')+act);
+      if(pl) L.push('    '+(lang==='en'?'Place: ':'場所: ')+pl);
+    });
+  });
+  return L.join('\n').trim();
+}
+function openSchedTextOut(){
+  if(!_schItems||!_schItems.length){ alert('スケジュール項目がありません'); return; }
+  var ja=g('sch-text-ja'), en=g('sch-text-en');
+  if(ja) ja.value=_buildSchedText('ja');
+  if(en) en.value=_buildSchedText('en');
+  g('sch-text-modal').classList.add('open');
+}
+function copySchedText(lang){
+  var ta=g(lang==='en'?'sch-text-en':'sch-text-ja'); if(!ta) return;
+  var done=function(){ toast(lang==='en'?'Copied':'コピーしました'); };
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(ta.value).then(done).catch(function(){ ta.removeAttribute('readonly'); ta.select(); try{document.execCommand('copy');}catch(e){} ta.setAttribute('readonly','readonly'); done(); });
+  } else { ta.removeAttribute('readonly'); ta.select(); try{document.execCommand('copy');}catch(e){} ta.setAttribute('readonly','readonly'); done(); }
+}
+
 // ── スケジュールの時間内包ネスト（会員画面と同じ考え方で、ある項目の時間帯に収まる項目を入れ子表示） ──
 // 移動(isMove)も toTime を終了とみなして容器化（例: 12:00-13:00のタクシー中に 12:30の車内飯 を入れ子）。
 function _schHmMin(s){ var v=_normHM(s); if(v==null||v==='') return null; var p=String(v).split(':'); return (+p[0])*60+(+p[1]); }
