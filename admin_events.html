@@ -3541,6 +3541,10 @@ function _siRoute(it){
   var tm={driving:'driving',car:'driving',taxi:'driving',shuttle:'driving',transit:'transit',bus:'transit',train:'transit',shinkansen:'transit',walking:'walking',bicycling:'bicycling'}[it.travelMode||''];
   return 'https://www.google.com/maps/dir/?api=1&origin='+o+'&destination='+d+(tm?('&travelmode='+tm):'');
 }
+function toggleSchedAddr(id, el){
+  var box=g('se-addr-'+id); if(!box) return;
+  var show=(box.style.display==='none'); box.style.display=show?'block':'none';
+}
 function renderSchedItemRow(it){
   var ic=itemIcon(it);
   // 参加者・ルート・地図・写真・現地ホスト・合流離脱はクリックで表示/開く（行クリックの編集に入らないよう stopPropagation）
@@ -3560,16 +3564,12 @@ function renderSchedItemRow(it){
   if(it.showNames&&(it.nameParticipants||[]).length&&!it.spotOnly) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();showSchedNames(\''+esc(it.id)+'\',this)">👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名</span>');
   if(it.roomingEnabled&&(it.rooms||[]).length) markers.push('🛏部屋割り'+it.rooms.length);
   var noteHtml=it.note?'<div class="se-note-line">'+esc(it.note.slice(0,80))+(it.note.length>80?'…':'')+'</div>':'';
-  // 住所（場所マスタ優先・無ければ地図URLから抽出。移動は出発地/目的地の両方）
+  // 住所（非移動のみ。📮アイコンをタップで開閉。移動には出さない）
   var _am=_schPlaceAddrMap();
-  var _addrO=_itemAddr(it.placeName, it.mapUrl, _am), addrHtml='';
-  if(it.isMove){
-    var _addrD=_itemAddr(it.toName, it.toMapUrl, _am), _ap=[];
-    if(_addrO) _ap.push(esc((it.placeName||'出発').trim())+'：'+esc(_addrO));
-    if(_addrD) _ap.push(esc((it.toName||'到着').trim())+'：'+esc(_addrD));
-    if(_ap.length) addrHtml='<div class="se-addr-line">📮 '+_ap.join('<br>📮 ')+'</div>';
-  } else if(_addrO){
-    addrHtml='<div class="se-addr-line">📮 '+esc(_addrO)+'</div>';
+  var _addr=it.isMove?'':_itemAddr(it.placeName, it.mapUrl, _am), _anm=(it.placeName||'').trim(), addrHtml='';
+  if(_addr){
+    markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();toggleSchedAddr(\''+esc(it.id)+'\',this)">📮住所</span>');
+    addrHtml='<div class="se-addr-line" id="se-addr-'+esc(it.id)+'" style="display:none">📮 '+(_anm?esc(_anm)+'：':'')+esc(_addr)+'</div>';
   }
   var info=_schedCostInfo(it.id);
   var costHtml;
@@ -3602,7 +3602,7 @@ function renderSchedItemRow(it){
     +'</div>';
   return '<div class="se-item'+(it.overnight?' ov':'')+'" onclick="openSchedEd(\''+esc(it.id)+'\')" style="cursor:pointer;background:'+catBg(it.category)+'">'
     +timeHtml+'<span class="se-ic">'+ic+'</span>'
-    +'<div class="se-main"><div class="se-ttl"><span class="se-ttl-txt" onclick="showTitlePop(event,\''+esc(it.id)+'\')">'+(it.overnight?'(泊) ':'')+esc(it.title||'（無題）')+'</span>'+SchedGroups.badge(it,esc)+'</div>'+noteHtml+addrHtml+(markers.length?'<div class="se-sub">'+markers.join('　')+'</div>':'')+'</div>'
+    +'<div class="se-main"><div class="se-ttl"><span class="se-ttl-txt" onclick="showTitlePop(event,\''+esc(it.id)+'\')">'+(it.overnight?'(泊) ':'')+esc(it.title||'（無題）')+'</span>'+SchedGroups.badge(it,esc)+'</div>'+noteHtml+(markers.length?'<div class="se-sub">'+markers.join('　')+'</div>':'')+addrHtml+'</div>'
     +costHtml+cico+'</div>';
 }
 // ── 深夜対応（朝帰り）: 時刻は 0:00〜30:00（翌朝6時まで）を同一日付に格納できる ──
@@ -4007,6 +4007,7 @@ function _buildSchedText(lang){
   var enr=_sortByJst(_schItems||[]);
   var byDay={}, order=[];
   enr.forEach(function(e){ var d=e.it.date||''; if(!byDay[d]){ byDay[d]=[]; order.push(d); } byDay[d].push(e.it); });
+  var seenAddr={}; // 同一地点の住所は初回のみ
   var L=[];
   L.push(evName+(lang==='en'?' | Schedule':' ｜ スケジュール'));
   order.forEach(function(d){
@@ -4016,13 +4017,13 @@ function _buildSchedText(lang){
       var tm=_schTimeRange(it), act=_schActText(it, lang), pl=_schPlaceText(it, lang, enMap);
       L.push((tm?tm+'  ':'')+(it.overnight?(lang==='en'?'(STAY) ':'(泊) '):'')+act);
       if(pl) L.push('    '+(lang==='en'?'Place: ':'場所: ')+pl);
-      var ao=_itemAddr(it.placeName, it.mapUrl, addrMap);
-      if(it.isMove){
-        var ad=_itemAddr(it.toName, it.toMapUrl, addrMap);
-        if(ao) L.push('    '+(lang==='en'?'Addr (from): ':'住所（発）: ')+ao);
-        if(ad) L.push('    '+(lang==='en'?'Addr (to): ':'住所（着）: ')+ad);
-      } else if(ao){
-        L.push('    '+(lang==='en'?'Addr: ':'住所: ')+ao);
+      // 住所は2点間移動以外のみ・同一地点は初回のみ。住所の前に場所名を付す。
+      if(!it.isMove){
+        var ao=_itemAddr(it.placeName, it.mapUrl, addrMap);
+        if(ao){
+          var key=(it.placeName||'').trim()||ao;
+          if(!seenAddr[key]){ seenAddr[key]=1; L.push('    '+(lang==='en'?'Addr: ':'住所: ')+(pl?pl+'：':'')+ao); }
+        }
       }
     });
   });
@@ -4067,6 +4068,7 @@ function _buildSchedDocHtml(lang){
   var T=(lang==='en')
     ? {time:'Time',act:'Activity',place:'Place',addr:'Address',sub:'Schedule',stay:'STAY'}
     : {time:'時刻',act:'内容',place:'場所',addr:'住所',sub:'スケジュール',stay:'泊'};
+  var seenAddr={}; // 同一地点の住所は初回のみ
   var H=[];
   H.push('<h1>'+esc(evName)+'</h1>');
   H.push('<p class="doc-sub">'+esc(T.sub)+'</p>');
@@ -4077,13 +4079,15 @@ function _buildSchedDocHtml(lang){
     byDay[d].forEach(function(it){
       var tm=_schTimeRange(it), act=_schActText(it, lang), pl=_schPlaceText(it, lang, enMap);
       var stay=it.overnight?('<span class="stay">'+esc(T.stay)+'</span>'):'';
-      var ao=_itemAddr(it.placeName, it.mapUrl, addrMap), addrCell='';
-      if(it.isMove){
-        var ad=_itemAddr(it.toName, it.toMapUrl, addrMap), parts=[];
-        if(ao) parts.push(esc(ao));
-        if(ad) parts.push('→ '+esc(ad));
-        addrCell=parts.join('<br>');
-      } else { addrCell=ao?esc(ao):''; }
+      // 住所は2点間移動以外のみ・同一地点は初回のみ。住所の前に場所名を付す。
+      var addrCell='';
+      if(!it.isMove){
+        var ao=_itemAddr(it.placeName, it.mapUrl, addrMap);
+        if(ao){
+          var key=(it.placeName||'').trim()||ao;
+          if(!seenAddr[key]){ seenAddr[key]=1; addrCell=(pl?esc(pl)+'：':'')+esc(ao); }
+        }
+      }
       H.push('<tr><td class="t">'+esc(tm||'')+'</td><td>'+stay+esc(act)+'</td><td>'+esc(pl)+'</td><td>'+addrCell+'</td></tr>');
     });
     H.push('</tbody></table>');
