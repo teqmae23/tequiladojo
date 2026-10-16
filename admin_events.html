@@ -1766,12 +1766,25 @@ function renderJoinMgr(){
     recs.forEach(function(iv){ if(usedRec[iv.id]) return; var mid=String(iv.memberId||''); if(mid && famIds.indexOf(mid)>=0) return;
       var nick=mid?_famNick(mid):''; var nm=nick||iv.memberName||'';
       var label=nm?(esc(nm)+(mid?'（'+esc(mid)+'）':'（ID未登録）')):(mid?esc(mid):'（会員不明）');
+      var idBtn=(!mid)?('<button class="btn bs sm" title="会員IDを設定（閲覧権限も付与）" onclick="setFamilyViewerId(\''+esc(iv.id)+'\')">ID設定</button> '):'';
       rows.push('<div class="doc-subrow"><span class="nm">'+label+'</span>'
         +'<div class="doc-file"><span class="fn">推薦者: '+esc(iv.invitedByName||iv.invitedBy||'（不明）')+'　<span style="color:var(--red)">※閲覧権限が未反映</span></span></div>'
-        +'<button class="rm" title="削除" onclick="removeFamilyViewer(\''+esc(iv.id)+'\',\''+esc(mid)+'\')">×</button></div>');
+        +idBtn+'<button class="rm" title="削除" onclick="removeFamilyViewer(\''+esc(iv.id)+'\',\''+esc(mid)+'\')">×</button></div>');
     });
     g('join-family-approved-list').innerHTML=rows.length?rows.join(''):'<div class="ec">承認済みの家族閲覧者はいません。</div>';
   }).catch(function(e){ g('join-family-approved-list').innerHTML='<div class="ec">読込失敗: '+esc(e.message)+'</div>'; });
+}
+// 会員IDが未保存の家族閲覧者レコードに、管理者が会員IDを設定（閲覧権限 familyViewerIds にも付与）
+function setFamilyViewerId(inviteId){
+  var mid=(prompt('この家族閲覧者の会員IDを入力してください（閲覧権限も付与されます）')||'').trim();
+  if(!mid) return;
+  var m=members.find(function(x){ return x.id===mid||String(x.memberId)===mid||String(x.displayId)===mid; });
+  var nm=(m&&(m.nickname||m.name))||'';
+  var data={ memberId:String(mid) }; if(nm) data.memberName=nm;
+  db.collection('events').doc(_editId).set({ familyViewerIds:firebase.firestore.FieldValue.arrayUnion(String(mid)) },{merge:true})
+    .then(function(){ return faminvCol(_editId).doc(inviteId).set(data,{merge:true}); })
+    .then(function(){ toast('会員IDを設定しました'); renderJoinMgr(); load(); })
+    .catch(function(e){ toast('失敗: '+e.message,'err'); });
 }
 // 承認済み家族閲覧者を削除（familyViewerIds から除外＋招待ドキュメント削除で閲覧権限を取り消す）
 function removeFamilyViewer(inviteId, memberId){
