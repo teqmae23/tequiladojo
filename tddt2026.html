@@ -251,6 +251,12 @@ a{color:var(--gold-d)}
 .sc-idl{display:flex;align-items:center;gap:10px;margin:10px 2px;color:#b0442e;font-size:11px;font-weight:700;letter-spacing:.06em}
 .sc-idl::before,.sc-idl::after{content:"";flex:1;border-top:1px dashed #d79a86}
 .sc-ic{font-size:16px;flex:0 0 auto}
+.sc-ic.sc-ic-pop{cursor:pointer}
+.sc-addr-in{color:var(--ink2)}
+/* 写真ボタン（コンテナ右上・大きめ・写真ラベル付き） */
+.sc-right{margin-left:auto;align-self:flex-start;display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:0 0 auto}
+.sc-photo-big{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:700;color:var(--teal);background:var(--white);border:1px solid var(--teal);border-radius:10px;padding:4px 10px;cursor:pointer;font-family:inherit;white-space:nowrap;line-height:1}
+.sc-photo-big.up{color:var(--gold-d);border-color:var(--gold-d)}
 .sc-body{flex:1;min-width:0}
 .sc-rowthumb{margin-left:auto;flex:0 0 auto;align-self:center;width:52px;height:52px;border-radius:8px;overflow:hidden;border:1px solid var(--border);cursor:pointer;display:flex}
 .sc-rowthumb img{width:100%;height:100%;object-fit:cover;display:block}
@@ -1402,6 +1408,7 @@ function loadCats(){
 }
 function catById(id){ for(var i=0;i<_cats.length;i++) if(_cats[i].id===id) return _cats[i]; return null; }
 function catIcon(id){ var c=catById(id); return (c&&c.icon)?c.icon:'📍'; }
+function catName(id){ var c=catById(id); return (c&&c.name)||'その他'; }
 // 移動アイテムは選択した移動手段のアイコンを優先（未指定は種別アイコン=既定🚗）
 var TRAVEL_ICONS={flight:'✈️',driving:'🚗',car:'🚗',taxi:'🚕',shuttle:'🚐',transit:'🚆',bus:'🚌',train:'🚃',shinkansen:'🚅',walking:'🚶',bicycling:'🚲'};
 function itemIcon(it){
@@ -1854,6 +1861,17 @@ function showHosts(id, btn){
   pop.style.left=Math.max(8, Math.min(r.left, window.innerWidth-270))+'px';
 }
 function hideRosterPop(){ var p=g('sc-rosterpop'); if(p) p.style.display='none'; }
+// イベント種別アイコンのタップ/ホバーで種別名をポップアップ表示
+function showCatPop(ev, catid){
+  var c=catById(catid), nm=(c&&c.name)||'その他';
+  var pop=g('sc-rosterpop'); if(!pop){ pop=document.createElement('div'); pop.id='sc-rosterpop'; document.body.appendChild(pop); }
+  pop.innerHTML='<div class="rp-hd">種別</div><div class="rp-body">'+(c&&c.icon?esc(c.icon)+' ':'')+esc(nm)+'</div>';
+  pop.style.display='block';
+  var el=ev&&(ev.currentTarget||ev.target);
+  var r=(el&&el.getBoundingClientRect)?el.getBoundingClientRect():{bottom:80,top:80,left:40};
+  var top=r.bottom+6; if(top+90>window.innerHeight) top=Math.max(8,r.top-90);
+  pop.style.top=top+'px'; pop.style.left=Math.max(8, Math.min(r.left, window.innerWidth-220))+'px';
+}
 document.addEventListener('click',function(e){ var p=g('sc-rosterpop'); if(p&&p.style.display==='block'&&!p.contains(e.target)&&!(e.target.classList&&(e.target.classList.contains('sc-rosterbtn')||e.target.classList.contains('sc-hostbtn')))) hideRosterPop(); });
 // 合流/離脱・班を使うイベントでは各項目に「参加者」ボタン（人数表示なし）、現地ホストは別ボタン。
 function rosterBtnHtml(it){
@@ -2041,15 +2059,21 @@ function printCostView(){
 }
 function toggleSchedAddr(id, el){
   var box=g('sc-addr-'+id); if(!box) return;
-  box.style.display=(box.style.display==='none')?'block':'none';
+  box.style.display=(box.style.display==='none')?'inline':'none';
 }
 function renderSchedItem(it, leg){
   var ic=itemIcon(it);
   var geo=(it.lat!=null&&it.lng!=null);
   var hideLoc=_locHidden(it); // ストーカー対策: 滞在中は位置を伏せる
+  var did=esc(it.id);
   var meta=[];
+  var aphotos=Array.isArray(it.photos)?it.photos:[]; // 管理者がプリセットした写真（スケジュールに最初から表示）
+  var photos=_photosByItem[it.id]||[];               // 会員がアップロードした写真
   var ct=costLineFor(it); if(ct) meta.push('<span class="sc-cost">'+esc(ct)+'</span>');
   if(it.linkUrl && /^https?:\/\//i.test(it.linkUrl)) meta.push('<a class="sc-map" href="'+esc(it.linkUrl)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🔗 参考URL</a>');
+  // アイコンの並び: 参加者 → 現地ホスト → 写真(プリセット) → 地図 → ルート → 住所
+  var rb=rosterBtnHtml(it); if(rb) meta.push(rb); // 参加者＋現地ホスト
+  if(aphotos.length) meta.push('<span class="sc-map" style="cursor:pointer" onclick="event.stopPropagation();openItemPhotos(\''+did+'\',0)" title="写真を見る">📷 写真('+aphotos.length+')</span>');
   if(hideLoc){
     meta.push('<span class="sc-loclock">'+(_isLodging(it)?'🏨 ホテル情報はチェックアウト後に公開されます':'📍 位置情報は滞在終了後に公開されます')+'</span>');
   } else {
@@ -2057,38 +2081,32 @@ function renderSchedItem(it, leg){
     var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
     if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="'+esc(routeLink(it))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+(_flm?'✈️ ルート':'🚗 ルート')+'</a>');
   }
-  var did=esc(it.id);
-  var aphotos=Array.isArray(it.photos)?it.photos:[]; // 管理者がプリセットした写真（最大10枚・右端サムネイル）
-  var photos=_photosByItem[it.id]||[];              // 会員がアップロードした写真（無制限・📷件数＋📤管理）
-  // プリセット写真: スケジュール表の右端にサムネイル表示（クリックでポップアップ＆ページ送り）
-  var firstThumb=aphotos.length?('<div class="sc-rowthumb" onclick="event.stopPropagation();openItemPhotos(\''+did+'\',0)"><img src="'+esc(aphotos[0].url)+'" alt="" loading="lazy"></div>'):'';
-  var moreThumbs=aphotos.length>1?('<div class="sc-gallery">'+aphotos.slice(1).map(function(p,idx){ return '<img class="sc-thumb" src="'+esc(p.url)+'" alt="" loading="lazy" onclick="event.stopPropagation();openItemPhotos(\''+did+'\','+(idx+1)+')">'; }).join('')+'</div>'):'';
-  // 会員アップロード写真: 📷(件数)で閲覧ライトボックス、後ろの📤で登録・削除・閲覧の管理ポップアップ（削除は登録者/管理者のみ）
-  if(photos.length) meta.push('<button type="button" class="sc-photo-ln" onclick="event.stopPropagation();openLb(\''+did+'\',0)" title="会員写真を表示">📷('+photos.length+')</button>');
-  if(_isReal) meta.push('<button type="button" class="sc-photo-ln sc-photo-up" onclick="event.stopPropagation();openItemPhotoMgr(\''+did+'\')" title="会員写真の登録・削除・閲覧">📤</button>');
-  // 参加者・現地ホスト・班バッジ・名前を費用の前に。改行せず費用・地図などと同じ行に流す。
-  var rb=rosterBtnHtml(it), bdg=SchedGroups.badge(it,esc), nm=schedNamesHtml(it,true);
-  // 住所（2点間移動以外のみ・📮をタップで開閉。位置を伏せる滞在中は非表示）
-  var addrHtml='';
+  // 会員の写真投稿・閲覧ボタン: コンテナ右上に大きめ表示（📷閲覧／📤投稿・管理）
+  var photoCorner='';
+  if(photos.length) photoCorner+='<button type="button" class="sc-photo-big" onclick="event.stopPropagation();openLb(\''+did+'\',0)" title="写真を見る">📷 写真('+photos.length+')</button>';
+  if(_isReal) photoCorner+='<button type="button" class="sc-photo-big up" onclick="event.stopPropagation();openItemPhotoMgr(\''+did+'\')" title="写真を投稿・管理">📤 投稿</button>';
+  // 班バッジ・名前
+  var bdg=SchedGroups.badge(it,esc), nm=schedNamesHtml(it,true);
+  // 住所（2点間移動以外のみ・📮をタップでアイコン右側に表示。位置を伏せる滞在中は非表示）
   if(!hideLoc && !it.isMove){
     var _ao=_itemAddr(it.placeName, it.mapUrl), _anm=(it.placeName||'').trim();
     if(_ao){
-      meta.push('<span class="sc-map" style="cursor:pointer" onclick="event.stopPropagation();toggleSchedAddr(\''+did+'\',this)">📮 住所</span>');
-      addrHtml='<div class="sc-addr" id="sc-addr-'+did+'" style="display:none">📮 '+(_anm?esc(_anm)+'：':'')+esc(_ao)+'</div>';
+      meta.push('<span class="sc-map" style="cursor:pointer" onclick="event.stopPropagation();toggleSchedAddr(\''+did+'\',this)">📮 住所<span class="sc-addr-in" id="sc-addr-'+did+'" style="display:none"> '+(_anm?esc(_anm)+'：':'')+esc(_ao)+'</span></span>');
     }
   }
-  var people=[]; if(rb)people.push(rb); if(bdg)people.push(bdg); if(nm)people.push(nm);
+  var people=[]; if(bdg)people.push(bdg); if(nm)people.push(nm);
   var allMeta=people.concat(meta);
-  var inner=(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')+addrHtml+(allMeta.length?'<div class="sc-meta">'+allMeta.join('')+'</div>':'')+schedRoomingHtml(it)+moreThumbs;
+  var inner=(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')+(allMeta.length?'<div class="sc-meta">'+allMeta.join('')+'</div>':'')+schedRoomingHtml(it);
   var hasDetail=!!inner;
   var detail=hasDetail?'<div class="sc-detail" id="scd-'+did+'" style="display:none">'+inner+'</div>':'';
   var clickable=hasDetail||geo;
+  var rightCol=photoCorner?('<div class="sc-right">'+photoCorner+'</div>'):'';
   // 折畳時に見えるのは「時間・イベントアイコン・タイトル・写真」のみ
-  return '<div class="sc-item'+(clickable?' has-geo':'')+'" style="background:'+catBg(it.category)+'"'+(clickable?' onclick="onSchedItemClick(\''+did+'\','+(geo?'1':'0')+')"':'')+'>'+schedTimeHtml(it,leg)+'<span class="sc-ic">'+ic+'</span>'
+  return '<div class="sc-item'+(clickable?' has-geo':'')+'" style="background:'+catBg(it.category)+'"'+(clickable?' onclick="onSchedItemClick(\''+did+'\','+(geo?'1':'0')+')"':'')+'>'+schedTimeHtml(it,leg)+'<span class="sc-ic sc-ic-pop" title="'+esc(catName(it.category))+'" onclick="event.stopPropagation();showCatPop(event,\''+esc(it.category)+'\')">'+ic+'</span>'
     +'<div class="sc-body"><div class="sc-ttl">'+(it.overnight?'(泊) ':'')+esc(it.title||'')+(hasDetail?'<span class="sc-caret2" id="scc-'+did+'">詳細表示</span>':'')+'</div>'
     +detail
     +'</div>'
-    +firstThumb
+    +rightCol
     +'</div>';
 }
 // イベント行クリックで詳細を開閉（俯瞰マップは廃止したため地図フォーカスは行わない。
