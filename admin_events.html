@@ -1030,7 +1030,7 @@ table.pl-tbl col.c-name{width:18%}table.pl-tbl col.c-en{width:14%}table.pl-tbl c
       <div id="pl-filter"></div>
       <div id="pl-list"><div class="ec">読み込み中…</div></div>
     </div>
-    <div class="mft"><button class="btn bs ca-only-hide" onclick="openPlaceCatMgr()">🏷 分類編集</button><div style="flex:1"></div><button class="btn bs" onclick="closePlaceMgr()">閉じる</button></div>
+    <div class="mft"><button class="btn bs ca-only-hide" onclick="openPlaceCatMgr()">🏷 分類編集</button><div style="flex:1"></div><button class="btn bp" onclick="savePlaceAll()">💾 全行を保存</button><button class="btn bs" onclick="closePlaceMgr()">閉じる</button></div>
   </div>
 </div>
 
@@ -2934,6 +2934,36 @@ function savePlaceRow(pid){
     fillPlacePickers(); // 名称・分類をスケジュール側のピッカーに反映
     toast('保存しました');
   }).catch(function(e){ toast('保存失敗: '+e.message,'err'); });
+}
+// 表示中の全行を一括保存（変更のある行のみ、Firestoreバッチで）。座標はURLから再取得。
+function savePlaceAll(){
+  var list=_places.filter(_placeMatch);
+  if(!list.length){ toast('保存対象の行がありません','err'); return; }
+  var batch=db.batch(), pending=[], skipEmpty=0;
+  list.forEach(function(p){
+    var pid=p.id, gv=function(k){ var e=g('pl-'+k+'-'+pid); return e?e.value:null; };
+    var nameV=gv('name'); if(nameV===null) return; // 行がDOMに無い（通常は無い）
+    var name=(nameV||'').trim();
+    if(!name){ skipEmpty++; return; } // 地点名が空の行は保存しない
+    var nameEn=(gv('en')||'').trim(), address=(gv('addr')||'').trim(), mapUrl=(gv('url')||'').trim();
+    var mapMode=(gv('mode')==='coord')?'coord':'name';
+    var cat=gv('cat')||'';
+    var c=parseLatLng(mapUrl); var lat=c?c.lat:p.lat, lng=c?c.lng:p.lng;
+    var data={ name:name, nameEn:nameEn, address:address, mapUrl:mapUrl, mapMode:mapMode, category:cat, lat:lat, lng:lng };
+    if(!_coAdminMode && g('pl-ev-'+pid)) data.eventId=g('pl-ev-'+pid).value||'';
+    // 変更検出（更新があるフィールドのみ比較。無変更の行はスキップ）
+    var changed=Object.keys(data).some(function(k){ return (p[k]==null?'':p[k])!==(data[k]==null?'':data[k]); });
+    if(!changed) return;
+    data.updatedAt=firebase.firestore.FieldValue.serverTimestamp();
+    batch.set(db.collection('places').doc(pid), data, {merge:true});
+    pending.push({p:p, data:data});
+  });
+  if(!pending.length){ toast(skipEmpty?('保存しました（地点名が空の'+skipEmpty+'行は除外）'):'変更はありません'); return; }
+  batch.commit().then(function(){
+    pending.forEach(function(x){ Object.assign(x.p, x.data); var co=g('pl-co-'+x.p.id); if(co) co.textContent=_plCoText(x.p); });
+    fillPlacePickers();
+    toast(pending.length+'件を保存しました'+(skipEmpty?('（地点名が空の'+skipEmpty+'行は除外）'):''));
+  }).catch(function(e){ toast('一括保存に失敗: '+e.message,'err'); });
 }
 // 新規行から場所を追加
 function addPlaceRow(){
