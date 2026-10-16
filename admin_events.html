@@ -581,6 +581,8 @@ table.pl-tbl col.c-name{width:18%}table.pl-tbl col.c-en{width:14%}table.pl-tbl c
       <div id="join-viewreq-list"><div class="ec">読み込み中…</div></div>
       <div style="font-weight:700;font-size:13px;color:var(--ink2);margin:16px 0 6px">👨‍👩‍👧 家族閲覧の招待（参加者からの推薦）</div>
       <div id="join-family-list"><div class="ec">読み込み中…</div></div>
+      <div style="font-weight:700;font-size:13px;color:var(--gold-d);margin:16px 0 6px">👨‍👩‍👧 家族閲覧者（承認済み・一覧／削除）</div>
+      <div id="join-family-approved-list"><div class="ec">読み込み中…</div></div>
     </div>
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeJoinMgr()">閉じる</button></div>
   </div>
@@ -1735,6 +1737,25 @@ function renderJoinMgr(){
     });
     g('join-family-list').innerHTML=rows.length?rows.join(''):'<div class="ec">保留中の家族招待はありません。</div>';
   }).catch(function(e){ g('join-family-list').innerHTML='<div class="ec">読込失敗: '+esc(e.message)+'</div>'; });
+  // 承認済みの家族閲覧者（一覧・推薦者表示・削除）
+  faminvCol(eid).where('status','==','approved').get().then(function(snap){
+    var rows=snap.docs.map(function(d){ var iv=Object.assign({id:d.id},d.data());
+      var nm=iv.memberName?(esc(iv.memberName)+'（'+esc(iv.memberId||'')+'）'):esc(iv.memberId||'（会員）');
+      return '<div class="doc-subrow"><span class="nm">'+nm+'</span>'
+        +'<div class="doc-file"><span class="fn">推薦者: '+esc(iv.invitedByName||iv.invitedBy||'（不明）')+'</span></div>'
+        +'<button class="rm" title="削除（閲覧権限を取り消す）" onclick="removeFamilyViewer(\''+esc(iv.id)+'\',\''+esc(iv.memberId||'')+'\')">×</button></div>';
+    });
+    g('join-family-approved-list').innerHTML=rows.length?rows.join(''):'<div class="ec">承認済みの家族閲覧者はいません。</div>';
+  }).catch(function(e){ g('join-family-approved-list').innerHTML='<div class="ec">読込失敗: '+esc(e.message)+'</div>'; });
+}
+// 承認済み家族閲覧者を削除（familyViewerIds から除外＋招待ドキュメント削除で閲覧権限を取り消す）
+function removeFamilyViewer(inviteId, memberId){
+  if(!confirm('この家族閲覧者を削除しますか？（イベントの閲覧権限が取り消されます）')) return;
+  var p=Promise.resolve();
+  if(memberId) p=db.collection('events').doc(_editId).set({ familyViewerIds:firebase.firestore.FieldValue.arrayRemove(String(memberId)) },{merge:true});
+  p.then(function(){ return faminvCol(_editId).doc(inviteId).delete(); })
+   .then(function(){ toast('家族閲覧者を削除しました'); renderJoinMgr(); load(); })
+   .catch(function(e){ toast('失敗: '+e.message,'err'); });
 }
 function approveViewReq(uid){
   vreqCol(_editId).doc(uid).set({status:'approved', approvedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
