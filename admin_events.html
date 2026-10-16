@@ -2185,6 +2185,7 @@ function _ensureDefaultCats(existingIds){
   }).catch(function(){});
 }
 function catById(id){ for(var i=0;i<_cats.length;i++) if(_cats[i].id===id) return _cats[i]; return null; }
+function catName(id){ var c=catById(id); return (c&&c.name)||'その他'; }
 function catIcon(id){ var c=catById(id); return (c&&c.icon)?c.icon:'📍'; }
 function catBg(id){ var c=catById(id); return (c&&c.bg)?c.bg:'#f5f3ee'; }
 // 移動アイテムは選択した移動手段のアイコンを優先（未指定は種別アイコン=既定🚗）
@@ -3491,6 +3492,13 @@ function showSchedHosts(id, btn){
   _posSchedPop(p, btn);
 }
 function hideSchedPop(){ var p=g('se-rosterpop'); if(p) p.style.display='none'; }
+// イベント種別アイコンのタップ/ホバーで種別名をポップアップ表示
+function showCatPop(btn, catid){
+  var c=catById(catid), nm=(c&&c.name)||'その他';
+  var p=_schedPop();
+  p.innerHTML='<div class="rp-hd">種別</div><div class="rp-body">'+(c&&c.icon?esc(c.icon)+' ':'')+esc(nm)+'</div>';
+  _posSchedPop(p, btn);
+}
 document.addEventListener('click',function(e){ var p=g('se-rosterpop'); if(p&&p.style.display==='block'&&!p.contains(e.target)&&!(e.target.classList&&e.target.classList.contains('se-maplink'))) hideSchedPop(); });
 // 地図/ルートのGoogleマップURL（会員ページと同等。クリックで開くため編集に入らない）
 function _isFlightItem(it){ return it.travelMode==='flight'||it.category==='flight'; }
@@ -3543,22 +3551,24 @@ function _siRoute(it){
 }
 function toggleSchedAddr(id, el){
   var box=g('se-addr-'+id); if(!box) return;
-  var show=(box.style.display==='none'); box.style.display=show?'block':'none';
+  box.style.display=(box.style.display==='none')?'inline':'none';
 }
 function renderSchedItemRow(it){
   var ic=itemIcon(it);
   // 参加者・ルート・地図・写真・現地ホスト・合流離脱はクリックで表示/開く（行クリックの編集に入らないよう stopPropagation）
   var markers=[];
+  // 並び順: 参加者 → 現地ホスト → 写真(プリセット) → 地図 → ルート →（公開設定・名前・部屋割り）→ 住所(後方で追加)
   // 参加者（合流/離脱に沿った各時点の参加メンバー・クリックでポップアップ）
   if(_schRosterOn) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();showSchedRoster(\''+esc(it.id)+'\',this)">👥参加者</span>');
-  // ルート・地図（空路は「✈️ルート」で経路画面を開き、Googleマップ上で✈️フライトに切替可能）
-  var _fl=_isFlightItem(it);
-  var _rl=_siRoute(it); if(_rl) markers.push('<a class="se-maplink" href="'+esc(_rl)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+(_fl?'✈️ルート':'🚗ルート')+'</a>');
-  var _mp=_siMap(it); if(_mp) markers.push('<a class="se-maplink" href="'+esc(_mp)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍地図</a>');
-  var _aph=Array.isArray(it.photos)?it.photos:[];
-  if(_aph.length) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();openItemLb(\''+esc(it.id)+'\',0)" title="写真を表示（左右でページ送り）">📷写真('+_aph.length+')</span>');
   // 現地ホスト（クリックでポップアップ）
   if(it.spotOnly && (it.nameParticipants||[]).length) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();showSchedHosts(\''+esc(it.id)+'\',this)">🧑‍🤝‍🧑現地ホスト</span>');
+  // 写真（スケジュールに最初から表示されるプリセット写真）
+  var _aph=Array.isArray(it.photos)?it.photos:[];
+  if(_aph.length) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();openItemLb(\''+esc(it.id)+'\',0)" title="写真を表示（左右でページ送り）">📷写真('+_aph.length+')</span>');
+  // 地図・ルート（空路は「✈️ルート」で経路画面を開き、Googleマップ上で✈️フライトに切替可能）
+  var _fl=_isFlightItem(it);
+  var _mp=_siMap(it); if(_mp) markers.push('<a class="se-maplink" href="'+esc(_mp)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍地図</a>');
+  var _rl=_siRoute(it); if(_rl) markers.push('<a class="se-maplink" href="'+esc(_rl)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+(_fl?'✈️ルート':'🚗ルート')+'</a>');
   if(it.hideUntilDone) markers.push('🙈完了後公開');
   // 合流/離脱（クリックで名前ポップアップ）
   if(it.showNames&&(it.nameParticipants||[]).length&&!it.spotOnly) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();showSchedNames(\''+esc(it.id)+'\',this)">👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名</span>');
@@ -3566,10 +3576,9 @@ function renderSchedItemRow(it){
   var noteHtml=it.note?'<div class="se-note-line">'+esc(it.note.slice(0,80))+(it.note.length>80?'…':'')+'</div>':'';
   // 住所（非移動のみ。📮アイコンをタップで開閉。移動には出さない）
   var _am=_schPlaceAddrMap();
-  var _addr=it.isMove?'':_itemAddr(it.placeName, it.mapUrl, _am), _anm=(it.placeName||'').trim(), addrHtml='';
+  var _addr=it.isMove?'':_itemAddr(it.placeName, it.mapUrl, _am), _anm=(it.placeName||'').trim();
   if(_addr){
-    markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();toggleSchedAddr(\''+esc(it.id)+'\',this)">📮住所</span>');
-    addrHtml='<div class="se-addr-line" id="se-addr-'+esc(it.id)+'" style="display:none">📮 '+(_anm?esc(_anm)+'：':'')+esc(_addr)+'</div>';
+    markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();toggleSchedAddr(\''+esc(it.id)+'\',this)">📮住所<span class="se-addr-in" id="se-addr-'+esc(it.id)+'" style="display:none"> '+(_anm?esc(_anm)+'：':'')+esc(_addr)+'</span></span>');
   }
   var info=_schedCostInfo(it.id);
   var costHtml;
@@ -3601,8 +3610,8 @@ function renderSchedItemRow(it){
     +(hasCO?'<button class="cico-btn co'+(coSet?' set':'')+'" onclick="eventCO(\''+esc(it.id)+'\')" title="'+(coSet?'タップで終了の実時間を変更':'終了の実時間を記録')+'">'+(coSet?'CO ✓':'CO')+'</button>':'')
     +'</div>';
   return '<div class="se-item'+(it.overnight?' ov':'')+'" onclick="openSchedEd(\''+esc(it.id)+'\')" style="cursor:pointer;background:'+catBg(it.category)+'">'
-    +timeHtml+'<span class="se-ic">'+ic+'</span>'
-    +'<div class="se-main"><div class="se-ttl"><span class="se-ttl-txt" onclick="showTitlePop(event,\''+esc(it.id)+'\')">'+(it.overnight?'(泊) ':'')+esc(it.title||'（無題）')+'</span>'+SchedGroups.badge(it,esc)+'</div>'+noteHtml+(markers.length?'<div class="se-sub">'+markers.join('　')+'</div>':'')+addrHtml+'</div>'
+    +timeHtml+'<span class="se-ic" title="'+esc(catName(it.category))+'" style="cursor:pointer" onclick="event.stopPropagation();showCatPop(this,\''+esc(it.category)+'\')">'+ic+'</span>'
+    +'<div class="se-main"><div class="se-ttl"><span class="se-ttl-txt" onclick="showTitlePop(event,\''+esc(it.id)+'\')">'+(it.overnight?'(泊) ':'')+esc(it.title||'（無題）')+'</span>'+SchedGroups.badge(it,esc)+'</div>'+noteHtml+(markers.length?'<div class="se-sub">'+markers.join('　')+'</div>':'')+'</div>'
     +costHtml+cico+'</div>';
 }
 // ── 深夜対応（朝帰り）: 時刻は 0:00〜30:00（翌朝6時まで）を同一日付に格納できる ──
