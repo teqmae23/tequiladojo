@@ -830,15 +830,15 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 <!-- スケジュール テキスト出力モーダル -->
 <div class="mbg" id="sch-text-modal">
   <div class="modal" style="max-width:720px">
-    <div class="mhd"><span>📄 スケジュール テキスト出力</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="document.getElementById('sch-text-modal').classList.remove('open')">✕</button></div>
+    <div class="mhd"><span>📄 スケジュール出力（テキスト／書類）</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="document.getElementById('sch-text-modal').classList.remove('open')">✕</button></div>
     <div class="mbd">
-      <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">日時・タイトル・場所を一覧出力します。英語版は日付/曜日/種別・移動手段を英語化します（地点名・固有名詞は入力のまま）。</div>
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">日時・内容・場所・住所を一覧出力します。英語版は日付/曜日/種別・移動手段を英語化します（地点名・固有名詞は場所マスタの英語名、無ければ入力のまま）。<br>「書類版」は罫線付きの表レイアウトを印刷ダイアログで開きます（送信先で「PDFに保存」を選ぶとPDF化できます）。</div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><label class="fl" style="margin:0;flex:1">日本語版</label><button class="btn bs sm" onclick="copySchedText('ja')">📋 コピー</button></div>
       <textarea id="sch-text-ja" rows="12" readonly style="width:100%;box-sizing:border-box;font-family:var(--mono);font-size:12px;white-space:pre"></textarea>
       <div style="display:flex;align-items:center;gap:8px;margin:12px 0 4px"><label class="fl" style="margin:0;flex:1">English</label><button class="btn bs sm" onclick="copySchedText('en')">📋 Copy</button></div>
       <textarea id="sch-text-en" rows="12" readonly style="width:100%;box-sizing:border-box;font-family:var(--mono);font-size:12px;white-space:pre"></textarea>
     </div>
-    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="document.getElementById('sch-text-modal').classList.remove('open')">閉じる</button></div>
+    <div class="mft"><button class="btn bs" onclick="openSchedDoc('ja')">🖨 書類版（日本語）</button><button class="btn bs" onclick="openSchedDoc('en')">🖨 Document (EN)</button><div style="flex:1"></div><button class="btn bs" onclick="document.getElementById('sch-text-modal').classList.remove('open')">閉じる</button></div>
   </div>
 </div>
 
@@ -3953,6 +3953,62 @@ function copySchedText(lang){
   if(navigator.clipboard&&navigator.clipboard.writeText){
     navigator.clipboard.writeText(ta.value).then(done).catch(function(){ ta.removeAttribute('readonly'); ta.select(); try{document.execCommand('copy');}catch(e){} ta.setAttribute('readonly','readonly'); done(); });
   } else { ta.removeAttribute('readonly'); ta.select(); try{document.execCommand('copy');}catch(e){} ta.setAttribute('readonly','readonly'); done(); }
+}
+// ── スケジュールの書類版（罫線付きの表レイアウトを印刷→PDF保存） ──
+function _schDocCss(){
+  return 'body{font-family:"Hiragino Sans","Noto Sans JP",sans-serif;padding:18px;color:#18110a}'
+    +'h1{font-size:18px;margin:0 0 2px}'
+    +'.doc-sub{font-size:12px;color:#7a6a52;margin:0 0 14px}'
+    +'.day-h{font-size:14px;font-weight:700;color:#7a5610;margin:16px 0 4px;border-left:4px solid #c8921e;padding-left:8px}'
+    +'table.sch{border-collapse:collapse;width:100%;font-size:11.5px;margin-bottom:6px;table-layout:fixed}'
+    +'table.sch th,table.sch td{border:1px solid #c9beac;padding:5px 7px;vertical-align:top;word-wrap:break-word;overflow-wrap:break-word}'
+    +'table.sch th{background:#efe9dd;font-size:11px;text-align:center}'
+    +'table.sch td.t{white-space:nowrap;text-align:center;font-variant-numeric:tabular-nums}'
+    +'.stay{display:inline-block;font-size:9px;font-weight:700;color:#fff;background:#8a5a2a;border-radius:3px;padding:1px 4px;margin-right:4px;vertical-align:middle}'
+    +'tr{page-break-inside:avoid}'
+    +'@media print{body{padding:0}.day-h{page-break-after:avoid}}';
+}
+function _buildSchedDocHtml(lang){
+  var ev=(events||[]).find(function(x){return x.id===_schEventId;});
+  var evName=(ev&&ev.name)||'';
+  var enMap=(lang==='en')?_schPlaceEnMap():null;
+  var addrMap=_schPlaceAddrMap();
+  var enr=_sortByJst(_schItems||[]);
+  var byDay={}, order=[];
+  enr.forEach(function(e){ var d=e.it.date||''; if(!byDay[d]){ byDay[d]=[]; order.push(d); } byDay[d].push(e.it); });
+  var T=(lang==='en')
+    ? {time:'Time',act:'Activity',place:'Place',addr:'Address',sub:'Schedule',stay:'STAY'}
+    : {time:'時刻',act:'内容',place:'場所',addr:'住所',sub:'スケジュール',stay:'泊'};
+  var H=[];
+  H.push('<h1>'+esc(evName)+'</h1>');
+  H.push('<p class="doc-sub">'+esc(T.sub)+'</p>');
+  order.forEach(function(d){
+    H.push('<div class="day-h">'+esc(_schDayText(d, lang))+'</div>');
+    H.push('<table class="sch"><colgroup><col style="width:70px"><col style="width:26%"><col style="width:30%"><col></colgroup>'
+      +'<thead><tr><th>'+esc(T.time)+'</th><th>'+esc(T.act)+'</th><th>'+esc(T.place)+'</th><th>'+esc(T.addr)+'</th></tr></thead><tbody>');
+    byDay[d].forEach(function(it){
+      var tm=_schTimeRange(it), act=_schActText(it, lang), pl=_schPlaceText(it, lang, enMap);
+      var stay=it.overnight?('<span class="stay">'+esc(T.stay)+'</span>'):'';
+      var ao=_itemAddr(it.placeName, it.mapUrl, addrMap), addrCell='';
+      if(it.isMove){
+        var ad=_itemAddr(it.toName, it.toMapUrl, addrMap), parts=[];
+        if(ao) parts.push(esc(ao));
+        if(ad) parts.push('→ '+esc(ad));
+        addrCell=parts.join('<br>');
+      } else { addrCell=ao?esc(ao):''; }
+      H.push('<tr><td class="t">'+esc(tm||'')+'</td><td>'+stay+esc(act)+'</td><td>'+esc(pl)+'</td><td>'+addrCell+'</td></tr>');
+    });
+    H.push('</tbody></table>');
+  });
+  return H.join('');
+}
+function openSchedDoc(lang){
+  if(!_schItems||!_schItems.length){ alert('スケジュール項目がありません'); return; }
+  var body=_buildSchedDocHtml(lang);
+  var w=window.open('','_blank','width=1000,height=760'); if(!w){ toast('ポップアップを許可してください','err'); return; }
+  var ttl=(lang==='en')?'Schedule':'スケジュール';
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+ttl+'</title><style>'+_schDocCss()+'</style></head><body>'+body+'</body></html>');
+  w.document.close(); w.focus(); setTimeout(function(){ try{ w.print(); }catch(e){} }, 400);
 }
 
 // ── スケジュールの時間内包ネスト（会員画面と同じ考え方で、ある項目の時間帯に収まる項目を入れ子表示） ──
