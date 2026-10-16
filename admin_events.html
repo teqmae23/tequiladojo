@@ -1754,6 +1754,13 @@ function renderJoinMgr(){
     var recs=res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
     var byId={}; recs.forEach(function(iv){ var mid=String(iv.memberId||''); if(mid) byId[mid]=iv; });
     var usedRec={};
+    // 【恒久修正】memberName が空のレコードを会員マスタから書き戻す。
+    // 原因: 承認時に会員マスタを参照できない経路（担当管理者は参加者名のみ・会員マスタ読取不可）で
+    // 承認されると memberName が空のまま保存され、会員画面がIDにフォールバックしていた。
+    // スタッフが開いたとき（members=全会員マスタ）に恒久的に補完する。
+    recs.forEach(function(iv){ var mid=String(iv.memberId||''); if(!mid || iv.memberName) return;
+      _famNickAsync(mid).then(function(nick){ if(nick){ iv.memberName=nick; faminvCol(eid).doc(iv.id).set({ memberName:nick },{merge:true}).catch(function(){}); } });
+    });
     var rows=famIds.map(function(fid){
       var nick=_famNick(fid);
       var rec=byId[fid];
@@ -1782,12 +1789,11 @@ function renderJoinMgr(){
 function setFamilyViewerId(inviteId){
   var mid=(prompt('この家族閲覧者の会員IDを入力してください（閲覧権限も付与されます）')||'').trim();
   if(!mid) return;
-  var m=members.find(function(x){ return x.id===mid||String(x.memberId)===mid||String(x.displayId)===mid; });
-  var nm=(m&&(m.nickname||m.name))||'';
-  var data={ memberId:String(mid) }; if(nm) data.memberName=nm;
-  db.collection('events').doc(_editId).set({ familyViewerIds:firebase.firestore.FieldValue.arrayUnion(String(mid)) },{merge:true})
-    .then(function(){ return faminvCol(_editId).doc(inviteId).set(data,{merge:true}); })
-    .then(function(){ toast('会員IDを設定しました'); renderJoinMgr(); load(); })
+  _famNickAsync(mid).then(function(nm){
+    var data={ memberId:String(mid) }; if(nm) data.memberName=nm;
+    return db.collection('events').doc(_editId).set({ familyViewerIds:firebase.firestore.FieldValue.arrayUnion(String(mid)) },{merge:true})
+      .then(function(){ return faminvCol(_editId).doc(inviteId).set(data,{merge:true}); });
+  }).then(function(){ toast('会員IDを設定しました'); renderJoinMgr(); load(); })
     .catch(function(e){ toast('失敗: '+e.message,'err'); });
 }
 // 承認済み家族閲覧者を削除（familyViewerIds から除外＋招待ドキュメント削除で閲覧権限を取り消す）
@@ -1807,14 +1813,26 @@ function rejectViewReq(uid){
   if(!confirm('この閲覧申請を却下（削除）しますか？')) return;
   vreqCol(_editId).doc(uid).delete().then(function(){ toast('却下しました'); renderJoinMgr(); }).catch(function(e){ toast('失敗: '+e.message,'err'); });
 }
+// 会員IDからニックネームを解決。ローカルの members(会員マスタ)優先、無ければ会員マスタに直接問い合わせ
+//（スタッフのみ読取可。担当管理者は権限が無いため空になり、後でスタッフ閲覧時に補完される）。
+function _famNickAsync(mid){
+  mid=String(mid);
+  var m=members.find(function(x){ return x.id===mid||String(x.memberId)===mid||String(x.displayId)===mid; });
+  var n=(m&&(m.nickname||m.name))||'';
+  if(n) return Promise.resolve(n);
+  return db.collection('members').where('displayId','==',mid).limit(1).get()
+    .then(function(s){ if(!s.empty){ var d=s.docs[0].data(); return d.nickname||d.name||''; }
+      return db.collection('members').where('memberId','==',mid).limit(1).get()
+        .then(function(s2){ if(!s2.empty){ var d2=s2.docs[0].data(); return d2.nickname||d2.name||''; } return ''; }); })
+    .catch(function(){ return ''; });
+}
 function approveFamily(inviteId, memberId){
   if(!memberId){ toast('会員IDが未指定です','err'); return; }
   var mid=String(memberId);
-  var m=members.find(function(x){ return x.id===mid||String(x.memberId)===mid||String(x.displayId)===mid; });
-  var nm=(m&&(m.nickname||m.name))||'';
-  db.collection('events').doc(_editId).set({ familyViewerIds:firebase.firestore.FieldValue.arrayUnion(mid) },{merge:true})
-    .then(function(){ return faminvCol(_editId).doc(inviteId).set({status:'approved', memberName:nm, approvedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}); })
-    .then(function(){ toast('家族の閲覧を許可しました'); renderJoinMgr(); load(); }).catch(function(e){ toast('失敗: '+e.message,'err'); });
+  _famNickAsync(mid).then(function(nm){
+    return db.collection('events').doc(_editId).set({ familyViewerIds:firebase.firestore.FieldValue.arrayUnion(mid) },{merge:true})
+      .then(function(){ return faminvCol(_editId).doc(inviteId).set({status:'approved', memberName:nm, approvedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}); });
+  }).then(function(){ toast('家族の閲覧を許可しました'); renderJoinMgr(); load(); }).catch(function(e){ toast('失敗: '+e.message,'err'); });
 }
 function rejectFamily(inviteId){
   if(!confirm('この家族招待を却下しますか？')) return;
