@@ -256,6 +256,7 @@ a{color:var(--gold-d)}
 .sc-rowthumb img{width:100%;height:100%;object-fit:cover;display:block}
 .sc-ttl{font-size:14px;font-weight:600;color:var(--ink)}
 .sc-note{font-size:12px;color:var(--ink);line-height:1.6;margin-top:2px;white-space:pre-wrap}
+.sc-addr{font-size:12px;color:var(--ink2);line-height:1.5;margin-top:3px}
 .sc-arrow{display:block;width:2px;height:16px;margin:2px auto;background:var(--gold-d);border-radius:1px;font-size:0;line-height:0;overflow:hidden}
 /* 範囲(開始↓終了)の時刻は縦にストレッチし、開始=上/終了=下、間の縦線を伸ばす */
 .sc-time-range{align-self:stretch;display:flex;flex-direction:column;align-items:center;justify-content:space-between}
@@ -1444,6 +1445,25 @@ function _coordsFromGmapUrl(url){
   m=s.match(/\/(-?\d{1,2}\.\d{3,}),(-?\d{1,3}\.\d{3,})/); if(m){ var d=_mkLL(+m[1],+m[2]); if(d) return d; }
   return null;
 }
+// Google Map URL から住所文字列を best-effort で抽出（管理画面と同一ロジック）。
+//  place/<SEG> または q=/query=/destination= を復号し、座標や名称のみは住所とみなさない。
+function _addrFromGmapUrl(url, nameHint){
+  var s=String(url||'').trim(); if(!s) return '';
+  var seg='', m=s.match(/\/maps\/place\/([^\/@?]+)/);
+  if(m){ seg=m[1]; }
+  else { var q=s.match(/[?&](?:q|query|destination|daddr)=([^&]+)/); if(q) seg=q[1]; }
+  if(!seg) return '';
+  var dec=seg;
+  try{ dec=decodeURIComponent(seg.replace(/\+/g,' ')); }catch(e){ dec=seg.replace(/\+/g,' '); }
+  dec=dec.replace(/\s+/g,' ').trim();
+  if(!dec) return '';
+  if(/^[-\d.\s,]+$/.test(dec)) return '';
+  if(/\d+°\d+'[\d.]+"?\s*[NSEW]/.test(dec)) return '';
+  if(dec.indexOf(',')<0) return '';
+  var nm=(nameHint||'').trim();
+  if(nm && dec.toLowerCase().indexOf((nm+',').toLowerCase())===0){ dec=dec.slice(nm.length+1).trim(); }
+  return dec;
+}
 // 座標はGoogleマップURLを正とする（出発地:mapUrl→lat/lng ／ 移動の到着地:toMapUrl→toLat/toLng）。
 function _normalizeMoveDest(items){
   (items||[]).forEach(function(it){
@@ -2033,7 +2053,20 @@ function renderSchedItem(it, leg){
   var rb=rosterBtnHtml(it), bdg=SchedGroups.badge(it,esc), nm=schedNamesHtml(it,true);
   var people=[]; if(rb)people.push(rb); if(bdg)people.push(bdg); if(nm)people.push(nm);
   var allMeta=people.concat(meta);
-  var inner=(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')+(allMeta.length?'<div class="sc-meta">'+allMeta.join('')+'</div>':'')+schedRoomingHtml(it)+moreThumbs;
+  // 住所（地図URLから抽出。位置を伏せる滞在中は非表示）
+  var addrHtml='';
+  if(!hideLoc){
+    var _ao=_addrFromGmapUrl(it.mapUrl, it.placeName);
+    if(it.isMove){
+      var _ad=_addrFromGmapUrl(it.toMapUrl, it.toName), _ap=[];
+      if(_ao) _ap.push(esc((it.placeName||'出発').trim())+'：'+esc(_ao));
+      if(_ad) _ap.push(esc((it.toName||'到着').trim())+'：'+esc(_ad));
+      if(_ap.length) addrHtml='<div class="sc-addr">📮 '+_ap.join('<br>📮 ')+'</div>';
+    } else if(_ao){
+      addrHtml='<div class="sc-addr">📮 '+esc(_ao)+'</div>';
+    }
+  }
+  var inner=(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')+addrHtml+(allMeta.length?'<div class="sc-meta">'+allMeta.join('')+'</div>':'')+schedRoomingHtml(it)+moreThumbs;
   var hasDetail=!!inner;
   var detail=hasDetail?'<div class="sc-detail" id="scd-'+did+'" style="display:none">'+inner+'</div>':'';
   var clickable=hasDetail||geo;
