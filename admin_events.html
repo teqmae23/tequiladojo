@@ -2844,7 +2844,7 @@ function renderPlaceList(){
         +(events||[]).map(function(ev){ return '<option value="'+esc(ev.id)+'"'+(p.eventId===ev.id?' selected':'')+'>'+esc(ev.name||ev.id)+'</option>'; }).join('')+'</select>';
     var _mlink=_placeMapLink(p);
     var _modeTag=(p.mapMode==='coord')?'座標固定':'名称検索';
-    return '<div class="pl-item"><div class="nm">'+esc(p.name||'（無題）')+'<div class="co">'+esc((p.lat!=null?p.lat:'?')+', '+(p.lng!=null?p.lng:'?'))+' ・ '+esc(_modeTag)+' ・ '+evCell+'</div></div>'
+    return '<div class="pl-item"><div class="nm">'+esc(p.name||'（無題）')+(p.nameEn?'<span style="color:var(--ink2);font-weight:400;font-size:12px"> ／ '+esc(p.nameEn)+'</span>':'')+'<div class="co">'+esc((p.lat!=null?p.lat:'?')+', '+(p.lng!=null?p.lng:'?'))+' ・ '+esc(_modeTag)+' ・ '+evCell+'</div></div>'
       +catSel
       +(_mlink?'<a class="btn bs sm" href="'+esc(_mlink)+'" target="_blank" rel="noopener" style="text-decoration:none" title="Googleマップで開く（'+esc(_modeTag)+'）">📍地図</a>':'')
       +'<button class="btn bs sm" onclick="editPlace(\''+esc(p.id)+'\')">編集</button>'
@@ -2866,11 +2866,12 @@ function assignPlaceEvent(pid, eid){
 function editPlace(pid){
   var p=_places.find(function(x){return x.id===pid;}); if(!p) return;
   var name=prompt('地点名', p.name||''); if(name==null) return;
+  var nameEn=prompt('英語名（英語スケジュール出力用。空欄可。例: El Pandillo Distillery）', p.nameEn||''); if(nameEn==null) return;
   var mapUrl=prompt('Google Map URL（@緯度,経度 を含むURL。空欄可）', p.mapUrl||''); if(mapUrl==null) return;
   var modeIn=prompt('地図の表示方法：name=名称で検索（既定） / coord=座標を固定', (p.mapMode==='coord')?'coord':'name'); if(modeIn==null) return;
   var mapMode=((modeIn||'').trim().toLowerCase()==='coord')?'coord':'name';
   var c=parseLatLng(mapUrl); var lat=c?c.lat:p.lat, lng=c?c.lng:p.lng;
-  db.collection('places').doc(pid).set({ name:(name||'').trim(), mapUrl:(mapUrl||'').trim(), mapMode:mapMode, lat:lat, lng:lng, updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
+  db.collection('places').doc(pid).set({ name:(name||'').trim(), nameEn:(nameEn||'').trim(), mapUrl:(mapUrl||'').trim(), mapMode:mapMode, lat:lat, lng:lng, updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
     .then(function(){ toast('更新しました'); renderPlaceMgr(); }).catch(function(e){ toast('更新失敗: '+e.message); });
 }
 function delPlace(pid){ if(!confirm('この場所を削除しますか？')) return; db.collection('places').doc(pid).delete().then(function(){ toast('削除しました'); renderPlaceMgr(); }).catch(function(e){ toast('削除失敗: '+e.message); }); }
@@ -3843,14 +3844,27 @@ function _schActText(it, lang){
   var cat=(_cats||[]).find(function(c){return c.id===it.category;});
   return (_SCH_CAT_EN[it.category]||(cat&&cat.name)||'Event');
 }
-function _schPlaceText(it){
-  var o=(it.placeName||'').trim();
-  if(it.isMove){ var d=(it.toName||'').trim(); if(o||d) return (o||'?')+' → '+(d||'?'); return ''; }
+// 場所名→英語名の対応表（場所マスタの nameEn を使用。現在イベントの場所を優先）
+function _schPlaceEnMap(){
+  var m={};
+  (_places||[]).forEach(function(p){
+    var nm=(p.name||'').trim(), en=(p.nameEn||'').trim();
+    if(!nm||!en) return;
+    if(p.eventId===_schEventId) m[nm]=en;           // 現在イベントの場所は上書き優先
+    else if(!(nm in m)) m[nm]=en;                     // 他イベント/未設定は補完のみ
+  });
+  return m;
+}
+function _schPlaceText(it, lang, enMap){
+  function tr(n){ n=(n||'').trim(); if(lang==='en'&&enMap&&enMap[n]) return enMap[n]; return n; }
+  var o=tr(it.placeName);
+  if(it.isMove){ var d=tr(it.toName); if(o||d) return (o||'?')+' → '+(d||'?'); return ''; }
   return o;
 }
 function _buildSchedText(lang){
   var ev=(events||[]).find(function(x){return x.id===_schEventId;});
   var evName=(ev&&ev.name)||'';
+  var enMap=(lang==='en')?_schPlaceEnMap():null;
   var enr=_sortByJst(_schItems||[]);
   var byDay={}, order=[];
   enr.forEach(function(e){ var d=e.it.date||''; if(!byDay[d]){ byDay[d]=[]; order.push(d); } byDay[d].push(e.it); });
@@ -3860,8 +3874,8 @@ function _buildSchedText(lang){
     L.push('');
     L.push('── '+_schDayText(d, lang)+' ──');
     byDay[d].forEach(function(it){
-      var tm=_schTimeRange(it), act=_schActText(it, lang), pl=_schPlaceText(it);
-      L.push((tm?tm+'  ':'')+(it.overnight?'(泊) ':'')+act);
+      var tm=_schTimeRange(it), act=_schActText(it, lang), pl=_schPlaceText(it, lang, enMap);
+      L.push((tm?tm+'  ':'')+(it.overnight?(lang==='en'?'(STAY) ':'(泊) '):'')+act);
       if(pl) L.push('    '+(lang==='en'?'Place: ':'場所: ')+pl);
     });
   });
