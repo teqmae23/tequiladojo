@@ -177,6 +177,17 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .pl-item .nm{flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--ink)}
 .pl-item .co{font-family:var(--mono);font-size:11px;color:var(--ink3)}
 .pl-item .co .pl-evsel{font-family:var(--sans);font-size:11px;padding:1px 4px;border:1px solid var(--border);border-radius:5px;background:var(--white);color:var(--ink2);max-width:62%;vertical-align:middle;margin-left:2px}
+/* 場所管理の一覧（インライン編集テーブル） */
+.pl-tblwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:var(--r);background:var(--white)}
+table.pl-tbl{border-collapse:collapse;width:100%;font-size:12px;min-width:920px}
+table.pl-tbl th,table.pl-tbl td{border:1px solid var(--border);padding:4px 5px;vertical-align:middle;text-align:left}
+table.pl-tbl th{background:var(--cream2);font-size:11px;color:var(--ink2);white-space:nowrap}
+table.pl-tbl input.pl-in,table.pl-tbl select.pl-in{width:100%;box-sizing:border-box;font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:var(--white);color:var(--ink);font-family:inherit}
+table.pl-tbl input.pl-in:focus,table.pl-tbl select.pl-in:focus{outline:none;border-color:var(--gold-d)}
+table.pl-tbl td.pl-co{font-family:var(--mono);font-size:10px;color:var(--ink3);white-space:nowrap;text-align:center}
+table.pl-tbl td.pl-act{white-space:nowrap;text-align:center}
+table.pl-tbl .pl-newrow td{background:#fbf7ee}
+table.pl-tbl col.c-name{width:18%}table.pl-tbl col.c-en{width:14%}table.pl-tbl col.c-addr{width:22%}table.pl-tbl col.c-url{width:16%}
 .se-ic{font-size:15px;flex:0 0 auto}
 .se-main{flex:1;min-width:0}
 .se-ttl{font-size:13px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:6px;min-width:0}
@@ -1012,10 +1023,10 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 
 <!-- 場所管理モーダル -->
 <div class="mbg" id="pl-mgr-modal">
-  <div class="modal">
+  <div class="modal" style="max-width:1120px;width:96vw">
     <div class="mhd"><span>📍 場所管理</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closePlaceMgr()">✕</button></div>
     <div class="mbd">
-      <div style="font-size:12px;color:var(--ink3);margin-bottom:8px">スケジュール項目に地点を登録すると自動でここに保存され、分類（蒸留所・レストラン等）は登録元の種別から自動振り分けされます。分類は各行のセレクトで手動変更できます。</div>
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:8px">一覧の各欄を直接編集し、行末の「💾」で保存します。最上段の行から新規追加できます。分類・イベントも各行で選択できます。地点名・英語名・住所・地図URLはスケジュールやテキスト／書類出力に反映されます。</div>
       <div id="pl-filter"></div>
       <div id="pl-list"><div class="ec">読み込み中…</div></div>
     </div>
@@ -2849,52 +2860,93 @@ function renderPlaceMgr(){ loadPlaces().then(renderPlaceList); }
 function _placeMapLink(p){
   return _mapLink(p.name, p.lat, p.lng, p.mapUrl, p.mapMode);
 }
+// 一覧（表）セル用のセレクト
+function _plModeSel(id, mode){
+  return '<select class="pl-in" id="pl-mode-'+id+'">'
+    +'<option value="name"'+(mode==='coord'?'':' selected')+'>名称</option>'
+    +'<option value="coord"'+(mode==='coord'?' selected':'')+'>座標固定</option></select>';
+}
+function _plCatSel(id, cat){
+  return '<select class="pl-in" id="pl-cat-'+id+'"><option value="">未分類</option>'
+    +_placeCats.map(function(c){ return '<option value="'+esc(c.k)+'"'+(cat===c.k?' selected':'')+'>'+esc(c.n)+'</option>'; }).join('')+'</select>';
+}
+function _plEvSel(id, eid){
+  return '<select class="pl-in" id="pl-ev-'+id+'"><option value="">（未設定）</option>'
+    +(events||[]).map(function(ev){ return '<option value="'+esc(ev.id)+'"'+(eid===ev.id?' selected':'')+'>'+esc(ev.name||ev.id)+'</option>'; }).join('')+'</select>';
+}
+function _plCoText(p){ return (p.lat!=null?(+p.lat).toFixed(5):'?')+','+(p.lng!=null?(+p.lng).toFixed(5):'?'); }
 function renderPlaceList(){
   _ensurePlaceFilterDefault();
   var box=g('pl-list'); if(!box) return;
   var list=_places.filter(_placeMatch);
-  box.innerHTML=list.length?list.map(function(p){
-    var catSel='<select class="plf-catsel" title="分類を変更" onchange="setPlaceCategory(\''+esc(p.id)+'\',this.value)">'
-      +'<option value=""'+(!p.category?' selected':'')+'>未分類</option>'
-      +_placeCats.map(function(c){ return '<option value="'+c.k+'"'+(p.category===c.k?' selected':'')+'>'+esc(c.n)+'</option>'; }).join('')+'</select>';
-    // イベントの割り当て（スタッフのみ・担当管理者はイベント固定のため読み取り表示）
-    var evCell=_coAdminMode
-      ? esc(_evName(p.eventId))
-      : '<select class="pl-evsel" title="イベントを割り当て" onchange="assignPlaceEvent(\''+esc(p.id)+'\',this.value)">'
-        +'<option value=""'+(!p.eventId?' selected':'')+'>（イベント未設定）</option>'
-        +(events||[]).map(function(ev){ return '<option value="'+esc(ev.id)+'"'+(p.eventId===ev.id?' selected':'')+'>'+esc(ev.name||ev.id)+'</option>'; }).join('')+'</select>';
+  // 新規フィルタが特定イベントなら新規行のイベント既定に採用
+  var defEv=(_placeEventFilter && _placeEventFilter.indexOf('__')!==0)?_placeEventFilter:'';
+  var head='<thead><tr>'
+    +'<th>地点名</th><th>英語名</th><th>住所</th><th>地図URL</th><th>表示</th><th>分類</th><th>イベント</th><th>座標</th><th>操作</th>'
+    +'</tr></thead>';
+  var newEvCell=_coAdminMode?esc(_evName(_coAdminEventId)):_plEvSel('new', defEv);
+  var newRow='<tr class="pl-newrow">'
+    +'<td><input class="pl-in" id="pl-new-name" placeholder="新規の地点名"></td>'
+    +'<td><input class="pl-in" id="pl-new-en" placeholder="English name"></td>'
+    +'<td><input class="pl-in" id="pl-new-addr" placeholder="住所"></td>'
+    +'<td><input class="pl-in" id="pl-new-url" placeholder="Google Map URL"></td>'
+    +'<td>'+_plModeSel('new','name')+'</td>'
+    +'<td>'+_plCatSel('new','')+'</td>'
+    +'<td>'+newEvCell+'</td>'
+    +'<td class="pl-co">—</td>'
+    +'<td class="pl-act"><button class="btn bs sm" onclick="addPlaceRow()">＋追加</button></td>'
+    +'</tr>';
+  var rows=list.map(function(p){
+    var id=esc(p.id);
+    var evCell=_coAdminMode?esc(_evName(p.eventId)):_plEvSel(id, p.eventId);
     var _mlink=_placeMapLink(p);
-    var _modeTag=(p.mapMode==='coord')?'座標固定':'名称検索';
-    return '<div class="pl-item"><div class="nm">'+esc(p.name||'（無題）')+(p.nameEn?'<span style="color:var(--ink2);font-weight:400;font-size:12px"> ／ '+esc(p.nameEn)+'</span>':'')+'<div class="co">'+esc((p.lat!=null?p.lat:'?')+', '+(p.lng!=null?p.lng:'?'))+' ・ '+esc(_modeTag)+' ・ '+evCell+'</div>'+(p.address?'<div class="co" style="color:var(--ink2)">📮 '+esc(p.address)+'</div>':'')+'</div>'
-      +catSel
-      +(_mlink?'<a class="btn bs sm" href="'+esc(_mlink)+'" target="_blank" rel="noopener" style="text-decoration:none" title="Googleマップで開く（'+esc(_modeTag)+'）">📍地図</a>':'')
-      +'<button class="btn bs sm" onclick="editPlace(\''+esc(p.id)+'\')">編集</button>'
-      +'<button class="rm" title="削除" onclick="delPlace(\''+esc(p.id)+'\')">×</button></div>';
-  }).join(''):'<div class="ec">該当する場所はありません（分類タブ・イベント選択の絞り込みを確認してください）。</div>';
+    var mapBtn=_mlink?'<a class="btn bs sm" href="'+esc(_mlink)+'" target="_blank" rel="noopener" style="text-decoration:none" title="Googleマップで開く">🗺</a> ':'';
+    return '<tr>'
+      +'<td><input class="pl-in" id="pl-name-'+id+'" value="'+esc(p.name||'')+'"></td>'
+      +'<td><input class="pl-in" id="pl-en-'+id+'" value="'+esc(p.nameEn||'')+'"></td>'
+      +'<td><input class="pl-in" id="pl-addr-'+id+'" value="'+esc(p.address||'')+'"></td>'
+      +'<td><input class="pl-in" id="pl-url-'+id+'" value="'+esc(p.mapUrl||'')+'"></td>'
+      +'<td>'+_plModeSel(id, p.mapMode)+'</td>'
+      +'<td>'+_plCatSel(id, p.category)+'</td>'
+      +'<td>'+evCell+'</td>'
+      +'<td class="pl-co" id="pl-co-'+id+'">'+esc(_plCoText(p))+'</td>'
+      +'<td class="pl-act">'+mapBtn+'<button class="btn bs sm" onclick="savePlaceRow(\''+id+'\')" title="この行を保存">💾</button> <button class="rm" title="削除" onclick="delPlace(\''+id+'\')">×</button></td>'
+      +'</tr>';
+  }).join('');
+  box.innerHTML='<div class="pl-tblwrap"><table class="pl-tbl"><colgroup><col class="c-name"><col class="c-en"><col class="c-addr"><col class="c-url"><col><col><col><col><col></colgroup>'+head+'<tbody>'+newRow+rows+'</tbody></table></div>'
+    +(list.length?'':'<div class="ec" style="margin-top:8px">該当する場所はありません（分類タブ・イベント選択の絞り込みを確認）。上段の行から新規追加できます。</div>');
 }
-function setPlaceCategory(pid, cat){
-  db.collection('places').doc(pid).set({ category:cat||'', updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
-    .then(function(){ var p=_places.find(function(x){return x.id===pid;}); if(p) p.category=cat||''; toast('分類を変更しました'); if(g('se-place-pick')){ g('se-place-pick').innerHTML=placeOptions(); } if(g('se-toplace-pick')){ g('se-toplace-pick').innerHTML=placeOptions(); } renderPlaceList(); })
-    .catch(function(e){ toast('変更失敗: '+e.message,'err'); });
-}
-// イベント未設定（または別イベント）の場所にイベントを割り当て（スタッフのみ）
-function assignPlaceEvent(pid, eid){
-  if(_coAdminMode) return; // 担当管理者は変更不可
-  db.collection('places').doc(pid).set({ eventId:eid||'', updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
-    .then(function(){ var p=_places.find(function(x){return x.id===pid;}); if(p) p.eventId=eid||''; toast(eid?'イベントを割り当てました':'イベント未設定にしました'); fillPlacePickers(); renderPlaceList(); })
-    .catch(function(e){ toast('割り当て失敗: '+e.message,'err'); });
-}
-function editPlace(pid){
+// 1行を保存（地点名・英語名・住所・地図URL・表示方法・分類・イベント）。座標はURLから再取得。
+function savePlaceRow(pid){
   var p=_places.find(function(x){return x.id===pid;}); if(!p) return;
-  var name=prompt('地点名', p.name||''); if(name==null) return;
-  var nameEn=prompt('英語名（英語スケジュール出力用。空欄可。例: El Pandillo Distillery）', p.nameEn||''); if(nameEn==null) return;
-  var address=prompt('住所（スケジュールに表示。空欄可）', p.address||''); if(address==null) return;
-  var mapUrl=prompt('Google Map URL（@緯度,経度 を含むURL。空欄可）', p.mapUrl||''); if(mapUrl==null) return;
-  var modeIn=prompt('地図の表示方法：name=名称で検索（既定） / coord=座標を固定', (p.mapMode==='coord')?'coord':'name'); if(modeIn==null) return;
-  var mapMode=((modeIn||'').trim().toLowerCase()==='coord')?'coord':'name';
+  var gv=function(k){ var e=g('pl-'+k+'-'+pid); return e?e.value:''; };
+  var name=(gv('name')||'').trim();
+  if(!name){ toast('地点名を入力してください','err'); return; }
+  var nameEn=(gv('en')||'').trim(), address=(gv('addr')||'').trim(), mapUrl=(gv('url')||'').trim();
+  var mapMode=(gv('mode')==='coord')?'coord':'name';
+  var cat=gv('cat')||'';
   var c=parseLatLng(mapUrl); var lat=c?c.lat:p.lat, lng=c?c.lng:p.lng;
-  db.collection('places').doc(pid).set({ name:(name||'').trim(), nameEn:(nameEn||'').trim(), address:(address||'').trim(), mapUrl:(mapUrl||'').trim(), mapMode:mapMode, lat:lat, lng:lng, updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
-    .then(function(){ toast('更新しました'); renderPlaceMgr(); }).catch(function(e){ toast('更新失敗: '+e.message); });
+  var data={ name:name, nameEn:nameEn, address:address, mapUrl:mapUrl, mapMode:mapMode, category:cat, lat:lat, lng:lng, updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
+  if(!_coAdminMode && g('pl-ev-'+pid)) data.eventId=g('pl-ev-'+pid).value||'';
+  db.collection('places').doc(pid).set(data,{merge:true}).then(function(){
+    Object.assign(p, data);
+    var co=g('pl-co-'+pid); if(co) co.textContent=_plCoText(p);
+    fillPlacePickers(); // 名称・分類をスケジュール側のピッカーに反映
+    toast('保存しました');
+  }).catch(function(e){ toast('保存失敗: '+e.message,'err'); });
+}
+// 新規行から場所を追加
+function addPlaceRow(){
+  var gv=function(k){ var e=g('pl-new-'+k); return e?e.value:''; };
+  var name=(gv('name')||'').trim();
+  if(!name){ toast('地点名を入力してください','err'); return; }
+  var nameEn=(gv('en')||'').trim(), address=(gv('addr')||'').trim(), mapUrl=(gv('url')||'').trim();
+  var mapMode=(g('pl-mode-new')&&g('pl-mode-new').value==='coord')?'coord':'name';
+  var cat=(g('pl-cat-new')?g('pl-cat-new').value:'')||'';
+  var eid=_coAdminMode?_coAdminEventId:(g('pl-ev-new')?g('pl-ev-new').value:'');
+  var c=parseLatLng(mapUrl); var lat=c?c.lat:null, lng=c?c.lng:null;
+  db.collection('places').add({ name:name, nameEn:nameEn, address:address, mapUrl:mapUrl, mapMode:mapMode, category:cat, eventId:eid||'', lat:lat, lng:lng, createdAt:firebase.firestore.FieldValue.serverTimestamp() })
+    .then(function(){ toast('追加しました'); return loadPlaces(); }).then(renderPlaceList).catch(function(e){ toast('追加失敗: '+e.message,'err'); });
 }
 function delPlace(pid){ if(!confirm('この場所を削除しますか？')) return; db.collection('places').doc(pid).delete().then(function(){ toast('削除しました'); renderPlaceMgr(); }).catch(function(e){ toast('削除失敗: '+e.message); }); }
 // 場所分類の編集（名前・並び順・追加・削除）
