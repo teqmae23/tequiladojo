@@ -1410,16 +1410,29 @@ function itemIcon(it){
   return catIcon(it.category);
 }
 function catBg(id){ var c=catById(id); return (c&&c.bg)?c.bg:'#f5f3ee'; }
-var _schedItems=[], _photosByItem={}, _tripTracks=[];
+var _schedItems=[], _photosByItem={}, _tripTracks=[], _placeAddrMap={};
 function phSort(a,b){ var ka=(a.takenAt||a.createdMs||0), kb=(b.takenAt||b.createdMs||0); return ka-kb; }
+// 項目の住所解決：まず場所マスタの住所、無ければ地図URLから抽出。
+function _itemAddr(name, mapUrl){
+  var nm=(name||'').trim();
+  if(nm && _placeAddrMap[nm]) return _placeAddrMap[nm];
+  return _addrFromGmapUrl(mapUrl, nm);
+}
 function loadSchedule(){
   var ref=db.collection('events').doc(eventId);
   Promise.all([
     ref.collection('scheduleItems').get(),
     ref.collection('photos').get().catch(function(){ return {docs:[]}; }),
     loadCats(),
-    ref.collection('tracks').get().catch(function(){ return {docs:[]}; }) // 旅の足跡（GPX軌跡）
+    ref.collection('tracks').get().catch(function(){ return {docs:[]}; }), // 旅の足跡（GPX軌跡）
+    db.collection('places').get().catch(function(){ return {docs:[]}; }) // 場所マスタ（住所表示用）
   ]).then(function(res){
+    _placeAddrMap={};
+    (res[4]&&res[4].docs?res[4].docs:[]).map(function(d){ return d.data()||{}; }).forEach(function(p){
+      var nm=(p.name||'').trim(), ad=(p.address||'').trim(); if(!nm||!ad) return;
+      if(p.eventId===eventId) _placeAddrMap[nm]=ad;          // 当該イベントの場所を優先
+      else if(!(nm in _placeAddrMap)) _placeAddrMap[nm]=ad;  // 他イベントは補完のみ
+    });
     _schedItems=res[0].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
     _normalizeMoveDest(_schedItems); // 移動の到着座標はGoogleマップURLを優先
     _schedItems.sort(function(a,b){ var ka=(a.date||'')+' '+(a.time||'99:99')+' '+_endMark(a)+' '+('00'+(a.seq||0)).slice(-3), kb=(b.date||'')+' '+(b.time||'99:99')+' '+_endMark(b)+' '+('00'+(b.seq||0)).slice(-3); return ka<kb?-1:1; });
@@ -2056,9 +2069,9 @@ function renderSchedItem(it, leg){
   // 住所（地図URLから抽出。位置を伏せる滞在中は非表示）
   var addrHtml='';
   if(!hideLoc){
-    var _ao=_addrFromGmapUrl(it.mapUrl, it.placeName);
+    var _ao=_itemAddr(it.placeName, it.mapUrl);
     if(it.isMove){
-      var _ad=_addrFromGmapUrl(it.toMapUrl, it.toName), _ap=[];
+      var _ad=_itemAddr(it.toName, it.toMapUrl), _ap=[];
       if(_ao) _ap.push(esc((it.placeName||'出発').trim())+'：'+esc(_ao));
       if(_ad) _ap.push(esc((it.toName||'到着').trim())+'：'+esc(_ad));
       if(_ap.length) addrHtml='<div class="sc-addr">📮 '+_ap.join('<br>📮 ')+'</div>';
