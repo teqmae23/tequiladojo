@@ -189,6 +189,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 #se-rosterpop .rp-host{display:flex;align-items:center;gap:8px;margin:5px 0}
 #se-rosterpop .rp-av{width:24px;height:24px;border-radius:50%;object-fit:cover;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;background:#5a4a30;color:#fff;font-size:10px;font-weight:700;text-transform:uppercase}
 .se-note-line{font-size:11px;color:var(--ink);line-height:1.5;margin-top:1px;white-space:pre-wrap}
+.se-addr-line{font-size:11px;color:var(--ink2);line-height:1.45;margin-top:1px}
 .se-cost{font-size:12px;color:var(--gold-d);font-weight:600;flex:0 0 auto}
 .cost-sec-t{font-size:13px;font-weight:700;color:var(--ink2);margin-bottom:6px}
 .cost-members{display:flex;flex-wrap:wrap;gap:8px}
@@ -2286,6 +2287,26 @@ function placeNameFromUrl(url){
   if(!m) return '';
   try{ return decodeURIComponent(m[1].replace(/\+/g,' ')).trim(); }catch(e){ return m[1].replace(/\+/g,' ').trim(); }
 }
+// Google Map URL から住所文字列を best-effort で抽出。
+//  place/<SEG> または q=/query=/destination= を復号し、座標や名称のみは住所とみなさない
+//  （カンマ区切りの住所要素を含む場合のみ返す）。nameHint と一致する先頭の名称は除去。
+function _addrFromGmapUrl(url, nameHint){
+  var s=String(url||'').trim(); if(!s) return '';
+  var seg='', m=s.match(/\/maps\/place\/([^\/@?]+)/);
+  if(m){ seg=m[1]; }
+  else { var q=s.match(/[?&](?:q|query|destination|daddr)=([^&]+)/); if(q) seg=q[1]; }
+  if(!seg) return '';
+  var dec=seg;
+  try{ dec=decodeURIComponent(seg.replace(/\+/g,' ')); }catch(e){ dec=seg.replace(/\+/g,' '); }
+  dec=dec.replace(/\s+/g,' ').trim();
+  if(!dec) return '';
+  if(/^[-\d.\s,]+$/.test(dec)) return '';              // 純粋な座標（lat,lng）
+  if(/\d+°\d+'[\d.]+"?\s*[NSEW]/.test(dec)) return '';  // 度分秒座標
+  if(dec.indexOf(',')<0) return '';                     // カンマ無し＝名称のみ（住所要素なし）
+  var nm=(nameHint||'').trim();
+  if(nm && dec.toLowerCase().indexOf((nm+',').toLowerCase())===0){ dec=dec.slice(nm.length+1).trim(); }
+  return dec;
+}
 function onMapUrl(urlId,latId,lngId,nameId){
   var url=g(urlId).value;
   var c=parseLatLng(url);
@@ -3450,6 +3471,16 @@ function renderSchedItemRow(it){
   if(it.showNames&&(it.nameParticipants||[]).length&&!it.spotOnly) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();showSchedNames(\''+esc(it.id)+'\',this)">👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名</span>');
   if(it.roomingEnabled&&(it.rooms||[]).length) markers.push('🛏部屋割り'+it.rooms.length);
   var noteHtml=it.note?'<div class="se-note-line">'+esc(it.note.slice(0,80))+(it.note.length>80?'…':'')+'</div>':'';
+  // 住所（地図URLから抽出。移動は出発地/目的地の両方）
+  var _addrO=_addrFromGmapUrl(it.mapUrl, it.placeName), addrHtml='';
+  if(it.isMove){
+    var _addrD=_addrFromGmapUrl(it.toMapUrl, it.toName), _ap=[];
+    if(_addrO) _ap.push(esc((it.placeName||'出発').trim())+'：'+esc(_addrO));
+    if(_addrD) _ap.push(esc((it.toName||'到着').trim())+'：'+esc(_addrD));
+    if(_ap.length) addrHtml='<div class="se-addr-line">📮 '+_ap.join('<br>📮 ')+'</div>';
+  } else if(_addrO){
+    addrHtml='<div class="se-addr-line">📮 '+esc(_addrO)+'</div>';
+  }
   var info=_schedCostInfo(it.id);
   var costHtml;
   if(info){
@@ -3481,7 +3512,7 @@ function renderSchedItemRow(it){
     +'</div>';
   return '<div class="se-item'+(it.overnight?' ov':'')+'" onclick="openSchedEd(\''+esc(it.id)+'\')" style="cursor:pointer;background:'+catBg(it.category)+'">'
     +timeHtml+'<span class="se-ic">'+ic+'</span>'
-    +'<div class="se-main"><div class="se-ttl"><span class="se-ttl-txt" onclick="showTitlePop(event,\''+esc(it.id)+'\')">'+(it.overnight?'(泊) ':'')+esc(it.title||'（無題）')+'</span>'+SchedGroups.badge(it,esc)+'</div>'+noteHtml+(markers.length?'<div class="se-sub">'+markers.join('　')+'</div>':'')+'</div>'
+    +'<div class="se-main"><div class="se-ttl"><span class="se-ttl-txt" onclick="showTitlePop(event,\''+esc(it.id)+'\')">'+(it.overnight?'(泊) ':'')+esc(it.title||'（無題）')+'</span>'+SchedGroups.badge(it,esc)+'</div>'+noteHtml+addrHtml+(markers.length?'<div class="se-sub">'+markers.join('　')+'</div>':'')+'</div>'
     +costHtml+cico+'</div>';
 }
 // ── 深夜対応（朝帰り）: 時刻は 0:00〜30:00（翌朝6時まで）を同一日付に格納できる ──
@@ -3877,6 +3908,14 @@ function _buildSchedText(lang){
       var tm=_schTimeRange(it), act=_schActText(it, lang), pl=_schPlaceText(it, lang, enMap);
       L.push((tm?tm+'  ':'')+(it.overnight?(lang==='en'?'(STAY) ':'(泊) '):'')+act);
       if(pl) L.push('    '+(lang==='en'?'Place: ':'場所: ')+pl);
+      var ao=_addrFromGmapUrl(it.mapUrl, it.placeName);
+      if(it.isMove){
+        var ad=_addrFromGmapUrl(it.toMapUrl, it.toName);
+        if(ao) L.push('    '+(lang==='en'?'Addr (from): ':'住所（発）: ')+ao);
+        if(ad) L.push('    '+(lang==='en'?'Addr (to): ':'住所（着）: ')+ad);
+      } else if(ao){
+        L.push('    '+(lang==='en'?'Addr: ':'住所: ')+ao);
+      }
     });
   });
   return L.join('\n').trim();
