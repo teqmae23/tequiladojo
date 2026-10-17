@@ -200,6 +200,9 @@ tr.okrow td{background:#eef7f1}
         <select id="f-abv"><option value="all">全件</option><option value="normal">通常(≤40%)</option><option value="hp">HP(≥41%)</option></select>
       </div>
       <div class="fg" id="fg-member"><span class="lbl">会員ID（注文者）</span><input type="text" id="f-member" placeholder="例: 260018 / 部分可"></div>
+      <div class="fg"><span class="lbl">蒸留所NOM</span><input type="text" id="f-nom" maxlength="6" placeholder="4桁 例:1123" style="width:92px"></div>
+      <div class="fg"><span class="lbl">ブランド</span><select id="f-brand"><option value="">全ブランド</option></select></div>
+      <div class="fg"><span class="lbl">銘柄</span><select id="f-bottle"><option value="">全銘柄</option></select></div>
       <div class="fg"><span class="lbl">&nbsp;</span><button class="btn" id="btn-reload">🔄 再読込</button></div>
     </div>
 
@@ -261,6 +264,7 @@ var BJRAX_COLOR={B:'#2a78d6',J:'#eb6834',R:'#1baf7a',A:'#eda100',X:'#e87ba4'};
 var _orders=[];        // orders 全件（生）
 var _bottles={};       // bottleData id → {classId,abv,price,bottleEs/En/Ja...}
 var _others={};        // otherBottles id → {bottleName,bottleEn,...}（他酒ベース解決用）
+var _brands={};        // brandId(7桁) → ブランドマスタ（絞り込みの名称表示用）
 var _sodaGroups={};    // orderGroupId → 1（ソーダ代が計上されているグループ＝オンライン奢りのソーダ指定）
 var _members={};       // id/memberId/realId/displayId → {name,disp}
 var _view='bottle';    // 'bottle' | 'member'
@@ -292,6 +296,31 @@ function nameOf(b, fallback){
   return fallback||'';
 }
 function nomOf(b){ return (b&&(b.nom||b.brandNom))||''; }
+// 蒸留所/ブランドの絞り込み用ヘルパー
+// ボトルマスタID(12桁)=brandId(7)+classId(2)+連番(3)。brandId(7)=蒸留所ID(4)+連番(3)。
+function _master12Of(bottleId, b){
+  if(/^\d{12}$/.test(String(bottleId))) return String(bottleId);
+  if(b && b.bottleId && /^\d{12}$/.test(String(b.bottleId))) return String(b.bottleId);
+  return '';
+}
+function _brandIdOf(bottleId, b){ var m=_master12Of(bottleId,b); return m?m.slice(0,7):''; }
+function _brandName(bid){ var b=_brands[bid]; return (b&&(b.brandEsBase||b.brandEs||b.brandEn||b.brandJaBase||b.brandJa||b.name))||bid; }
+// ブランド/銘柄の選択肢をデータから生成
+function populateDrinkFilters(){
+  var brands={}, bottles={};
+  _orders.forEach(function(o){
+    var r=resolveLine(o); if(!r) return;
+    var b=_bottles[r.bottleId];
+    var pid=masterKey(r.bottleId,b,r.pname);
+    if(!bottles[pid]) bottles[pid]={key:pid, name:nameOf(b, r.pname||pid)};
+    var bid=_brandIdOf(r.bottleId,b);
+    if(bid && !brands[bid]) brands[bid]={id:bid, name:_brandName(bid)};
+  });
+  var bArr=Object.keys(brands).map(function(k){return brands[k];}).sort(function(x,y){return String(x.name).localeCompare(String(y.name));});
+  var oArr=Object.keys(bottles).map(function(k){return bottles[k];}).sort(function(x,y){return String(x.name).localeCompare(String(y.name));});
+  var bs=g('f-brand'); if(bs){ var cb=bs.value; bs.innerHTML='<option value="">全ブランド</option>'+bArr.map(function(x){return '<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>';}).join(''); bs.value=cb; }
+  var os=g('f-bottle'); if(os){ var co=os.value; os.innerHTML='<option value="">全銘柄</option>'+oArr.map(function(x){return '<option value="'+esc(x.key)+'">'+esc(x.name)+'</option>';}).join(''); os.value=co; }
+}
 
 // orderDate は YYMMDD 文字列。date入力(YYYY-MM-DD)→YYMMDD へ変換して文字列比較
 function ymd6(s){ s=String(s||''); if(!s) return ''; return s.length>=10 ? s.slice(2).replace(/-/g,'') : s; }
@@ -374,7 +403,8 @@ function load(){
     _chunk(mIds).forEach(function(ck){ tasks.push(db.collection('bottles').where(firebase.firestore.FieldPath.documentId(),'in',ck).get().then(function(s){ s.docs.forEach(function(x){ _bottles[x.id]=x.data(); }); }).catch(function(){})); });
     tasks.push(loadMembers());
     tasks.push(db.collection('otherBottles').get().then(function(s){ s.docs.forEach(function(x){ _others[x.id]=x.data(); }); }).catch(function(){}));
-    return Promise.all(tasks).then(render);
+    tasks.push(db.collection('brands').get().then(function(s){ s.docs.forEach(function(x){ _brands[x.id]=x.data(); }); }).catch(function(){}));
+    return Promise.all(tasks).then(function(){ populateDrinkFilters(); render(); });
   }).catch(function(e){ g('rows').innerHTML='<tr><td colspan="10" class="empty">読み込みに失敗しました: '+esc(e.message)+'</td></tr>'; });
 }
 
@@ -396,7 +426,8 @@ function curFilters(){
   // 状態=常に提供済み / 注文種別=常に全件 / スタイル=常に両方 / ブラインド=常に含む（フィルタUIは廃止）
   return { statusMode:'served', sourceMode:'all', blindMode:'inc',
     abvMode:g('f-abv').value, styleMode:'all', cls:cls, allCls:(Object.keys(cls).length===5),
-    member:(_view==='member'?'':(g('f-member').value||'').trim()), from:ymd6(g('f-from').value), to:ymd6(g('f-to').value) };
+    member:(_view==='member'?'':(g('f-member').value||'').trim()), from:ymd6(g('f-from').value), to:ymd6(g('f-to').value),
+    nom:((g('f-nom')&&g('f-nom').value)||'').replace(/\D/g,''), brandId:((g('f-brand')&&g('f-brand').value)||''), bottleKey:((g('f-bottle')&&g('f-bottle').value)||'') };
 }
 // 1明細の判定: 対象外(null) / {bottleId,ml,isSoda,b,cl,abv,amt,counted,reason}
 function lineVerdict(o, F, opts){
@@ -425,6 +456,10 @@ function lineVerdict(o, F, opts){
     if(F.styleMode==='soda' && !r.isSoda){ v.reason='スタイル外(ストレート)'; return v; }
   }
   if(F.member && String(o.customerId||'').indexOf(F.member)<0){ v.reason='会員外'; return v; }
+  // 蒸留所NOM / ブランド / 銘柄 の絞り込み（指定時のみ）
+  if(F.nom){ if(String(nomOf(b)||'').replace(/\D/g,'')!==F.nom){ v.reason='NOM外'; return v; } }
+  if(F.brandId){ if(_brandIdOf(r.bottleId,b)!==F.brandId){ v.reason='ブランド外'; return v; } }
+  if(F.bottleKey){ if(pid!==F.bottleKey){ v.reason='銘柄外'; return v; } }
   if(!opts.skipDate){
     if(F.from && od<F.from){ v.reason='期間前'; return v; }
     if(F.to && od>F.to){ v.reason='期間後'; return v; }
@@ -1094,6 +1129,9 @@ g('f-bjrax').addEventListener('click',function(e){ var cb=e.target.closest('.cb'
 g('f-abv').addEventListener('change',render);
 ['f-from','f-to'].forEach(function(id){ g(id).addEventListener('change',render); });
 g('f-member').addEventListener('input',render);
+if(g('f-nom')) g('f-nom').addEventListener('input',render);
+if(g('f-brand')) g('f-brand').addEventListener('change',render);
+if(g('f-bottle')) g('f-bottle').addEventListener('change',render);
 g('btn-reload').addEventListener('click',load);
 
 /* ── 認証 ── */
