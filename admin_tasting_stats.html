@@ -304,6 +304,10 @@ function _master12Of(bottleId, b){
   return '';
 }
 function _brandIdOf(bottleId, b){ var m=_master12Of(bottleId,b); return m?m.slice(0,7):''; }
+// 蒸留所NOM = ボトルマスタID(12桁)の先頭4桁（distilleryId=NOM番号4桁。brandId7=蒸留所4+連番3）
+function _distNomOf(bottleId, b){ var m=_master12Of(bottleId,b); return m?m.slice(0,4):''; }
+// 銘柄フィルタのキー: ボトルマスタID(12桁)で束ねる。取れない個体は名称キーにフォールバック。
+function _bottleKey(bottleId, b, pname){ return _master12Of(bottleId,b) || masterKey(bottleId,b,pname); }
 function _brandName(bid){ var b=_brands[bid]; return (b&&(b.brandEsBase||b.brandEs||b.brandEn||b.brandJaBase||b.brandJa||b.name))||bid; }
 // ブランド/銘柄の選択肢をデータから生成
 function populateDrinkFilters(){
@@ -311,8 +315,8 @@ function populateDrinkFilters(){
   _orders.forEach(function(o){
     var r=resolveLine(o); if(!r) return;
     var b=_bottles[r.bottleId];
-    var pid=masterKey(r.bottleId,b,r.pname);
-    if(!bottles[pid]) bottles[pid]={key:pid, name:nameOf(b, r.pname||pid)};
+    var bkey=_bottleKey(r.bottleId,b,r.pname);
+    if(!bottles[bkey]) bottles[bkey]={key:bkey, name:nameOf(b, r.pname||bkey)};
     var bid=_brandIdOf(r.bottleId,b);
     if(bid && !brands[bid]) brands[bid]={id:bid, name:_brandName(bid)};
   });
@@ -457,9 +461,9 @@ function lineVerdict(o, F, opts){
   }
   if(F.member && String(o.customerId||'').indexOf(F.member)<0){ v.reason='会員外'; return v; }
   // 蒸留所NOM / ブランド / 銘柄 の絞り込み（指定時のみ）
-  if(F.nom){ if(String(nomOf(b)||'').replace(/\D/g,'')!==F.nom){ v.reason='NOM外'; return v; } }
+  if(F.nom){ if(_distNomOf(r.bottleId,b)!==F.nom){ v.reason='NOM外'; return v; } }
   if(F.brandId){ if(_brandIdOf(r.bottleId,b)!==F.brandId){ v.reason='ブランド外'; return v; } }
-  if(F.bottleKey){ if(pid!==F.bottleKey){ v.reason='銘柄外'; return v; } }
+  if(F.bottleKey){ if(_bottleKey(r.bottleId,b,r.pname)!==F.bottleKey){ v.reason='銘柄外'; return v; } }
   if(!opts.skipDate){
     if(F.from && od<F.from){ v.reason='期間前'; return v; }
     if(F.to && od>F.to){ v.reason='期間後'; return v; }
