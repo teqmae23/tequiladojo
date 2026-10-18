@@ -837,7 +837,7 @@ table.pl-tbl col.c-name{width:18%}table.pl-tbl col.c-en{width:14%}table.pl-tbl c
   <div class="modal" style="max-width:640px">
     <div class="mhd"><span id="sch-mgr-title">スケジュール</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeSchedMgr()">✕</button></div>
     <div class="mbd">
-      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm ca-only-hide" onclick="openCatMgr()">🏷 種別管理</button><button class="btn bs sm" onclick="openGpxImport()" title="GPSロガーのGPX/CSVを取り込み、2点間移動の実ルートを登録">🛰 GPXルート取込</button><button class="btn bs sm" onclick="openSchedTextOut()" title="スケジュールを日時・タイトル・場所のテキストで出力（日本語/英語）">📄 テキスト出力</button><a class="btn bs sm" id="sch-live-link" href="#" target="_blank" rel="noopener" style="text-decoration:none" title="イベント中の現在地をリアルタイム中継（スタッフ端末で実行）">🔴 ライブ中継</a><span class="cnt" id="sch-total"></span></div>
+      <div class="toolbar" style="margin-bottom:10px"><button class="btn bp sm" onclick="openSchedEd(null)">＋ 項目追加</button><button class="btn bs sm" onclick="openPlaceMgr()">📍 場所管理</button><button class="btn bs sm ca-only-hide" onclick="openCatMgr()">🏷 種別管理</button><button class="btn bs sm" onclick="openGpxImport()" title="GPSロガーのGPX/CSVを取り込み、2点間移動の実ルートを登録">🛰 GPXルート取込</button><button class="btn bs sm" onclick="openTransitImport()" title="乗換案内のテキストを貼り付けて、乗車ごとの2点間移動を一括登録（駅は場所マスタへ座標付きで登録）">🚃 乗換案内取込</button><button class="btn bs sm" onclick="openSchedTextOut()" title="スケジュールを日時・タイトル・場所のテキストで出力（日本語/英語）">📄 テキスト出力</button><a class="btn bs sm" id="sch-live-link" href="#" target="_blank" rel="noopener" style="text-decoration:none" title="イベント中の現在地をリアルタイム中継（スタッフ端末で実行）">🔴 ライブ中継</a><span class="cnt" id="sch-total"></span></div>
       <div id="sch-list"><div class="ec">読み込み中…</div></div>
     </div>
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeSchedMgr()">閉じる</button></div>
@@ -897,6 +897,24 @@ table.pl-tbl col.c-name{width:18%}table.pl-tbl col.c-en{width:14%}table.pl-tbl c
       <div id="rte-err" style="color:var(--red);font-size:12px;min-height:14px"></div>
     </div>
     <div class="mft"><button class="btn bs sm" style="color:var(--red);border-color:var(--red)" onclick="_rteClearRoute()">この移動のルート消去</button><div style="flex:1"></div><button class="btn bs" onclick="closeRouteEdit()">キャンセル</button><button class="btn bp" onclick="_rteSave()">保存</button></div>
+  </div>
+</div>
+
+<!-- 乗換案内 取込モーダル -->
+<div class="mbg" id="transit-modal" style="z-index:310">
+  <div class="modal" style="max-width:680px">
+    <div class="mhd"><span>🚃 乗換案内から取込</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeTransitImport()">✕</button></div>
+    <div class="mbd">
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:6px;line-height:1.6">乗換案内アプリの結果テキストを貼り付けて「解析」。<b>乗車ごと</b>（直通の「降車不要」は結合）に2点間移動を作ります。各駅は<b>場所マスタへ座標付きで自動登録</b>（座標はOpenStreetMapで駅名検索。取得できない駅は座標なしで登録）。</div>
+      <textarea id="transit-text" rows="8" style="width:100%;box-sizing:border-box;font-family:var(--mono);font-size:12px" placeholder="乗換案内の結果テキストを貼り付け"></textarea>
+      <div class="row2" style="margin-top:6px">
+        <div class="fg"><label class="fl">年（日付補完用）</label><input class="fi" id="transit-year" type="number" style="max-width:110px"></div>
+        <div class="fg" style="display:flex;align-items:flex-end"><button class="btn bs sm" onclick="parseTransitPreview()">🔎 解析＆座標取得</button></div>
+      </div>
+      <div id="transit-prev" style="margin-top:6px"></div>
+      <div id="transit-err" style="color:var(--red);font-size:12px;min-height:14px;margin-top:4px"></div>
+    </div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeTransitImport()">キャンセル</button><button class="btn bp" id="transit-add" onclick="doTransitImport()" disabled>スケジュールに追加</button></div>
   </div>
 </div>
 
@@ -4151,6 +4169,130 @@ function _rteClearRoute(){
 }
 g('rte-gap-m').addEventListener('change',function(){ _rteRedraw(); });
 g('rte-modal').addEventListener('click',function(e){ if(e.target===g('rte-modal')) closeRouteEdit(); });
+
+// ── 乗換案内テキストから乗車ごとの2点間移動を取込（駅は場所マスタへ座標付き自動登録） ──
+var _transitRides=[], _transitGeo={};
+function openTransitImport(){
+  if(!_schEventId){ toast('先にイベントのスケジュールを開いてください','err'); return; }
+  g('transit-text').value=''; g('transit-prev').innerHTML=''; g('transit-err').textContent=''; g('transit-add').disabled=true;
+  _transitRides=[]; _transitGeo={};
+  var ev=(events||[]).find(function(x){return x.id===_schEventId;});
+  var y=(ev&&ev.startDate&&String(ev.startDate).slice(0,4))||String(new Date().getFullYear());
+  g('transit-year').value=y;
+  g('transit-modal').classList.add('open');
+}
+function closeTransitImport(){ g('transit-modal').classList.remove('open'); }
+g('transit-modal').addEventListener('click',function(e){ if(e.target===g('transit-modal')) closeTransitImport(); });
+function _transitMode(kind, line){
+  var s=(kind||'')+' '+(line||'');
+  if(/新幹線/.test(s)) return 'shinkansen';
+  if(/飛行機|空路|航空|ＡＮＡ|ＪＡＬ|ANA|JAL/.test(s)) return 'flight';
+  if(/高速バス|バス/.test(s)) return 'bus';
+  if(/フェリー|船|航路/.test(s)) return 'shuttle';
+  if(/徒歩|歩いて/.test(s)) return 'walk';
+  return 'train'; // 地下鉄/私鉄/JR在来線など
+}
+function parseTransit(text, year){
+  var y=parseInt(year,10)||new Date().getFullYear();
+  var lines=String(text||'').replace(/\r/g,'').split('\n').map(function(s){ return s.replace(/　/g,' ').replace(/\s+/g,' ').trim(); }).filter(function(s){return s;});
+  function mkDate(mmdd){ var m=mmdd.match(/(\d{1,2})\/(\d{1,2})/); if(!m) return null; return y+'-'+('0'+m[1]).slice(-2)+'-'+('0'+m[2]).slice(-2); }
+  var rides=[], ride=null, curDate=null, headerDate=null;
+  lines.forEach(function(ln){
+    var dh=ln.match(/^\[(\d{1,2}\/\d{1,2})\]$/) || ln.match(/^(\d{1,2}\/\d{1,2})\s*\([^)]*\)/);
+    if(dh){ var d=mkDate(dh[1]); if(d){ curDate=d; if(!headerDate) headerDate=d; } return; }
+    var dep=ln.match(/^(\d{1,2}:\d{2})発\s+(\S+)/);
+    if(dep){ if(ride==null){ ride={ date:(curDate||headerDate), from:dep[2], fromTime:dep[1], to:null, toTime:null, lines:[], fares:[], mode:'' }; } return; }
+    var arr=ln.match(/^(\d{1,2}:\d{2})着\s+(\S+)/);
+    if(arr){ if(ride){ ride.to=arr[2]; ride.toTime=arr[1]; } return; }
+    var lm=ln.match(/^［(.+?)］(.+)$/) || ln.match(/^\[([^\]]+?)\](.+\S線.*)$/);
+    if(lm && ride){ ride.lines.push({kind:lm[1], line:lm[2]}); if(!ride.mode) ride.mode=_transitMode(lm[1], lm[2]); return; }
+    var fm=ln.match(/運賃[:：]\s*(.+)$/);
+    if(fm && ride){ ride.fares.push(fm[1]); return; }
+    if(/降車不要/.test(ln)) return;                 // 直通＝区間を結合（rideは閉じない）
+    if(/乗換\s*\d*\s*分?/.test(ln)){ if(ride){ rides.push(ride); ride=null; } return; } // 乗換＝区間を確定
+  });
+  if(ride) rides.push(ride);
+  return rides.filter(function(r){ return r.from && r.to && r.fromTime && r.toTime; });
+}
+function _transitNote(r){
+  var parts=(r.lines||[]).map(function(l){ return l.kind+' '+l.line; });
+  if(r.fares&&r.fares.length) parts.push('運賃: '+r.fares.join(' / '));
+  return parts.join('\n');
+}
+function _geocodeStation(name){
+  if(_transitGeo[name]!==undefined) return Promise.resolve(_transitGeo[name]);
+  var q=encodeURIComponent(String(name).trim()+'駅');
+  return fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=jp&accept-language=ja&q='+q)
+    .then(function(r){ return r.json(); })
+    .then(function(a){ var g=(a&&a.length)?{lat:Math.round(parseFloat(a[0].lat)*1e6)/1e6, lng:Math.round(parseFloat(a[0].lon)*1e6)/1e6}:null; _transitGeo[name]=g; return g; })
+    .catch(function(){ _transitGeo[name]=null; return null; });
+}
+var _TRMODE_JA={train:'🚃 鉄道',shinkansen:'🚄 新幹線',bus:'🚌 バス',shuttle:'⛴️ 船',walk:'🚶 徒歩',flight:'✈️ 空路'};
+function renderTransitPreview(){
+  var rows=_transitRides.map(function(r,i){
+    var ln=(r.lines||[]).map(function(l){return esc(l.line);}).join(' → ');
+    function co(nm){ var gg=_transitGeo[nm]; if(gg===undefined) return '<span id="tg-'+i+'" style="color:var(--ink3)">…</span>'; return gg?'<span style="color:var(--teal)">✓</span>':'<span style="color:var(--red)">座標×</span>'; }
+    return '<tr><td>'+(i+1)+'</td><td style="white-space:nowrap">'+esc(r.fromTime)+'→'+esc(r.toTime)+'<br><span style="font-size:10px;color:var(--ink3)">'+esc(r.date||'')+'</span></td>'
+      +'<td>'+esc(r.from)+' '+co(r.from)+'<br>→ '+esc(r.to)+' '+co(r.to)+'</td>'
+      +'<td style="white-space:nowrap">'+esc(_TRMODE_JA[r.mode]||r.mode)+'</td><td style="font-size:11px">'+ln+'</td></tr>';
+  }).join('');
+  g('transit-prev').innerHTML=_transitRides.length
+    ? '<div style="font-size:12px;color:var(--ink2);margin-bottom:4px">'+_transitRides.length+'件の移動を作成します（✓=座標取得済）</div><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px" class="tr-prev"><thead><tr><th>#</th><th>時刻</th><th>区間</th><th>手段</th><th>路線</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    : '<div class="ec">解析できる移動がありませんでした。テキストをご確認ください。</div>';
+}
+function parseTransitPreview(){
+  g('transit-err').textContent='';
+  _transitRides=parseTransit(g('transit-text').value, g('transit-year').value);
+  if(!_transitRides.length){ renderTransitPreview(); g('transit-add').disabled=true; return; }
+  renderTransitPreview();
+  // 駅の座標を順次取得（Nominatim: 1秒1件のレート制限を尊重）
+  var stations={}; _transitRides.forEach(function(r){ stations[r.from]=1; stations[r.to]=1; });
+  var names=Object.keys(stations).filter(function(n){ return _transitGeo[n]===undefined; });
+  g('transit-add').disabled=true;
+  var seq=Promise.resolve();
+  names.forEach(function(nm){ seq=seq.then(function(){ return _geocodeStation(nm).then(function(){ renderTransitPreview(); return new Promise(function(res){ setTimeout(res,1200); }); }); }); });
+  seq.then(function(){ renderTransitPreview(); g('transit-add').disabled=false; });
+}
+function _ensureStationPlace(name, geo){
+  var nm=(name||'').trim(); if(!nm) return Promise.resolve();
+  var ex=(_places||[]).find(function(p){ return p.eventId===_schEventId && (p.name||'').trim()===nm; });
+  if(ex){ if(geo && (ex.lat==null||ex.lng==null)){ return db.collection('places').doc(ex.id).set({lat:geo.lat,lng:geo.lng},{merge:true}).then(function(){ ex.lat=geo.lat; ex.lng=geo.lng; }); } return Promise.resolve(); }
+  var data={ name:nm, mapMode:'name', mapUrl:'', eventId:_schEventId, category:'transit', createdAt:firebase.firestore.FieldValue.serverTimestamp() };
+  if(geo){ data.lat=geo.lat; data.lng=geo.lng; }
+  return db.collection('places').add(data).then(function(ref){ (_places||[]).push(Object.assign({id:ref.id}, data)); });
+}
+function doTransitImport(){
+  if(!_transitRides||!_transitRides.length){ return; }
+  g('transit-add').disabled=true; g('transit-err').textContent='';
+  var FV=firebase.firestore.FieldValue;
+  var stations={}; _transitRides.forEach(function(r){ stations[r.from]=1; stations[r.to]=1; });
+  var names=Object.keys(stations);
+  loadPlaces().then(function(){
+    var seq=Promise.resolve();
+    names.forEach(function(nm){ seq=seq.then(function(){ return _ensureStationPlace(nm, _transitGeo[nm]||null); }); });
+    return seq;
+  }).then(function(){
+    var seq=Promise.resolve(), added=0, baseSeq=_schItems.length;
+    _transitRides.forEach(function(r, idx){ seq=seq.then(function(){
+      var fg=_transitGeo[r.from]||{}, tg=_transitGeo[r.to]||{};
+      var data={ date:r.date||'', time:r.fromTime||'', endTime:'', category:'move',
+        cost:'', costCurrency:'', costAmount:null, costJpy:null,
+        title:(r.from||'')+' → '+(r.to||''), note:_transitNote(r), linkUrl:'', photos:[],
+        mapUrl:'', lat:(fg.lat!=null?fg.lat:null), lng:(fg.lng!=null?fg.lng:null), placeName:r.from||'', mapMode:'name',
+        isMove:true, toTime:r.toTime||'', toMapUrl:'', toLat:(tg.lat!=null?tg.lat:null), toLng:(tg.lng!=null?tg.lng:null), toName:r.to||'', toMapMode:'name',
+        travelMode:r.mode||'train',
+        overnight:false, hideUntilDone:false, showNames:false, spotOnly:false, nameLabel:'', nameParticipants:[],
+        roomingEnabled:false, hotelName:'', useBuildings:false, buildings:[], rooms:[],
+        group:1, groupOp:'', groupFrom:null, groupTo:null, groupMembers:[],
+        createdAt:FV.serverTimestamp(), updatedAt:FV.serverTimestamp(), seq:baseSeq+idx };
+      if(data.date) _schExpandedDays[data.date]=true;
+      return schCol(_schEventId).add(data).then(function(){ added++; });
+    }); });
+    return seq.then(function(){ return added; });
+  }).then(function(added){
+    toast(added+'件の移動を追加しました'); closeTransitImport(); if(typeof loadSchedItems==='function') loadSchedItems();
+  }).catch(function(e){ g('transit-add').disabled=false; g('transit-err').textContent='追加失敗: '+(e&&e.message||e); });
+}
 
 var _schExpandedDays={}; // 展開中の日付を記憶（追加・編集後も維持）
 function toggleDay(idx, date){ var b=g('se-day-body-'+idx), c=g('se-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▶':'▼'; _schExpandedDays[date]=!open; }
