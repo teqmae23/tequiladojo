@@ -880,6 +880,26 @@ table.pl-tbl col.c-name{width:18%}table.pl-tbl col.c-en{width:14%}table.pl-tbl c
   </div>
 </div>
 
+<!-- 移動ルート 手動補完モーダル -->
+<div class="mbg" id="rte-modal" style="z-index:310">
+  <div class="modal" style="max-width:640px">
+    <div class="mhd"><span>🛤 ルート手動補完: <span id="rte-title"></span></span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeRouteEdit()">✕</button></div>
+    <div class="mbd">
+      <div style="font-size:11px;color:var(--ink3);margin-bottom:6px;line-height:1.6">赤い破線＝GPSが大きく飛んだ区間（欠落）。<b>地図をクリックで補完点を追加</b>（ドラッグで微調整／点をクリックで時刻入力・削除）。ルートが無い移動は出発→到着の直線から始まります。</div>
+      <div id="rte-map" style="height:300px;border:1px solid var(--border2);border-radius:8px;z-index:0"></div>
+      <div style="font-size:12px;color:var(--ink2);margin-top:6px">欠落しきい値 <input class="fi" id="rte-gap-m" type="number" value="200" style="max-width:90px;display:inline-block"> m ／ 追加点 <b id="rte-added-n">0</b> ／ 全 <b id="rte-total-n">0</b> 点</div>
+      <div class="row2" style="margin-top:4px">
+        <div class="fg"><label class="fl">始点時刻（任意）</label><input class="fi" id="rte-t0" type="datetime-local"></div>
+        <div class="fg"><label class="fl">終点時刻（任意）</label><input class="fi" id="rte-t1" type="datetime-local"></div>
+        <div class="fg" style="display:flex;align-items:flex-end"><button type="button" class="btn bs sm" onclick="_rteInterp()">時刻を按分</button></div>
+      </div>
+      <div style="font-size:11px;color:var(--ink3)">※時刻は任意。按分＝始点/終点やGPS時刻の間を、線分の長さで補完点に割り振ります。</div>
+      <div id="rte-err" style="color:var(--red);font-size:12px;min-height:14px"></div>
+    </div>
+    <div class="mft"><button class="btn bs sm" style="color:var(--red);border-color:var(--red)" onclick="_rteClearRoute()">この移動のルート消去</button><div style="flex:1"></div><button class="btn bs" onclick="closeRouteEdit()">キャンセル</button><button class="btn bp" onclick="_rteSave()">保存</button></div>
+  </div>
+</div>
+
 <!-- 実時間(CI/CO) 変更・消去モーダル -->
 <div class="mbg" id="act-modal" style="z-index:300">
   <div class="modal" style="max-width:360px">
@@ -3650,6 +3670,7 @@ function renderSchedItemRow(it){
   var _fl=_isFlightItem(it);
   var _mp=_siMap(it); if(_mp) markers.push('<a class="se-maplink" href="'+esc(_mp)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍地図</a>');
   var _rl=_siRoute(it); if(_rl) markers.push('<a class="se-maplink" href="'+esc(_rl)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+(_fl?'✈️ルート':'🚗ルート')+'</a>');
+  if(it.isMove) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();openRouteEdit(\''+esc(it.id)+'\')" title="実ルートを地図で手動補完"><span style="color:var(--teal)">🛤補完</span>'+(Array.isArray(it.track)&&it.track.length?'('+it.track.length+')':'')+'</span>');
   if(it.hideUntilDone) markers.push('🙈完了後公開');
   // 合流/離脱（クリックで名前ポップアップ）
   if(it.showNames&&(it.nameParticipants||[]).length&&!it.spotOnly) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();showSchedNames(\''+esc(it.id)+'\',this)">👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名</span>');
@@ -4025,6 +4046,111 @@ function clearAllTracks(){
     .catch(function(e){ toast('消去失敗: '+e.message,'err'); });
 }
 g('gpx-modal').addEventListener('click',function(e){ if(e.target===g('gpx-modal')) closeGpxImport(); });
+
+// ── 移動ルートの手動補完エディタ（地図クリックで補完点を追加・時刻は手動/按分） ──
+var _rteMap=null, _rteId=null, _rtePts=[], _rteLayers=[];
+function _rteHaver(a,b){ var R=6371000,r=Math.PI/180,dLat=(b.lat-a.lat)*r,dLng=(b.lng-a.lng)*r,la=a.lat*r,lb=b.lat*r; var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(la)*Math.cos(lb)*Math.sin(dLng/2)*Math.sin(dLng/2); return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x)); }
+function _rteToInput(ms){ if(ms==null) return ''; var d=new Date(ms); function p(n){return('0'+n).slice(-2);} return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
+function _rteFromInput(s){ if(!s) return null; var t=Date.parse(s); return isNaN(t)?null:t; }
+function _rteMapEnsure(){ var el=g('rte-map'); if(!el||!window.L) return null; if(!_rteMap){ _rteMap=L.map(el); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OSM'}).addTo(_rteMap); _rteMap.on('click',function(e){ if(_rteId!=null) _rteAddPoint(e.latlng); }); } setTimeout(function(){ try{_rteMap.invalidateSize();}catch(e){} },90); return _rteMap; }
+function openRouteEdit(itemId){
+  var it=_schItems.find(function(x){return x.id===itemId;}); if(!it){ return; }
+  if(!it.isMove){ toast('2点間移動のみルート補完できます','err'); return; }
+  var src=(Array.isArray(it.track)&&it.track.length>=2)?it.track:null;
+  if(!src){
+    if(it.lat!=null&&it.lng!=null&&it.toLat!=null&&it.toLng!=null) src=[[it.lat,it.lng],[it.toLat,it.toLng]];
+    else { toast('出発地・到着地の座標が無いため直線を作れません','err'); return; }
+  }
+  _rteId=itemId;
+  _rtePts=src.map(function(p){ return {lat:+p[0], lng:+p[1], t:(p[2]!=null?+p[2]:null), added:false}; }).filter(function(p){ return isFinite(p.lat)&&isFinite(p.lng); });
+  g('rte-title').textContent=((it.placeName||'出発')+' → '+(it.toName||'到着'));
+  g('rte-err').textContent='';
+  var w=(typeof _moveWindow==='function')?(_moveWindow(it)||{}):{};
+  g('rte-t0').value=_rteToInput(_rtePts[0].t!=null?_rtePts[0].t:(w.s!=null?w.s:null));
+  g('rte-t1').value=_rteToInput((_rtePts.length&&_rtePts[_rtePts.length-1].t!=null)?_rtePts[_rtePts.length-1].t:(w.e!=null?w.e:null));
+  g('rte-modal').classList.add('open');
+  _rteMapEnsure();
+  _rteRedraw(true);
+}
+function closeRouteEdit(){ _rteId=null; _rtePts=[]; _rteClearLayers(); g('rte-modal').classList.remove('open'); }
+function _rteClearLayers(){ if(!_rteMap) return; _rteLayers.forEach(function(l){ try{_rteMap.removeLayer(l);}catch(e){} }); _rteLayers=[]; }
+function _rteGapM(){ return Math.max(20, parseInt(g('rte-gap-m').value,10)||200); }
+function _rteRedraw(fit){
+  if(!_rteMap||_rteId==null) return;
+  _rteClearLayers();
+  var gapM=_rteGapM(), pts=_rtePts, bounds=[];
+  for(var i=0;i<pts.length-1;i++){
+    var a=pts[i], b=pts[i+1], far=_rteHaver(a,b)>gapM;
+    _rteLayers.push(L.polyline([[a.lat,a.lng],[b.lat,b.lng]], far?{color:'#d11',weight:2,dashArray:'6,6'}:{color:'#2563eb',weight:3,opacity:.65}).addTo(_rteMap));
+  }
+  pts.forEach(function(p,idx){ bounds.push([p.lat,p.lng]);
+    if(p.added){
+      var mk=L.marker([p.lat,p.lng],{draggable:true,title:'補完点'+(p.t!=null?('／'+_gpxFmt(p.t)):'')}).addTo(_rteMap);
+      mk.on('dragend',function(e){ var ll=e.target.getLatLng(); p.lat=ll.lat; p.lng=ll.lng; _rteRedraw(); });
+      mk.on('click',function(ev){ if(ev&&ev.originalEvent){ L.DomEvent.stop(ev.originalEvent); } _rtePointMenu(idx); });
+      _rteLayers.push(mk);
+    } else if(idx===0 || idx===pts.length-1 || (_rteHaver(pts[idx-1],p)>gapM) || (idx<pts.length-1 && _rteHaver(p,pts[idx+1])>gapM)){
+      _rteLayers.push(L.circleMarker([p.lat,p.lng],{radius:4,color:(idx===0||idx===pts.length-1)?'#2563eb':'#d11',fillColor:'#fff',fillOpacity:1,weight:2}).addTo(_rteMap));
+    }
+  });
+  var an=g('rte-added-n'); if(an) an.textContent=pts.filter(function(p){return p.added;}).length;
+  var tn=g('rte-total-n'); if(tn) tn.textContent=pts.length;
+  if(fit && bounds.length){ try{ _rteMap.fitBounds(bounds,{padding:[30,30],maxZoom:16}); }catch(e){} }
+}
+function _rteNearestInsertIdx(latlng){
+  if(_rtePts.length<2) return _rtePts.length;
+  var cp=_rteMap.latLngToLayerPoint(latlng), best=Infinity, bi=_rtePts.length;
+  for(var i=0;i<_rtePts.length-1;i++){
+    var ap=_rteMap.latLngToLayerPoint([_rtePts[i].lat,_rtePts[i].lng]), bp=_rteMap.latLngToLayerPoint([_rtePts[i+1].lat,_rtePts[i+1].lng]);
+    var cl=L.LineUtil.closestPointOnSegment(cp,ap,bp), d=cp.distanceTo(cl);
+    if(d<best){ best=d; bi=i+1; }
+  }
+  return bi;
+}
+function _rteAddPoint(latlng){ if(_rteId==null) return; var idx=_rteNearestInsertIdx(latlng); _rtePts.splice(idx,0,{lat:latlng.lat,lng:latlng.lng,t:null,added:true}); _rteRedraw(); }
+function _rtePointMenu(idx){
+  var p=_rtePts[idx]; if(!p) return;
+  var s=prompt('補完点の時刻（空欄可・形式 '+_rteToInput(Date.now())+'）。この点を削除する場合は「削除」:', p.t!=null?_rteToInput(p.t):'');
+  if(s==null) return;
+  if(s.trim()==='削除'){ _rtePts.splice(idx,1); _rteRedraw(); return; }
+  p.t=_rteFromInput(s.trim()); _rteRedraw();
+}
+function _rteInterp(){
+  if(_rtePts.length<2){ g('rte-err').textContent='点が不足しています'; return; }
+  var t0=_rteFromInput(g('rte-t0').value), t1=_rteFromInput(g('rte-t1').value);
+  if(t0!=null) _rtePts[0].t=t0;
+  if(t1!=null) _rtePts[_rtePts.length-1].t=t1;
+  var anchors=[]; _rtePts.forEach(function(p,i){ if(p.t!=null) anchors.push(i); });
+  if(anchors.length<2){ g('rte-err').textContent='始点・終点の時刻を入力してから按分してください'; return; }
+  g('rte-err').textContent='';
+  for(var a=0;a<anchors.length-1;a++){
+    var i=anchors[a], j=anchors[a+1]; if(j<=i+1) continue;
+    var cum=[0]; for(var k=i;k<j;k++){ cum.push(cum[cum.length-1]+_rteHaver(_rtePts[k],_rtePts[k+1])); }
+    var total=cum[cum.length-1], ti=_rtePts[i].t, tj=_rtePts[j].t;
+    for(var k2=i+1;k2<j;k2++){ if(_rtePts[k2].t==null){ var f=total>0?(cum[k2-i]/total):0; _rtePts[k2].t=Math.round(ti+(tj-ti)*f); } }
+  }
+  _rteRedraw(); toast('時刻を按分しました');
+}
+function _rteSave(){
+  if(_rteId==null) return;
+  if(_rtePts.length<2){ g('rte-err').textContent='点が不足しています'; return; }
+  var pts=_rtePts.map(function(p){ var la=Math.round(p.lat*1e6)/1e6, ln=Math.round(p.lng*1e6)/1e6; return (p.t!=null)?[la,ln,p.t]:[la,ln]; });
+  var dist=(typeof _trackDistKm==='function')?_trackDistKm(pts):0;
+  var FV=firebase.firestore.FieldValue;
+  schCol(_schEventId).doc(_rteId).update({ track:pts, trackPts:pts.length, trackDistKm:Math.round(dist*100)/100, trackSrc:'manual', trackAt:FV.serverTimestamp() })
+    .then(function(){ var it=_schItems.find(function(x){return x.id===_rteId;}); if(it){ it.track=pts; it.trackPts=pts.length; it.trackDistKm=Math.round(dist*100)/100; } toast('ルートを保存しました（'+pts.length+'点）'); closeRouteEdit(); renderSchedList(); })
+    .catch(function(e){ g('rte-err').textContent='保存失敗: '+(e&&e.message||e); });
+}
+function _rteClearRoute(){
+  if(_rteId==null) return;
+  if(!confirm('この移動の実ルートを消去しますか？（予定の直線表示に戻ります）')) return;
+  var FV=firebase.firestore.FieldValue;
+  schCol(_schEventId).doc(_rteId).update({ track:FV.delete(), trackPts:FV.delete(), trackDistKm:FV.delete(), trackSrc:FV.delete(), trackAt:FV.delete() })
+    .then(function(){ var it=_schItems.find(function(x){return x.id===_rteId;}); if(it){ delete it.track; delete it.trackPts; delete it.trackDistKm; } toast('ルートを消去しました'); closeRouteEdit(); renderSchedList(); })
+    .catch(function(e){ g('rte-err').textContent='消去失敗: '+(e&&e.message||e); });
+}
+g('rte-gap-m').addEventListener('change',function(){ _rteRedraw(); });
+g('rte-modal').addEventListener('click',function(e){ if(e.target===g('rte-modal')) closeRouteEdit(); });
 
 var _schExpandedDays={}; // 展開中の日付を記憶（追加・編集後も維持）
 function toggleDay(idx, date){ var b=g('se-day-body-'+idx), c=g('se-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▶':'▼'; _schExpandedDays[date]=!open; }
