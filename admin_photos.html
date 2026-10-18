@@ -167,6 +167,14 @@ input,select{font-family:var(--sans)}
         </div>
       </div>
       <div id="track-list" style="margin-top:8px;display:flex;flex-direction:column;gap:4px"></div>
+      <div id="trk-edit" style="display:none;margin-top:8px;border-top:1px dashed var(--border2);padding-top:8px">
+        <div class="gpxsub">✏️ 欠落補完: <b id="trk-edit-name"></b></div>
+        <div class="gpxrow gpxinfo">赤い破線＝GPSが大きく飛んだ区間（欠落）。<b>地図をクリックすると補完点を追加</b>（ドラッグで微調整／点をクリックで時刻入力・削除）。</div>
+        <div class="gpxrow">欠落しきい値 <input class="ci" id="trk-gap-m" value="200" inputmode="numeric" onchange="_trkRedraw()"> m ／ 追加点 <b id="trk-added-n">0</b> 点</div>
+        <div class="gpxrow">始点 <input type="datetime-local" id="trk-t0" class="ci wide"> 終点 <input type="datetime-local" id="trk-t1" class="ci wide"> <button class="btn sm" onclick="_trkInterp()">時刻を按分</button></div>
+        <div class="gpxrow gpxinfo">※時刻は任意。按分＝始点/終点やGPS時刻の間を、線分の長さで補完点に割り振ります。</div>
+        <div class="gpxrow"><button class="btn p sm" onclick="_trkSave()">保存</button> <button class="btn sm" onclick="_trkCancelEdit()">キャンセル</button></div>
+      </div>
     </div>
 
     <div class="gpxbox">
@@ -249,7 +257,7 @@ function initMap(){
   var el=g('map'); if(!el||!window.L) return;
   _map=L.map(el);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(_map);
-  _map.on('click',function(e){ if(_sel) applyCoords(_sel, e.latlng.lat, e.latlng.lng); });
+  _map.on('click',function(e){ if(_trkEdit!=null){ _trkAddPoint(e.latlng); return; } if(_sel) applyCoords(_sel, e.latlng.lat, e.latlng.lng); });
   setTimeout(function(){ try{ _map.invalidateSize(); }catch(e){} },150);
 }
 function _pinIcon(sel){ return L.divIcon({className:'ph-pin-wrap',html:'<span class="ph-pin'+(sel?' sel':'')+'">📷</span>',iconSize:[30,24],iconAnchor:[15,24]}); }
@@ -486,7 +494,7 @@ function gpxApplyGeotag(){
 }
 // 足跡保存用に点を間引き（最大maxN点・座標は小数6桁）
 function _thin(pts, maxN){
-  var ll=pts.map(function(p){ return [Math.round(p.lat*1e6)/1e6, Math.round(p.lng*1e6)/1e6]; });
+  var ll=pts.map(function(p){ var la=Math.round(p.lat*1e6)/1e6, ln=Math.round(p.lng*1e6)/1e6; return (p.t!=null)?[la,ln,p.t]:[la,ln]; });
   if(ll.length<=maxN) return ll;
   var step=Math.ceil(ll.length/maxN), out=[];
   for(var i=0;i<ll.length;i+=step) out.push(ll[i]);
@@ -514,9 +522,103 @@ function renderTracks(){
   if(!_tracks.length){ box.innerHTML='<div class="gpxinfo">保存済みの足跡はまだありません。</div>'; return; }
   box.innerHTML='<div class="gpxinfo" style="font-weight:700">保存済みの足跡（会員ページの地図に表示）</div>'+_tracks.map(function(t){
     return '<div class="trk">🥾 '+esc(t.name||'足跡')+'　<span class="gpxinfo">'+(t.date?esc(t.date):'全日程')+' ・ '+((t.points&&t.points.length)||0)+'点</span>'
+      +'<button class="trk-del" style="color:var(--teal);border-color:var(--teal)" onclick="editTrack(\''+esc(t.id)+'\')">✏️欠落補完</button>'
       +'<button class="trk-del" onclick="deleteTrack(\''+esc(t.id)+'\')">削除</button></div>';
   }).join('');
 }
+
+// ── 旅の足跡 欠落補完エディタ（地図クリックで補完点を追加・時刻は手動/按分） ──
+var _trkEdit=null, _trkPts=[], _trkLayers=[];
+function _haver(a,b){ var R=6371000,r=Math.PI/180,dLat=(b.lat-a.lat)*r,dLng=(b.lng-a.lng)*r,la=a.lat*r,lb=b.lat*r; var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(la)*Math.cos(lb)*Math.sin(dLng/2)*Math.sin(dLng/2); return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x)); }
+function _toLocalInput(ms){ if(ms==null) return ''; var d=new Date(ms); function p(n){return('0'+n).slice(-2);} return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }
+function _fromLocalInput(s){ if(!s) return null; var t=Date.parse(s); return isNaN(t)?null:t; }
+function editTrack(tid){
+  var t=_tracks.find(function(x){return x.id===tid;}); if(!t||!Array.isArray(t.points)){ toast('この足跡は編集できません','err'); return; }
+  _trkEdit=tid;
+  _trkPts=t.points.map(function(p){ return {lat:+p[0], lng:+p[1], t:(p[2]!=null?+p[2]:null), added:false}; }).filter(function(p){ return isFinite(p.lat)&&isFinite(p.lng); });
+  g('trk-edit').style.display='block';
+  g('trk-edit-name').textContent=(t.name||'足跡');
+  g('trk-t0').value=_toLocalInput(_trkPts.length?_trkPts[0].t:null);
+  g('trk-t1').value=_toLocalInput(_trkPts.length?_trkPts[_trkPts.length-1].t:null);
+  if(!_map) initMap();
+  _trkRedraw(true);
+  try{ g('trk-edit').scrollIntoView({behavior:'smooth',block:'nearest'}); }catch(e){}
+}
+function _trkClearLayers(){ _trkLayers.forEach(function(l){ try{_map.removeLayer(l);}catch(e){} }); _trkLayers=[]; }
+function _trkGapM(){ return Math.max(20, parseInt(g('trk-gap-m').value,10)||200); }
+function _trkRedraw(fit){
+  if(!_map||_trkEdit==null) return;
+  _trkClearLayers();
+  var gapM=_trkGapM(), pts=_trkPts, bounds=[];
+  for(var i=0;i<pts.length-1;i++){
+    var a=pts[i], b=pts[i+1], far=_haver(a,b)>gapM;
+    var ln=L.polyline([[a.lat,a.lng],[b.lat,b.lng]], far?{color:'#d11',weight:2,dashArray:'6,6'}:{color:'#2563eb',weight:3,opacity:.6}).addTo(_map);
+    _trkLayers.push(ln);
+  }
+  pts.forEach(function(p,idx){ bounds.push([p.lat,p.lng]);
+    if(p.added){
+      var mk=L.marker([p.lat,p.lng],{draggable:true,title:'補完点'+(p.t?('／'+_fmtMs(p.t)):'')}).addTo(_map);
+      mk.on('dragend',function(e){ var ll=e.target.getLatLng(); p.lat=ll.lat; p.lng=ll.lng; _trkRedraw(); });
+      mk.on('click',function(ev){ if(ev&&ev.originalEvent){ L.DomEvent.stop(ev.originalEvent); } _trkPointMenu(idx); });
+      _trkLayers.push(mk);
+    } else if((idx>0 && _haver(pts[idx-1],p)>gapM) || (idx<pts.length-1 && _haver(p,pts[idx+1])>gapM)){
+      var cm=L.circleMarker([p.lat,p.lng],{radius:4,color:'#d11',fillColor:'#fff',fillOpacity:1,weight:2}).addTo(_map);
+      _trkLayers.push(cm);
+    }
+  });
+  var el=g('trk-added-n'); if(el) el.textContent=pts.filter(function(p){return p.added;}).length;
+  if(fit && bounds.length){ try{ _map.fitBounds(bounds,{padding:[30,30],maxZoom:16}); }catch(e){} }
+}
+function _trkNearestInsertIdx(latlng){
+  if(_trkPts.length<2) return _trkPts.length;
+  var cp=_map.latLngToLayerPoint(latlng), best=Infinity, bi=_trkPts.length;
+  for(var i=0;i<_trkPts.length-1;i++){
+    var ap=_map.latLngToLayerPoint([_trkPts[i].lat,_trkPts[i].lng]), bp=_map.latLngToLayerPoint([_trkPts[i+1].lat,_trkPts[i+1].lng]);
+    var cl=L.LineUtil.closestPointOnSegment(cp,ap,bp), d=cp.distanceTo(cl);
+    if(d<best){ best=d; bi=i+1; }
+  }
+  return bi;
+}
+function _trkAddPoint(latlng){
+  if(_trkEdit==null) return;
+  var idx=_trkNearestInsertIdx(latlng);
+  _trkPts.splice(idx,0,{lat:latlng.lat,lng:latlng.lng,t:null,added:true});
+  _trkRedraw();
+}
+function _trkPointMenu(idx){
+  var p=_trkPts[idx]; if(!p) return;
+  var s=prompt('補完点の時刻（空欄可・形式 '+(_toLocalInput(Date.now()))+'）。この点を削除する場合は「削除」:', p.t!=null?_toLocalInput(p.t):'');
+  if(s==null) return;
+  if(s.trim()==='削除'){ _trkPts.splice(idx,1); _trkRedraw(); return; }
+  p.t=_fromLocalInput(s.trim());
+  _trkRedraw();
+}
+function _trkInterp(){
+  if(_trkPts.length<2){ toast('点が不足しています','err'); return; }
+  var t0=_fromLocalInput(g('trk-t0').value), t1=_fromLocalInput(g('trk-t1').value);
+  if(t0!=null) _trkPts[0].t=t0;
+  if(t1!=null) _trkPts[_trkPts.length-1].t=t1;
+  var anchors=[]; _trkPts.forEach(function(p,i){ if(p.t!=null) anchors.push(i); });
+  if(anchors.length<2){ toast('始点・終点の時刻を入力してから按分してください','err'); return; }
+  for(var a=0;a<anchors.length-1;a++){
+    var i=anchors[a], j=anchors[a+1]; if(j<=i+1) continue;
+    var cum=[0]; for(var k=i;k<j;k++){ cum.push(cum[cum.length-1]+_haver(_trkPts[k],_trkPts[k+1])); }
+    var total=cum[cum.length-1], ti=_trkPts[i].t, tj=_trkPts[j].t;
+    for(var k2=i+1;k2<j;k2++){ if(_trkPts[k2].t==null){ var f=total>0?(cum[k2-i]/total):0; _trkPts[k2].t=Math.round(ti+(tj-ti)*f); } }
+  }
+  _trkRedraw();
+  toast('時刻を按分しました');
+}
+function _trkSave(){
+  if(_trkEdit==null) return;
+  if(_trkPts.length<2){ toast('点が不足しています','err'); return; }
+  var pts=_trkPts.map(function(p){ var la=Math.round(p.lat*1e6)/1e6, ln=Math.round(p.lng*1e6)/1e6; return (p.t!=null)?[la,ln,p.t]:[la,ln]; });
+  setSaving('足跡を保存中…');
+  db.collection('events').doc(EV).collection('tracks').doc(_trkEdit).update({ points:pts, n:pts.length, editedMs:Date.now() })
+    .then(function(){ var t=_tracks.find(function(x){return x.id===_trkEdit;}); if(t){ t.points=pts; t.n=pts.length; } setSaving('保存しました ✓'); toast('足跡を更新しました（'+pts.length+'点）'); _trkCancelEdit(); renderTracks(); })
+    .catch(function(e){ setSaving(''); toast('保存失敗: '+e.message,'err'); });
+}
+function _trkCancelEdit(){ _trkEdit=null; _trkPts=[]; _trkClearLayers(); var el=g('trk-edit'); if(el) el.style.display='none'; }
 
 // ── スマホGPSで足跡をバックアップ記録（GPSロガー故障時の保険） ──
 var REC_KEY='tdphoto_rec_'+EV;
