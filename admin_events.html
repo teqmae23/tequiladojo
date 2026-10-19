@@ -3217,7 +3217,12 @@ function _itemMembers(it){
   var set=(it&&Array.isArray(it.members))?it.members:all;
   return all.filter(function(t){ return set.indexOf(t)>=0; });
 }
-function costShare(it){ var n=_itemMembers(it).length; if(!n) return 0; var base=_costBase(it); if(base<=0) return 0; return Math.ceil(base/n/100)*100; }
+// 按分・精算は円換算で統一（費目ごとの通貨を toYen で円に変換）
+function _costBaseYen(it){ var y=toYen(_costBase(it), it&&it.currency); return (y!=null&&isFinite(y))?y:0; }
+function costShare(it){ var n=_itemMembers(it).length; if(!n) return 0; var base=_costBaseYen(it); if(base<=0) return 0; return Math.ceil(base/n/100)*100; }
+function _isCashItem(it){ return (it&&it.payType)!=='card'; }  // 未設定=現金扱い
+function _curOptions(sel){ sel=(sel==='USD'||sel==='MXN')?sel:'JPY'; return '<option value="JPY"'+(sel==='JPY'?' selected':'')+'>¥</option><option value="USD"'+(sel==='USD'?' selected':'')+'>US$</option><option value="MXN"'+(sel==='MXN'?' selected':'')+'>MX$</option>'; }
+function _payTypeOptions(sel){ sel=(sel==='card')?'card':'cash'; return '<option value="cash"'+(sel==='cash'?' selected':'')+'>現金</option><option value="card"'+(sel==='card'?' selected':'')+'>カード</option>'; }
 // 予算・実費とも未入力なら金額未確定（按分額は「?」表示）
 function _costUnpriced(it){ var b=(it&&it.budget!=null&&it.budget!==''); var a=(it&&it.actual!=null&&it.actual!==''); return !b && !a; }
 function _shareCell(sh, unpriced){ return unpriced?'?':('¥'+sh.toLocaleString()); }
@@ -3250,10 +3255,10 @@ function renderCostTable(){
   _sortCostItemsInPlace();
   var mem=_costMembers;
   // 並び順: 日付/時間/費目/予算/実費/参加者名/対応スケジュール/備考
-  var head='<thead><tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th><th>支払者</th>'
+  var head='<thead><tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th><th>通貨</th><th>支払者</th><th>支払</th>'
     +mem.map(function(m){return '<th title="'+esc(m.name)+'">'+esc(_shortName(m.name))+'</th>';}).join('')
     +'<th>対応スケジュール</th><th>備考</th><th></th></tr></thead>';
-  if(!_costItems.length){ g('cost-table').innerHTML=head+'<tbody><tr><td colspan="'+(9+mem.length)+'" style="color:var(--ink3);padding:12px">「＋ 費目を追加」で行を追加してください</td></tr></tbody>'; renderCostSettle(); return; }
+  if(!_costItems.length){ g('cost-table').innerHTML=head+'<tbody><tr><td colspan="'+(11+mem.length)+'" style="color:var(--ink3);padding:12px">「＋ 費目を追加」で行を追加してください</td></tr></tbody>'; renderCostSettle(); return; }
   var totals={}; mem.forEach(function(m){ totals[m.tid]=0; });
   // 日付ごとに色を割り当て（出現順で cd0..cd5 を循環）。同じ日付は常に同じ色。
   var dateColorMap={}, dcIdx=0;
@@ -3274,14 +3279,16 @@ function renderCostTable(){
       +'<td><input class="ci-name" value="'+esc(it.name||'')+'" oninput="costEdit('+i+',\'name\',this.value)"></td>'
       +'<td><input class="ci-num" type="number" min="0" value="'+(it.budget!=null&&it.budget!==''?esc(String(it.budget)):'')+'" onchange="costEdit('+i+',\'budget\',this.value);renderCostTable()"></td>'
       +'<td><input class="ci-num" type="number" min="0" placeholder="—" value="'+(it.actual!=null&&it.actual!==''?esc(String(it.actual)):'')+'" onchange="costEdit('+i+',\'actual\',this.value);renderCostTable()"></td>'
+      +'<td><select class="ci-cur" onchange="costEdit('+i+',\'currency\',this.value);renderCostTable()">'+_curOptions(it.currency)+'</select></td>'
       +'<td><select class="ci-payer" onchange="costEdit('+i+',\'payer\',this.value);renderCostSettle()">'+_payerOptions(it.payer)+'</select></td>'
+      +'<td><select class="ci-paytype" onchange="costEdit('+i+',\'payType\',this.value);renderCostSettle()">'+_payTypeOptions(it.payType)+'</select></td>'
       +cells
       +'<td><select class="ci-sched" onchange="costLinkSched('+i+',this.value)">'+_schedOptions(it.schedItemId,it.date)+'</select></td>'
       +'<td><input class="ci-note" value="'+esc(it.notes||'')+'" oninput="costEdit('+i+',\'notes\',this.value)"></td>'
       +'<td><button class="ci-del" title="削除" onclick="delCostItem('+i+')">🗑</button></td>'
     +'</tr>';
   }).join('');
-  var foot='<tfoot><tr><td colspan="6" style="text-align:right">1人あたり合計 →</td>'
+  var foot='<tfoot><tr><td colspan="8" style="text-align:right">1人あたり合計（円換算）→</td>'
     +mem.map(function(m){return '<td>¥'+(totals[m.tid]||0).toLocaleString()+'</td>';}).join('')+'<td colspan="3"></td></tr></tfoot>';
   g('cost-table').innerHTML=head+'<tbody>'+body+'</tbody>'+foot;
   renderCostSettle();
@@ -3298,10 +3305,11 @@ function _computeSettle(its, mem, deposits, defPayer){
   var share={}, paidCost={}, dep={}, tb=0, ta=0;
   mem.forEach(function(m){ share[m.tid]=0; paidCost[m.tid]=0; dep[m.tid]=0; });
   its.forEach(function(it){
-    tb+=Number(it.budget||0);
-    if(it.actual!=null&&it.actual!=='') ta+=Number(it.actual)||0;
+    // 通貨混在のため精算は円換算で統一
+    tb+=toYen(Number(it.budget||0), it.currency)||0;
+    if(it.actual!=null&&it.actual!=='') ta+=toYen(Number(it.actual)||0, it.currency)||0;
     var sh=costShare(it); _itemMembers(it).forEach(function(t){ if(share[t]!=null) share[t]+=sh; });
-    if(it.payer && paidCost[it.payer]!=null) paidCost[it.payer]+=_costBase(it);
+    if(it.payer && paidCost[it.payer]!=null) paidCost[it.payer]+=_costBaseYen(it);
   });
   var depTotal=0;
   (deposits||[]).forEach(function(d){ var a=Number(d.amount||0); if(!isFinite(a)||a<=0) return; if(dep[d.tid]!=null){ dep[d.tid]+=a; depTotal+=a; } });
@@ -3340,6 +3348,22 @@ function _costByItemAgg(its){
   });
   return order.map(function(k){return map[k];});
 }
+// 日別必要現金集計: 現金払い(payType!=='card')の費目を日付ごとに集計（グループ全体）。
+// 通貨別の native 合計と、円換算合計を保持。
+function _cashByDayAgg(its){
+  var order=[], map={};
+  (its||[]).forEach(function(it){
+    if(!_isCashItem(it)) return;
+    var base=_costBase(it); if(!(base>0)) return;
+    var d=it.date||'（日付なし）';
+    if(!map[d]){ map[d]={date:d, byCur:{}, yen:0}; order.push(d); }
+    var cur=(it.currency==='USD'||it.currency==='MXN')?it.currency:'JPY';
+    map[d].byCur[cur]=(map[d].byCur[cur]||0)+base;
+    map[d].yen+=_costBaseYen(it);
+  });
+  order.sort();
+  return order.map(function(d){ return map[d]; });
+}
 function renderCostSettle(){
   var el=g('cost-settle'); if(!el) return;
   var mem=_costMembers;
@@ -3361,7 +3385,31 @@ function renderCostSettle(){
       +'<td>¥'+(s.paidCost[m.tid]||0).toLocaleString()+'</td>'+_depCell(s,m.tid)+'<td>¥'+(s.share[m.tid]||0).toLocaleString()+'</td>'+_netCell(s.net[m.tid]||0)+'</tr>';
   }).join('');
   var note=s.depTotal>0 ? (s.applied?('デポジット計 ¥'+s.depTotal.toLocaleString()+' はデフォルト支払者（'+esc(_payerName(_costDefaultPayer)||'—')+'）が受領済みとして差し引きに反映しています（主催のデポジット列に −¥'+s.depTotal.toLocaleString()+' として計上）。'):'⚠ デポジットを精算に反映するにはデフォルト支払者を設定してください。') : '';
-  el.innerHTML=byItemHtml
+  // 日別必要現金（グループ全体・現地通貨換算）
+  var cashDays=_cashByDayAgg(_costItems);
+  var cashHtml='';
+  if(cashDays.length){
+    var curOrder=['JPY','USD','MXN'];
+    var cashRows=cashDays.map(function(r){
+      var parts=curOrder.filter(function(c){return r.byCur[c]>0;}).map(function(c){ return curSym(c)+Math.round(r.byCur[c]).toLocaleString(); });
+      // 現地通貨＝その日で円換算額が最大の非JPY通貨。円換算合計をその通貨に割り戻す。
+      var local='', localYen=-1;
+      ['USD','MXN'].forEach(function(c){ if(r.byCur[c]>0){ var y=toYen(r.byCur[c],c)||0; if(y>localYen){ localYen=y; local=c; } } });
+      var localCell='<span style="color:var(--ink3)">—</span>';
+      if(local && FX[local]){ localCell='<b>'+curSym(local)+(Math.ceil(r.yen/FX[local])).toLocaleString()+'</b>'; }
+      var dlab=(/^\d{4}-\d{2}-\d{2}$/.test(r.date))?_mmdd(r.date):r.date;
+      return '<tr><td style="text-align:left">'+esc(dlab)+'</td>'
+        +'<td style="text-align:left">'+(parts.join(' ＋ ')||'—')+'</td>'
+        +'<td>¥'+Math.round(r.yen).toLocaleString()+'</td>'
+        +'<td>'+localCell+'</td></tr>';
+    }).join('');
+    var cashYenTotal=cashDays.reduce(function(a,r){return a+r.yen;},0);
+    var cashFoot='<tr class="cs-total"><td style="text-align:left">合計</td><td></td><td>¥'+Math.round(cashYenTotal).toLocaleString()+'</td><td></td></tr>';
+    cashHtml='<div class="cv-settle-t" style="margin-top:14px">日別必要現金（グループ全体）</div>'
+      +'<div class="cost-table-wrap"><table class="cost-settle"><thead><tr><th style="text-align:left">日付</th><th style="text-align:left">内訳</th><th>円換算</th><th>現地通貨換算</th></tr></thead><tbody>'+cashRows+cashFoot+'</tbody></table></div>'
+      +'<div style="font-size:11px;color:var(--ink3);margin-top:4px">現金払い（支払＝現金）の費目のみ集計。金額は実費（なければ予算）。現地通貨換算はその日の最大額通貨で円換算合計を割り戻した概算（1'+curSym('USD')+'≈¥'+FX.USD+'／1'+curSym('MXN')+'≈¥'+FX.MXN+'）。</div>';
+  }
+  el.innerHTML=byItemHtml+cashHtml
     +'<div class="cv-settle-t" style="margin-top:14px">集計・立て替え精算</div>'
     +'<div class="cv-settle-sum">予算合計 <b>¥'+s.tb.toLocaleString()+'</b>　／　実費合計 <b>¥'+s.ta.toLocaleString()+'</b></div>'
     +'<div class="cost-table-wrap"><table class="cost-settle"><thead><tr><th>メンバー</th><th>立て替え</th><th>デポジット</th><th>負担</th><th>差し引き</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
@@ -3426,7 +3474,7 @@ function costLinkSched(i, schedId){
 }
 function addCostItem(){
   _costDirty=true;
-  _costItems.push({ id:'ci_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), name:'', date:'', time:'', schedItemId:'', budget:null, actual:null, payer:_costDefaultPayer||'', notes:'' });
+  _costItems.push({ id:'ci_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), name:'', date:'', time:'', schedItemId:'', budget:null, actual:null, currency:'JPY', payType:'cash', payer:_costDefaultPayer||'', notes:'' });
   renderCostTable();
 }
 function delCostItem(i){ if(!confirm('この費目を削除しますか？')) return; _costDirty=true; _costItems.splice(i,1); renderCostTable(); }
