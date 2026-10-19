@@ -3675,6 +3675,25 @@ function toggleSchedAddr(id, el){
   var box=g('se-addr-'+id); if(!box) return;
   box.style.display=(box.style.display==='none')?'inline':'none';
 }
+// 移動の所要時間（開始〜到着。日跨ぎ対応）と距離（実ルート優先・無ければ直線）
+function _moveDurMin(it){
+  function hm(s){ var m=String(s==null?'':s).match(/^(\d{1,2}):(\d{2})/); return m?(+m[1]*60+ +m[2]):null; }
+  var s=hm(it.time), e=hm(it.isMove?it.toTime:it.endTime); if(s==null||e==null) return null;
+  var d=e-s; if(d<0) d+=1440; return d>0?d:null;
+}
+function _fmtDur(m){ if(m==null) return ''; var h=Math.floor(m/60), mm=m%60; return h>0?(h+'時間'+(mm?mm+'分':'')):(mm+'分'); }
+function _moveDist(it){
+  if(it.trackDistKm!=null && isFinite(it.trackDistKm) && it.trackDistKm>0) return {km:+it.trackDistKm, route:true};
+  if(it.lat!=null&&it.lng!=null&&it.toLat!=null&&it.toLng!=null){ var km=_haversineKm(+it.lat,+it.lng,+it.toLat,+it.toLng); if(isFinite(km)&&km>0) return {km:km, route:false}; }
+  return null;
+}
+function _moveInfoHtml(it){
+  if(!it.isMove) return '';
+  var parts=[], d=_moveDist(it);
+  if(d){ var km=d.km>=10?Math.round(d.km):Math.round(d.km*10)/10; parts.push((d.route?'':'直線')+km+'km'); }
+  var du=_fmtDur(_moveDurMin(it)); if(du) parts.push(du);
+  return parts.length?('<span class="se-maplink" style="color:var(--ink2);cursor:default" title="'+(d&&d.route?'実ルートの距離':'直線距離')+'／所要時間">🛣 '+parts.join('・')+'</span>'):'';
+}
 function renderSchedItemRow(it){
   var ic=itemIcon(it);
   // 参加者・ルート・地図・写真・現地ホスト・合流離脱はクリックで表示/開く（行クリックの編集に入らないよう stopPropagation）
@@ -3691,6 +3710,7 @@ function renderSchedItemRow(it){
   var _fl=_isFlightItem(it);
   var _mp=_siMap(it); if(_mp) markers.push('<a class="se-maplink" href="'+esc(_mp)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍地図</a>');
   var _rl=_siRoute(it); if(_rl) markers.push('<a class="se-maplink" href="'+esc(_rl)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+(_fl?'✈️ルート':'🚗ルート')+'</a>');
+  var _ri=_moveInfoHtml(it); if(_ri) markers.push(_ri);
   if(it.isMove) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();openRouteEdit(\''+esc(it.id)+'\')" title="実ルートを地図で手動補完"><span style="color:var(--teal)">🛤補完</span>'+(Array.isArray(it.track)&&it.track.length?'('+it.track.length+')':'')+'</span>');
   if(it.hideUntilDone) markers.push('🙈完了後公開');
   // 合流/離脱（クリックで名前ポップアップ）

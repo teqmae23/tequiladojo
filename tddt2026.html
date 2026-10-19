@@ -2067,6 +2067,12 @@ function toggleSchedAddr(id, el){
   var box=g('sc-addr-'+id); if(!box) return;
   box.style.display=(box.style.display==='none')?'inline':'none';
 }
+// 移動の所要時間・距離（実ルート優先、無ければ直線）をルートの後に表示
+function _mvDurMin(it){ function hm(s){ var m=String(s==null?'':s).match(/^(\d{1,2}):(\d{2})/); return m?(+m[1]*60+ +m[2]):null; } var s=hm(it.time), e=hm(it.isMove?it.toTime:it.endTime); if(s==null||e==null) return null; var d=e-s; if(d<0) d+=1440; return d>0?d:null; }
+function _mvFmtDur(m){ if(m==null) return ''; var h=Math.floor(m/60), mm=m%60; return h>0?(h+'時間'+(mm?mm+'分':'')):(mm+'分'); }
+function _mvKm(a1,o1,a2,o2){ var R=6371,r=Math.PI/180,dLat=(a2-a1)*r,dLng=(o2-o1)*r; var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a1*r)*Math.cos(a2*r)*Math.sin(dLng/2)*Math.sin(dLng/2); return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x)); }
+function _moveDist(it){ if(it.trackDistKm!=null&&isFinite(it.trackDistKm)&&it.trackDistKm>0) return {km:+it.trackDistKm, route:true}; if(it.lat!=null&&it.lng!=null&&it.toLat!=null&&it.toLng!=null){ var km=_mvKm(+it.lat,+it.lng,+it.toLat,+it.toLng); if(isFinite(km)&&km>0) return {km:km, route:false}; } return null; }
+function _moveInfoHtml(it){ if(!it.isMove) return ''; var parts=[], d=_moveDist(it); if(d){ var km=d.km>=10?Math.round(d.km):Math.round(d.km*10)/10; parts.push((d.route?'':'直線')+km+'km'); } var du=_mvFmtDur(_mvDurMin(it)); if(du) parts.push(du); return parts.length?('<span class="sc-map" style="color:var(--ink2);cursor:default">🛣 '+parts.join('・')+'</span>'):''; }
 function renderSchedItem(it, leg){
   var ic=itemIcon(it);
   var geo=(it.lat!=null&&it.lng!=null);
@@ -2085,6 +2091,7 @@ function renderSchedItem(it, leg){
     var _flm=(it.travelMode==='flight'||it.category==='flight'); // 空路は「✈️ ルート」で経路画面を開き、Googleマップ上で✈️フライトに切替可能
     var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
     if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="'+esc(routeLink(it))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+(_flm?'✈️ ルート':'🚗 ルート')+'</a>');
+    var _ri=_moveInfoHtml(it); if(_ri) meta.push(_ri);
   }
   // 会員の写真投稿・閲覧ボタン: コンテナ右上に大きめ表示（📷閲覧／📤投稿・管理）
   var photoCorner='';
