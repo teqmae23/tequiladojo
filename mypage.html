@@ -379,6 +379,15 @@ select.fi{min-width:80px}
         <div><div class="md-tt" data-i18n="mp_map_t">🗺 蒸留所マップ</div><div class="md-dd" data-i18n="mp_map_d">飲んだ蒸留所をマップで確認できます</div></div>
         <span class="md-cv">›</span>
       </a>
+      <!-- 過去のイベント（終了したイベント。クリックで展開） -->
+      <div id="past-events-wrap" style="display:none">
+        <div class="md-tile" style="cursor:pointer" onclick="togglePastEvents()">
+          <span class="md-ic">📅</span>
+          <div><div class="md-tt">過去のイベント</div><div class="md-dd"><span id="past-events-count">0</span>件 ・ タップで展開</div></div>
+          <span class="md-cv" id="past-events-cv" style="transition:transform .2s">›</span>
+        </div>
+        <div id="past-events-list" style="display:none;margin-top:4px"></div>
+      </div>
     </div>
 
     <!-- デポジット（前払金）: デポジット有効会員のみ表示 -->
@@ -680,10 +689,12 @@ async function loadEventBanners(memberDoc){
     evs=evs.filter(ev=>_evVisibleToMember(ev, mids, uid));
     // 開始日が新しい順
     evs.sort((a,b)=>String(b.startDate||'').localeCompare(String(a.startDate||'')));
-    if(!evs.length){ box.innerHTML=''; return; }
     const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const fmt=s=>{ if(!s)return ''; const p=String(s).split('-'); return p.length===3?(p[0]+'/'+p[1]+'/'+p[2]):s; };
-    box.innerHTML=evs.map(ev=>{
+    // 終了判定: 終了日(無ければ開始日)が今日(JST)より前なら「終了したイベント」
+    const todayJST=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    const isPast=ev=>{ const end=String(ev.endDate||ev.startDate||''); return !!end && end<todayJST; };
+    const card=ev=>{
       // リンク先: 空欄→標準の /event.html?id=... ／ http(s)完全URL→そのまま ／
       // それ以外（tddt2026 等の短縮URL）→ /tddt2026.html（実ファイル。無い場合もrewriteでイベント表示）
       const _tp=(ev.topPageUrl||'').trim();
@@ -692,7 +703,8 @@ async function loadEventBanners(memberDoc){
       else if(/^https?:\/\//i.test(_tp)){ url=_tp; }
       else { let _p=_tp.replace(/^\/+/,''); if(!/\.html?$/i.test(_p)) _p+='.html'; url='/'+_p; }
       const period=fmt(ev.startDate)+(ev.endDate&&ev.endDate!==ev.startDate?(' 〜 '+fmt(ev.endDate)):'');
-      return `<a href="${esc(url)}" style="display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:14px 16px;background:linear-gradient(135deg,#fdf3dc,#f4e8cf);border:1.5px solid var(--border2);border-radius:12px;text-decoration:none;color:var(--gold-d);box-shadow:0 2px 10px rgba(200,146,30,.12)">
+      const ended=isPast(ev);
+      return `<a href="${esc(url)}" style="display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:14px 16px;background:${ended?'linear-gradient(135deg,#f1ece3,#e9e2d4)':'linear-gradient(135deg,#fdf3dc,#f4e8cf)'};border:1.5px solid var(--border2);border-radius:12px;text-decoration:none;color:${ended?'var(--ink2)':'var(--gold-d)'};box-shadow:0 2px 10px rgba(200,146,30,.12)">
         <span style="font-size:22px;flex-shrink:0">🎪</span>
         <span style="flex:1;min-width:0">
           <span style="display:block;font-weight:700;font-size:15px;line-height:1.3">${esc(ev.name||'イベント')}</span>
@@ -700,8 +712,26 @@ async function loadEventBanners(memberDoc){
         </span>
         <span style="font-size:13px;white-space:nowrap;flex-shrink:0">詳細 →</span>
       </a>`;
-    }).join('');
+    };
+    // 開催中・今後のイベントはトップに。終了したイベントは「きろく」の過去イベント枠へ（クリックで展開）。
+    const active=evs.filter(ev=>!isPast(ev));
+    const past=evs.filter(isPast);
+    box.innerHTML=active.map(card).join('');
+    const pastWrap=document.getElementById('past-events-wrap');
+    const pastList=document.getElementById('past-events-list');
+    const pastCnt=document.getElementById('past-events-count');
+    if(pastList) pastList.innerHTML=past.map(card).join('');
+    if(pastCnt) pastCnt.textContent=String(past.length);
+    if(pastWrap) pastWrap.style.display=past.length?'block':'none';
   }catch(e){ console.warn('event banners error:',e); }
+}
+// 過去のイベント枠の開閉
+function togglePastEvents(){
+  var l=document.getElementById('past-events-list'), cv=document.getElementById('past-events-cv');
+  if(!l) return;
+  var open=(l.style.display!=='none');
+  l.style.display=open?'none':'block';
+  if(cv) cv.style.transform=open?'':'rotate(90deg)';
 }
 
 // ─── 管理者プレビュー: 呼び出し元へ戻る ───
