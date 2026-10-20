@@ -267,6 +267,9 @@ a{color:var(--gold-d)}
 .sc-rowthumb img{width:100%;height:100%;object-fit:cover;display:block}
 .sc-ttl{font-size:14px;font-weight:600;color:var(--ink)}
 .sc-note{font-size:12px;color:var(--ink);line-height:1.6;margin-top:2px;white-space:pre-wrap}
+.sc-pgal{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.sc-pgal-th{width:64px;height:64px;border-radius:8px;overflow:hidden;border:1px solid var(--border);cursor:pointer;padding:0;background:none}
+.sc-pgal-th img{width:100%;height:100%;object-fit:cover;display:block}
 .sc-addr{font-size:12px;color:var(--ink2);line-height:1.5;margin-top:3px}
 .sc-arrow{display:block;width:2px;height:16px;margin:2px auto;background:var(--gold-d);border-radius:1px;font-size:0;line-height:0;overflow:hidden}
 /* 範囲(開始↓終了)の時刻は縦にストレッチし、開始=上/終了=下、間の縦線を伸ばす */
@@ -1432,7 +1435,7 @@ function itemIcon(it){
   return catIcon(it.category);
 }
 function catBg(id){ var c=catById(id); return (c&&c.bg)?c.bg:'#f5f3ee'; }
-var _schedItems=[], _photosByItem={}, _tripTracks=[], _placeAddrMap={}, _placeCurMap={};
+var _schedItems=[], _photosByItem={}, _tripTracks=[], _placeAddrMap={}, _placeCurMap={}, _placePhotoMap={};
 function phSort(a,b){ var ka=(a.takenAt||a.createdMs||0), kb=(b.takenAt||b.createdMs||0); return ka-kb; }
 // 項目の住所解決：まず場所マスタの住所、無ければ地図URLから抽出。
 function _itemAddr(name, mapUrl){
@@ -1449,14 +1452,16 @@ function loadSchedule(){
     ref.collection('tracks').get().catch(function(){ return {docs:[]}; }), // 旅の足跡（GPX軌跡）
     db.collection('places').get().catch(function(){ return {docs:[]}; }) // 場所マスタ（住所表示用）
   ]).then(function(res){
-    _placeAddrMap={}; _placeCurMap={};
+    _placeAddrMap={}; _placeCurMap={}; _placePhotoMap={};
     (res[4]&&res[4].docs?res[4].docs:[]).map(function(d){ return d.data()||{}; }).forEach(function(p){
       var nm=(p.name||'').trim(); if(!nm) return;
       var ad=(p.address||'').trim();
       var cur=(p.currency==='JPY'||p.currency==='USD'||p.currency==='MXN')?p.currency:(_curFromLatLng(p.lat,p.lng)||_curFromAddr(p.address));
+      var ph=(Array.isArray(p.photos)?p.photos:[]).filter(function(x){return x&&x.url;});
       var own=(p.eventId===eventId);
       if(ad){ if(own) _placeAddrMap[nm]=ad; else if(!(nm in _placeAddrMap)) _placeAddrMap[nm]=ad; }
       if(cur){ if(own) _placeCurMap[nm]=cur; else if(!(nm in _placeCurMap)) _placeCurMap[nm]=cur; }
+      if(ph.length){ if(own) _placePhotoMap[nm]=ph; else if(!(nm in _placePhotoMap)) _placePhotoMap[nm]=ph; }
     });
     _schedItems=res[0].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
     _normalizeMoveDest(_schedItems); // 移動の到着座標はGoogleマップURLを優先
@@ -2166,7 +2171,8 @@ function renderSchedItem(it, leg){
   var hideLoc=_locHidden(it); // ストーカー対策: 滞在中は位置を伏せる
   var did=esc(it.id);
   var meta=[];
-  var aphotos=Array.isArray(it.photos)?it.photos:[]; // 管理者がプリセットした写真（スケジュールに最初から表示）
+  // 場所写真: 2点間移動以外は、紐づく場所（地点名一致）の写真を使用（1枚目=サムネイル、詳細で全表示）
+  var aphotos=(!it.isMove)?((_placePhotoMap[(it.placeName||'').trim()])||[]):[];
   var photos=_photosByItem[it.id]||[];               // 会員がアップロードした写真
   var ct=costLineFor(it); if(ct) meta.push('<span class="sc-cost">'+esc(ct)+'</span>');
   if(it.linkUrl && /^https?:\/\//i.test(it.linkUrl)) meta.push('<a class="sc-map" href="'+esc(it.linkUrl)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🔗 参考URL</a>');
@@ -2197,7 +2203,9 @@ function renderSchedItem(it, leg){
   }
   var people=[]; if(bdg)people.push(bdg); if(nm)people.push(nm);
   var allMeta=people.concat(meta);
-  var inner=(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')+(allMeta.length?'<div class="sc-meta">'+allMeta.join('')+'</div>':'')+schedRoomingHtml(it);
+  // 詳細内の写真ギャラリー（場所の全写真サムネイル・クリックで拡大）
+  var photoGal=aphotos.length?('<div class="sc-pgal">'+aphotos.map(function(p,i){ return '<button type="button" class="sc-pgal-th" onclick="event.stopPropagation();openItemPhotos(\''+did+'\','+i+')"><img src="'+esc(p.url)+'" alt="" loading="lazy"></button>'; }).join('')+'</div>'):'';
+  var inner=(it.note?'<div class="sc-note">'+esc(it.note)+'</div>':'')+(allMeta.length?'<div class="sc-meta">'+allMeta.join('')+'</div>':'')+photoGal+schedRoomingHtml(it);
   var hasDetail=!!inner;
   var detail=hasDetail?'<div class="sc-detail" id="scd-'+did+'" style="display:none">'+inner+'</div>':'';
   var clickable=hasDetail||geo;
@@ -2808,7 +2816,7 @@ function openLb(itemId, idx){
 // 管理者が項目に添付した写真(it.photos)のライトボックス（削除は管理画面から）
 function openItemPhotos(itemId, idx){
   var it=_schedItems.find(function(x){ return x.id===itemId; });
-  var list=(it&&Array.isArray(it.photos))?it.photos:[];
+  var list=(it&&!it.isMove)?((_placePhotoMap[(it.placeName||'').trim()])||[]):[];
   if(!list.length) return;
   _lbList=list.slice(); _lbIdx=idx||0; _lbNoDelete=true;
   showLb(); g('lightbox').classList.add('open');
