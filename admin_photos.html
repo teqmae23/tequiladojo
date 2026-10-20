@@ -83,6 +83,12 @@ input,select{font-family:var(--sans)}
 .pc-meta{font-size:11px;color:var(--ink3);line-height:1.4;overflow:hidden}
 .pc-meta .it{font-weight:700;color:var(--ink2);font-size:11.5px}
 .pc-cap{color:var(--ink2)}
+.pc-shot{color:var(--ink3)}
+.photo-lb{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:3000;display:none;align-items:center;justify-content:center;padding:16px;flex-direction:column;gap:10px}
+.photo-lb.on{display:flex}
+.photo-lb img{max-width:100%;max-height:82vh;object-fit:contain;border-radius:8px;box-shadow:0 6px 30px rgba(0,0,0,.5)}
+.photo-lb .lb-cap{color:#f0e8da;font-size:12.5px;text-align:center;max-width:92vw}
+.photo-lb .lb-x{position:absolute;top:14px;right:16px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4);color:#fff;font-size:22px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .badge{display:inline-block;font-size:9.5px;font-weight:700;border-radius:8px;padding:1px 6px;margin-top:2px}
 .badge.inh{background:#fbf1d6;color:#8a6a1e}
 .badge.none{background:var(--red-l);color:var(--red)}
@@ -300,6 +306,19 @@ function selectPhoto(pid, pan){
 }
 function clearSel(){ _sel=null; g('pickbar').classList.remove('on'); refreshMarkers(false); renderList(); }
 function pickOnMap(pid){ selectPhoto(pid, true); }
+// 撮影日時（takenAt: ms。アップロード端末ローカル時刻）を YYYY/MM/DD HH:MM に整形。無ければ空。
+function _fmtTaken(ms){ if(ms==null||isNaN(+ms)) return ''; var d=new Date(+ms); if(isNaN(d.getTime())) return ''; var p=function(n){ return ('0'+n).slice(-2); }; return d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes()); }
+// サムネイルタップで写真を拡大表示（ライトボックス）
+function openPhotoLb(pid){
+  var p=_photoById[pid]; if(!p) return;
+  var lb=g('photo-lb'), img=g('photo-lb-img'), cap=g('photo-lb-cap');
+  if(!lb||!img) return;
+  img.src=p.url||p.thumbUrl||'';
+  var shot=_fmtTaken(p.takenAt);
+  if(cap) cap.textContent=_photoTitle(p)+(shot?('　／　📷 '+shot):'');
+  lb.classList.add('on');
+}
+function closePhotoLb(){ var lb=g('photo-lb'); if(lb){ lb.classList.remove('on'); var img=g('photo-lb-img'); if(img) img.src=''; } }
 
 /* ── 座標の適用（3手法共通の保存経路） ── */
 function applyCoords(pid, lat, lng){
@@ -351,12 +370,14 @@ function _photoCard(p){
   var geo=_hasGeo(p);
   var badge = !geo ? '<span class="badge none">座標なし</span>' : (p.geoInherited?'<span class="badge inh">項目から継承</span>':'<span class="badge ok">設定済み</span>');
   var latv=geo?(+p.lat).toFixed(6):''; var lngv=geo?(+p.lng).toFixed(6):'';
+  var shot=_fmtTaken(p.takenAt);
   var meta='<div class="it">'+esc((_itemById[p.scheduleItemId]&&_itemById[p.scheduleItemId].title)||'（項目なし）')+'</div>'
     +(p.caption?'<div class="pc-cap">🏷 '+esc(p.caption)+'</div>':'')
+    +'<div class="pc-shot">📷 撮影日時: '+(shot?esc(shot):'不明')+'</div>'
     +(p.uploaderName?'<div>投稿: '+esc(p.uploaderName)+'</div>':'')
     +'<div>'+badge+'</div>';
   return '<div class="pc'+(sel?' sel':'')+'" id="pc-'+esc(p.id)+'">'
-    +'<div class="pc-top"><img class="pc-thumb" src="'+esc(p.thumbUrl||p.url||'')+'" alt="" loading="lazy" title="クリックで選択" onclick="selectPhoto(\''+esc(p.id)+'\',true)"><div class="pc-meta">'+meta+'</div></div>'
+    +'<div class="pc-top"><img class="pc-thumb" src="'+esc(p.thumbUrl||p.url||'')+'" alt="" loading="lazy" title="タップで拡大" style="cursor:zoom-in" onclick="openPhotoLb(\''+esc(p.id)+'\')"><div class="pc-meta">'+meta+'</div></div>'
     +'<div class="pc-row"><span class="lbl">① 直接座標編集（緯度・経度）</span>'
       +'<input class="ci" id="lat-'+esc(p.id)+'" value="'+latv+'" placeholder="緯度" inputmode="decimal">'
       +'<input class="ci" id="lng-'+esc(p.id)+'" value="'+lngv+'" placeholder="経度" inputmode="decimal">'
@@ -721,5 +742,11 @@ g('lpass').addEventListener('keydown',function(e){ if(e.key==='Enter') g('lbtn')
 g('btn-logout').addEventListener('click',function(){ auth.signOut(); });
 g('gpx-file').addEventListener('change',function(){ var f=this.files&&this.files[0]; if(f){ _gpxName=f.name||''; _onGpxFile(f); } });
 </script>
+<!-- 写真拡大（ライトボックス） -->
+<div class="photo-lb" id="photo-lb" onclick="if(event.target===this)closePhotoLb()">
+  <button type="button" class="lb-x" onclick="closePhotoLb()" aria-label="閉じる">×</button>
+  <img id="photo-lb-img" src="" alt="">
+  <div class="lb-cap" id="photo-lb-cap"></div>
+</div>
 </body>
 </html>
