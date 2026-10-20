@@ -403,6 +403,7 @@ a{color:var(--gold-d)}
 .phr-main{flex:1;min-width:0}
 .phr-by{font-size:10px;margin-bottom:3px}
 .phr-by.geo{color:var(--teal)}.phr-by.time{color:var(--gold-d)}.phr-by.none{color:var(--red)}
+.phr-shot{font-size:11px;color:var(--ink2,#8a7a60);margin:1px 0 3px}
 .phr-sel{width:100%;font-size:12px;padding:6px 8px;border:1px solid var(--border2);border-radius:7px;background:var(--cream)}
 .ck-summary{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:5px 12px;border-radius:14px;border:1px solid rgba(0,0,0,.06)}
 .ck-summary.done{background:#e3edfb;color:#22568f}
@@ -3169,7 +3170,19 @@ g('ph-modal').addEventListener('click',function(e){ if(e.target===g('ph-modal'))
 // 項目の基準時刻(ms): 実時間(CI)優先、無ければ予定時刻。終了も実時間(CO)優先。
 function _itemStartMs(it){ if(it.actualStartMs) return it.actualStartMs; if(it.date) return new Date(it.date+'T'+(it.time||'12:00')+':00').getTime(); return 0; }
 function _itemEndMs(it){ if(it.actualEndMs) return it.actualEndMs; var e=it.isMove?it.toTime:it.endTime; if(it.date&&e) return new Date(it.date+'T'+e+':00').getTime(); return 0; }
-function _itemLabel(it){ var t=(it.actualStart||it.time||''); return ((it.date||'')+' '+t+' '+(it.title||'（無題）')).trim(); }
+// 項目の時刻表示（分類の参考用）。2点間移動・終了時刻ありは「開始→終了」の両方、それ以外は単一。実時間があれば優先。
+function _itemTimeRange(it){
+  if(!it) return '';
+  var s=_hm(it.actualStart||it.time||'');
+  var e='';
+  if(it.isMove) e=_hm(it.actualEnd||it.toTime||'');
+  else if(it.endTime && String(it.endTime).trim()) e=_hm(it.actualEnd||it.endTime||'');
+  if(s && e) return s+'→'+e;
+  return s||e||'';
+}
+function _itemLabel(it){ var t=_itemTimeRange(it); return ((it.date||'')+' '+t+' '+(it.title||'（無題）')).trim(); }
+// 写真の撮影日時（EXIF由来のms）を表示用に整形
+function _fmtShotTime(ms){ if(!ms) return '撮影日時: 不明'; var d=new Date(ms); var p=function(n){ return ('0'+n).slice(-2); }; return '撮影日時: '+d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes()); }
 // 撮影時刻 t(ms) の前後 hours 時間内のスケジュール項目（時刻不明なら全項目）
 function _itemsWithin(t, hours){
   if(!t) return _schedItems.slice();
@@ -3245,6 +3258,7 @@ function renderReview(){
     var warn=r.mismatch?'<div class="phr-warn">⚠ 位置・時刻がこの項目と大きく離れています。問題なければそのまま保存できます。</div>':'';
     return '<div class="phr-row"><img src="'+r._url+'" alt="">'
       +'<div class="phr-main"><div class="phr-by '+byCls+'">'+byTxt+'</div>'+warn
+      +'<div class="phr-shot">📷 '+esc(_fmtShotTime(r.ex&&r.ex.time))+'</div>'
       +'<select class="phr-sel" onchange="_phSetItem('+i+',this.value)">'+opts+'</select>'
       +'<input class="phr-cap" data-i="'+i+'" placeholder="キャプション（場所など・任意）" value="'+esc(r.caption||'')+'" oninput="_phSetCap('+i+',this)"></div></div>';
   }).join('');
