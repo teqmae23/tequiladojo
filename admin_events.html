@@ -4494,7 +4494,7 @@ function toggleDay(idx, date){ var b=g('se-day-body-'+idx), c=g('se-caret-'+idx)
 function openSchedForDay(date, grp){ _schExpandedDays[date]=true; openSchedEd(null, date, grp); }
 
 // ── スケジュールのテキスト出力（日時・タイトル・場所／日本語・英語） ──
-var _SCH_CAT_EN={flight:'Flight', move:'Transfer', hotel:'Hotel', checkin:'Check-in', meal:'Meal', distillery:'Distillery', distillery_tour:'Distillery Tour', activity:'Activity', free:'Free time', other:'Event'};
+var _SCH_CAT_EN={flight:'Flight', move:'Transfer', hotel:'Hotel', checkin:'Check-in', checkout:'Check-out', meal:'Meal', breakfast:'Breakfast', lunch:'Lunch', dinner:'Dinner', bar:'Bar', cafe:'Cafe', distillery:'Distillery', distillery_tour:'Distillery Tour', activity:'Activity', sightseeing:'Sightseeing', shopping:'Shopping', free:'Free time', other:'Event'};
 var _SCH_TRAVEL_EN={walk:'Walk', car:'Car', taxi:'Taxi', shuttle:'Shuttle', bus:'Bus', train:'Train', shinkansen:'Shinkansen', flight:'Flight', bicycling:'Bike', driving:'Car', transit:'Transit'};
 function _schDayText(d, lang){
   var p=String(d||'').split('-'); if(p.length<3) return String(d||'（日付未設定）');
@@ -4519,39 +4519,50 @@ function _schActText(it, lang){
   return (_SCH_CAT_EN[it.category]||(cat&&cat.name)||'Event');
 }
 // 場所名→英語名の対応表（場所マスタの nameEn を使用。現在イベントの場所を優先）
+// 地点名の正規化キー（表記ゆれ対策：空白畳み・NFKC・小文字）
+function _normNm(s){ return String(s||'').trim().replace(/\s+/g,' ').normalize('NFKC').toLowerCase(); }
+// 場所名→英語名（完全一致キー＋正規化キー'#...'の両方を登録）
 function _schPlaceEnMap(){
   var m={};
   (_places||[]).forEach(function(p){
     var nm=(p.name||'').trim(), en=(p.nameEn||'').trim();
     if(!nm||!en) return;
-    if(p.eventId===_schEventId) m[nm]=en;           // 現在イベントの場所は上書き優先
-    else if(!(nm in m)) m[nm]=en;                     // 他イベント/未設定は補完のみ
+    var own=(p.eventId===_schEventId), k='#'+_normNm(nm);
+    if(own){ m[nm]=en; m[k]=en; }
+    else { if(!(nm in m)) m[nm]=en; if(!(k in m)) m[k]=en; }
   });
   return m;
 }
-// 場所名→住所の対応表（場所マスタの address を使用。現在イベントの場所を優先）
+// 場所名→住所（完全一致キー＋正規化キーの両方。現在イベントの場所を優先）
 function _schPlaceAddrMap(){
   var m={};
   (_places||[]).forEach(function(p){
     var nm=(p.name||'').trim(), ad=(p.address||'').trim();
     if(!nm||!ad) return;
-    if(p.eventId===_schEventId) m[nm]=ad;
-    else if(!(nm in m)) m[nm]=ad;
+    var own=(p.eventId===_schEventId), k='#'+_normNm(nm);
+    if(own){ m[nm]=ad; m[k]=ad; }
+    else { if(!(nm in m)) m[nm]=ad; if(!(k in m)) m[k]=ad; }
   });
   return m;
 }
-// 項目の住所解決：まず場所マスタの住所、無ければ地図URLから抽出。
+// 名前マップ（en/addr）の検索：完全一致→正規化一致
+function _lookupNameMap(map, name){ if(!map) return ''; var nm=(name||'').trim(); if(nm && map[nm]) return map[nm]; var k='#'+_normNm(nm); return map[k]||''; }
+// 項目の住所解決：まず場所マスタの住所（正規化一致込み）、無ければ地図URLから抽出。
 function _itemAddr(name, mapUrl, addrMap){
-  var nm=(name||'').trim();
-  if(addrMap && nm && addrMap[nm]) return addrMap[nm];
-  return _addrFromGmapUrl(mapUrl, nm);
+  var ad=_lookupNameMap(addrMap, name); if(ad) return ad;
+  return _addrFromGmapUrl(mapUrl, (name||'').trim());
 }
 function _schPlaceText(it, lang, enMap){
-  function tr(n){ n=(n||'').trim(); if(lang==='en'&&enMap&&enMap[n]) return enMap[n]; return n; }
+  function tr(n){ n=(n||'').trim(); if(lang==='en'&&enMap){ var e=_lookupNameMap(enMap,n); if(e) return e; } return n; }
   var o=tr(it.placeName);
   if(it.isMove){ var d=tr(it.toName); if(o||d) return (o||'?')+' → '+(d||'?'); return ''; }
   return o;
 }
+// TAB整形用: 表示幅（全角=2）と、startCol から targetCol までTABで到達（8桁タブストップ）
+function _dispLen(s){ s=String(s||''); var n=0; for(var i=0;i<s.length;i++){ var c=s.charCodeAt(i);
+  n += (c>=0x1100 && (c<=0x115F || (c>=0x2E80&&c<=0xA4CF) || (c>=0xAC00&&c<=0xD7A3) || (c>=0xF900&&c<=0xFAFF) || (c>=0xFE30&&c<=0xFE4F) || (c>=0xFF00&&c<=0xFF60) || (c>=0xFFE0&&c<=0xFFE6))) ? 2 : 1; }
+  return n; }
+function _tabPad(s, startCol, targetCol){ var col=startCol+_dispLen(s), out=String(s), guard=0; do{ out+='\t'; col=Math.floor(col/8)*8+8; guard++; }while(col<targetCol && guard<12); return out; }
 function _buildSchedText(lang){
   var ev=(events||[]).find(function(x){return x.id===_schEventId;});
   var evName=(ev&&ev.name)||'';
@@ -4560,27 +4571,37 @@ function _buildSchedText(lang){
   var enr=_sortByJst(_schItems||[]);
   var byDay={}, order=[];
   enr.forEach(function(e){ var d=e.it.date||''; if(!byDay[d]){ byDay[d]=[]; order.push(d); } byDay[d].push(e.it); });
-  var seenAddr={}; // 同一地点の住所は初回のみ
+  function trName(n){ n=(n||'').trim(); if(lang==='en'&&enMap){ var e=_lookupNameMap(enMap,n); if(e) return e; } return n; }
+  // 住所は末尾にまとめる（訪問先の初出順。移動の出発地・到着地も対象）
+  var addrOrder=[], addrSeen={};
+  function noteAddr(rawName, mapUrl){ var nm=(rawName||'').trim(); if(!nm) return; var key=_normNm(nm); if(addrSeen[key]) return;
+    var ad=_itemAddr(nm, mapUrl, addrMap); if(!ad) return; addrSeen[key]=1; addrOrder.push({name:trName(nm), addr:ad}); }
   var L=[];
   L.push(evName+(lang==='en'?' | Schedule':' ｜ スケジュール'));
   order.forEach(function(d){
     L.push('');
     L.push('── '+_schDayText(d, lang)+' ──');
+    var stays=[];
     byDay[d].forEach(function(it){
       var tm=_schTimeRange(it), act=_schActText(it, lang), pl=_schPlaceText(it, lang, enMap);
-      L.push((tm?tm+'  ':'')+(it.overnight?(lang==='en'?'(STAY) ':'(泊) '):'')+act);
-      if(pl) L.push('    '+(lang==='en'?'Place: ':'場所: ')+pl);
-      // 住所は2点間移動以外のみ・同一地点は初回のみ。住所の前に場所名を付す。
-      if(!it.isMove){
-        var ao=_itemAddr(it.placeName, it.mapUrl, addrMap);
-        if(ao){
-          var key=(it.placeName||'').trim()||ao;
-          if(!seenAddr[key]){ seenAddr[key]=1; L.push('    '+(lang==='en'?'Addr: ':'住所: ')+(pl?pl+'：':'')+ao); }
-        }
-      }
+      // 時刻 \t カテゴリ \t 場所/ルート（TABで列揃え）
+      L.push(_tabPad(tm||'', 0, 16)+_tabPad(act||'', 16, 32)+(pl||''));
+      if(it.overnight) stays.push(it);
+      if(it.isMove){ noteAddr(it.placeName, it.mapUrl); noteAddr(it.toName, it.toMapUrl); }
+      else noteAddr(it.placeName, it.mapUrl);
+    });
+    // 宿泊（STAY）は当日の末尾にまとめて
+    stays.forEach(function(it){
+      var hn=trName(it.placeName)||'';
+      L.push(_tabPad('(STAY)',0,16)+_tabPad(lang==='en'?'Hotel':'宿泊',16,32)+hn);
     });
   });
-  return L.join('\n').trim();
+  // 住所一覧（末尾）
+  if(addrOrder.length){
+    L.push(''); L.push('');
+    addrOrder.forEach(function(a){ L.push(a.name); L.push(a.addr); L.push(''); });
+  }
+  return L.join('\n').replace(/\s+$/,'');
 }
 function openSchedTextOut(){
   if(!_schItems||!_schItems.length){ alert('スケジュール項目がありません'); return; }
