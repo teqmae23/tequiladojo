@@ -4861,32 +4861,36 @@ function _pdfLinesFromItems(items){
   if(cur&&cur.length) lines.push(cur);
   return lines.map(function(ln){ return ln.slice().sort(function(a,b){return a.x-b.x;}).map(function(i){return i.s;}).join('').trim(); }).filter(function(s){return s;});
 }
-function _pdfIsTime(s){ return /^\d{1,2}:\d{2}$/.test(String(s).trim()); }
-function _pdfIsStation(s){ return /^\S+駅$/.test(String(s).trim()); }
+// pdf.jsは時刻と駅名/地点名を同じ行に結合する（例:「14:32下北沢駅」「14:24 純手打ち 麺と未来」）。
+// その「時刻＋名称」の行を1つの地点として解析。地点でなければnull。
+function _pdfStop(s){
+  var m=String(s).match(/^(\d{1,2}:\d{2})\s*(.+)$/); if(!m) return null;
+  if(/^[-–—]/.test(m[2]) || /^\d{1,2}:\d{2}/.test(m[2])) return null; // 「14:24 - 14:49」等の概要行は除外
+  var nm=m[2].replace(/〒.*$/,'').replace(/\s+/g,' ').trim(); if(!nm) return null;
+  return { time:m[1], name:nm };
+}
 function _pdfIsTrain(s){ s=String(s).trim(); return /行$/.test(s) && /線|ライン/.test(s); }
 function _pdfTrainMode(s){ if(/新幹線/.test(s)) return 'shinkansen'; if(/バス/.test(s)) return 'bus'; return 'train'; }
 // 行程PDFの行配列 → {legs:[{dep,arr,from,to,travel,note}], fare}
 function parseTransitPdf(rawLines){
-  var lines=rawLines.map(function(s){ return String(s||'').trim(); }).filter(function(s){ return s && !/^\d\/\d$/.test(s) && !/^\d{4}\/\d{1,2}\/\d{1,2}/.test(s); });
-  var times=[], stations=[], origin='', dest='', fare='';
-  for(var i=0;i<lines.length;i++){ if(_pdfIsTime(lines[i])){ times.push(lines[i]); if(times.length===1){ for(var j=i+1;j<lines.length;j++){ if(lines[j] && !/^〒/.test(lines[j])){ origin=lines[j]; break; } } } } }
-  for(var k=lines.length-1;k>=0;k--){ if(_pdfIsTime(lines[k])){ for(var j2=k+1;j2<lines.length;j2++){ if(lines[j2] && !/^〒/.test(lines[j2])){ dest=lines[j2]; break; } } break; } }
-  for(var m=0;m<lines.length;m++){ if(_pdfIsStation(lines[m])) stations.push(lines[m]); var fm=lines[m].match(/料金[:：]\s*([\d,]+\s*円)/); if(fm) fare=fm[1].replace(/\s/g,''); }
-  var stops=[origin].concat(stations).concat([dest]);
+  var lines=rawLines.map(function(s){ return String(s||'').trim(); }).filter(function(s){ return s && !/^\d\/\d$/.test(s) && !/^\d{4}\/\d{1,2}\/\d{1,2}/.test(s) && !/^https?:/.test(s); });
+  var stops=[], fare='';
+  for(var i=0;i<lines.length;i++){ var st=_pdfStop(lines[i]); if(st) stops.push(st); var fm=lines[i].match(/料金[:：]\s*([\d,]+\s*円)/); if(fm) fare=fm[1].replace(/\s/g,''); }
+  function _bound(s){ return !!_pdfStop(s) || s==='徒歩' || _pdfIsTrain(s); }
   var modes=[];
   for(var n=0;n<lines.length;n++){ var L=lines[n];
     if(L==='徒歩'){ var dur='',dist='';
-      for(var w=n+1;w<Math.min(n+6,lines.length);w++){ var mm=lines[w].match(/^約\s*(\d+)\s*分(?:、\s*([\d.]+)\s*m)?/); if(mm){ dur=mm[1]; dist=mm[2]||''; break; } if(_pdfIsTime(lines[w])||_pdfIsStation(lines[w])) break; }
+      for(var w=n+1;w<Math.min(n+6,lines.length);w++){ var mm=lines[w].match(/^約\s*(\d+)\s*分(?:、\s*([\d.]+)\s*m)?/); if(mm){ dur=mm[1]; dist=mm[2]||''; break; } if(_bound(lines[w])) break; }
       modes.push({type:'walk', travel:'walking', note:'徒歩'+(dur?' 約'+dur+'分':'')+(dist?' '+dist+'m':'')});
     } else if(_pdfIsTrain(L)){ var det=[];
-      for(var t=n+1;t<lines.length;t++){ var x=lines[t]; if(_pdfIsTime(x)||_pdfIsStation(x)||x==='徒歩'||_pdfIsTrain(x)) break; if(/ルートは正確|ご注意ください|^[-]|^[\d.]+\s*m$|^0\.0\s*km$|階段|改札|進む|渡る|通過|^北|^南|^東|^西|^右折|^左折|出口|入口/.test(x)) continue; det.push(x); }
-      modes.push({type:'train', travel:_pdfTrainMode(L), note:L+(det.length?(' / '+det.join(' / ')):'')});
+      for(var t=n+1;t<lines.length;t++){ var x=lines[t]; if(_bound(x)) break; if(/ルートは正確|ご注意ください|^[-]|^[\d.]+\s*m$|^0\.0\s*km$|階段|改札|進む|渡る|通過|^北|^南|^東|^西|^右折|^左折|出口|入口/.test(x)) continue; det.push(x); }
+      modes.push({type:'train', travel:_pdfTrainMode(L), note:(L+(det.length?(' / '+det.join(' / ')):'')).replace(/\s+/g,' ')});
     }
   }
-  var ok=(times.length===stops.length && stops.length===modes.length+1 && modes.length>0);
+  var ok=(stops.length>=2 && stops.length===modes.length+1);
   var legs=[];
-  if(ok){ for(var p=0;p<modes.length;p++){ legs.push({ dep:times[p], arr:times[p+1], from:stops[p], to:stops[p+1], travel:modes[p].travel, note:modes[p].note }); } }
-  return { legs:legs, fare:fare, ok:ok, nTimes:times.length, nStops:stops.length, nModes:modes.length };
+  if(ok){ for(var p=0;p<modes.length;p++){ legs.push({ dep:stops[p].time, arr:stops[p+1].time, from:stops[p].name, to:stops[p+1].name, travel:modes[p].travel, note:modes[p].note }); } }
+  return { legs:legs, fare:fare, ok:ok, nStops:stops.length, nModes:modes.length };
 }
 function openPdfImport(){
   if(!_schEventId){ toast('先にイベントのスケジュールを開いてください','err'); return; }
@@ -4914,7 +4918,7 @@ function parsePdfPreview(){
     .then(function(contents){
       var lines=[]; contents.forEach(function(tc){ lines=lines.concat(_pdfLinesFromItems(tc.items)); });
       var r=parseTransitPdf(lines);
-      if(!r.ok||!r.legs.length){ g('pdf-prog').textContent=''; g('pdf-err').textContent='行程を解析できませんでした（時刻'+r.nTimes+'・地点'+r.nStops+'・区間'+r.nModes+'）。Googleマップの経路PDFか確認してください。'; return; }
+      if(!r.ok||!r.legs.length){ g('pdf-prog').textContent=''; g('pdf-err').textContent='行程を解析できませんでした（地点'+r.nStops+'・区間'+r.nModes+'）。Googleマップの経路PDFか確認してください。'; return; }
       _pdfLegs=r;
       // 駅・地点の座標を順次取得
       var names={}; r.legs.forEach(function(lg){ names[lg.from]=1; names[lg.to]=1; });
