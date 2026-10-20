@@ -1116,7 +1116,7 @@ table.pl-tbl select.pl-in{padding-left:3px;padding-right:2px}
       <div id="pl-filter"></div>
       <div id="pl-list"><div class="ec">読み込み中…</div></div>
     </div>
-    <div class="mft"><button class="btn bs ca-only-hide" onclick="openPlaceCatMgr()">🏷 分類編集</button><button class="btn bs" id="pl-revgeo-btn" onclick="backfillPlaceCurrencies(false)" title="座標から国を判定して通貨を自動設定（逆ジオコーディング）。通貨設定済みの場所はスキップ。">🌐 座標から通貨判定</button><button class="btn bs" id="pl-revaddr-btn" onclick="backfillPlaceAddresses(false)" title="座標から住所を取得して自動設定（逆ジオコーディング）。住所設定済みの場所はスキップ。">🌐 座標から住所取得</button><button class="btn bs" onclick="migrateSchedPhotosToPlaces()" title="開いているイベントのスケジュール項目の写真を、地点名が一致する場所へ移管">📷 写真を場所へ移管</button><div style="flex:1"></div><button class="btn bp" onclick="savePlaceAll()">💾 全行を保存</button><button class="btn bs" onclick="closePlaceMgr()">閉じる</button></div>
+    <div class="mft"><button class="btn bs ca-only-hide" onclick="openPlaceCatMgr()">🏷 分類編集</button><button class="btn bs" id="pl-revgeo-btn" onclick="backfillPlaceCurrencies()" title="チェックした座標ありの場所について、座標から国を判定して通貨を自動設定。">🌐 座標から通貨判定</button><button class="btn bs" id="pl-revaddr-btn" onclick="backfillPlaceAddresses()" title="チェックした場所について、地点名で検索して住所（と未設定なら座標）を自動設定。">🌐 名前から住所取得</button><button class="btn bs" onclick="migrateSchedPhotosToPlaces()" title="開いているイベントのスケジュール項目の写真を、地点名が一致する場所へ移管">📷 写真を場所へ移管</button><div style="flex:1"></div><button class="btn bp" onclick="savePlaceAll()">💾 全行を保存</button><button class="btn bs" onclick="closePlaceMgr()">閉じる</button></div>
   </div>
 </div>
 
@@ -2623,11 +2623,16 @@ function _revGeoCurrency(lat,lng){
       var cur=cc==='jp'?'JPY':(cc==='us'?'USD':(cc==='mx'?'MXN':'')); _revCache[key]=cur; return cur; })
     .catch(function(){ _revCache[key]=''; return ''; });
 }
-// 座標を持つ場所の通貨を逆ジオコーディングで一括設定（force=false は通貨未設定のみ）。1秒1件を尊重。
-function backfillPlaceCurrencies(force){
+// 表示中のうちチェックされた場所のIDを返す
+function getCheckedPlaceIds(){ var ids=[]; (_places||[]).filter(_placeMatch).forEach(function(p){ var c=g('pl-chk-'+p.id); if(c&&c.checked) ids.push(p.id); }); return ids; }
+// 全チェック/全解除トグル
+function plToggleAllChk(on){ (_places||[]).filter(_placeMatch).forEach(function(p){ var c=g('pl-chk-'+p.id); if(c) c.checked=!!on; }); }
+// チェックされた座標ありの場所の通貨を逆ジオコーディングで一括設定。1秒1件を尊重。
+function backfillPlaceCurrencies(){
   var btn=g('pl-revgeo-btn');
-  var targets=(_places||[]).filter(function(p){ return _placeMatch(p) && (p.lat!=null&&p.lng!=null) && (force || !(p.currency==='JPY'||p.currency==='USD'||p.currency==='MXN')); });
-  if(!targets.length){ toast('対象の場所がありません（表示中・座標あり・通貨未設定）'); return; }
+  var ids=getCheckedPlaceIds();
+  var targets=(_places||[]).filter(function(p){ return _placeMatch(p) && ids.indexOf(p.id)>=0 && (p.lat!=null&&p.lng!=null); });
+  if(!targets.length){ toast('チェックされた座標ありの場所がありません','err'); return; }
   if(btn) btn.disabled=true;
   var seq=Promise.resolve(), done=0, set=0, total=targets.length;
   targets.forEach(function(p){ seq=seq.then(function(){
@@ -2668,25 +2673,41 @@ function _revGeoAddress(lat,lng){
     .then(function(d){ var ad=_fmtNomAddr(d); _revCache[key]=ad; return ad; })
     .catch(function(){ _revCache[key]=''; return ''; });
 }
-// 座標を持つ場所の住所を逆ジオコーディングで一括設定（force=false は住所未設定のみ）。1秒1件を尊重。
-function backfillPlaceAddresses(force){
+// 地点名で検索（Nominatim forward geocoding）→ {address, lat, lng}。名称でキャッシュ。
+var _fwdCache={};
+function _fwdGeoByName(name){
+  name=(name||'').trim(); if(!name) return Promise.resolve(null);
+  if(_fwdCache[name]!==undefined) return Promise.resolve(_fwdCache[name]);
+  return fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=1&accept-language=en&q='+encodeURIComponent(name))
+    .then(function(r){ return r.json(); })
+    .then(function(arr){ var d0=(Array.isArray(arr)&&arr[0])?arr[0]:null; var res=d0?{ address:_fmtNomAddr(d0), lat:parseFloat(d0.lat), lng:parseFloat(d0.lon) }:null; _fwdCache[name]=res; return res; })
+    .catch(function(){ _fwdCache[name]=null; return null; });
+}
+// チェックされた場所について、地点名で検索し住所（と未設定なら座標）を一括設定。1秒1件を尊重。
+function backfillPlaceAddresses(){
   var btn=g('pl-revaddr-btn');
-  var targets=(_places||[]).filter(function(p){ return _placeMatch(p) && (p.lat!=null&&p.lng!=null) && (force || !((p.address||'').trim())); });
-  if(!targets.length){ toast('対象の場所がありません（表示中・座標あり・住所未設定）'); return; }
+  var ids=getCheckedPlaceIds();
+  var targets=(_places||[]).filter(function(p){ return _placeMatch(p) && ids.indexOf(p.id)>=0; });
+  if(!targets.length){ toast('チェックされた場所がありません','err'); return; }
   if(btn) btn.disabled=true;
   var seq=Promise.resolve(), done=0, set=0, total=targets.length;
   targets.forEach(function(p){ seq=seq.then(function(){
     if(btn) btn.textContent='🌐 住所取得中… '+(done+1)+'/'+total;
-    return _revGeoAddress(p.lat,p.lng).then(function(ad){
+    var ne=g('pl-name-'+p.id); var nm=(ne?(ne.value||'').trim():'')||p.name||''; // 画面の名称を優先
+    return _fwdGeoByName(nm).then(function(res){
       done++;
-      if(ad && ad!==p.address){ return db.collection('places').doc(p.id).set({address:ad, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).then(function(){ p.address=ad; set++; }); }
+      if(!res) return;
+      var upd={}, changed=false;
+      if(res.address && res.address!==p.address){ upd.address=res.address; changed=true; }
+      if((p.lat==null||p.lng==null) && isFinite(res.lat) && isFinite(res.lng)){ upd.lat=res.lat; upd.lng=res.lng; changed=true; }
+      if(changed){ upd.updatedAt=firebase.firestore.FieldValue.serverTimestamp(); return db.collection('places').doc(p.id).set(upd,{merge:true}).then(function(){ Object.assign(p, upd); set++; }); }
     }).then(function(){ return new Promise(function(res){ setTimeout(res, 1100); }); });
   }); });
   seq.then(function(){
-    if(btn){ btn.disabled=false; btn.textContent='🌐 座標から住所取得'; }
-    toast(set+'件の住所を設定しました（'+total+'件を判定）');
+    if(btn){ btn.disabled=false; btn.textContent='🌐 名前から住所取得'; }
+    toast(set+'件を更新しました（'+total+'件を検索）');
     if(_placeMgrOpen()) renderPlaceList();
-  }).catch(function(e){ if(btn){ btn.disabled=false; btn.textContent='🌐 座標から住所取得'; } toast('取得に失敗: '+(e&&e.message||e),'err'); });
+  }).catch(function(e){ if(btn){ btn.disabled=false; btn.textContent='🌐 名前から住所取得'; } toast('取得に失敗: '+(e&&e.message||e),'err'); });
 }
 // 場所マスタ用 通貨セレクト（初期値は呼び出し側で住所推定を渡す）
 function _plCurSel(id, cur){ cur=(cur==='USD'||cur==='MXN'||cur==='JPY')?cur:'';
@@ -3243,10 +3264,12 @@ function renderPlaceList(){
   // 新規フィルタが特定イベントなら新規行のイベント既定に採用
   var defEv=(_placeEventFilter && _placeEventFilter.indexOf('__')!==0)?_placeEventFilter:'';
   var head='<thead><tr>'
+    +'<th style="text-align:center" title="全チェック/全解除"><input type="checkbox" id="pl-chk-all" onclick="plToggleAllChk(this.checked)"></th>'
     +'<th>地点名</th><th>英語名</th><th>住所</th><th>地図URL</th><th>表示</th><th>分類</th><th title="現金の必要通貨。住所から自動推定。日別必要現金の集計に使用">通貨</th><th>イベント</th><th>座標</th><th>操作</th>'
     +'</tr></thead>';
   var newEvCell=_coAdminMode?esc(_evName(_coAdminEventId)):_plEvSel('new', defEv);
   var newRow='<tr class="pl-newrow">'
+    +'<td></td>'
     +'<td><input class="pl-in" id="pl-new-name" placeholder="新規の地点名"></td>'
     +'<td><input class="pl-in" id="pl-new-en" placeholder="English name"></td>'
     +'<td><input class="pl-in" id="pl-new-addr" placeholder="住所"></td>'
@@ -3264,6 +3287,7 @@ function renderPlaceList(){
     var _mlink=_placeMapLink(p);
     var mapBtn=_mlink?'<a class="btn bs sm" href="'+esc(_mlink)+'" target="_blank" rel="noopener" style="text-decoration:none" title="Googleマップで開く">🗺</a> ':'';
     return '<tr>'
+      +'<td style="text-align:center"><input type="checkbox" class="pl-chk" id="pl-chk-'+id+'"></td>'
       +'<td><input class="pl-in" id="pl-name-'+id+'" value="'+esc(p.name||'')+'"></td>'
       +'<td><input class="pl-in" id="pl-en-'+id+'" value="'+esc(p.nameEn||'')+'"></td>'
       +'<td><input class="pl-in" id="pl-addr-'+id+'" value="'+esc(p.address||'')+'"></td>'
@@ -3276,7 +3300,7 @@ function renderPlaceList(){
       +'<td class="pl-act">'+mapBtn+'<button class="btn bs sm" onclick="openPlacePhotoMgr(\''+id+'\')" title="写真を管理">🖼'+(p.photos&&p.photos.length?(' '+p.photos.length):'')+'</button> <button class="btn bs sm" onclick="savePlaceRow(\''+id+'\')" title="この行を保存">💾</button> <button class="rm" title="削除" onclick="delPlace(\''+id+'\')">×</button></td>'
       +'</tr>';
   }).join('');
-  box.innerHTML='<div class="pl-tblwrap"><table class="pl-tbl"><colgroup><col class="c-name"><col class="c-en"><col class="c-addr"><col class="c-url"><col class="c-mode"><col class="c-cat"><col class="c-cur"><col class="c-ev"><col class="c-co"><col class="c-act"></colgroup>'+head+'<tbody>'+newRow+rows+'</tbody></table></div>'
+  box.innerHTML='<div class="pl-tblwrap"><table class="pl-tbl"><colgroup><col style="width:34px"><col class="c-name"><col class="c-en"><col class="c-addr"><col class="c-url"><col class="c-mode"><col class="c-cat"><col class="c-cur"><col class="c-ev"><col class="c-co"><col class="c-act"></colgroup>'+head+'<tbody>'+newRow+rows+'</tbody></table></div>'
     +(list.length?'':'<div class="ec" style="margin-top:8px">該当する場所はありません（分類タブ・イベント選択の絞り込みを確認）。上段の行から新規追加できます。</div>');
 }
 // 1行を保存（地点名・英語名・住所・地図URL・表示方法・分類・イベント）。座標はURLから再取得。
