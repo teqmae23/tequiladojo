@@ -293,10 +293,13 @@ a{color:var(--gold-d)}
 .sc-now.before::before{content:'';position:absolute;top:0;left:-60%;width:38%;height:100%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.38),transparent);transform:skewX(-18deg);animation:cdShine 4.5s ease-in-out infinite;pointer-events:none}
 @keyframes cdShine{0%{left:-60%}55%{left:135%}100%{left:135%}}
 .sc-now.before .sc-now-lbl{color:#fff;font-size:13px;font-weight:800;letter-spacing:.16em;opacity:.96}
-.sc-now.before .sc-now-cd{color:#fff;font-size:44px;font-weight:900;margin-top:6px;line-height:1.02;letter-spacing:.01em;text-shadow:0 2px 12px rgba(0,0,0,.28);animation:cdPulse 2s ease-in-out infinite}
+.sc-now.before .sc-now-cd{color:#fff;font-size:44px;font-weight:900;margin-top:6px;line-height:1.02;letter-spacing:.01em;text-shadow:0 2px 12px rgba(0,0,0,.28);font-variant-numeric:tabular-nums;animation:cdPulse 2s ease-in-out infinite}
 .sc-now.before .sc-now-sub{color:rgba(255,255,255,.92);font-size:12px;margin-top:7px}
 @keyframes cdPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
-@media (prefers-reduced-motion:reduce){.sc-now.before::before,.sc-now.before .sc-now-cd{animation:none}}
+/* 24時間を切ったら赤背景＋速い脈動で緊迫感 */
+.sc-now.before.urgent{background:linear-gradient(120deg,#7a0f10 0%,#b31217 48%,#e3342f 100%);box-shadow:0 10px 26px rgba(179,18,23,.40),inset 0 1px 0 rgba(255,255,255,.22)}
+.sc-now.before.urgent .sc-now-cd{animation:cdPulse 1s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.sc-now.before::before,.sc-now.before .sc-now-cd,.sc-now.before.urgent .sc-now-cd{animation:none}}
 .sc-now.live{background:#e9f4ef;border-color:#bcdccf}
 .sc-now.ended{background:var(--cream2);text-align:center}
 .sc-now-lbl{font-size:12px;font-weight:700;color:var(--ink2);letter-spacing:.04em}
@@ -2542,7 +2545,12 @@ function nowMs(){ return (_nowOverride!=null?_nowOverride:Date.now()) - _viewDel
 function _pad2(n){ return ('0'+n).slice(-2); }
 function _fmtLocalInput(ms){ var d=new Date(ms); return d.getFullYear()+'-'+_pad2(d.getMonth()+1)+'-'+_pad2(d.getDate())+'T'+_pad2(d.getHours())+':'+_pad2(d.getMinutes()); }
 function _fmtDbg(ms){ var d=new Date(ms); return d.getFullYear()+'/'+_pad2(d.getMonth()+1)+'/'+_pad2(d.getDate())+' '+_pad2(d.getHours())+':'+_pad2(d.getMinutes()); }
-function fmtCountdown(ms){ if(ms<0)ms=0; var tm=Math.floor(ms/60000); var days=Math.floor(tm/1440); var hh=Math.floor((tm%1440)/60); var mm=tm%60; return 'あと'+days+'日 '+_pad2(hh)+':'+_pad2(mm); }
+// 24時間未満は秒まで表示（あと HH:MM:SS）、それ以上は日＋時分（あとX日 HH:MM）
+function fmtCountdown(ms){ if(ms<0)ms=0;
+  var ts=Math.floor(ms/1000), ss=ts%60, tm=Math.floor(ts/60), mm=tm%60, th=Math.floor(tm/60), days=Math.floor(th/24), hh=th%24;
+  if(ms<86400000) return 'あと '+_pad2(hh)+':'+_pad2(mm)+':'+_pad2(ss);
+  return 'あと'+days+'日 '+_pad2(hh)+':'+_pad2(mm);
+}
 // イベントの開始・終了境界（開始=最初の項目の実時刻/なければ開催開始日、終了=終了日の翌日0:00 JST）
 // 項目の終了時刻（実時間優先→予定の到着/終了→なければ開始）の絶対ms
 function _endInstMs(it){
@@ -2567,7 +2575,7 @@ function nowSectionHtml(visEnr){
   var b=_eventBounds(_schedItems); var now=nowMs();
   if(b.startMs==null) return '';
   if(now < b.startMs){
-    return '<div class="sc-now before"><div class="sc-now-lbl">🕒 イベント開始まで</div><div class="sc-now-cd" id="sc-now-cd">'+fmtCountdown(b.startMs-now)+'</div>'
+    return '<div class="sc-now before'+((b.startMs-now)<86400000?' urgent':'')+'"><div class="sc-now-lbl">🕒 イベント開始まで</div><div class="sc-now-cd" id="sc-now-cd">'+fmtCountdown(b.startMs-now)+'</div>'
       +'<div class="sc-now-sub">開始予定: '+esc(_fmtDbg(b.startMs))+'（JST）</div></div>';
   }
   if(b.endMs!=null && now >= b.endMs){
@@ -2658,7 +2666,7 @@ function _startNowTimer(){
     if(!g('schedule-cont')){ clearInterval(_nowTimer); _nowTimer=null; return; }
     var b=_eventBounds(_schedItems), now=nowMs();
     var cd=g('sc-now-cd');
-    if(cd && now < b.startMs){ cd.textContent=fmtCountdown(b.startMs-now); return; }
+    if(cd && now < b.startMs){ var rem=b.startMs-now; cd.textContent=fmtCountdown(rem); var box=cd.parentNode; if(box&&box.classList) box.classList.toggle('urgent', rem<86400000); return; }
     // フェーズ境界を跨いだら再描画
     var isEndedShown=!!document.querySelector('.sc-now.ended');
     var isBeforeShown=!!document.querySelector('.sc-now.before');
