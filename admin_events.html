@@ -4871,26 +4871,32 @@ function _pdfStop(s){
 }
 function _pdfIsTrain(s){ s=String(s).trim(); return /行$/.test(s) && /線|ライン/.test(s); }
 function _pdfTrainMode(s){ if(/新幹線/.test(s)) return 'shinkansen'; if(/バス/.test(s)) return 'bus'; return 'train'; }
+// 電車区間の備考に残す行か（路線・所要・ホーム・直通・運休・事業者）。乗換の徒歩案内や距離は除外。
+function _pdfTrainKeep(x){ return _pdfIsTrain(x) || /\d\s*分\s*（/.test(x) || /ホーム/.test(x) || x==='直通' || x==='一部運休' || /電鉄$|鉄道$|交通局$|バス$|東日本$|西日本$|東海$|メトロ$/.test(x) || /^ＪＲ|^JR/.test(x); }
 // 行程PDFの行配列 → {legs:[{dep,arr,from,to,travel,note}], fare}
+// 地点（時刻＋名称）で区切り、2地点間を1区間として分類（直通で路線が複数に分かれても1区間に統合）。
 function parseTransitPdf(rawLines){
   var lines=rawLines.map(function(s){ return String(s||'').trim(); }).filter(function(s){ return s && !/^\d\/\d$/.test(s) && !/^\d{4}\/\d{1,2}\/\d{1,2}/.test(s) && !/^https?:/.test(s); });
-  var stops=[], fare='';
-  for(var i=0;i<lines.length;i++){ var st=_pdfStop(lines[i]); if(st) stops.push(st); var fm=lines[i].match(/料金[:：]\s*([\d,]+\s*円)/); if(fm) fare=fm[1].replace(/\s/g,''); }
-  function _bound(s){ return !!_pdfStop(s) || s==='徒歩' || _pdfIsTrain(s); }
-  var modes=[];
-  for(var n=0;n<lines.length;n++){ var L=lines[n];
-    if(L==='徒歩'){ var dur='',dist='';
-      for(var w=n+1;w<Math.min(n+6,lines.length);w++){ var mm=lines[w].match(/^約\s*(\d+)\s*分(?:、\s*([\d.]+)\s*m)?/); if(mm){ dur=mm[1]; dist=mm[2]||''; break; } if(_bound(lines[w])) break; }
-      modes.push({type:'walk', travel:'walking', note:'徒歩'+(dur?' 約'+dur+'分':'')+(dist?' '+dist+'m':'')});
-    } else if(_pdfIsTrain(L)){ var det=[];
-      for(var t=n+1;t<lines.length;t++){ var x=lines[t]; if(_bound(x)) break; if(/ルートは正確|ご注意ください|^[-]|^[\d.]+\s*m$|^0\.0\s*km$|階段|改札|進む|渡る|通過|^北|^南|^東|^西|^右折|^左折|出口|入口/.test(x)) continue; det.push(x); }
-      modes.push({type:'train', travel:_pdfTrainMode(L), note:(L+(det.length?(' / '+det.join(' / ')):'')).replace(/\s+/g,' ')});
-    }
-  }
-  var ok=(stops.length>=2 && stops.length===modes.length+1);
+  var stopIdx=[], stops=[], fare='';
+  for(var i=0;i<lines.length;i++){ var st=_pdfStop(lines[i]); if(st){ stopIdx.push(i); stops.push(st); } var fm=lines[i].match(/料金[:：]\s*([\d,]+\s*円)/); if(fm) fare=fm[1].replace(/\s/g,''); }
+  if(stops.length<2) return { legs:[], fare:fare, ok:false, nStops:stops.length, nLegs:0 };
   var legs=[];
-  if(ok){ for(var p=0;p<modes.length;p++){ legs.push({ dep:stops[p].time, arr:stops[p+1].time, from:stops[p].name, to:stops[p+1].name, travel:modes[p].travel, note:modes[p].note }); } }
-  return { legs:legs, fare:fare, ok:ok, nStops:stops.length, nModes:modes.length };
+  for(var s=0;s<stops.length-1;s++){
+    var seg=lines.slice(stopIdx[s]+1, stopIdx[s+1]);
+    var base={ dep:stops[s].time, arr:stops[s+1].time, from:stops[s].name, to:stops[s+1].name };
+    if(seg.indexOf('徒歩')>=0){
+      var dur='',dist='';
+      for(var k=0;k<seg.length;k++){ var mm=seg[k].match(/^約\s*(\d+)\s*分(?:、\s*([\d.]+)\s*m)?/); if(mm){ dur=mm[1]; dist=mm[2]||''; break; } }
+      base.travel='walking'; base.note='徒歩'+(dur?' 約'+dur+'分':'')+(dist?' '+dist+'m':'');
+    } else {
+      var firstTrain=''; for(var q=0;q<seg.length;q++){ if(_pdfIsTrain(seg[q])){ firstTrain=seg[q]; break; } }
+      var det=[], prev=''; seg.forEach(function(x){ if(_pdfTrainKeep(x) && x!==prev){ det.push(x); prev=x; } });
+      base.travel=_pdfTrainMode(firstTrain); base.note=det.join(' / ').replace(/\s+/g,' ');
+    }
+    legs.push(base);
+  }
+  var ok=(legs.length===stops.length-1 && legs.length>0);
+  return { legs:legs, fare:fare, ok:ok, nStops:stops.length, nLegs:legs.length };
 }
 function openPdfImport(){
   if(!_schEventId){ toast('先にイベントのスケジュールを開いてください','err'); return; }
@@ -4918,7 +4924,7 @@ function parsePdfPreview(){
     .then(function(contents){
       var lines=[]; contents.forEach(function(tc){ lines=lines.concat(_pdfLinesFromItems(tc.items)); });
       var r=parseTransitPdf(lines);
-      if(!r.ok||!r.legs.length){ g('pdf-prog').textContent=''; g('pdf-err').textContent='行程を解析できませんでした（地点'+r.nStops+'・区間'+r.nModes+'）。Googleマップの経路PDFか確認してください。'; return; }
+      if(!r.ok||!r.legs.length){ g('pdf-prog').textContent=''; g('pdf-err').textContent='行程を解析できませんでした（地点'+r.nStops+'・区間'+r.nLegs+'）。Googleマップの経路PDFか確認してください。'; return; }
       _pdfLegs=r;
       // 駅・地点の座標を順次取得
       var names={}; r.legs.forEach(function(lg){ names[lg.from]=1; names[lg.to]=1; });
