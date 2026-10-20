@@ -266,6 +266,8 @@ a{color:var(--gold-d)}
 .sc-rowthumb{margin-left:auto;flex:0 0 auto;align-self:center;width:52px;height:52px;border-radius:8px;overflow:hidden;border:1px solid var(--border);cursor:pointer;display:flex}
 .sc-rowthumb img{width:100%;height:100%;object-fit:cover;display:block}
 .sc-ttl{font-size:14px;font-weight:600;color:var(--ink)}
+.sc-wx-in{font-size:11.5px;font-weight:700;color:var(--ink2);white-space:nowrap;margin-left:4px}
+.sc-wx-in .pop{color:var(--teal);font-weight:700}
 .sc-note{font-size:12px;color:var(--ink);line-height:1.6;margin-top:2px;white-space:pre-wrap}
 .sc-pgal{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .sc-pgal-th{width:64px;height:64px;border-radius:8px;overflow:hidden;border:1px solid var(--border);cursor:pointer;padding:0;background:none}
@@ -2342,7 +2344,7 @@ function renderSchedItem(it, leg){
   var rightCol=(photoCorner||presetThumb)?('<div class="sc-right">'+photoCorner+presetThumb+'</div>'):'';
   // 折畳時に見えるのは「時間・イベントアイコン・タイトル・写真」のみ（参加者/ホスト/名前/費用は展開で表示）
   return '<div class="sc-item'+(clickable?' has-geo':'')+'" style="background:'+catBg(it.category)+'"'+(clickable?' onclick="onSchedItemClick(\''+did+'\','+(geo?'1':'0')+')"':'')+'>'+schedTimeHtml(it,leg)+'<span class="sc-ic sc-ic-pop" title="'+esc(catName(it.category))+'" onclick="event.stopPropagation();showCatPop(event,\''+esc(it.category)+'\')">'+ic+'</span>'
-    +'<div class="sc-body"><div class="sc-ttl">'+esc(it.title||'')+(hasDetail?'<span class="sc-caret2" id="scc-'+did+'">詳細表示</span>':'')+'</div>'+_schSubLine(it)
+    +'<div class="sc-body"><div class="sc-ttl">'+esc(it.title||'')+'<span class="sc-wx" id="sc-wx-'+did+'"></span>'+(hasDetail?'<span class="sc-caret2" id="scc-'+did+'">詳細表示</span>':'')+'</div>'+_schSubLine(it)
     +_cicoControls(it)
     +detail
     +'</div>'
@@ -2889,6 +2891,7 @@ function renderSchedule(items){
   h+='</div>';
   el.innerHTML=h;
   _loadSchedDayWeather(sections, dayItemsMap); // 各日ヘッダに天気（その日の最後の場所基準）
+  _loadItemWeather(_schedItems); // 各項目にその場所・時刻の1時間毎予報（本日〜約16日先）
   var nt=g('now-top'); if(nt) nt.innerHTML=_nowHtml; // 現在のイベント／NEXTをTOPに表示
   if(_nowMapItem && window.L) initNowMap(_nowMapItem);
   _startNowTimer();
@@ -2932,6 +2935,46 @@ function _loadSchedDayWeather(sections, dayItemsMap){
                pop:(d.daily.precipitation_probability_max?d.daily.precipitation_probability_max[0]:null) };
       _schWxCache[key]=wx;
       _fillDayWx(g('sc-day-wx-'+idx), wx);
+    }).catch(function(){});
+  });
+}
+/* ── 各項目の「その場所・時刻」の1時間毎予報（Open-Meteo・本日〜約16日先）。
+   場所=項目の座標（移動は出発地）・時刻=予定開始時刻の時。位置を伏せる項目は非表示。 ── */
+var _wxHourlyCache={};
+function _itemWxLL(it){ if(!it||_locHidden(it)) return null; if(it.lat!=null&&it.lng!=null) return {lat:+it.lat, lng:+it.lng}; return null; }
+function _loadItemWeather(items){
+  var today=new Date(); today.setHours(0,0,0,0);
+  var maxD=new Date(today.getTime()+15*86400000); // 予報は本日〜16日先
+  var groups={}; // locKey -> {lat,lng,dates:{},items:[{it,date,hour}]}
+  (items||[]).forEach(function(it){
+    var ll=_itemWxLL(it); if(!ll||!isFinite(ll.lat)||!isFinite(ll.lng)) return;
+    if(!it.date) return;
+    var dt=new Date(it.date+'T00:00:00'); if(isNaN(dt.getTime())||dt<today||dt>maxD) return;
+    var hm=_hm(it.time||it.actualStart||''); var hh=(hm.match(/^(\d{1,2}):/)||[])[1];
+    if(hh==null || +hh>23) return; // 時刻なし・深夜表記(24:00+)は対象外
+    var key=ll.lat.toFixed(3)+'|'+ll.lng.toFixed(3);
+    groups[key]=groups[key]||{lat:ll.lat, lng:ll.lng, dates:{}, items:[]};
+    groups[key].dates[it.date]=1;
+    groups[key].items.push({it:it, date:it.date, hour:('0'+(+hh)).slice(-2)});
+  });
+  Object.keys(groups).forEach(function(key){
+    var gpd=groups[key];
+    function apply(h){
+      gpd.items.forEach(function(o){ var span=g('sc-wx-'+o.it.id); if(!span) return;
+        var i=h.index[o.date+'T'+o.hour+':00']; if(i==null) return;
+        var t=h.temp[i], pop=h.pop[i], w=_wmo(h.code[i]);
+        span.innerHTML=' <span class="sc-wx-in" title="'+esc(w.t)+'（'+esc(o.date+' '+o.hour+':00')+'・現地）">'+w.i+(t!=null?Math.round(t)+'°':'')+(pop!=null?' <span class="pop">💧'+pop+'%</span>':'')+'</span>';
+      });
+    }
+    if(_wxHourlyCache[key]){ apply(_wxHourlyCache[key]); return; }
+    var dates=Object.keys(gpd.dates).sort();
+    var url='https://api.open-meteo.com/v1/forecast?latitude='+encodeURIComponent(gpd.lat)+'&longitude='+encodeURIComponent(gpd.lng)
+      +'&hourly=temperature_2m,precipitation_probability,weather_code&timezone=auto&start_date='+dates[0]+'&end_date='+dates[dates.length-1];
+    fetch(url).then(function(r){ return r.json(); }).then(function(d){
+      if(!d||!d.hourly||!d.hourly.time) return;
+      var h={ temp:d.hourly.temperature_2m||[], pop:d.hourly.precipitation_probability||[], code:d.hourly.weather_code||[], index:{} };
+      d.hourly.time.forEach(function(t,i){ h.index[String(t)]=i; });
+      _wxHourlyCache[key]=h; apply(h);
     }).catch(function(){});
   });
 }
