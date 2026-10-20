@@ -3275,8 +3275,8 @@ function renderReview(){
     // 候補に現在の選択が含まれていなければ加える
     if(r.itemId && !cands.some(function(it){return it.id===r.itemId;})){ var cur=_schedItems.find(function(it){return it.id===r.itemId;}); if(cur) cands=[cur].concat(cands); }
     var opts='<option value="">— 未分類 —</option>'+cands.map(function(it){ return '<option value="'+esc(it.id)+'"'+(it.id===r.itemId?' selected':'')+'>'+esc(_itemLabel(it))+'</option>'; }).join('');
-    var byTxt=r.by==='target'?'この項目に追加':(r.by==='位置情報'?'📍 位置情報で判定':(r.by==='撮影時刻'?'🕐 撮影時刻で判定':'⚠ 自動判定できません（項目を選択）'));
-    var byCls=r.by==='位置情報'?'geo':(r.by==='撮影時刻'?'time':(r.by==='target'?'time':'none'));
+    var byTxt=r.by==='target'?'この項目に追加':(r.by==='時刻+座標'?'🕐📍 時刻＋位置で判定':(r.by==='位置情報'?'📍 位置情報で判定':(r.by==='撮影時刻'?'🕐 撮影時刻で判定':'⚠ 自動判定できません（項目を選択）')));
+    var byCls=(r.by==='位置情報')?'geo':((r.by==='撮影時刻'||r.by==='時刻+座標'||r.by==='target')?'time':'none');
     var warn=r.mismatch?'<div class="phr-warn">⚠ 位置・時刻がこの項目と大きく離れています。問題なければそのまま保存できます。</div>':'';
     return '<div class="phr-row"><img src="'+r._url+'" alt="">'
       +'<div class="phr-main"><div class="phr-by '+byCls+'">'+byTxt+'</div>'+warn
@@ -3376,17 +3376,33 @@ function _geoInItem(it, lat, lng){
   return {hit:false};
 }
 function suggestItem(ex){
-  // ① 位置情報（GPS）。2点間移動は経度帯・緯度帯に入れば一致。滞在地点は50km以内で最も近い。
-  if(ex.lat!=null&&ex.lng!=null){
+  var hasGeo=(ex.lat!=null && ex.lng!=null);
+  // ① まず「時刻」で判定：撮影時刻がその項目の時間帯[開始,終了]に入る項目を抽出（実時間CI/CO優先）。
+  //    幅のある項目は厳密に、点（終了時刻なし）の項目のみ±5分の許容。開始時刻の昇順（＝早い方が先）で並べる。
+  if(ex.time){
+    var inWin=[];
+    _schedItems.forEach(function(it){
+      var s=_itemStartMs(it); if(!s) return;
+      var e=_itemEndMs(it); if(!e||e<s) e=s;          // 終了が無い/不正なら点とみなす
+      var tol=(e===s)?5*60000:0;                      // 点のみ±5分、幅のある項目は厳密（隣接項目との重なりを避ける）
+      if(ex.time>=s-tol && ex.time<=e+tol) inWin.push({it:it, s:s});
+    });
+    inWin.sort(function(a,b){ return a.s-b.s; });       // 早い項目が先（入れ子は最初にヒットしたものを優先）
+    if(inWin.length){
+      // 座標があれば、時間帯に入る項目のうち「座標も合う最初」の項目をセット。
+      if(hasGeo){ for(var i=0;i<inWin.length;i++){ if(_geoInItem(inWin[i].it,ex.lat,ex.lng).hit) return {id:inWin[i].it.id, by:'時刻+座標'}; } }
+      // 座標が無い／座標が一致しない場合は、時間帯の最初の項目（時刻を優先）。
+      return {id:inWin[0].it.id, by:'撮影時刻'};
+    }
+  }
+  // ② 時間帯に入る項目が無い場合：座標で判定（2点間移動は経路内、滞在地点は50km以内で最も近い）。
+  if(hasGeo){
     var moveHit=null; _schedItems.forEach(function(it){ if(moveHit) return; var gi=_geoInItem(it,ex.lat,ex.lng); if(gi.move&&gi.hit) moveHit=it; });
     if(moveHit) return {id:moveHit.id, by:'位置情報'};
     var best=null,bd=1e9; _schedItems.forEach(function(it){ if(it.isMove) return; if(it.lat!=null&&it.lng!=null){ var d=haversine(ex.lat,ex.lng,it.lat,it.lng); if(d<bd){bd=d;best=it;} } }); if(best&&bd<50) return {id:best.id, by:'位置情報'};
   }
-  // ② 撮影時刻（実時間CI/CO優先）。まず時間帯[開始,終了]に入る項目、無ければ最も近い開始時刻（12h以内）
+  // ③ 最後の手段：最も近い開始時刻（12h以内）
   if(ex.time){
-    var inWin=null;
-    _schedItems.forEach(function(it){ var s=_itemStartMs(it); if(!s)return; var e=_itemEndMs(it)||s; if(ex.time>=s-5*60000 && ex.time<=e+5*60000){ if(!inWin || s>_itemStartMs(inWin)) inWin=it; } });
-    if(inWin) return {id:inWin.id, by:'撮影時刻'};
     var b2=null,bd2=1e15; _schedItems.forEach(function(it){ var s=_itemStartMs(it); if(!s)return; var d=Math.abs(s-ex.time); if(d<bd2){bd2=d;b2=it;} }); if(b2&&bd2<12*3600*1000) return {id:b2.id, by:'撮影時刻'};
   }
   return null;
