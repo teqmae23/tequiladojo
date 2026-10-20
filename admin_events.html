@@ -2347,15 +2347,19 @@ function openCatMgr(){ if(_coAdminMode) return; g('cat-mgr-modal').classList.add
 function closeCatMgr(){ g('cat-mgr-modal').classList.remove('open'); }
 function ensureCatsSeeded(){
   return catCol().get().then(function(s){
-    if(s.empty){ var b=db.batch(); DEFAULT_CATS.forEach(function(c){ b.set(catCol().doc(c.id),{name:c.name,icon:c.icon,bg:c.bg,seq:c.seq}); }); return b.commit().then(loadCats); }
+    if(s.empty){ var b=db.batch(); DEFAULT_CATS.forEach(function(c){ b.set(catCol().doc(c.id),{name:c.name,nameEn:c.nameEn||'',icon:c.icon,bg:c.bg,seq:c.seq}); }); return b.commit().then(loadCats); }
     return loadCats();
   }).catch(function(){ return loadCats(); });
 }
 function refreshCatUI(){ if(g('sch-ed-modal').classList.contains('open')) catOptions(g('se-cat').value); if(_schItems&&_schItems.length) renderSchedList(); }
 function renderCatMgr(){
   return loadCats().then(function(){
-    g('cat-list').innerHTML=_cats.length?_cats.map(function(c){
+    g('cat-list').innerHTML=_cats.length?_cats.map(function(c, idx){
+      var up=(idx>0), dn=(idx<_cats.length-1);
       return '<div class="cat-item" style="background:'+esc(c.bg||'#fff')+'"><span class="cat-ic">'+esc(c.icon||'📍')+'</span><span class="cat-nm">'+esc(c.name||'（無題）')+(c.nameEn?' <span style="color:var(--ink3);font-weight:400;font-size:11px">/ '+esc(c.nameEn)+'</span>':'')+'</span>'
+        +'<button class="btn bs sm" title="上へ" onclick="moveCat(\''+esc(c.id)+'\',-1)"'+(up?'':' disabled style="opacity:.3"')+'>↑</button>'
+        +'<button class="btn bs sm" title="下へ" onclick="moveCat(\''+esc(c.id)+'\',1)"'+(dn?'':' disabled style="opacity:.3"')+'>↓</button>'
+        +'<button class="btn bs sm" title="複製" onclick="dupCat(\''+esc(c.id)+'\')">複製</button>'
         +'<button class="btn bs sm" onclick="editCat(\''+esc(c.id)+'\')">編集</button>'
         +'<button class="rm" title="削除" onclick="delCat(\''+esc(c.id)+'\')">×</button></div>';
     }).join(''):'<div class="ec">種別がありません。</div>';
@@ -2378,6 +2382,23 @@ function saveCat(){
    .finally(function(){ btn.disabled=false; });
 }
 function delCat(id){ if(!confirm('この種別を削除しますか？（この種別の項目は既定表示になります）')) return; catCol().doc(id).delete().then(function(){ toast('削除しました'); if(_catEditId===id) catFormReset(); renderCatMgr(); }).catch(function(e){ toast('削除失敗: '+e.message); }); }
+// 並び替え（dir=-1:上へ, +1:下へ）。全件の seq を新しい並び順で振り直して保存。
+function moveCat(id, dir){
+  var arr=_cats.slice(), i=-1;
+  for(var k=0;k<arr.length;k++){ if(arr[k].id===id){ i=k; break; } }
+  if(i<0) return; var j=i+dir; if(j<0||j>=arr.length) return;
+  var t=arr[i]; arr[i]=arr[j]; arr[j]=t;
+  var b=db.batch(), changed=0;
+  arr.forEach(function(c,idx){ if((c.seq||0)!==idx){ b.set(catCol().doc(c.id),{seq:idx},{merge:true}); changed++; } });
+  if(!changed){ _cats=arr; renderCatMgr(); return; }
+  b.commit().then(function(){ renderCatMgr(); }).catch(function(e){ toast('並び替え失敗: '+e.message,'err'); });
+}
+// 複製（名前に「（コピー）」、英語名に「 copy」を付けて末尾に追加）
+function dupCat(id){
+  var c=catById(id); if(!c) return;
+  var data={ name:(c.name||'種別')+'（コピー）', nameEn:(c.nameEn?(c.nameEn+' copy'):''), icon:c.icon||'📍', bg:(c.bg&&/^#[0-9a-fA-F]{6}$/.test(c.bg))?c.bg:'#f0efea', seq:_cats.length, createdAt:firebase.firestore.FieldValue.serverTimestamp(), updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
+  catCol().add(data).then(function(){ toast('複製しました'); renderCatMgr(); }).catch(function(e){ toast('複製失敗: '+e.message,'err'); });
+}
 // JST絶対時刻（会員側event.htmlと同じ考え方）で並べ替え・日付変更線判定
 function _tzOffMin(inst,tz){ var m={}; new Intl.DateTimeFormat('en-US',{timeZone:tz,hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(inst).forEach(function(p){m[p.type]=p.value;}); if(m.hour==='24')m.hour='00'; return Math.round((Date.UTC(+m.year,+m.month-1,+m.day,+m.hour,+m.minute,+m.second)-inst.getTime())/60000); }
 function _wallInstant(dateStr,timeStr,tz){ var dp=(dateStr||'').split('-'),tp=(timeStr||'00:00').split(':'); if(dp.length<3)return null; var g=Date.UTC(+dp[0],+dp[1]-1,+dp[2],(+tp[0]||0),(+tp[1]||0)); return new Date(g-_tzOffMin(new Date(g),tz)*60000); }
