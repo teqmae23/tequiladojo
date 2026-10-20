@@ -4444,10 +4444,28 @@ function _gpxPtsIn(s,e){ var off=_gpxOff(); return _gpxPts.filter(function(p){ r
 function previewGpx(){
   if(!_gpxPts.length){ g('gpx-summary').textContent='トラックがありません'; g('gpx-preview').innerHTML=''; g('gpx-save').disabled=true; _gpxMapClear(); return; }
   var withT=_gpxPts.filter(function(p){return p.t!=null;});
+  var moves=_schItems.filter(function(it){ return it.isMove; });
+  // GT730FL-S/CanWay等はローカル時刻を末尾Z(=UTC)で書き出すため、ログ時刻が移動予定と時間帯ごとずれる。
+  // オフセット未設定(0)で、どの移動予定にもGPS点がほぼ入らない場合のみ、
+  // 「各移動の予定時刻に最も多くのGPS点が収まるオフセット」を±14h/30分刻みで探索して自動補正する（推測ではなく実一致数で決定）。
+  var autoNote='';
+  if(withT.length && (parseInt(g('gpx-offset').value,10)||0)===0){
+    var wins=[]; moves.forEach(function(it){ var w=_moveWindow(it); if(w) wins.push(w); });
+    if(wins.length){
+      var totalIn=function(offMin){ var off=offMin*60000, c=0; for(var i=0;i<withT.length;i++){ var tt=withT[i].t+off; for(var j=0;j<wins.length;j++){ if(tt>=wins[j].s&&tt<=wins[j].e){ c++; break; } } } return c; };
+      var base=totalIn(0), best=0, bestC=base;
+      for(var o=-14*60;o<=14*60;o+=30){ var c=totalIn(o); if(c>bestC || (c===bestC && Math.abs(o)<Math.abs(best))){ bestC=c; best=o; } }
+      if(base<2 && best!==0 && bestC>=2){
+        g('gpx-offset').value=best;
+        var hh=best/60;
+        autoNote='<div style="color:var(--red);margin-top:4px">⚠ GPSログの時刻が移動予定と'+(best%60?hh.toFixed(1):hh.toFixed(0))+'hずれていたため自動補正しました（GT730等はローカル時刻をUTC表記する場合があります）。ずれが残る場合は上のオフセット（分）を手動調整してください。</div>';
+      }
+    }
+  }
   var off=_gpxOff();
   g('gpx-summary').innerHTML='取得点数: <b>'+_gpxPts.length+'</b>　時刻付き: <b>'+withT.length+'</b>'
-    +(withT.length?('　範囲: '+_gpxFmt(withT[0].t+off)+' 〜 '+_gpxFmt(withT[withT.length-1].t+off)):'（時刻なし→自動割当できません）');
-  var moves=_schItems.filter(function(it){ return it.isMove; });
+    +(withT.length?('　範囲: '+_gpxFmt(withT[0].t+off)+' 〜 '+_gpxFmt(withT[withT.length-1].t+off)):'（時刻なし→自動割当できません）')
+    +autoNote;
   _gpxMatch=[];
   var rows=moves.map(function(it){
     var w=_moveWindow(it); if(!w) w={s:(withT.length?withT[0].t+off:Date.now()), e:(withT.length?withT[withT.length-1].t+off:Date.now())};
