@@ -410,6 +410,7 @@ table.pl-tbl select.pl-in{padding-left:3px;padding-right:2px}
     <div class="toolbar">
       <button class="btn bp" onclick="openEvent(null)">＋ イベント追加</button>
       <span class="cnt" id="cnt"></span>
+      <button class="btn bs ca-only-hide" onclick="migrateFixAllTimeFields()" title="全イベントのスケジュール時刻を点検し、分形式（コロン無しの数値。例: 1399→23:19）で保存された不正な時刻をHH:MMへ一括修正します。正常なHH:MMは変更しません。" style="margin-left:auto">🛠 時刻データ一括修正</button>
     </div>
     <div id="list"><div class="ec">読み込み中…</div></div>
   </div>
@@ -1327,6 +1328,53 @@ function togglePublish(id){
   db.collection('events').doc(id).set({ published:toPub, updatedAt:firebase.firestore.FieldValue.serverTimestamp() },{merge:true})
     .then(function(){ ev.published=toPub; toast(toPub?'公開しました':'非公開にしました'); render(); })
     .catch(function(e){ toast('変更に失敗しました: '+((e&&e.message)||e)); });
+}
+// 分(minute-of-day)形式で保存された不正な時刻(例:"1399")をHH:MMへ変換して返す。変換不要ならnull。
+// 通常保存は必ずコロン付き「HH:MM」になるため、コロン無しの裸の数値のみを対象にでき、正常値は巻き込まない。
+function _minToHMfix(v){
+  if(v==null) return null;
+  var s=String(v).trim();
+  if(s===''||s.indexOf(':')>=0) return null;        // 空・既にコロン付き(HH:MM / HH:MM:SS)は対象外
+  if(!/^\d{1,4}$/.test(s)) return null;             // 数値以外は対象外
+  var t=+s; if(t<0||t>=1800) return null;           // 0〜29:59(=1799分)の範囲のみ変換
+  return ('0'+Math.floor(t/60)).slice(-2)+':'+('0'+(t%60)).slice(-2);
+}
+// 全イベントのスケジュール時刻フィールド(time/toTime/endTime)の分形式不正値をHH:MMへ一括修正。
+function migrateFixAllTimeFields(){
+  if(_coAdminMode){ toast('この操作は管理者のみ可能です','err'); return; }
+  if(!confirm('全イベントのスケジュール時刻を点検し、分形式（コロン無しの数値。例: 1399 → 23:19）で保存された不正な時刻を HH:MM に一括修正します。\n正常な「HH:MM」はそのままです。続行しますか？')) return;
+  toast('点検中…');
+  var FIELDS=['time','toTime','endTime'];
+  db.collection('events').get().then(function(evSnap){
+    var chain=Promise.resolve(), fixes=[];
+    evSnap.docs.forEach(function(ed){
+      chain=chain.then(function(){
+        return ed.ref.collection('scheduleItems').get().then(function(siSnap){
+          var evName=(ed.data()&&ed.data().name)||ed.id;
+          siSnap.docs.forEach(function(sd){
+            var d=sd.data()||{}, upd={}, befs=[], afts=[];
+            FIELDS.forEach(function(f){ var nv=_minToHMfix(d[f]); if(nv!=null){ upd[f]=nv; befs.push(f+' '+d[f]); afts.push(f+' '+nv); } });
+            if(Object.keys(upd).length){ fixes.push({ ref:sd.ref, upd:upd, before:befs.join(' / '), after:afts.join(' / '), ev:evName, title:d.title||d.placeName||'(無題)' }); }
+          });
+        });
+      });
+    });
+    return chain.then(function(){ return fixes; });
+  }).then(function(fixes){
+    if(!fixes.length){ toast('修正が必要な時刻データはありませんでした'); return; }
+    var sample=fixes.slice(0,10).map(function(x){ return '・['+x.ev+'] '+x.title+'  '+x.before+' → '+x.after; }).join('\n');
+    if(!confirm(fixes.length+'件の項目を修正します。\n\n'+sample+(fixes.length>10?('\n…ほか'+(fixes.length-10)+'件'):'')+'\n\nこの内容で確定しますか？（元に戻せません）')){ toast('キャンセルしました'); return; }
+    var chunks=[]; for(var i=0;i<fixes.length;i+=400) chunks.push(fixes.slice(i,i+400));
+    var done=0, cc=Promise.resolve();
+    chunks.forEach(function(ch){
+      cc=cc.then(function(){
+        var b=db.batch();
+        ch.forEach(function(x){ x.upd.updatedAt=firebase.firestore.FieldValue.serverTimestamp(); b.set(x.ref, x.upd, {merge:true}); });
+        return b.commit().then(function(){ done+=ch.length; toast('修正中… '+done+'/'+fixes.length); });
+      });
+    });
+    return cc.then(function(){ toast('完了: '+fixes.length+'件の時刻を修正しました'); });
+  }).catch(function(e){ toast('一括修正に失敗しました: '+((e&&e.message)||e),'err'); });
 }
 
 // ── スケジュール（各日の開催時間） ──
