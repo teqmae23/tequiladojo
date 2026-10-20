@@ -1682,10 +1682,20 @@ function _addSec(hms, sec){
   var hh=Math.floor(tot/3600), mm=Math.floor((tot%3600)/60), ss=tot%60;
   return ('0'+hh).slice(-2)+':'+('0'+mm).slice(-2)+':'+('0'+ss).slice(-2);
 }
+// 予定時刻を表示用に整える。HH:MM / HHMM（妥当）はそのまま、壊れた値（例: 分で保存された "1399"=23:19）はHH:MMへ修復。
+// ※ 現行コードはすべて _normHM で HH:MM 保存するため、分形式は旧/外部データのみ。正常値は一切変化しない。
+function _dispHM(v){
+  if(v==null||v==='') return '';
+  var s=String(v).trim();
+  if(s.indexOf(':')>=0) return _hm(s);              // 通常保存はすべてコロン付き（HH:MM / HH:MM:SS）→ HH:MMに丸め
+  // コロンの無い裸の数値は通常データに存在しない（保存時に必ずHH:MMへ正規化されるため）＝分(minute-of-day)形式の旧/外部データ。
+  if(/^\d{1,4}$/.test(s)){ var t=+s; if(t>=0 && t<1800){ var hh=Math.floor(t/60), mm=t%60; return ('0'+hh).slice(-2)+':'+('0'+mm).slice(-2); } }
+  return _hm(s);
+}
 function _tcell(actual, sched){
   // 実時間があれば実時間のみ表示（HH:MMに丸め）。クリックで「予定→実」をポップアップ
   if(actual) return '<span class="sc-act">'+esc(_hm(actual))+'</span>';
-  return esc(sched||'—');
+  return esc(_dispHM(sched)||'—');
 }
 // 終了（到着/滞在終了）を持つ項目か（2点移動 or 終了時刻あり）。単一時間はfalse。
 function _hasEnd(it){ return !!(it && (it.isMove || (it.endTime&&String(it.endTime).trim()))); }
@@ -3173,16 +3183,38 @@ function _itemEndMs(it){ if(it.actualEndMs) return it.actualEndMs; var e=it.isMo
 // 項目の時刻表示（分類の参考用）。2点間移動・終了時刻ありは「開始→終了」の両方、それ以外は単一。実時間があれば優先。
 function _itemTimeRange(it){
   if(!it) return '';
-  var s=_hm(it.actualStart||it.time||'');
+  var s=_dispHM(it.actualStart||it.time||'');
   var e='';
-  if(it.isMove) e=_hm(it.actualEnd||it.toTime||'');
-  else if(it.endTime && String(it.endTime).trim()) e=_hm(it.actualEnd||it.endTime||'');
+  if(it.isMove) e=_dispHM(it.actualEnd||it.toTime||'');
+  else if(it.endTime && String(it.endTime).trim()) e=_dispHM(it.actualEnd||it.endTime||'');
   if(s && e) return s+'→'+e;
   return s||e||'';
 }
 function _itemLabel(it){ var t=_itemTimeRange(it); return ((it.date||'')+' '+t+' '+(it.title||'（無題）')).trim(); }
-// 写真の撮影日時（EXIF由来のms）を表示用に整形
-function _fmtShotTime(ms){ if(!ms) return '撮影日時: 不明'; var d=new Date(ms); var p=function(n){ return ('0'+n).slice(-2); }; return '撮影日時: '+d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes()); }
+// 写真の撮影日時を、撮影地（GPS座標）のタイムゾーンに合わせて表示。
+// ・GPSがあり tzlookup でTZ判定できる場合: 撮影地の現地時刻＋TZ略称を表示
+//   - EXIFにオフセット(OffsetTimeOriginal)があれば、絶対時刻を確定して撮影地TZで整形（正確）
+//   - オフセットが無ければ、EXIFの壁時計を撮影地の現地時刻とみなしTZ略称を付与
+// ・GPSが無ければ EXIF壁時計をそのまま表示（従来どおり）
+function _fmtShotTime(ex){
+  if(!ex || !ex.time) return '撮影日時: 不明';
+  var d=new Date(ex.time), p=function(n){ return ('0'+n).slice(-2); };
+  var Y=d.getFullYear(), Mo=d.getMonth()+1, D=d.getDate(), H=d.getHours(), Mi=d.getMinutes(), Se=d.getSeconds();
+  var tz=(ex.lat!=null && ex.lng!=null)?_safeTz(ex.lat,ex.lng):null;
+  if(tz){
+    var inst;
+    if(ex.tzOffMin!=null){ inst=new Date(Date.UTC(Y,Mo-1,D,H,Mi,Se)-ex.tzOffMin*60000); }
+    else { inst=_wallInstant(Y+'-'+p(Mo)+'-'+p(D), p(H)+':'+p(Mi), tz); }
+    if(inst){
+      try{
+        var parts={}; new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(inst).forEach(function(x){ parts[x.type]=x.value; });
+        var hh=(parts.hour==='24'?'00':parts.hour);
+        return '撮影日時: '+parts.year+'/'+parts.month+'/'+parts.day+' '+hh+':'+parts.minute+'（'+_tzAbbr(inst,tz)+'）';
+      }catch(e){}
+    }
+  }
+  return '撮影日時: '+Y+'/'+p(Mo)+'/'+p(D)+' '+p(H)+':'+p(Mi);
+}
 // 撮影時刻 t(ms) の前後 hours 時間内のスケジュール項目（時刻不明なら全項目）
 function _itemsWithin(t, hours){
   if(!t) return _schedItems.slice();
@@ -3258,7 +3290,7 @@ function renderReview(){
     var warn=r.mismatch?'<div class="phr-warn">⚠ 位置・時刻がこの項目と大きく離れています。問題なければそのまま保存できます。</div>':'';
     return '<div class="phr-row"><img src="'+r._url+'" alt="">'
       +'<div class="phr-main"><div class="phr-by '+byCls+'">'+byTxt+'</div>'+warn
-      +'<div class="phr-shot">📷 '+esc(_fmtShotTime(r.ex&&r.ex.time))+'</div>'
+      +'<div class="phr-shot">📷 '+esc(_fmtShotTime(r.ex))+'</div>'
       +'<select class="phr-sel" onchange="_phSetItem('+i+',this.value)">'+opts+'</select>'
       +'<input class="phr-cap" data-i="'+i+'" placeholder="キャプション（場所など・任意）" value="'+esc(r.caption||'')+'" oninput="_phSetCap('+i+',this)"></div></div>';
   }).join('');
@@ -3310,7 +3342,12 @@ function parseExif(dv){
       var rat=function(o){ var den=u32(o+4)||1; return u32(o)/den; };
       var ifd0=tiff+u32(tiff+4), res={}, exifPtr=0, gpsPtr=0, n=u16(ifd0);
       for(var i=0;i<n;i++){ var e=ifd0+2+i*12, tg=u16(e); if(tg===0x8769)exifPtr=tiff+u32(e+8); else if(tg===0x8825)gpsPtr=tiff+u32(e+8); }
-      if(exifPtr){ var en=u16(exifPtr); for(var j=0;j<en;j++){ var ee=exifPtr+2+j*12; if(u16(ee)===0x9003){ var cnt=u32(ee+4), po=(cnt>4)?(tiff+u32(ee+8)):(ee+8), s=''; for(var k=0;k<cnt-1;k++){ var c=dv.getUint8(po+k); if(c)s+=String.fromCharCode(c); } var m=s.match(/(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/); if(m) res.time=new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6]).getTime(); } } }
+      if(exifPtr){ var en=u16(exifPtr), rdAscii=function(ee){ var cnt=u32(ee+4), po=(cnt>4)?(tiff+u32(ee+8)):(ee+8), s=''; for(var k=0;k<cnt-1;k++){ var c=dv.getUint8(po+k); if(c)s+=String.fromCharCode(c); } return s; };
+        for(var j=0;j<en;j++){ var ee=exifPtr+2+j*12, tag2=u16(ee);
+          if(tag2===0x9003){ var s=rdAscii(ee); var m=s.match(/(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/); if(m) res.time=new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6]).getTime(); }
+          else if(tag2===0x9011){ var so=rdAscii(ee).trim().match(/^([+-])(\d{2}):?(\d{2})$/); if(so) res.tzOffMin=(so[1]==='-'?-1:1)*((+so[2])*60+(+so[3])); } // OffsetTimeOriginal（撮影地のUTCオフセット）
+        }
+      }
       if(gpsPtr){ var gn=u16(gpsPtr), latRef='',lngRef='',lat=null,lng=null;
         var dms=function(o,cnt){ var po=(cnt*8>4)?(tiff+u32(o+8)):(o+8); return rat(po)+rat(po+8)/60+rat(po+16)/3600; };
         for(var q=0;q<gn;q++){ var ge=gpsPtr+2+q*12, gt=u16(ge), gcv=u32(ge+4);
