@@ -1931,10 +1931,10 @@ function toYen(amt,cur){ if(amt==null) return null; if(cur==='JPY'||!cur) return
 function fromYen(yen,cur){ yen=Number(yen)||0; if(cur==='JPY'||!cur) return Math.round(yen); var r=FX[cur]; return r?Math.ceil(yen/r):0; }
 function _curFromAddr(addr){
   var s=String(addr||''); if(!s.trim()) return '';
-  if(/[ぁ-んァ-ヶ一-龠]/.test(s) || /日本|〒/.test(s)) return 'JPY';
   var a=s.toLowerCase();
-  if(/m[eé]xico|jalisco|guadalajara|oaxaca|cdmx|yucat|quintana|nayarit|michoac|puebla|cancun|canc[uú]n/.test(a)) return 'MXN';
-  if(/\busa\b|u\.s\.a|united states|california|san francisco|los angeles|nevada|arizona|texas|new york|washington|oregon|florida|hawaii|chicago|illinois/.test(a)) return 'USD';
+  if(/メキシコ|ハリスコ|グアダラハラ|テキーラ|オアハカ|カンクン|プエブラ/.test(s) || /m[eé]xico|jalisco|guadalajara|tequila|oaxaca|cdmx|yucat|quintana|nayarit|michoac|puebla|canc[uú]n/.test(a)) return 'MXN';
+  if(/アメリカ|米国|合衆国|カリフォルニア|サンフランシスコ|ロサンゼルス|ニューヨーク|ラスベガス|ハワイ|テキサス/.test(s) || /\busa\b|u\.s\.a|united states|california|san francisco|los angeles|nevada|arizona|texas|new york|washington|oregon|florida|hawaii|chicago|illinois|las vegas/.test(a)) return 'USD';
+  if(/[ぁ-んァ-ヶ一-龠]/.test(s) || /日本|〒/.test(s)) return 'JPY';
   return '';
 }
 function costMain(it){ if(it.costAmount!=null){ var y=(it.costJpy!=null?it.costJpy:toYen(it.costAmount,it.costCurrency||'JPY')); return '¥'+Number(y).toLocaleString(); } return it.cost||''; }
@@ -1995,10 +1995,14 @@ function costViewHtml(items, members, myTid){
   function base(it){ var a=(it.actual!=null&&it.actual!=='')?Number(it.actual):Number(it.budget||0); return (isFinite(a)&&a>0)?a:0; }
   function share(it){ var n=imembers(it).length; if(!n) return 0; var b=base(it); if(b<=0) return 0; return Math.ceil(b/n/100)*100; }
   function isCash(it){ return (it&&it.payType)!=='card'; }
-  // 現金通貨は対応スケジュールの場所から判定（場所マスタ通貨→住所推定）。判定不能は未解決。
-  function ciPlaceName(sid){ if(!sid) return ''; for(var i=0;i<_schedItems.length;i++){ if(_schedItems[i].id===sid) return String((_schedItems[i].placeName||_schedItems[i].title||_schedItems[i].toName||'')).trim(); } return ''; }
-  function curResolved(it){ var nm=(it&&it.schedItemId)?ciPlaceName(it.schedItemId):''; var c=nm?_placeCurMap[nm]:''; return (c==='JPY'||c==='USD'||c==='MXN'); }
-  function itemCur(it){ var nm=(it&&it.schedItemId)?ciPlaceName(it.schedItemId):''; var c=nm?_placeCurMap[nm]:''; return (c==='JPY'||c==='USD'||c==='MXN')?c:'JPY'; }
+  // 現金通貨: 費目の場所→その日のスケジュール由来→既定¥（移動は出発地・到着地の両方を試す）
+  function curOfName(nm){ nm=String(nm||'').trim(); var c=nm?_placeCurMap[nm]:''; return (c==='JPY'||c==='USD'||c==='MXN')?c:''; }
+  function schItem(sid){ if(!sid) return null; for(var i=0;i<_schedItems.length;i++){ if(_schedItems[i].id===sid) return _schedItems[i]; } return null; }
+  function itemPlaceCur(it){ if(!it||!it.schedItemId) return ''; var s=schItem(it.schedItemId); if(!s) return ''; return curOfName(s.placeName)||curOfName(s.toName)||curOfName(s.title); }
+  var _dcc={};
+  function dayCur(date){ if(!date) return ''; if(_dcc[date]!==undefined) return _dcc[date]; var cnt={}; _schedItems.forEach(function(s){ if((s.date||'')!==date) return; var c1=curOfName(s.placeName); if(c1) cnt[c1]=(cnt[c1]||0)+1; var c2=curOfName(s.toName); if(c2) cnt[c2]=(cnt[c2]||0)+1; }); var best='',bn=0; Object.keys(cnt).forEach(function(c){ if(cnt[c]>bn){bn=cnt[c];best=c;} }); _dcc[date]=best; return best; }
+  function curResolved(it){ return !!(itemPlaceCur(it) || dayCur(it&&it.date)); }
+  function itemCur(it){ var c=itemPlaceCur(it)||dayCur(it&&it.date); return (c==='JPY'||c==='USD'||c==='MXN')?c:'JPY'; }
   if(!mem.length) return '<div style="color:var(--ink3);font-size:13px;padding:10px">費用計算メンバーが設定されていません。</div>';
   function unpriced(it){ var b=(it&&it.budget!=null&&it.budget!==''); var a=(it&&it.actual!=null&&it.actual!==''); return !b && !a; }
   function pName(tid){ var m=mem.find(function(x){return x.tid===tid;}); return m?m.name:''; }
