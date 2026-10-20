@@ -848,7 +848,7 @@ async function initMyPage(user){
     // 会員区分バッジ
     updateMemBadge(memberDoc);
     applyPlanDisplay(memberDoc);                 // 課金区分＋有料会員の金枠
-    if(!_previewMemberId) renderNextReservation(); // 次回来場予約バナー（本人のみ）
+    if(_previewMemberId) renderPreviewReservation(); else renderNextReservation(); // 次回来場予約バナー（本人／プレビューは対象会員）
 
     // デポジット（前払金）: 有効会員のみ残高＋履歴を表示
     renderDepositSection(memberDoc, _previewMemberId);
@@ -1160,6 +1160,27 @@ async function renderNextReservation(){
       ps.forEach(function(d){ var r=Object.assign({id:d.id},d.data()); if((r.status||'pending')==='pending') items.push({r:r,type:'pending'}); });
     }
   }catch(e){}
+  _resvBannerFromItems(items);
+}
+// プレビュー（管理者が会員のマイ道場を表示）時: 対象会員の予約を memberIds から取得して表示
+async function renderPreviewReservation(){
+  var box=document.getElementById('next-resv-banner'); if(!box) return;
+  var pm=_previewMemberDoc||{};
+  var raw=String(pm.displayId||pm.memberId||pm.id||'').replace(/\D/g,'');
+  if(!raw){ box.innerHTML=''; return; }
+  var codes=[raw.padStart(6,'0')]; if(codes.indexOf(raw)<0) codes.push(raw);
+  var items=[], seen={};
+  for(var ci=0;ci<codes.length;ci++){
+    try{ var rs=await db.collection('reservations').where('memberIds','array-contains',codes[ci]).get();
+      rs.forEach(function(d){ if(seen['r'+d.id]) return; seen['r'+d.id]=1; items.push({r:Object.assign({id:d.id},d.data()),type:'approved'}); }); }catch(e){}
+    try{ var ps=await db.collection('reservationRequests').where('memberIds','array-contains',codes[ci]).get();
+      ps.forEach(function(d){ if(seen['q'+d.id]) return; seen['q'+d.id]=1; var r=Object.assign({id:d.id},d.data()); if((r.status||'pending')==='pending') items.push({r:r,type:'pending'}); }); }catch(e){}
+  }
+  _resvBannerFromItems(items);
+}
+// 予約アイテム配列から次回来場予約バナーを描画（本人/プレビュー共通）
+function _resvBannerFromItems(items){
+  var box=document.getElementById('next-resv-banner'); if(!box) return;
   var now=Date.now();
   var upcoming=items.map(function(x){ return {r:x.r,type:x.type,s:_resvMs(x.r.reservationDate,x.r.startTime),e:_resvMs(x.r.reservationDate,x.r.endTime)}; })
     .filter(function(x){ return x.e && x.e>=now; })
