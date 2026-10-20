@@ -4000,6 +4000,7 @@ function schSortKey(it){ return (it.date||'')+' '+(it.time||'99:99')+' '+_endMar
 function loadSchedItems(){
   schCol(_schEventId).get().then(function(snap){
     _schItems=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    _schItems.forEach(function(it){ if(Array.isArray(it.track)) it.track=_ptsFromObj(it.track); }); // 実ルートtrackを[lat,lng,t]配列に正規化
     _schItems.sort(function(a,b){ return schSortKey(a)<schSortKey(b)?-1:1; });
     renderSchedList();
   }).catch(function(e){ g('sch-list').innerHTML='<div class="ec">読込失敗: '+esc(e.message)+'</div>'; });
@@ -4536,6 +4537,9 @@ function _simplifyTrack(pts, epsM, maxPts){
 }
 function _haversineKm(a,b,c,dd){ var R=6371,r=Math.PI/180,dLat=(c-a)*r,dLng=(dd-b)*r; var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a*r)*Math.cos(c*r)*Math.sin(dLng/2)*Math.sin(dLng/2); return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x)); }
 function _trackDistKm(pts){ var d=0; for(var i=1;i<pts.length;i++){ d+=_haversineKm(pts[i-1][0],pts[i-1][1],pts[i][0],pts[i][1]); } return d; }
+// Firestoreはネスト配列を保存できないため、track点は{lat,lng,t?}の配列で保存し、読込時に[lat,lng,t?]へ戻す。
+function _ptsFromObj(a){ if(!Array.isArray(a)) return a; return a.map(function(p){ if(Array.isArray(p)) return p; if(p&&p.lat!=null&&p.lng!=null) return (p.t!=null)?[+p.lat,+p.lng,+p.t]:[+p.lat,+p.lng]; return p; }); }
+function _ptsToObj(a){ return (a||[]).map(function(p){ if(!Array.isArray(p)) return p; var o={lat:p[0],lng:p[1]}; if(p[2]!=null) o.t=p[2]; return o; }); }
 function saveGpx(){
   var checked={}; [].forEach.call(document.querySelectorAll('.gpx-chk:checked'), function(c){ checked[c.getAttribute('data-id')]=1; });
   var targets=_gpxMatch.filter(function(m){ return m.count>=2 && checked[m.id]; });
@@ -4544,7 +4548,7 @@ function saveGpx(){
   var FV=firebase.firestore.FieldValue, seq=Promise.resolve(), saved=0;
   targets.forEach(function(m){ seq=seq.then(function(){
     var simp=_simplifyTrack(m.pts, 15, 800), dist=_trackDistKm(simp);
-    return schCol(_schEventId).doc(m.id).update({ track:simp, trackPts:simp.length, trackDistKm:Math.round(dist*100)/100, trackSrc:'gpx', trackAt:FV.serverTimestamp() })
+    return schCol(_schEventId).doc(m.id).update({ track:_ptsToObj(simp), trackPts:simp.length, trackDistKm:Math.round(dist*100)/100, trackSrc:'gpx', trackAt:FV.serverTimestamp() })
       .then(function(){ var it=_schItems.find(function(x){return x.id===m.id;}); if(it){ it.track=simp; it.trackPts=simp.length; it.trackDistKm=Math.round(dist*100)/100; } saved++; });
   }); });
   seq.then(function(){ g('gpx-save').disabled=false; toast(saved+'件の移動に実ルートを保存しました'); closeGpxImport(); renderSchedList(); })
@@ -4651,7 +4655,7 @@ function _rteSave(){
   var pts=_rtePts.map(function(p){ var la=Math.round(p.lat*1e6)/1e6, ln=Math.round(p.lng*1e6)/1e6; return (p.t!=null)?[la,ln,p.t]:[la,ln]; });
   var dist=(typeof _trackDistKm==='function')?_trackDistKm(pts):0;
   var FV=firebase.firestore.FieldValue;
-  schCol(_schEventId).doc(_rteId).update({ track:pts, trackPts:pts.length, trackDistKm:Math.round(dist*100)/100, trackSrc:'manual', trackAt:FV.serverTimestamp() })
+  schCol(_schEventId).doc(_rteId).update({ track:_ptsToObj(pts), trackPts:pts.length, trackDistKm:Math.round(dist*100)/100, trackSrc:'manual', trackAt:FV.serverTimestamp() })
     .then(function(){ var it=_schItems.find(function(x){return x.id===_rteId;}); if(it){ it.track=pts; it.trackPts=pts.length; it.trackDistKm=Math.round(dist*100)/100; } toast('ルートを保存しました（'+pts.length+'点）'); closeRouteEdit(); renderSchedList(); })
     .catch(function(e){ g('rte-err').textContent='保存失敗: '+(e&&e.message||e); });
 }

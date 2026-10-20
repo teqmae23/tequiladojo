@@ -234,6 +234,9 @@ function g(id){ return document.getElementById(id); }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function toast(msg,type){ var el=document.createElement('div'); el.className='toast'+(type==='err'?' terr':''); el.textContent=msg; g('toasts').appendChild(el); setTimeout(function(){el.remove();},2600); }
 function setSaving(t){ var el=g('save-ind'); if(el) el.textContent=t||''; }
+// Firestoreはネスト配列を保存できないため、track/pointsは{lat,lng,t?}の配列で保存し、読込時に[lat,lng,t?]へ戻す。
+function _ptsFromObj(a){ if(!Array.isArray(a)) return a; return a.map(function(p){ if(Array.isArray(p)) return p; if(p&&p.lat!=null&&p.lng!=null) return (p.t!=null)?[+p.lat,+p.lng,+p.t]:[+p.lat,+p.lng]; return p; }); }
+function _ptsToObj(a){ return (a||[]).map(function(p){ if(!Array.isArray(p)) return p; var o={lat:p[0],lng:p[1]}; if(p[2]!=null) o.t=p[2]; return o; }); }
 var EV=(new URLSearchParams(location.search).get('ev'))||'';
 
 var _ev={}, _items=[], _itemById={}, _photos=[], _photoById={}, _sel=null;
@@ -251,8 +254,9 @@ function load(){
   ]).then(function(res){
     _ev=res[0].data()||{};
     _items=res[1].docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    _items.forEach(function(it){ if(Array.isArray(it.track)) it.track=_ptsFromObj(it.track); }); // 実ルートtrackを[lat,lng,t]配列に正規化
     _photos=res[2].docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
-    _tracks=(res[3]&&res[3].docs?res[3].docs:[]).map(function(d){ return Object.assign({id:d.id}, d.data()); });
+    _tracks=(res[3]&&res[3].docs?res[3].docs:[]).map(function(d){ var t=Object.assign({id:d.id}, d.data()); if(Array.isArray(t.points)) t.points=_ptsFromObj(t.points); return t; }); // 足跡pointsを[lat,lng,t]配列に正規化
     _items.sort(function(a,b){ return (a.date||'').localeCompare(b.date||'')||(a.time||'').localeCompare(b.time||''); });
     _itemById={}; _items.forEach(function(it){ _itemById[it.id]=it; });
     _photoById={}; _photos.forEach(function(p){ _photoById[p.id]=p; });
@@ -556,12 +560,12 @@ function _thin(pts, maxN){
 }
 function gpxSaveTrack(){
   if(!_gpxPts.length){ toast('先にGPXを読み込んでください','err'); return; }
-  var pts=_thin(_gpxPts, 1500);
+  var pts=_ptsFromObj(_thin(_gpxPts, 1500)); // [lat,lng,t?]配列に統一
   if(pts.length<2){ toast('軌跡点が不足しています','err'); return; }
-  var doc={ name:((g('gpx-name').value||'').trim()||'足跡'), date:(g('gpx-date').value||''), points:pts, n:pts.length, createdMs:Date.now() };
+  var doc={ name:((g('gpx-name').value||'').trim()||'足跡'), date:(g('gpx-date').value||''), points:_ptsToObj(pts), n:pts.length, createdMs:Date.now() };
   setSaving('足跡を保存中…');
   db.collection('events').doc(EV).collection('tracks').add(doc)
-    .then(function(ref){ _tracks.push(Object.assign({id:ref.id}, doc)); setSaving('足跡を保存しました ✓'); toast('足跡「'+doc.name+'」を保存しました（'+pts.length+'点）'); renderTracks(); })
+    .then(function(ref){ _tracks.push(Object.assign({id:ref.id}, doc, {points:pts})); setSaving('足跡を保存しました ✓'); toast('足跡「'+doc.name+'」を保存しました（'+pts.length+'点）'); renderTracks(); })
     .catch(function(e){ setSaving(''); toast('保存失敗: '+e.message,'err'); });
 }
 function deleteTrack(tid){
@@ -667,7 +671,7 @@ function _trkSave(){
   if(_trkPts.length<2){ toast('点が不足しています','err'); return; }
   var pts=_trkPts.map(function(p){ var la=Math.round(p.lat*1e6)/1e6, ln=Math.round(p.lng*1e6)/1e6; return (p.t!=null)?[la,ln,p.t]:[la,ln]; });
   setSaving('足跡を保存中…');
-  db.collection('events').doc(EV).collection('tracks').doc(_trkEdit).update({ points:pts, n:pts.length, editedMs:Date.now() })
+  db.collection('events').doc(EV).collection('tracks').doc(_trkEdit).update({ points:_ptsToObj(pts), n:pts.length, editedMs:Date.now() })
     .then(function(){ var t=_tracks.find(function(x){return x.id===_trkEdit;}); if(t){ t.points=pts; t.n=pts.length; } setSaving('保存しました ✓'); toast('足跡を更新しました（'+pts.length+'点）'); _trkCancelEdit(); renderTracks(); })
     .catch(function(e){ setSaving(''); toast('保存失敗: '+e.message,'err'); });
 }
@@ -783,7 +787,7 @@ function _mvSave(){
   var first=pts[0], last=pts[pts.length-1];
   var dist=0; for(var i=0;i<_mvPts.length-1;i++) dist+=_haver(_mvPts[i],_mvPts[i+1]);
   var FV=firebase.firestore.FieldValue;
-  var upd={ lat:first[0], lng:first[1], toLat:last[0], toLng:last[1], track:pts, trackPts:pts.length, trackDistKm:Math.round(dist/10)/100, trackSrc:'manual', trackAt:FV.serverTimestamp() };
+  var upd={ lat:first[0], lng:first[1], toLat:last[0], toLng:last[1], track:_ptsToObj(pts), trackPts:pts.length, trackDistKm:Math.round(dist/10)/100, trackSrc:'manual', trackAt:FV.serverTimestamp() };
   g('mv-err').textContent=''; setSaving('経路を保存中…');
   db.collection('events').doc(EV).collection('scheduleItems').doc(_mvEdit).update(upd)
     .then(function(){ Object.assign(it,{lat:first[0],lng:first[1],toLat:last[0],toLng:last[1],track:pts,trackPts:pts.length,trackDistKm:upd.trackDistKm}); setSaving('保存しました ✓'); toast('経路を保存しました（'+pts.length+'点）'); _mvCancelEdit(); renderMoves(); refreshMarkers(false); })
@@ -854,12 +858,12 @@ function recClear(){
 }
 function recSaveTrack(){
   if(_recPts.length<2){ toast('記録が不足しています','err'); return; }
-  var pts=_thin(_recPts, 1500);
+  var pts=_ptsFromObj(_thin(_recPts, 1500)); // [lat,lng,t?]配列に統一
   var d=new Date(), defName='スマホ記録 '+(d.getMonth()+1)+'/'+d.getDate();
-  var doc={ name:((g('rec-name').value||'').trim()||defName), date:(g('rec-date').value||''), points:pts, n:pts.length, source:'phone', createdMs:Date.now() };
+  var doc={ name:((g('rec-name').value||'').trim()||defName), date:(g('rec-date').value||''), points:_ptsToObj(pts), n:pts.length, source:'phone', createdMs:Date.now() };
   setSaving('足跡を保存中…');
   db.collection('events').doc(EV).collection('tracks').add(doc)
-    .then(function(ref){ _tracks.push(Object.assign({id:ref.id}, doc)); setSaving('足跡を保存しました ✓'); toast('スマホ記録を足跡として保存（'+pts.length+'点）','inf'); renderTracks(); })
+    .then(function(ref){ _tracks.push(Object.assign({id:ref.id}, doc, {points:pts})); setSaving('足跡を保存しました ✓'); toast('スマホ記録を足跡として保存（'+pts.length+'点）','inf'); renderTracks(); })
     .catch(function(e){ setSaving(''); toast('保存失敗: '+e.message,'err'); });
 }
 function recDownloadGpx(){

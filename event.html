@@ -1541,12 +1541,13 @@ function loadSchedule(){
       if(ph.length){ if(own) _placePhotoMap[nm]=ph; else if(!(nm in _placePhotoMap)) _placePhotoMap[nm]=ph; }
     });
     _schedItems=res[0].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    _schedItems.forEach(function(it){ if(Array.isArray(it.track)) it.track=_ptsFromObj(it.track); }); // 実ルートtrackを[lat,lng,t]配列に正規化
     _normalizeMoveDest(_schedItems); // 移動の到着座標はGoogleマップURLを優先
     _schedItems.sort(function(a,b){ var ka=(a.date||'')+' '+(a.time||'99:99')+' '+_endMark(a)+' '+('000000000000'+_caSec(a)).slice(-12)+' '+('00'+(a.seq||0)).slice(-3), kb=(b.date||'')+' '+(b.time||'99:99')+' '+_endMark(b)+' '+('000000000000'+_caSec(b)).slice(-12)+' '+('00'+(b.seq||0)).slice(-3); return ka<kb?-1:(ka>kb?1:0); });
     _photosByItem={};
     res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).forEach(function(p){ (_photosByItem[p.scheduleItemId]=_photosByItem[p.scheduleItemId]||[]).push(p); });
     Object.keys(_photosByItem).forEach(function(k){ _photosByItem[k].sort(phSort); });
-    _tripTracks=(res[3]&&res[3].docs?res[3].docs:[]).map(function(d){ return Object.assign({id:d.id},d.data()); }).filter(function(t){ return Array.isArray(t.points)&&t.points.length>=2; });
+    _tripTracks=(res[3]&&res[3].docs?res[3].docs:[]).map(function(d){ var t=Object.assign({id:d.id},d.data()); if(Array.isArray(t.points)) t.points=_ptsFromObj(t.points); return t; }).filter(function(t){ return Array.isArray(t.points)&&t.points.length>=2; });
     renderSchedule(_schedItems);
     subscribeLive(); // ライブ位置の購読を開始（1回のみ）
   }).catch(function(){ var el=g('schedule-cont'); if(el) el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div><div style="font-size:12px;color:var(--ink3)">読み込みに失敗しました</div></div>'; });
@@ -2283,6 +2284,9 @@ function toggleSchedAddr(id, el){
 function _mvDurMin(it){ function hm(s){ var m=String(s==null?'':s).match(/^(\d{1,2}):(\d{2})/); return m?(+m[1]*60+ +m[2]):null; } var s=hm(it.time), e=hm(it.isMove?it.toTime:it.endTime); if(s==null||e==null) return null; var d=e-s; if(d<0) d+=1440; return d>0?d:null; }
 function _mvFmtDur(m){ if(m==null) return ''; var h=Math.floor(m/60), mm=m%60; return h>0?(h+'時間'+(mm?mm+'分':'')):(mm+'分'); }
 function _mvKm(a1,o1,a2,o2){ var R=6371,r=Math.PI/180,dLat=(a2-a1)*r,dLng=(o2-o1)*r; var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a1*r)*Math.cos(a2*r)*Math.sin(dLng/2)*Math.sin(dLng/2); return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x)); }
+// Firestoreはネスト配列を保存できないため、track/pointsは{lat,lng,t?}の配列で保存する。
+// 読込時はこの関数で[lat,lng,t?]配列に正規化し、以降の描画・距離計算は従来どおり配列として扱う。
+function _ptsFromObj(a){ if(!Array.isArray(a)) return a; return a.map(function(p){ if(Array.isArray(p)) return p; if(p&&p.lat!=null&&p.lng!=null) return (p.t!=null)?[+p.lat,+p.lng,+p.t]:[+p.lat,+p.lng]; return p; }); }
 function _moveDist(it){
   if(it.trackDistKm!=null&&isFinite(it.trackDistKm)&&it.trackDistKm>0) return {km:+it.trackDistKm, route:true};
   // 実ルート(track)が登録されていれば、距離はトラック点の合計から算出し「実ルート」扱いにする（trackDistKm未保存の古い/手動データでも直線表示にならないように）。
