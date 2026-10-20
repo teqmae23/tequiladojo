@@ -410,7 +410,7 @@ table.pl-tbl select.pl-in{padding-left:3px;padding-right:2px}
     <div class="toolbar">
       <button class="btn bp" onclick="openEvent(null)">＋ イベント追加</button>
       <span class="cnt" id="cnt"></span>
-      <button class="btn bs ca-only-hide" onclick="diagScanTimeFields()" title="全イベントのスケジュール項目の時刻フィールド(time/toTime/endTime/actualStart/actualEnd)の生の値と型をそのまま表示（読み取り専用・書き込みなし）。異常値の実態を確認するための診断。" style="margin-left:auto">🔍 時刻データ診断</button>
+      <button class="btn bs ca-only-hide" onclick="diagDumpAllSchedule()" title="全イベントの全スケジュール項目の全フィールドを、フィルタ無しでそのまま出力（読み取り専用・書き込みなし）。新しいタブに全文JSON表示＋JSONダウンロード。" style="margin-left:auto">🔍 全データ出力</button>
     </div>
     <div id="list"><div class="ec">読み込み中…</div></div>
   </div>
@@ -1329,39 +1329,33 @@ function togglePublish(id){
     .then(function(){ ev.published=toPub; toast(toPub?'公開しました':'非公開にしました'); render(); })
     .catch(function(e){ toast('変更に失敗しました: '+((e&&e.message)||e)); });
 }
-// 【読み取り専用の診断】全イベントのスケジュール項目の時刻フィールドの「生の値」と型をそのまま表示する。
-// 書き込みは一切行わない。HH:MM でない異常な時刻が、どの項目のどのフィールドに、どんな形式で入っているかを可視化する。
-function diagScanTimeFields(){
-  var CLEAN=/^\d{1,2}:\d{2}(:\d{2})?$/;               // 正常な時刻（HH:MM / HH:MM:SS）
-  var KEYS=['time','toTime','endTime','actualStart','actualEnd']; // 画面表示が参照する時刻フィールド
-  toast('スキャン中…');
+// 【読み取り専用】全イベントの全スケジュール項目の「全フィールド」をフィルタ無しでそのまま出力する。
+// 書き込みは一切行わない。新しいタブに全文JSONを表示（Ctrl+Fで検索可）し、JSONファイルもダウンロードする。
+function diagDumpAllSchedule(){
+  toast('収集中…');
   db.collection('events').get().then(function(evSnap){
-    var chain=Promise.resolve(), hits=[], scanned=0;
+    var chain=Promise.resolve(), out=[];
     evSnap.docs.forEach(function(ed){
       chain=chain.then(function(){
         return ed.ref.collection('scheduleItems').get().then(function(si){
           var evName=(ed.data()&&ed.data().name)||ed.id;
-          si.docs.forEach(function(sd){
-            scanned++;
-            var d=sd.data()||{}, bad=false, parts=[];
-            KEYS.forEach(function(k){
-              var v=d[k];
-              if(v==null||v===''||typeof v==='object') return;
-              var isBad=!CLEAN.test(String(v).trim());
-              if(isBad) bad=true;
-              parts.push(k+'='+JSON.stringify(v)+'['+(typeof v)+']'+(isBad?'⚠':''));
-            });
-            if(bad) hits.push('['+evName+'] '+(d.title||d.placeName||'(無題)')+(d.isMove?'(移動)':'')+'\n  '+parts.join('  ')+'\n  id='+sd.id);
-          });
+          si.docs.forEach(function(sd){ out.push({ event:evName, eventId:ed.id, itemId:sd.id, data:sd.data() }); });
         });
       });
     });
-    return chain.then(function(){ return {hits:hits, scanned:scanned}; });
-  }).then(function(r){
-    if(!r.hits.length){ alert('スキャン完了: '+r.scanned+'項目を確認。\n\n時刻フィールド(time/toTime/endTime/actualStart/actualEnd)に、HH:MM形式でない異常値はありませんでした。'); return; }
-    var head='スキャン完了: '+r.scanned+'項目中、異常な時刻フィールドを持つ項目 '+r.hits.length+'件:\n（⚠=異常値。[ ]内は型）\n\n';
-    alert(head+r.hits.slice(0,30).join('\n\n')+(r.hits.length>30?('\n\n…ほか'+(r.hits.length-30)+'件'):''));
-  }).catch(function(e){ toast('スキャン失敗: '+((e&&e.message)||e),'err'); alert('スキャン失敗: '+((e&&e.message)||e)); });
+    return chain.then(function(){ return out; });
+  }).then(function(out){
+    var json=JSON.stringify(out,null,2);
+    // 新しいタブに全文表示（何も省略しない）
+    try{
+      var w=window.open('','_blank');
+      if(w){ w.document.open(); w.document.write('<!doctype html><meta charset="utf-8"><title>schedule dump ('+out.length+'件)</title><pre style="white-space:pre-wrap;word-break:break-all;font:12px/1.5 monospace;padding:12px">'+json.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</pre>'); w.document.close(); }
+      else { alert('ポップアップがブロックされました。許可するか、ダウンロードされたJSONファイルをご確認ください。'); }
+    }catch(e){}
+    // JSONファイルとしてもダウンロード
+    try{ var blob=new Blob([json],{type:'application/json'}); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='schedule_dump.json'; document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },1500); }catch(e){}
+    toast(out.length+'項目を出力しました');
+  }).catch(function(e){ toast('出力失敗: '+((e&&e.message)||e),'err'); alert('出力失敗: '+((e&&e.message)||e)); });
 }
 
 // ── スケジュール（各日の開催時間） ──
