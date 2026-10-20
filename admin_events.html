@@ -183,7 +183,7 @@ textarea.fi{min-height:90px;resize:vertical;line-height:1.6}
 .pl-item .co .pl-evsel{font-family:var(--sans);font-size:11px;padding:1px 4px;border:1px solid var(--border);border-radius:5px;background:var(--white);color:var(--ink2);max-width:62%;vertical-align:middle;margin-left:2px}
 /* 場所管理の一覧（インライン編集テーブル） */
 .pl-tblwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:var(--r);background:var(--white)}
-table.pl-tbl{border-collapse:collapse;width:100%;font-size:12px;table-layout:fixed;min-width:1266px}
+table.pl-tbl{border-collapse:collapse;width:100%;font-size:12px;table-layout:fixed;min-width:1358px}
 table.pl-tbl th,table.pl-tbl td{border:1px solid var(--border);padding:4px 5px;vertical-align:middle;text-align:left}
 table.pl-tbl th{background:var(--cream2);font-size:11px;color:var(--ink2);white-space:nowrap}
 table.pl-tbl input.pl-in,table.pl-tbl select.pl-in{width:100%;box-sizing:border-box;font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:var(--white);color:var(--ink);font-family:inherit}
@@ -191,7 +191,7 @@ table.pl-tbl input.pl-in:focus,table.pl-tbl select.pl-in:focus{outline:none;bord
 table.pl-tbl td.pl-co{font-family:var(--mono);font-size:10px;color:var(--ink3);white-space:nowrap;text-align:center}
 table.pl-tbl td.pl-act{white-space:nowrap;text-align:center}
 table.pl-tbl .pl-newrow td{background:#fbf7ee}
-table.pl-tbl col.c-name{width:170px}table.pl-tbl col.c-en{width:128px}table.pl-tbl col.c-addr{width:210px}table.pl-tbl col.c-url{width:150px}table.pl-tbl col.c-mode{width:84px}table.pl-tbl col.c-cat{width:112px}table.pl-tbl col.c-ev{width:124px}table.pl-tbl col.c-co{width:152px}table.pl-tbl col.c-act{width:136px}
+table.pl-tbl col.c-name{width:170px}table.pl-tbl col.c-en{width:128px}table.pl-tbl col.c-addr{width:210px}table.pl-tbl col.c-url{width:150px}table.pl-tbl col.c-mode{width:84px}table.pl-tbl col.c-cat{width:112px}table.pl-tbl col.c-cur{width:92px}table.pl-tbl col.c-ev{width:124px}table.pl-tbl col.c-co{width:152px}table.pl-tbl col.c-act{width:136px}
 table.pl-tbl select.pl-in{padding-left:3px;padding-right:2px}
 .se-ic{font-size:15px;flex:0 0 auto}
 .se-main{flex:1;min-width:0}
@@ -2461,6 +2461,26 @@ function loadFx(){
 function curSym(c){ return c==='USD'?'US$':c==='MXN'?'MX$':'¥'; }
 function costAmountNum(s){ if(s==null) return null; var m=String(s).replace(/[,，\s]/g,'').match(/-?\d+(\.\d+)?/); return m?parseFloat(m[0]):null; }
 function toYen(amt,cur){ if(amt==null) return null; if(cur==='JPY'||!cur) return Math.round(amt); return Math.round(amt*(FX[cur]||0)); }
+// 円→現地通貨（必要現金の概算。繰り上げ）
+function fromYen(yen,cur){ yen=Number(yen)||0; if(cur==='JPY'||!cur) return Math.round(yen); var r=FX[cur]; return r?Math.ceil(yen/r):0; }
+// 住所文字列から国→通貨を推定（初期値用。場所マスタで確認・修正可能）。判定不能は ''。
+function _curFromAddr(addr){
+  var s=String(addr||''); if(!s.trim()) return '';
+  if(/[ぁ-んァ-ヶ一-龠]/.test(s) || /日本|〒/.test(s)) return 'JPY';
+  var a=s.toLowerCase();
+  if(/m[eé]xico|jalisco|guadalajara|oaxaca|cdmx|yucat|quintana|nayarit|michoac|puebla|cancun|canc[uú]n/.test(a)) return 'MXN';
+  if(/\busa\b|u\.s\.a|united states|california|san francisco|los angeles|nevada|arizona|texas|new york|washington|oregon|florida|hawaii|chicago|illinois/.test(a)) return 'USD';
+  return '';
+}
+// 場所の通貨（明示設定があればそれ、無ければ住所から推定）
+function _placeCurOf(p){ if(!p) return ''; var c=p.currency; if(c==='JPY'||c==='USD'||c==='MXN') return c; return _curFromAddr(p.address); }
+// 場所マスタ用 通貨セレクト（初期値は呼び出し側で住所推定を渡す）
+function _plCurSel(id, cur){ cur=(cur==='USD'||cur==='MXN'||cur==='JPY')?cur:'';
+  return '<select class="pl-in" id="pl-cur-'+id+'">'
+    +'<option value=""'+(cur===''?' selected':'')+'>— 未判定</option>'
+    +'<option value="JPY"'+(cur==='JPY'?' selected':'')+'>¥ JPY</option>'
+    +'<option value="USD"'+(cur==='USD'?' selected':'')+'>US$</option>'
+    +'<option value="MXN"'+(cur==='MXN'?' selected':'')+'>MX$</option></select>'; }
 // このスケジュール項目に紐づく費用計算の費目（対応スケジュール）を探し、金額・1人按分を返す
 function _schedCostInfo(schedId){
   var ev=events.find(function(x){return x.id===_schEventId;});
@@ -3009,7 +3029,7 @@ function renderPlaceList(){
   // 新規フィルタが特定イベントなら新規行のイベント既定に採用
   var defEv=(_placeEventFilter && _placeEventFilter.indexOf('__')!==0)?_placeEventFilter:'';
   var head='<thead><tr>'
-    +'<th>地点名</th><th>英語名</th><th>住所</th><th>地図URL</th><th>表示</th><th>分類</th><th>イベント</th><th>座標</th><th>操作</th>'
+    +'<th>地点名</th><th>英語名</th><th>住所</th><th>地図URL</th><th>表示</th><th>分類</th><th title="現金の必要通貨。住所から自動推定。日別必要現金の集計に使用">通貨</th><th>イベント</th><th>座標</th><th>操作</th>'
     +'</tr></thead>';
   var newEvCell=_coAdminMode?esc(_evName(_coAdminEventId)):_plEvSel('new', defEv);
   var newRow='<tr class="pl-newrow">'
@@ -3019,6 +3039,7 @@ function renderPlaceList(){
     +'<td><input class="pl-in" id="pl-new-url" placeholder="Google Map URL" oninput="onPlUrlCo(this,\'pl-co-new\')"></td>'
     +'<td>'+_plModeSel('new','name')+'</td>'
     +'<td>'+_plCatSel('new','')+'</td>'
+    +'<td>'+_plCurSel('new','')+'</td>'
     +'<td>'+newEvCell+'</td>'
     +'<td class="pl-co" id="pl-co-new">—</td>'
     +'<td class="pl-act"><button class="btn bs sm" onclick="addPlaceRow()">＋追加</button></td>'
@@ -3035,12 +3056,13 @@ function renderPlaceList(){
       +'<td><input class="pl-in" id="pl-url-'+id+'" value="'+esc(p.mapUrl||'')+'" oninput="onPlUrlCo(this,\'pl-co-'+id+'\')"></td>'
       +'<td>'+_plModeSel(id, p.mapMode)+'</td>'
       +'<td>'+_plCatSel(id, p.category)+'</td>'
+      +'<td>'+_plCurSel(id, p.currency||_curFromAddr(p.address))+'</td>'
       +'<td>'+evCell+'</td>'
       +'<td class="pl-co" id="pl-co-'+id+'">'+esc(_plCoText(p))+'</td>'
       +'<td class="pl-act">'+mapBtn+'<button class="btn bs sm" onclick="savePlaceRow(\''+id+'\')" title="この行を保存">💾</button> <button class="rm" title="削除" onclick="delPlace(\''+id+'\')">×</button></td>'
       +'</tr>';
   }).join('');
-  box.innerHTML='<div class="pl-tblwrap"><table class="pl-tbl"><colgroup><col class="c-name"><col class="c-en"><col class="c-addr"><col class="c-url"><col class="c-mode"><col class="c-cat"><col class="c-ev"><col class="c-co"><col class="c-act"></colgroup>'+head+'<tbody>'+newRow+rows+'</tbody></table></div>'
+  box.innerHTML='<div class="pl-tblwrap"><table class="pl-tbl"><colgroup><col class="c-name"><col class="c-en"><col class="c-addr"><col class="c-url"><col class="c-mode"><col class="c-cat"><col class="c-cur"><col class="c-ev"><col class="c-co"><col class="c-act"></colgroup>'+head+'<tbody>'+newRow+rows+'</tbody></table></div>'
     +(list.length?'':'<div class="ec" style="margin-top:8px">該当する場所はありません（分類タブ・イベント選択の絞り込みを確認）。上段の行から新規追加できます。</div>');
 }
 // 1行を保存（地点名・英語名・住所・地図URL・表示方法・分類・イベント）。座標はURLから再取得。
@@ -3052,8 +3074,9 @@ function savePlaceRow(pid){
   var nameEn=(gv('en')||'').trim(), address=(gv('addr')||'').trim(), mapUrl=(gv('url')||'').trim();
   var mapMode=(gv('mode')==='coord')?'coord':'name';
   var cat=gv('cat')||'';
+  var cur=gv('cur'); cur=(cur==='JPY'||cur==='USD'||cur==='MXN')?cur:'';
   var c=parseLatLng(mapUrl); var lat=c?c.lat:p.lat, lng=c?c.lng:p.lng;
-  var data={ name:name, nameEn:nameEn, address:address, mapUrl:mapUrl, mapMode:mapMode, category:cat, lat:lat, lng:lng, updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
+  var data={ name:name, nameEn:nameEn, address:address, mapUrl:mapUrl, mapMode:mapMode, category:cat, currency:cur, lat:lat, lng:lng, updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
   if(!_coAdminMode && g('pl-ev-'+pid)) data.eventId=g('pl-ev-'+pid).value||'';
   db.collection('places').doc(pid).set(data,{merge:true}).then(function(){
     Object.assign(p, data);
@@ -3075,8 +3098,9 @@ function savePlaceAll(){
     var nameEn=(gv('en')||'').trim(), address=(gv('addr')||'').trim(), mapUrl=(gv('url')||'').trim();
     var mapMode=(gv('mode')==='coord')?'coord':'name';
     var cat=gv('cat')||'';
+    var curv=gv('cur'); curv=(curv==='JPY'||curv==='USD'||curv==='MXN')?curv:'';
     var c=parseLatLng(mapUrl); var lat=c?c.lat:p.lat, lng=c?c.lng:p.lng;
-    var data={ name:name, nameEn:nameEn, address:address, mapUrl:mapUrl, mapMode:mapMode, category:cat, lat:lat, lng:lng };
+    var data={ name:name, nameEn:nameEn, address:address, mapUrl:mapUrl, mapMode:mapMode, category:cat, currency:curv, lat:lat, lng:lng };
     if(!_coAdminMode && g('pl-ev-'+pid)) data.eventId=g('pl-ev-'+pid).value||'';
     // 変更検出（更新があるフィールドのみ比較。無変更の行はスキップ）
     var changed=Object.keys(data).some(function(k){ return (p[k]==null?'':p[k])!==(data[k]==null?'':data[k]); });
@@ -3100,9 +3124,10 @@ function addPlaceRow(){
   var nameEn=(gv('en')||'').trim(), address=(gv('addr')||'').trim(), mapUrl=(gv('url')||'').trim();
   var mapMode=(g('pl-mode-new')&&g('pl-mode-new').value==='coord')?'coord':'name';
   var cat=(g('pl-cat-new')?g('pl-cat-new').value:'')||'';
+  var curn=(g('pl-cur-new')?g('pl-cur-new').value:'')||''; curn=(curn==='JPY'||curn==='USD'||curn==='MXN')?curn:_curFromAddr(address);
   var eid=_coAdminMode?_coAdminEventId:(g('pl-ev-new')?g('pl-ev-new').value:'');
   var c=parseLatLng(mapUrl); var lat=c?c.lat:null, lng=c?c.lng:null;
-  db.collection('places').add({ name:name, nameEn:nameEn, address:address, mapUrl:mapUrl, mapMode:mapMode, category:cat, eventId:eid||'', lat:lat, lng:lng, createdAt:firebase.firestore.FieldValue.serverTimestamp() })
+  db.collection('places').add({ name:name, nameEn:nameEn, address:address, mapUrl:mapUrl, mapMode:mapMode, category:cat, currency:curn, eventId:eid||'', lat:lat, lng:lng, createdAt:firebase.firestore.FieldValue.serverTimestamp() })
     .then(function(){ toast('追加しました'); return loadPlaces(); }).then(renderPlaceList).catch(function(e){ toast('追加失敗: '+e.message,'err'); });
 }
 function delPlace(pid){ if(!confirm('この場所を削除しますか？')) return; db.collection('places').doc(pid).delete().then(function(){ toast('削除しました'); renderPlaceMgr(); }).catch(function(e){ toast('削除失敗: '+e.message); }); }
@@ -3217,12 +3242,18 @@ function _itemMembers(it){
   var set=(it&&Array.isArray(it.members))?it.members:all;
   return all.filter(function(t){ return set.indexOf(t)>=0; });
 }
-// 按分・精算は円換算で統一（費目ごとの通貨を toYen で円に変換）
-function _costBaseYen(it){ var y=toYen(_costBase(it), it&&it.currency); return (y!=null&&isFinite(y))?y:0; }
-function costShare(it){ var n=_itemMembers(it).length; if(!n) return 0; var base=_costBaseYen(it); if(base<=0) return 0; return Math.ceil(base/n/100)*100; }
+// 金額は円入力で統一。按分・精算は円のまま計算する。
+function costShare(it){ var n=_itemMembers(it).length; if(!n) return 0; var base=_costBase(it); if(base<=0) return 0; return Math.ceil(base/n/100)*100; }
 function _isCashItem(it){ return (it&&it.payType)!=='card'; }  // 未設定=現金扱い
-function _curOptions(sel){ sel=(sel==='USD'||sel==='MXN')?sel:'JPY'; return '<option value="JPY"'+(sel==='JPY'?' selected':'')+'>¥</option><option value="USD"'+(sel==='USD'?' selected':'')+'>US$</option><option value="MXN"'+(sel==='MXN'?' selected':'')+'>MX$</option>'; }
 function _payTypeOptions(sel){ sel=(sel==='card')?'card':'cash'; return '<option value="cash"'+(sel==='cash'?' selected':'')+'>現金</option><option value="card"'+(sel==='card'?' selected':'')+'>カード</option>'; }
+// 費目の現金通貨は「対応スケジュールの場所」から判定（場所マスタの通貨）。判定不能は未解決。
+function _schedPlaceName(schedId){ if(!schedId) return ''; var s=_costSched.find(function(x){return x.id===schedId;}); return s?String((s.placeName||s.title||s.toName||'')).trim():''; }
+function _placeByName(nm){ nm=String(nm||'').trim(); if(!nm||!Array.isArray(_places)) return null; return _places.find(function(p){ return String(p.name||'').trim()===nm; })||null; }
+function _itemPlaceCur(it){ if(!it||!it.schedItemId) return ''; var p=_placeByName(_schedPlaceName(it.schedItemId)); return p?_placeCurOf(p):''; }
+// 現金通貨（解決できれば場所由来、できなければ既定¥）
+function _itemCurrency(it){ var c=_itemPlaceCur(it); return (c==='JPY'||c==='USD'||c==='MXN')?c:'JPY'; }
+// 場所から通貨を確定できたか（警告判定用）
+function _itemCurResolved(it){ var c=_itemPlaceCur(it); return (c==='JPY'||c==='USD'||c==='MXN'); }
 // 予算・実費とも未入力なら金額未確定（按分額は「?」表示）
 function _costUnpriced(it){ var b=(it&&it.budget!=null&&it.budget!==''); var a=(it&&it.actual!=null&&it.actual!==''); return !b && !a; }
 function _shareCell(sh, unpriced){ return unpriced?'?':('¥'+sh.toLocaleString()); }
@@ -3255,10 +3286,10 @@ function renderCostTable(){
   _sortCostItemsInPlace();
   var mem=_costMembers;
   // 並び順: 日付/時間/費目/予算/実費/参加者名/対応スケジュール/備考
-  var head='<thead><tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th><th>通貨</th><th>支払者</th><th>支払</th>'
+  var head='<thead><tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th><th>支払者</th><th>支払</th>'
     +mem.map(function(m){return '<th title="'+esc(m.name)+'">'+esc(_shortName(m.name))+'</th>';}).join('')
     +'<th>対応スケジュール</th><th>備考</th><th></th></tr></thead>';
-  if(!_costItems.length){ g('cost-table').innerHTML=head+'<tbody><tr><td colspan="'+(11+mem.length)+'" style="color:var(--ink3);padding:12px">「＋ 費目を追加」で行を追加してください</td></tr></tbody>'; renderCostSettle(); return; }
+  if(!_costItems.length){ g('cost-table').innerHTML=head+'<tbody><tr><td colspan="'+(10+mem.length)+'" style="color:var(--ink3);padding:12px">「＋ 費目を追加」で行を追加してください</td></tr></tbody>'; renderCostSettle(); return; }
   var totals={}; mem.forEach(function(m){ totals[m.tid]=0; });
   // 日付ごとに色を割り当て（出現順で cd0..cd5 を循環）。同じ日付は常に同じ色。
   var dateColorMap={}, dcIdx=0;
@@ -3279,7 +3310,6 @@ function renderCostTable(){
       +'<td><input class="ci-name" value="'+esc(it.name||'')+'" oninput="costEdit('+i+',\'name\',this.value)"></td>'
       +'<td><input class="ci-num" type="number" min="0" value="'+(it.budget!=null&&it.budget!==''?esc(String(it.budget)):'')+'" onchange="costEdit('+i+',\'budget\',this.value);renderCostTable()"></td>'
       +'<td><input class="ci-num" type="number" min="0" placeholder="—" value="'+(it.actual!=null&&it.actual!==''?esc(String(it.actual)):'')+'" onchange="costEdit('+i+',\'actual\',this.value);renderCostTable()"></td>'
-      +'<td><select class="ci-cur" onchange="costEdit('+i+',\'currency\',this.value);renderCostTable()">'+_curOptions(it.currency)+'</select></td>'
       +'<td><select class="ci-payer" onchange="costEdit('+i+',\'payer\',this.value);renderCostSettle()">'+_payerOptions(it.payer)+'</select></td>'
       +'<td><select class="ci-paytype" onchange="costEdit('+i+',\'payType\',this.value);renderCostSettle()">'+_payTypeOptions(it.payType)+'</select></td>'
       +cells
@@ -3288,7 +3318,7 @@ function renderCostTable(){
       +'<td><button class="ci-del" title="削除" onclick="delCostItem('+i+')">🗑</button></td>'
     +'</tr>';
   }).join('');
-  var foot='<tfoot><tr><td colspan="8" style="text-align:right">1人あたり合計（円換算）→</td>'
+  var foot='<tfoot><tr><td colspan="7" style="text-align:right">1人あたり合計 →</td>'
     +mem.map(function(m){return '<td>¥'+(totals[m.tid]||0).toLocaleString()+'</td>';}).join('')+'<td colspan="3"></td></tr></tfoot>';
   g('cost-table').innerHTML=head+'<tbody>'+body+'</tbody>'+foot;
   renderCostSettle();
@@ -3305,11 +3335,11 @@ function _computeSettle(its, mem, deposits, defPayer){
   var share={}, paidCost={}, dep={}, tb=0, ta=0;
   mem.forEach(function(m){ share[m.tid]=0; paidCost[m.tid]=0; dep[m.tid]=0; });
   its.forEach(function(it){
-    // 通貨混在のため精算は円換算で統一
-    tb+=toYen(Number(it.budget||0), it.currency)||0;
-    if(it.actual!=null&&it.actual!=='') ta+=toYen(Number(it.actual)||0, it.currency)||0;
+    // 金額は円入力で統一
+    tb+=Number(it.budget||0);
+    if(it.actual!=null&&it.actual!=='') ta+=Number(it.actual)||0;
     var sh=costShare(it); _itemMembers(it).forEach(function(t){ if(share[t]!=null) share[t]+=sh; });
-    if(it.payer && paidCost[it.payer]!=null) paidCost[it.payer]+=_costBaseYen(it);
+    if(it.payer && paidCost[it.payer]!=null) paidCost[it.payer]+=_costBase(it);
   });
   var depTotal=0;
   (deposits||[]).forEach(function(d){ var a=Number(d.amount||0); if(!isFinite(a)||a<=0) return; if(dep[d.tid]!=null){ dep[d.tid]+=a; depTotal+=a; } });
@@ -3348,21 +3378,22 @@ function _costByItemAgg(its){
   });
   return order.map(function(k){return map[k];});
 }
-// 日別必要現金集計: 現金払い(payType!=='card')の費目を日付ごとに集計（グループ全体）。
-// 通貨別の native 合計と、円換算合計を保持。
+// 日別必要現金集計: 現金払い(payType!=='card')の費目を日付×通貨で集計（グループ全体）。
+// 金額は円。通貨は対応スケジュールの場所から判定。場所未解決の費目は unresolved に記録して警告。
 function _cashByDayAgg(its){
-  var order=[], map={};
+  var order=[], map={}, unresolved=[];
   (its||[]).forEach(function(it){
     if(!_isCashItem(it)) return;
     var base=_costBase(it); if(!(base>0)) return;
     var d=it.date||'（日付なし）';
-    if(!map[d]){ map[d]={date:d, byCur:{}, yen:0}; order.push(d); }
-    var cur=(it.currency==='USD'||it.currency==='MXN')?it.currency:'JPY';
-    map[d].byCur[cur]=(map[d].byCur[cur]||0)+base;
-    map[d].yen+=_costBaseYen(it);
+    if(!map[d]){ map[d]={date:d, curYen:{}, yen:0}; order.push(d); }
+    var cur=_itemCurrency(it);
+    map[d].curYen[cur]=(map[d].curYen[cur]||0)+base;
+    map[d].yen+=base;
+    if(!_itemCurResolved(it)) unresolved.push({name:(it.name&&String(it.name).trim())||'（名称未設定）', date:d});
   });
   order.sort();
-  return order.map(function(d){ return map[d]; });
+  return { days:order.map(function(d){ return map[d]; }), unresolved:unresolved };
 }
 function renderCostSettle(){
   var el=g('cost-settle'); if(!el) return;
@@ -3385,29 +3416,31 @@ function renderCostSettle(){
       +'<td>¥'+(s.paidCost[m.tid]||0).toLocaleString()+'</td>'+_depCell(s,m.tid)+'<td>¥'+(s.share[m.tid]||0).toLocaleString()+'</td>'+_netCell(s.net[m.tid]||0)+'</tr>';
   }).join('');
   var note=s.depTotal>0 ? (s.applied?('デポジット計 ¥'+s.depTotal.toLocaleString()+' はデフォルト支払者（'+esc(_payerName(_costDefaultPayer)||'—')+'）が受領済みとして差し引きに反映しています（主催のデポジット列に −¥'+s.depTotal.toLocaleString()+' として計上）。'):'⚠ デポジットを精算に反映するにはデフォルト支払者を設定してください。') : '';
-  // 日別必要現金（グループ全体・現地通貨換算）
-  var cashDays=_cashByDayAgg(_costItems);
+  // 日別必要現金（グループ全体）: 現金費目を日付×通貨で集計し、円額を現地通貨に換算
+  var cashAgg=_cashByDayAgg(_costItems);
   var cashHtml='';
-  if(cashDays.length){
+  if(cashAgg.days.length){
     var curOrder=['JPY','USD','MXN'];
-    var cashRows=cashDays.map(function(r){
-      var parts=curOrder.filter(function(c){return r.byCur[c]>0;}).map(function(c){ return curSym(c)+Math.round(r.byCur[c]).toLocaleString(); });
-      // 現地通貨＝その日で円換算額が最大の非JPY通貨。円換算合計をその通貨に割り戻す。
-      var local='', localYen=-1;
-      ['USD','MXN'].forEach(function(c){ if(r.byCur[c]>0){ var y=toYen(r.byCur[c],c)||0; if(y>localYen){ localYen=y; local=c; } } });
-      var localCell='<span style="color:var(--ink3)">—</span>';
-      if(local && FX[local]){ localCell='<b>'+curSym(local)+(Math.ceil(r.yen/FX[local])).toLocaleString()+'</b>'; }
+    var cashRows=cashAgg.days.map(function(r){
+      var parts=curOrder.filter(function(c){return r.curYen[c]>0;}).map(function(c){ return '<b>'+curSym(c)+fromYen(r.curYen[c],c).toLocaleString()+'</b>'; });
       var dlab=(/^\d{4}-\d{2}-\d{2}$/.test(r.date))?_mmdd(r.date):r.date;
       return '<tr><td style="text-align:left">'+esc(dlab)+'</td>'
         +'<td style="text-align:left">'+(parts.join(' ＋ ')||'—')+'</td>'
-        +'<td>¥'+Math.round(r.yen).toLocaleString()+'</td>'
-        +'<td>'+localCell+'</td></tr>';
+        +'<td>¥'+Math.round(r.yen).toLocaleString()+'</td></tr>';
     }).join('');
-    var cashYenTotal=cashDays.reduce(function(a,r){return a+r.yen;},0);
-    var cashFoot='<tr class="cs-total"><td style="text-align:left">合計</td><td></td><td>¥'+Math.round(cashYenTotal).toLocaleString()+'</td><td></td></tr>';
+    var curTot={}; cashAgg.days.forEach(function(r){ curOrder.forEach(function(c){ if(r.curYen[c]>0) curTot[c]=(curTot[c]||0)+r.curYen[c]; }); });
+    var totParts=curOrder.filter(function(c){return curTot[c]>0;}).map(function(c){ return '<b>'+curSym(c)+fromYen(curTot[c],c).toLocaleString()+'</b>'; });
+    var cashYenTotal=cashAgg.days.reduce(function(a,r){return a+r.yen;},0);
+    var cashFoot='<tr class="cs-total"><td style="text-align:left">合計</td><td style="text-align:left">'+(totParts.join(' ＋ ')||'—')+'</td><td>¥'+Math.round(cashYenTotal).toLocaleString()+'</td></tr>';
+    var warn='';
+    if(cashAgg.unresolved.length){
+      var names=cashAgg.unresolved.map(function(u){ var dl=(/^\d{4}-\d{2}-\d{2}$/.test(u.date))?_mmdd(u.date):u.date; return esc(u.name)+'（'+esc(dl)+'）'; }).join('、');
+      warn='<div style="font-size:11px;color:#b26a00;margin-top:4px">⚠ 通貨未判定（暫定で¥として集計）：'+names+'。対応スケジュールを場所に紐づけるか、場所マスタで通貨を設定してください。</div>';
+    }
     cashHtml='<div class="cv-settle-t" style="margin-top:14px">日別必要現金（グループ全体）</div>'
-      +'<div class="cost-table-wrap"><table class="cost-settle"><thead><tr><th style="text-align:left">日付</th><th style="text-align:left">内訳</th><th>円換算</th><th>現地通貨換算</th></tr></thead><tbody>'+cashRows+cashFoot+'</tbody></table></div>'
-      +'<div style="font-size:11px;color:var(--ink3);margin-top:4px">現金払い（支払＝現金）の費目のみ集計。金額は実費（なければ予算）。現地通貨換算はその日の最大額通貨で円換算合計を割り戻した概算（1'+curSym('USD')+'≈¥'+FX.USD+'／1'+curSym('MXN')+'≈¥'+FX.MXN+'）。</div>';
+      +'<div class="cost-table-wrap"><table class="cost-settle"><thead><tr><th style="text-align:left">日付</th><th style="text-align:left">必要現金（現地通貨）</th><th>（参考）円</th></tr></thead><tbody>'+cashRows+cashFoot+'</tbody></table></div>'
+      +warn
+      +'<div style="font-size:11px;color:var(--ink3);margin-top:4px">現金払い（支払＝現金）の費目のみ集計。金額は実費（なければ予算、円入力）。現地通貨は対応スケジュールの場所から判定し、円額を換算（1'+curSym('USD')+'≈¥'+FX.USD+'／1'+curSym('MXN')+'≈¥'+FX.MXN+'、繰り上げ）。</div>';
   }
   el.innerHTML=byItemHtml+cashHtml
     +'<div class="cv-settle-t" style="margin-top:14px">集計・立て替え精算</div>'
@@ -3474,7 +3507,7 @@ function costLinkSched(i, schedId){
 }
 function addCostItem(){
   _costDirty=true;
-  _costItems.push({ id:'ci_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), name:'', date:'', time:'', schedItemId:'', budget:null, actual:null, currency:'JPY', payType:'cash', payer:_costDefaultPayer||'', notes:'' });
+  _costItems.push({ id:'ci_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), name:'', date:'', time:'', schedItemId:'', budget:null, actual:null, payType:'cash', payer:_costDefaultPayer||'', notes:'' });
   renderCostTable();
 }
 function delCostItem(i){ if(!confirm('この費目を削除しますか？')) return; _costDirty=true; _costItems.splice(i,1); renderCostTable(); }
