@@ -3382,15 +3382,17 @@ function _costByItemAgg(its){
 // 金額は円。通貨は対応スケジュールの場所から判定。場所未解決の費目は unresolved に記録して警告。
 function _cashByDayAgg(its){
   var order=[], map={}, unresolved=[];
+  function ensure(d){ if(!map[d]){ map[d]={date:d, curYen:{}, yen:0, card:0}; order.push(d); } return map[d]; }
   (its||[]).forEach(function(it){
-    if(!_isCashItem(it)) return;
     var base=_costBase(it); if(!(base>0)) return;
     var d=it.date||'（日付なし）';
-    if(!map[d]){ map[d]={date:d, curYen:{}, yen:0}; order.push(d); }
-    var cur=_itemCurrency(it);
-    map[d].curYen[cur]=(map[d].curYen[cur]||0)+base;
-    map[d].yen+=base;
-    if(!_itemCurResolved(it)) unresolved.push({name:(it.name&&String(it.name).trim())||'（名称未設定）', date:d});
+    if(_isCashItem(it)){
+      var m=ensure(d), cur=_itemCurrency(it);
+      m.curYen[cur]=(m.curYen[cur]||0)+base; m.yen+=base;
+      if(!_itemCurResolved(it)) unresolved.push({name:(it.name&&String(it.name).trim())||'（名称未設定）', date:d});
+    } else {
+      ensure(d).card+=base; // カード決済（円貨）
+    }
   });
   order.sort();
   return { days:order.map(function(d){ return map[d]; }), unresolved:unresolved };
@@ -3426,21 +3428,23 @@ function renderCostSettle(){
       var dlab=(/^\d{4}-\d{2}-\d{2}$/.test(r.date))?_mmdd(r.date):r.date;
       return '<tr><td style="text-align:left">'+esc(dlab)+'</td>'
         +'<td style="text-align:left">'+(parts.join(' ＋ ')||'—')+'</td>'
-        +'<td>¥'+Math.round(r.yen).toLocaleString()+'</td></tr>';
+        +'<td>¥'+Math.round(r.yen).toLocaleString()+'</td>'
+        +'<td>'+(r.card>0?'¥'+Math.round(r.card).toLocaleString():'<span style="color:var(--ink3)">—</span>')+'</td></tr>';
     }).join('');
     var curTot={}; cashAgg.days.forEach(function(r){ curOrder.forEach(function(c){ if(r.curYen[c]>0) curTot[c]=(curTot[c]||0)+r.curYen[c]; }); });
     var totParts=curOrder.filter(function(c){return curTot[c]>0;}).map(function(c){ return '<b>'+curSym(c)+fromYen(curTot[c],c).toLocaleString()+'</b>'; });
     var cashYenTotal=cashAgg.days.reduce(function(a,r){return a+r.yen;},0);
-    var cashFoot='<tr class="cs-total"><td style="text-align:left">合計</td><td style="text-align:left">'+(totParts.join(' ＋ ')||'—')+'</td><td>¥'+Math.round(cashYenTotal).toLocaleString()+'</td></tr>';
+    var cardTotal=cashAgg.days.reduce(function(a,r){return a+(r.card||0);},0);
+    var cashFoot='<tr class="cs-total"><td style="text-align:left">合計</td><td style="text-align:left">'+(totParts.join(' ＋ ')||'—')+'</td><td>¥'+Math.round(cashYenTotal).toLocaleString()+'</td><td>'+(cardTotal>0?'¥'+Math.round(cardTotal).toLocaleString():'—')+'</td></tr>';
     var warn='';
     if(cashAgg.unresolved.length){
       var names=cashAgg.unresolved.map(function(u){ var dl=(/^\d{4}-\d{2}-\d{2}$/.test(u.date))?_mmdd(u.date):u.date; return esc(u.name)+'（'+esc(dl)+'）'; }).join('、');
       warn='<div style="font-size:11px;color:#b26a00;margin-top:4px">⚠ 通貨未判定（暫定で¥として集計）：'+names+'。対応スケジュールを場所に紐づけるか、場所マスタで通貨を設定してください。</div>';
     }
     cashHtml='<div class="cv-settle-t" style="margin-top:14px">日別必要現金（グループ全体）</div>'
-      +'<div class="cost-table-wrap"><table class="cost-settle"><thead><tr><th style="text-align:left">日付</th><th style="text-align:left">必要現金（現地通貨）</th><th>（参考）円</th></tr></thead><tbody>'+cashRows+cashFoot+'</tbody></table></div>'
+      +'<div class="cost-table-wrap"><table class="cost-settle"><thead><tr><th style="text-align:left">日付</th><th style="text-align:left">必要現金（現地通貨）</th><th>（参考）円</th><th>カード決済（円）</th></tr></thead><tbody>'+cashRows+cashFoot+'</tbody></table></div>'
       +warn
-      +'<div style="font-size:11px;color:var(--ink3);margin-top:4px">現金払い（支払＝現金）の費目のみ集計。金額は実費（なければ予算、円入力）。現地通貨は対応スケジュールの場所から判定し、円額を換算（1'+curSym('USD')+'≈¥'+FX.USD+'／1'+curSym('MXN')+'≈¥'+FX.MXN+'、繰り上げ）。</div>';
+      +'<div style="font-size:11px;color:var(--ink3);margin-top:4px">「必要現金」は支払＝現金の費目のみ（実費→予算、円入力）。現地通貨は対応スケジュールの場所から判定し円額を換算（1'+curSym('USD')+'≈¥'+FX.USD+'／1'+curSym('MXN')+'≈¥'+FX.MXN+'、繰り上げ）。「カード決済」は支払＝カードの費目の円貨合計。</div>';
   }
   el.innerHTML=byItemHtml+cashHtml
     +'<div class="cv-settle-t" style="margin-top:14px">集計・立て替え精算</div>'

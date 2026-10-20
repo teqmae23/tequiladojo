@@ -2044,11 +2044,13 @@ function costViewHtml(items, members, myTid){
     +'<div class="cv-wrap"><table class="cv-table cv-settle"><thead><tr><th>メンバー</th><th>立て替え</th><th>デポジット</th><th>負担</th><th>差し引き</th></tr></thead><tbody>'+srows+'</tbody></table></div>'+dnote;
   // 日別必要現金（グループ全体）: 現金費目を日付×通貨(場所由来)で集計し、円額を現地通貨に換算
   var cashMap={}, cashOrder=[], cashUnres=[];
-  its.forEach(function(it){ if(!isCash(it)) return; var b=base(it); if(!(b>0)) return;
-    var d=it.date||'（日付なし）'; if(!cashMap[d]){ cashMap[d]={curYen:{},yen:0}; cashOrder.push(d); }
-    var cur=itemCur(it);
-    cashMap[d].curYen[cur]=(cashMap[d].curYen[cur]||0)+b; cashMap[d].yen+=b;
-    if(!curResolved(it)) cashUnres.push({name:(it.name&&String(it.name).trim())||'（名称未設定）', date:d}); });
+  function cashEnsure(d){ if(!cashMap[d]){ cashMap[d]={curYen:{},yen:0,card:0}; cashOrder.push(d); } return cashMap[d]; }
+  its.forEach(function(it){ var b=base(it); if(!(b>0)) return;
+    var d=it.date||'（日付なし）';
+    if(isCash(it)){ var m=cashEnsure(d), cur=itemCur(it);
+      m.curYen[cur]=(m.curYen[cur]||0)+b; m.yen+=b;
+      if(!curResolved(it)) cashUnres.push({name:(it.name&&String(it.name).trim())||'（名称未設定）', date:d});
+    } else { cashEnsure(d).card+=b; } });
   cashOrder.sort();
   var cashBlock='';
   if(cashOrder.length){
@@ -2056,18 +2058,19 @@ function costViewHtml(items, members, myTid){
     var crows=cashOrder.map(function(d){ var r=cashMap[d];
       var parts=cords.filter(function(c){return r.curYen[c]>0;}).map(function(c){ return '<b>'+curSym(c)+fromYen(r.curYen[c],c).toLocaleString()+'</b>'; });
       var dlab=(/^\d{4}-\d{2}-\d{2}$/.test(d))?_cvMmdd(d):d;
-      return '<tr><td style="text-align:left">'+esc(dlab)+'</td><td style="text-align:left">'+(parts.join(' ＋ ')||'—')+'</td><td>¥'+Math.round(r.yen).toLocaleString()+'</td></tr>'; }).join('');
+      return '<tr><td style="text-align:left">'+esc(dlab)+'</td><td style="text-align:left">'+(parts.join(' ＋ ')||'—')+'</td><td>¥'+Math.round(r.yen).toLocaleString()+'</td><td>'+(r.card>0?'¥'+Math.round(r.card).toLocaleString():'—')+'</td></tr>'; }).join('');
     var curTot={}; cashOrder.forEach(function(d){ cords.forEach(function(c){ if(cashMap[d].curYen[c]>0) curTot[c]=(curTot[c]||0)+cashMap[d].curYen[c]; }); });
     var totParts=cords.filter(function(c){return curTot[c]>0;}).map(function(c){ return '<b>'+curSym(c)+fromYen(curTot[c],c).toLocaleString()+'</b>'; });
     var ctot=cashOrder.reduce(function(a,d){return a+cashMap[d].yen;},0);
-    crows+='<tr class="cv-foot"><td style="text-align:left">合計</td><td style="text-align:left">'+(totParts.join(' ＋ ')||'—')+'</td><td>¥'+Math.round(ctot).toLocaleString()+'</td></tr>';
+    var cardTot=cashOrder.reduce(function(a,d){return a+(cashMap[d].card||0);},0);
+    crows+='<tr class="cv-foot"><td style="text-align:left">合計</td><td style="text-align:left">'+(totParts.join(' ＋ ')||'—')+'</td><td>¥'+Math.round(ctot).toLocaleString()+'</td><td>'+(cardTot>0?'¥'+Math.round(cardTot).toLocaleString():'—')+'</td></tr>';
     var cwarn='';
     if(cashUnres.length){ var nm=cashUnres.map(function(u){ var dl=(/^\d{4}-\d{2}-\d{2}$/.test(u.date))?_cvMmdd(u.date):u.date; return esc(u.name)+'（'+esc(dl)+'）'; }).join('、');
       cwarn='<div style="font-size:11px;color:#b26a00;margin-top:4px">⚠ 通貨未判定（暫定で¥集計）：'+nm+'</div>'; }
     cashBlock='<div class="cv-settle-t" style="margin-top:14px">日別必要現金（グループ全体）</div>'
-      +'<div class="cv-wrap"><table class="cv-table cv-settle"><thead><tr><th style="text-align:left">日付</th><th style="text-align:left">必要現金（現地通貨）</th><th>（参考）円</th></tr></thead><tbody>'+crows+'</tbody></table></div>'
+      +'<div class="cv-wrap"><table class="cv-table cv-settle"><thead><tr><th style="text-align:left">日付</th><th style="text-align:left">必要現金（現地通貨）</th><th>（参考）円</th><th>カード（円）</th></tr></thead><tbody>'+crows+'</tbody></table></div>'
       +cwarn
-      +'<div style="font-size:11px;color:var(--ink3);margin-top:4px">現金払いの費目のみ集計（実費があれば実費、なければ予算、円入力）。通貨は対応スケジュールの場所から判定し円額を換算（繰り上げ）。</div>';
+      +'<div style="font-size:11px;color:var(--ink3);margin-top:4px">「必要現金」は現金払いのみ（実費→予算、円入力）、通貨は対応スケジュールの場所から判定し換算（繰り上げ）。「カード」はカード払いの円貨合計。</div>';
   }
   return summary+'<div class="cv-wrap"><table class="cv-table"><thead>'+head+'</thead><tbody>'+rows+'</tbody><tfoot>'+foot+'</tfoot></table></div>'+settle+cashBlock;
 }
