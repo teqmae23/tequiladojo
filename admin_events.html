@@ -1075,7 +1075,7 @@ table.pl-tbl select.pl-in{padding-left:3px;padding-right:2px}
       <div id="pl-filter"></div>
       <div id="pl-list"><div class="ec">読み込み中…</div></div>
     </div>
-    <div class="mft"><button class="btn bs ca-only-hide" onclick="openPlaceCatMgr()">🏷 分類編集</button><div style="flex:1"></div><button class="btn bp" onclick="savePlaceAll()">💾 全行を保存</button><button class="btn bs" onclick="closePlaceMgr()">閉じる</button></div>
+    <div class="mft"><button class="btn bs ca-only-hide" onclick="openPlaceCatMgr()">🏷 分類編集</button><button class="btn bs" id="pl-revgeo-btn" onclick="backfillPlaceCurrencies(false)" title="座標から国を判定して通貨を自動設定（逆ジオコーディング）。通貨設定済みの場所はスキップ。">🌐 座標から通貨判定</button><div style="flex:1"></div><button class="btn bp" onclick="savePlaceAll()">💾 全行を保存</button><button class="btn bs" onclick="closePlaceMgr()">閉じる</button></div>
   </div>
 </div>
 
@@ -2473,8 +2473,53 @@ function _curFromAddr(addr){
   if(/[ぁ-んァ-ヶ一-龠]/.test(s) || /日本|〒/.test(s)) return 'JPY';
   return '';
 }
-// 場所の通貨（明示設定があればそれ、無ければ住所から推定）
-function _placeCurOf(p){ if(!p) return ''; var c=p.currency; if(c==='JPY'||c==='USD'||c==='MXN') return c; return _curFromAddr(p.address); }
+// 緯度経度から国→通貨を判定。日本は経度で分離、米国/メキシコは国境線(西32.5°N〜東25.9°N)を対角線近似で分離。
+function _curFromLatLng(lat,lng){
+  lat=Number(lat); lng=Number(lng);
+  if(!isFinite(lat)||!isFinite(lng)) return '';
+  if(lng>=120 && lng<=155 && lat>=20 && lat<=47) return 'JPY'; // 日本
+  if(lng>=-125 && lng<=-60 && lat>=12 && lat<=50){            // 北米
+    var bLng=Math.max(-117, Math.min(-97, lng));              // 国境の線形補間範囲にクランプ
+    var border=32.5 + (bLng-(-117))*((25.9-32.5)/((-97)-(-117)));
+    return (lat < border) ? 'MXN' : 'USD';
+  }
+  return '';
+}
+// 場所の通貨: 明示設定 ＞ 座標 ＞ 住所キーワード
+function _placeCurOf(p){ if(!p) return ''; var c=p.currency; if(c==='JPY'||c==='USD'||c==='MXN') return c; c=_curFromLatLng(p.lat,p.lng); if(c) return c; return _curFromAddr(p.address); }
+// 逆ジオコーディング（Nominatim reverse）で座標→通貨を取得。座標でキャッシュ。
+var _revCache={};
+function _revGeoCurrency(lat,lng){
+  lat=Number(lat); lng=Number(lng); if(!isFinite(lat)||!isFinite(lng)) return Promise.resolve('');
+  var key=lat.toFixed(3)+','+lng.toFixed(3);
+  if(_revCache[key]!==undefined) return Promise.resolve(_revCache[key]);
+  return fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=3&accept-language=en&lat='+encodeURIComponent(lat)+'&lon='+encodeURIComponent(lng))
+    .then(function(r){ return r.json(); })
+    .then(function(d){ var cc=String(d&&d.address&&d.address.country_code||'').toLowerCase();
+      var cur=cc==='jp'?'JPY':(cc==='us'?'USD':(cc==='mx'?'MXN':'')); _revCache[key]=cur; return cur; })
+    .catch(function(){ _revCache[key]=''; return ''; });
+}
+// 座標を持つ場所の通貨を逆ジオコーディングで一括設定（force=false は通貨未設定のみ）。1秒1件を尊重。
+function backfillPlaceCurrencies(force){
+  var btn=g('pl-revgeo-btn');
+  var targets=(_places||[]).filter(function(p){ return (p.lat!=null&&p.lng!=null) && (force || !(p.currency==='JPY'||p.currency==='USD'||p.currency==='MXN')); });
+  if(!targets.length){ toast('対象の場所がありません（座標あり・通貨未設定）'); return; }
+  if(btn) btn.disabled=true;
+  var seq=Promise.resolve(), done=0, set=0, total=targets.length;
+  targets.forEach(function(p){ seq=seq.then(function(){
+    if(btn) btn.textContent='🌐 判定中… '+(done+1)+'/'+total;
+    return _revGeoCurrency(p.lat,p.lng).then(function(cur){
+      done++;
+      if(cur && cur!==p.currency){ return db.collection('places').doc(p.id).set({currency:cur, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).then(function(){ p.currency=cur; set++; }); }
+    }).then(function(){ return new Promise(function(res){ setTimeout(res, 1100); }); });
+  }); });
+  seq.then(function(){
+    if(btn){ btn.disabled=false; btn.textContent='🌐 座標から通貨判定'; }
+    toast(set+'件の通貨を設定しました（'+total+'件を判定）');
+    if(_placeMgrOpen()) renderPlaceList();
+    if(g('cost-settle')) renderCostSettle();
+  }).catch(function(e){ if(btn){ btn.disabled=false; btn.textContent='🌐 座標から通貨判定'; } toast('判定に失敗: '+(e&&e.message||e),'err'); });
+}
 // 場所マスタ用 通貨セレクト（初期値は呼び出し側で住所推定を渡す）
 function _plCurSel(id, cur){ cur=(cur==='USD'||cur==='MXN'||cur==='JPY')?cur:'';
   return '<select class="pl-in" id="pl-cur-'+id+'">'
@@ -3245,18 +3290,24 @@ function _itemMembers(it){
 }
 // 金額は円入力で統一。按分・精算は円のまま計算する。
 function costShare(it){ var n=_itemMembers(it).length; if(!n) return 0; var base=_costBase(it); if(base<=0) return 0; return Math.ceil(base/n/100)*100; }
-function _isCashItem(it){ return (it&&it.payType)!=='card'; }  // 未設定=現金扱い
-function _payTypeOptions(sel){ sel=(sel==='card')?'card':'cash'; return '<option value="cash"'+(sel==='cash'?' selected':'')+'>現金</option><option value="card"'+(sel==='card'?' selected':'')+'>カード</option>'; }
-// 費目の現金通貨は「対応スケジュールの場所」から判定（場所マスタの通貨）。判定不能は未解決。
+// 支払区分: cash(現金)/card(カード)/post(事後)。未設定=現金扱い。
+function _payCat(it){ var p=it&&it.payType; return (p==='card'||p==='post')?p:'cash'; }
+function _isCashItem(it){ return _payCat(it)==='cash'; }
+function _payTypeOptions(sel){ sel=(sel==='card'||sel==='post')?sel:'cash'; return '<option value="cash"'+(sel==='cash'?' selected':'')+'>現金</option><option value="card"'+(sel==='card'?' selected':'')+'>カード</option><option value="post"'+(sel==='post'?' selected':'')+'>事後</option>'; }
+// 費目の現金通貨は「対応スケジュールの場所」から判定。優先: 場所の通貨設定＞座標＞住所。
 function _placeByName(nm){ nm=String(nm||'').trim(); if(!nm||!Array.isArray(_places)) return null; return _places.find(function(p){ return String(p.name||'').trim()===nm; })||null; }
-function _curOfName(nm){ var p=_placeByName(nm); if(!p) return ''; var c=_placeCurOf(p); return (c==='JPY'||c==='USD'||c==='MXN')?c:''; }
+// 1地点の通貨: 場所マスタ(設定>座標>住所) → スケジュール項目自身の座標
+function _curOfEndpoint(nm, lat, lng){
+  var p=_placeByName(nm);
+  if(p){ var c=_placeCurOf(p); if(c==='JPY'||c==='USD'||c==='MXN') return c; }
+  var cc=_curFromLatLng(lat,lng); if(cc) return cc;
+  return '';
+}
 // 費目に紐づくスケジュール項目の場所から通貨を判定（移動は出発地・到着地の両方を試す）
 function _itemPlaceCur(it){
   if(!it||!it.schedItemId) return '';
   var s=_costSched.find(function(x){return x.id===it.schedItemId;}); if(!s) return '';
-  var names=[s.placeName, s.toName, s.title];
-  for(var i=0;i<names.length;i++){ var c=_curOfName(String(names[i]||'').trim()); if(c) return c; }
-  return '';
+  return _curOfEndpoint(s.placeName, s.lat, s.lng) || _curOfEndpoint(s.toName, s.toLat, s.toLng) || _curOfEndpoint(s.title) || '';
 }
 // その日のスケジュールの場所から通貨を判定（最頻の通貨）。未リンク費目のフォールバック。
 var _dayCurCache={};
@@ -3265,14 +3316,27 @@ function _dayCurrency(date){
   if(_dayCurCache[date]!==undefined) return _dayCurCache[date];
   var cnt={};
   (_costSched||[]).forEach(function(s){ if((s.date||'')!==date) return;
-    [s.placeName, s.toName].forEach(function(nm){ var c=_curOfName(String(nm||'').trim()); if(c) cnt[c]=(cnt[c]||0)+1; }); });
+    var c1=_curOfEndpoint(s.placeName, s.lat, s.lng); if(c1) cnt[c1]=(cnt[c1]||0)+1;
+    var c2=_curOfEndpoint(s.toName, s.toLat, s.toLng); if(c2) cnt[c2]=(cnt[c2]||0)+1; });
   var best='', bn=0; Object.keys(cnt).forEach(function(c){ if(cnt[c]>bn){ bn=cnt[c]; best=c; } });
   _dayCurCache[date]=best; return best;
 }
-// 現金通貨: 費目の場所→その日のスケジュール由来→既定¥
-function _itemCurrency(it){ var c=_itemPlaceCur(it)||_dayCurrency(it&&it.date); return (c==='JPY'||c==='USD'||c==='MXN')?c:'JPY'; }
-// 通貨を場所から確定できたか（警告判定用）
-function _itemCurResolved(it){ return !!(_itemPlaceCur(it) || _dayCurrency(it&&it.date)); }
+// 自動判定通貨（手動設定を含めない。明細の「自動」ラベル表示用）
+function _autoCurrency(it){ var c=_itemPlaceCur(it)||_dayCurrency(it&&it.date); return (c==='JPY'||c==='USD'||c==='MXN')?c:''; }
+// 実効通貨: 手動設定(it.currency)が最優先。無ければ自動判定、それも無ければ¥。
+function _itemManualCur(it){ var c=it&&it.currency; return (c==='JPY'||c==='USD'||c==='MXN')?c:''; }
+function _itemCurrency(it){ return _itemManualCur(it) || _autoCurrency(it) || 'JPY'; }
+// 通貨を確定できたか（手動 or 自動。警告判定用）
+function _itemCurResolved(it){ return !!(_itemManualCur(it) || _autoCurrency(it)); }
+// 明細の通貨セレクト: 先頭に「自動(判定値)」、以下に手動指定。選択中= it.currency(手動) か空(自動)。
+function _ciCurOptions(it){
+  var manual=_itemManualCur(it), auto=_autoCurrency(it);
+  var autoLbl='自動'+(auto?('：'+curSym(auto)):'：—');
+  return '<option value=""'+(manual?'':' selected')+'>'+autoLbl+'</option>'
+    +'<option value="JPY"'+(manual==='JPY'?' selected':'')+'>¥ JPY</option>'
+    +'<option value="USD"'+(manual==='USD'?' selected':'')+'>US$</option>'
+    +'<option value="MXN"'+(manual==='MXN'?' selected':'')+'>MX$</option>';
+}
 // 予算・実費とも未入力なら金額未確定（按分額は「?」表示）
 function _costUnpriced(it){ var b=(it&&it.budget!=null&&it.budget!==''); var a=(it&&it.actual!=null&&it.actual!==''); return !b && !a; }
 function _shareCell(sh, unpriced){ return unpriced?'?':('¥'+sh.toLocaleString()); }
@@ -3305,10 +3369,10 @@ function renderCostTable(){
   _sortCostItemsInPlace();
   var mem=_costMembers;
   // 並び順: 日付/時間/費目/予算/実費/参加者名/対応スケジュール/備考
-  var head='<thead><tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th><th>支払者</th><th>支払</th>'
+  var head='<thead><tr><th>日付</th><th>時間</th><th>費目</th><th>予算</th><th>実費</th><th>支払者</th><th>支払</th><th title="現金費目の通貨。空欄=自動判定（場所/座標）。選ぶと手動優先。">通貨</th>'
     +mem.map(function(m){return '<th title="'+esc(m.name)+'">'+esc(_shortName(m.name))+'</th>';}).join('')
     +'<th>対応スケジュール</th><th>備考</th><th></th></tr></thead>';
-  if(!_costItems.length){ g('cost-table').innerHTML=head+'<tbody><tr><td colspan="'+(10+mem.length)+'" style="color:var(--ink3);padding:12px">「＋ 費目を追加」で行を追加してください</td></tr></tbody>'; renderCostSettle(); return; }
+  if(!_costItems.length){ g('cost-table').innerHTML=head+'<tbody><tr><td colspan="'+(11+mem.length)+'" style="color:var(--ink3);padding:12px">「＋ 費目を追加」で行を追加してください</td></tr></tbody>'; renderCostSettle(); return; }
   var totals={}; mem.forEach(function(m){ totals[m.tid]=0; });
   // 日付ごとに色を割り当て（出現順で cd0..cd5 を循環）。同じ日付は常に同じ色。
   var dateColorMap={}, dcIdx=0;
@@ -3330,14 +3394,15 @@ function renderCostTable(){
       +'<td><input class="ci-num" type="number" min="0" value="'+(it.budget!=null&&it.budget!==''?esc(String(it.budget)):'')+'" onchange="costEdit('+i+',\'budget\',this.value);renderCostTable()"></td>'
       +'<td><input class="ci-num" type="number" min="0" placeholder="—" value="'+(it.actual!=null&&it.actual!==''?esc(String(it.actual)):'')+'" onchange="costEdit('+i+',\'actual\',this.value);renderCostTable()"></td>'
       +'<td><select class="ci-payer" onchange="costEdit('+i+',\'payer\',this.value);renderCostSettle()">'+_payerOptions(it.payer)+'</select></td>'
-      +'<td><select class="ci-paytype" onchange="costEdit('+i+',\'payType\',this.value);renderCostSettle()">'+_payTypeOptions(it.payType)+'</select></td>'
+      +'<td><select class="ci-paytype" onchange="costEdit('+i+',\'payType\',this.value);renderCostTable()">'+_payTypeOptions(it.payType)+'</select></td>'
+      +'<td>'+(_payCat(it)==='cash'?('<select class="ci-cur" onchange="costEdit('+i+',\'currency\',this.value);renderCostTable()">'+_ciCurOptions(it)+'</select>'):'<span style="color:var(--ink3)">—</span>')+'</td>'
       +cells
       +'<td><select class="ci-sched" onchange="costLinkSched('+i+',this.value)">'+_schedOptions(it.schedItemId,it.date)+'</select></td>'
       +'<td><input class="ci-note" value="'+esc(it.notes||'')+'" oninput="costEdit('+i+',\'notes\',this.value)"></td>'
       +'<td><button class="ci-del" title="削除" onclick="delCostItem('+i+')">🗑</button></td>'
     +'</tr>';
   }).join('');
-  var foot='<tfoot><tr><td colspan="7" style="text-align:right">1人あたり合計 →</td>'
+  var foot='<tfoot><tr><td colspan="8" style="text-align:right">1人あたり合計 →</td>'
     +mem.map(function(m){return '<td>¥'+(totals[m.tid]||0).toLocaleString()+'</td>';}).join('')+'<td colspan="3"></td></tr></tfoot>';
   g('cost-table').innerHTML=head+'<tbody>'+body+'</tbody>'+foot;
   renderCostSettle();
@@ -3397,20 +3462,20 @@ function _costByItemAgg(its){
   });
   return order.map(function(k){return map[k];});
 }
-// 日別必要現金集計: 現金払い(payType!=='card')の費目を日付×通貨で集計（グループ全体）。
-// 金額は円。通貨は対応スケジュールの場所から判定。場所未解決の費目は unresolved に記録して警告。
+// 日別集計: 費目を日付ごとに 現金(通貨別)/カード/事後 の3区分で集計（グループ全体）。
+// 金額は円。現金の通貨は場所/座標から判定。通貨未解決の現金費目は unresolved に記録して警告。
 function _cashByDayAgg(its){
   var order=[], map={}, unresolved=[];
-  function ensure(d){ if(!map[d]){ map[d]={date:d, curYen:{}, yen:0, card:0}; order.push(d); } return map[d]; }
+  function ensure(d){ if(!map[d]){ map[d]={date:d, curYen:{}, yen:0, card:0, post:0}; order.push(d); } return map[d]; }
   (its||[]).forEach(function(it){
     var base=_costBase(it); if(!(base>0)) return;
-    var d=it.date||'（日付なし）';
-    if(_isCashItem(it)){
-      var m=ensure(d), cur=_itemCurrency(it);
+    var d=it.date||'（日付なし）', cat=_payCat(it), m=ensure(d);
+    if(cat==='card'){ m.card+=base; }
+    else if(cat==='post'){ m.post+=base; }
+    else {
+      var cur=_itemCurrency(it);
       m.curYen[cur]=(m.curYen[cur]||0)+base; m.yen+=base;
       if(!_itemCurResolved(it)) unresolved.push({name:(it.name&&String(it.name).trim())||'（名称未設定）', date:d});
-    } else {
-      ensure(d).card+=base; // カード決済（円貨）
     }
   });
   order.sort();
@@ -3438,33 +3503,34 @@ function renderCostSettle(){
       +'<td>¥'+(s.paidCost[m.tid]||0).toLocaleString()+'</td>'+_depCell(s,m.tid)+'<td>¥'+(s.share[m.tid]||0).toLocaleString()+'</td>'+_netCell(s.net[m.tid]||0)+'</tr>';
   }).join('');
   var note=s.depTotal>0 ? (s.applied?('デポジット計 ¥'+s.depTotal.toLocaleString()+' はデフォルト支払者（'+esc(_payerName(_costDefaultPayer)||'—')+'）が受領済みとして差し引きに反映しています（主催のデポジット列に −¥'+s.depTotal.toLocaleString()+' として計上）。'):'⚠ デポジットを精算に反映するにはデフォルト支払者を設定してください。') : '';
-  // 日別必要現金（グループ全体）: 現金費目を日付×通貨で集計し、円額を現地通貨に換算
+  // 日別集計（グループ全体）: 現金(現地通貨)/カード(円)/事後(円) の3区分
   var cashAgg=_cashByDayAgg(_costItems);
   var cashHtml='';
   if(cashAgg.days.length){
     var curOrder=['JPY','USD','MXN'];
+    var yenCell=function(v){ return v>0?'¥'+Math.round(v).toLocaleString():'<span style="color:var(--ink3)">—</span>'; };
     var cashRows=cashAgg.days.map(function(r){
       var parts=curOrder.filter(function(c){return r.curYen[c]>0;}).map(function(c){ return '<b>'+curSym(c)+fromYen(r.curYen[c],c).toLocaleString()+'</b>'; });
       var dlab=(/^\d{4}-\d{2}-\d{2}$/.test(r.date))?_mmdd(r.date):r.date;
       return '<tr><td style="text-align:left">'+esc(dlab)+'</td>'
         +'<td style="text-align:left">'+(parts.join(' ＋ ')||'—')+'</td>'
-        +'<td>¥'+Math.round(r.yen).toLocaleString()+'</td>'
-        +'<td>'+(r.card>0?'¥'+Math.round(r.card).toLocaleString():'<span style="color:var(--ink3)">—</span>')+'</td></tr>';
+        +'<td>'+yenCell(r.card)+'</td>'
+        +'<td>'+yenCell(r.post)+'</td></tr>';
     }).join('');
     var curTot={}; cashAgg.days.forEach(function(r){ curOrder.forEach(function(c){ if(r.curYen[c]>0) curTot[c]=(curTot[c]||0)+r.curYen[c]; }); });
     var totParts=curOrder.filter(function(c){return curTot[c]>0;}).map(function(c){ return '<b>'+curSym(c)+fromYen(curTot[c],c).toLocaleString()+'</b>'; });
-    var cashYenTotal=cashAgg.days.reduce(function(a,r){return a+r.yen;},0);
     var cardTotal=cashAgg.days.reduce(function(a,r){return a+(r.card||0);},0);
-    var cashFoot='<tr class="cs-total"><td style="text-align:left">合計</td><td style="text-align:left">'+(totParts.join(' ＋ ')||'—')+'</td><td>¥'+Math.round(cashYenTotal).toLocaleString()+'</td><td>'+(cardTotal>0?'¥'+Math.round(cardTotal).toLocaleString():'—')+'</td></tr>';
+    var postTotal=cashAgg.days.reduce(function(a,r){return a+(r.post||0);},0);
+    var cashFoot='<tr class="cs-total"><td style="text-align:left">合計</td><td style="text-align:left">'+(totParts.join(' ＋ ')||'—')+'</td><td>'+yenCell(cardTotal)+'</td><td>'+yenCell(postTotal)+'</td></tr>';
     var warn='';
     if(cashAgg.unresolved.length){
       var names=cashAgg.unresolved.map(function(u){ var dl=(/^\d{4}-\d{2}-\d{2}$/.test(u.date))?_mmdd(u.date):u.date; return esc(u.name)+'（'+esc(dl)+'）'; }).join('、');
-      warn='<div style="font-size:11px;color:#b26a00;margin-top:4px">⚠ 通貨未判定（暫定で¥として集計）：'+names+'。対応スケジュールを場所に紐づけるか、場所マスタで通貨を設定してください。</div>';
+      warn='<div style="font-size:11px;color:#b26a00;margin-top:4px">⚠ 通貨未判定（暫定で¥として集計）：'+names+'。明細の通貨を指定するか、場所マスタで通貨を設定してください。</div>';
     }
-    cashHtml='<div class="cv-settle-t" style="margin-top:14px">日別必要現金（グループ全体）</div>'
-      +'<div class="cost-table-wrap"><table class="cost-settle"><thead><tr><th style="text-align:left">日付</th><th style="text-align:left">必要現金（現地通貨）</th><th>（参考）円</th><th>カード決済（円）</th></tr></thead><tbody>'+cashRows+cashFoot+'</tbody></table></div>'
+    cashHtml='<div class="cv-settle-t" style="margin-top:14px">日別の支払区分（グループ全体）</div>'
+      +'<div class="cost-table-wrap"><table class="cost-settle"><thead><tr><th style="text-align:left">日付</th><th style="text-align:left">必要現金（現地通貨）</th><th>カード決済（円）</th><th>事後（円）</th></tr></thead><tbody>'+cashRows+cashFoot+'</tbody></table></div>'
       +warn
-      +'<div style="font-size:11px;color:var(--ink3);margin-top:4px">「必要現金」は支払＝現金の費目のみ（実費→予算、円入力）。現地通貨は対応スケジュールの場所から判定し円額を換算（1'+curSym('USD')+'≈¥'+FX.USD+'／1'+curSym('MXN')+'≈¥'+FX.MXN+'、繰り上げ）。「カード決済」は支払＝カードの費目の円貨合計。</div>';
+      +'<div style="font-size:11px;color:var(--ink3);margin-top:4px">金額は実費→予算（円入力）。「必要現金」は支払＝現金の費目を現地通貨に換算（1'+curSym('USD')+'≈¥'+FX.USD+'／1'+curSym('MXN')+'≈¥'+FX.MXN+'、繰り上げ）。通貨は明細の指定＞場所/座標の自動判定。「カード」「事後」は円貨合計。</div>';
   }
   el.innerHTML=byItemHtml+cashHtml
     +'<div class="cv-settle-t" style="margin-top:14px">集計・立て替え精算</div>'
