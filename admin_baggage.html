@@ -152,6 +152,7 @@ td.c-flight{background:#f3f8f5}td.c-collect{background:#f2f6fd}
       <h1 id="plan-title">スーツケース管理</h1>
       <div class="legend">🧳 色=重量クラス（<span style="color:#c0261a;font-weight:700">赤15kg</span>／<span style="color:#d1771a;font-weight:700">橙23kg</span>／<span style="font-weight:700">黒30kg</span>）・①②=個人別連番・🍾ボトル1本1.5kg／SC1個に最大12本</div>
       <div style="flex:1"></div>
+      <button class="btn" id="btn-print" title="対象者配布用の一覧を別画面で開き、印刷/PDF保存できます">📄 一覧表示 / PDF出力</button>
       <button class="btn" id="btn-reseed">スケジュールから航路を再生成</button>
       <button class="btn p" id="btn-save">保存</button>
     </div>
@@ -341,7 +342,8 @@ function renderCell(c,pid){
     st.in.forEach(function(b){ var on=leaveIds.indexOf(b.id)>=0;
       h3+='<div class="bagwrap"><span class="serial">'+circ(b.serial)+'</span>'
         +'<button class="bagchip" title="タップで残置ON/OFF" onclick="toggleLeave(\''+c.id+'\',\''+pid+'\',\''+b.id+'\')"><span class="bagicon '+bagColor(b.w)+(on?' sel':'')+'"><b>'+esc(b.w)+'kg</b><span>'+esc(b.s)+'cm</span></span></button>'
-        +(on?'<span class="bbtl" style="color:var(--red)">置</span>':(b.bottles?'<span class="bbtl">🍾'+b.bottles+'</span>':''))+'</div>'; });
+        +(b.bottles?'<span class="bbtl'+((+b.bottles>bagCap(b.w))?' over':'')+'">🍾'+b.bottles+'</span>':'<span class="bbtl" style="color:var(--ink3)">🍾0</span>')
+        +(on?'<span class="bbtl" style="color:var(--red)">置</span>':'')+'</div>'; });
     h3+='</div>';
     return h3;
   }
@@ -361,6 +363,61 @@ function renderCell(c,pid){
     return h4;
   }
   return '';
+}
+
+// ── 対象者配布用の一覧（読み取り専用）を別画面で開き、印刷/PDF出力 ──
+function _pBag(b, tag){
+  var over=(+b.bottles||0)>bagCap(b.w);
+  return '<div class="pb"><span class="ps">'+circ(b.serial)+'</span>'
+    +'<span class="pi '+bagColor(b.w)+'"><b>'+esc(b.w)+'kg</b><span>'+esc(b.s)+'cm</span></span>'
+    +(b.bottles?'<span class="pt'+(over?' o':'')+'">🍾'+b.bottles+(over?'⚠':'')+'</span>':'<span class="pt z">🍾0</span>')
+    +(tag?'<span class="pg">'+tag+'</span>':'')+'</div>';
+}
+function _pCell(c,pid){
+  var st=(_states[c.id]&&_states[c.id][pid])||{in:[],out:[],collected:[]};
+  var bags, tag='', tot=false;
+  if(c.type==='flight'){ bags=st.out; tot=true; }
+  else if(c.type==='pack'){ bags=st.out; tag='収納'; }
+  else if(c.type==='add'){ var inIds={}; st.in.forEach(function(b){inIds[b.id]=1;}); bags=st.out.filter(function(b){return !inIds[b.id];}); tag='追加'; }
+  else if(c.type==='leave'){ var lv=(edOf(c.id,pid).leave)||[]; bags=st.in.filter(function(b){return lv.indexOf(b.id)>=0;}); tag='残置'; }
+  else if(c.type==='collect'){ bags=st.collected; tag='回収'; }
+  else bags=[];
+  if(!bags.length) return '<span class="pnone">—</span>';
+  var h='<div class="pbags">'+bags.map(function(b){ return _pBag(b, (c.type==='flight'||c.type==='pack')?'':tag); }).join('')+'</div>';
+  if(tot){ var btl=bags.reduce(function(a,b){return a+(+b.bottles||0);},0), cap=bags.reduce(function(a,b){return a+bagCap(b.w);},0);
+    h+='<div class="ptot">🧳'+bags.length+' ／ 🍾'+btl+'/'+cap+(btl>cap?' ⚠':'')+'</div>'; }
+  return h;
+}
+function openBaggagePrint(){
+  if(!plan.participants.length || !plan.columns.length){ toast('表示するデータがありません','err'); return; }
+  computeStates();
+  var P=plan.participants, C=plan.columns;
+  var th='<th class="ch">区間 →<br>↓参加者</th>'+C.map(function(c){ return '<th class="t-'+esc(c.type)+'"><span class="ctag">'+esc(COLTYPES[c.type]||'')+'</span><br>'+esc(c.label||'（無題）')+'</th>'; }).join('');
+  var rows=P.map(function(pt){ return '<tr><td class="ch">'+esc(pt.name)+'</td>'+C.map(function(c){ var cls=(c.type==='flight'?' c-flight':(c.type==='collect'?' c-collect':(c.type==='leave'?' c-leave':''))); return '<td class="pc'+cls+'">'+_pCell(c,pt.id)+'</td>'; }).join('')+'</tr>'; }).join('');
+  var title=(_ev.name?(_ev.name+' — '):'')+'スーツケース一覧';
+  var css='*{box-sizing:border-box;margin:0;padding:0}body{font-family:"Noto Sans JP",sans-serif;color:#18110a;padding:14px}'
+    +'h1{font-size:16px;margin-bottom:4px;color:#7a5610}.lg{font-size:10px;color:#6b5a44;margin-bottom:10px}'
+    +'table{border-collapse:collapse;width:100%;font-size:10.5px}th,td{border:1px solid #bbb;padding:3px 5px;text-align:center;vertical-align:top}'
+    +'th{background:#f0ebe0;font-size:10px}.ch{text-align:left;font-weight:700;background:#f0ebe0;white-space:nowrap}'
+    +'.ctag{font-size:9px;color:#6b5a44;font-weight:700}th.t-flight{background:#eaf2ee}th.t-add{background:#eef7e9}th.t-leave{background:#fdeee0}th.t-collect{background:#e9f0fb}th.t-pack{background:#f6ecfa}'
+    +'td.c-flight{background:#f6faf8}td.c-collect{background:#f4f8fd}td.c-leave{background:#fdf6ef}'
+    +'.pbags{display:flex;flex-wrap:wrap;gap:4px;justify-content:center}.pnone{color:#999}'
+    +'.pb{display:flex;flex-direction:column;align-items:center;gap:1px}.ps{font-size:9px;font-weight:700}'
+    +'.pi{width:30px;height:34px;border:2px solid #222;border-radius:4px 4px 3px 3px;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.02;margin-top:4px;background:#fff}'
+    +'.pi::before{content:"";position:absolute;top:-5px;left:50%;transform:translateX(-50%);width:13px;height:5px;border:2px solid #222;border-bottom:none;border-radius:4px 4px 0 0}'
+    +'.pi b{font-size:8px}.pi span{font-size:7px}.pi.red{border-color:#c0261a;color:#c0261a}.pi.red::before{border-color:#c0261a}.pi.amber{border-color:#d1771a;color:#d1771a}.pi.amber::before{border-color:#d1771a}.pi.black{border-color:#222;color:#222}'
+    +'.pt{font-size:8.5px;color:#1a6e58;font-weight:700}.pt.o{color:#c0261a}.pt.z{color:#999}.pg{font-size:8px;color:#8c2818;font-weight:700}'
+    +'.ptot{font-size:9px;color:#6b5a44;margin-top:3px;white-space:nowrap}'
+    +'@page{size:A4 landscape;margin:8mm}@media print{.noprint{display:none}}';
+  var leg='🧳色=重量（赤15kg/橙23kg/黒30kg）・①②=連番・🍾ボトル(1本1.5kg,SC1個最大12本)';
+  var btn='<button class="noprint" onclick="window.print()" style="margin-bottom:10px;padding:8px 16px;font-size:13px;border-radius:6px;border:1px solid #7a5610;background:#7a5610;color:#fff;cursor:pointer">🖨 印刷 / PDFで保存</button>';
+  var w=window.open('','_blank');
+  if(!w){ toast('ポップアップを許可してください','err'); return; }
+  w.document.open();
+  w.document.write('<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(title)+'</title><link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet"><style>'+css+'</style></head><body>'
+    +btn+'<h1>'+esc(title)+'</h1><div class="lg">'+esc(leg)+'</div>'
+    +'<table><thead><tr>'+th+'</tr></thead><tbody>'+rows+'</tbody></table></body></html>');
+  w.document.close();
 }
 
 // ── 列操作 ──
@@ -475,6 +532,7 @@ function load(){
 }
 
 g('btn-save').addEventListener('click',saveNow);
+g('btn-print').addEventListener('click',openBaggagePrint);
 g('btn-reseed').addEventListener('click',function(){ if(!confirm('スケジュールの空路から航路（列）を作り直します（現在の列と入力は消えます。参加者は保持）。よろしいですか？')) return; reseedFromSchedule(); });
 
 AuthRole.requireStaff(auth, function(user){ g('login-screen').style.display='none'; g('app').style.display='block'; load(); });
