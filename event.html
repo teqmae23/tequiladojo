@@ -3403,8 +3403,8 @@ function renderReview(){
     // 候補に現在の選択が含まれていなければ加える
     if(r.itemId && !cands.some(function(it){return it.id===r.itemId;})){ var cur=_schedItems.find(function(it){return it.id===r.itemId;}); if(cur) cands=[cur].concat(cands); }
     var opts='<option value="">— 未分類 —</option>'+cands.map(function(it){ return '<option value="'+esc(it.id)+'"'+(it.id===r.itemId?' selected':'')+'>'+esc(_itemLabel(it))+'</option>'; }).join('');
-    var byTxt=r.by==='target'?'この項目に追加':(r.by==='時刻+座標'?'🕐📍 時刻＋位置で判定':(r.by==='位置情報'?'📍 位置情報で判定':(r.by==='撮影時刻'?'🕐 撮影時刻で判定':'⚠ 自動判定できません（項目を選択）')));
-    var byCls=(r.by==='位置情報')?'geo':((r.by==='撮影時刻'||r.by==='時刻+座標'||r.by==='target')?'time':'none');
+    var byTxt=r.by==='target'?'この項目に追加':(r.by==='時刻+座標'?'🕐📍 時刻＋位置で判定':(r.by==='時刻近接+座標'?'🕐📍 撮影時刻が近く位置も合う項目に割当':(r.by==='位置情報'?'📍 位置情報で判定':(r.by==='撮影時刻'?'🕐 撮影時刻で判定':'⚠ 自動判定できません（項目を選択）'))));
+    var byCls=(r.by==='位置情報')?'geo':((r.by==='撮影時刻'||r.by==='時刻+座標'||r.by==='時刻近接+座標'||r.by==='target')?'time':'none');
     var warn=r.mismatch?'<div class="phr-warn">⚠ 位置・時刻がこの項目と大きく離れています。問題なければそのまま保存できます。</div>':'';
     return '<div class="phr-row"><img src="'+r._url+'" alt="">'
       +'<div class="phr-main"><div class="phr-by '+byCls+'">'+byTxt+'</div>'+warn
@@ -3529,6 +3529,23 @@ function suggestItem(ex){
       if(hasGeo){ for(var i=0;i<inWin.length;i++){ if(_geoInItem(inWin[i].it,ex.lat,ex.lng).hit) return {id:inWin[i].it.id, by:'時刻+座標'}; } }
       // 座標が無い／座標が一致しない場合は、時間帯の最初の項目（時刻を優先）。
       return {id:inWin[0].it.id, by:'撮影時刻'};
+    }
+  }
+  // ②' 時間帯に入る項目が無く座標がある場合：撮影時刻が近い順に見て、座標も近い（道中/50km以内）最初の項目へ割当。
+  //     例) 電車乗換の徒歩移動などがスケジュール未登録で、撮影時刻がどの項目の時間帯にも入らない写真を、
+  //         撮影日時に近く座標も合う項目に寄せる。
+  if(ex.time && hasGeo){
+    var byTime=[];
+    _schedItems.forEach(function(it){
+      var s=_itemStartMs(it); if(!s) return;
+      var e=_itemEndMs(it); if(!e||e<s) e=s;
+      var tgap=(ex.time<s)?(s-ex.time):((ex.time>e)?(ex.time-e):0); // 時間帯[開始,終了]への距離（中なら0）
+      byTime.push({it:it, tgap:tgap});
+    });
+    byTime.sort(function(a,b){ return a.tgap-b.tgap; });            // 撮影時刻に近い順
+    for(var k=0;k<byTime.length;k++){
+      if(byTime[k].tgap>3*3600000) break;                          // 撮影時刻から3時間以内の項目に限る
+      if(_geoInItem(byTime[k].it, ex.lat, ex.lng).hit) return {id:byTime[k].it.id, by:'時刻近接+座標'};
     }
   }
   // ② 時間帯に入る項目が無い場合：座標で判定（2点間移動は経路内、滞在地点は50km以内で最も近い）。
