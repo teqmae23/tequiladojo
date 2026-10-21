@@ -2575,7 +2575,8 @@ exports.createTreatCheckout = functions
     return { url: session.url, treatId };
   });
 
-// スタッフが奢りを承認 → 受取会員(来場中)の注文（未提供 served:1）に登録。ストレートは飲酒ログにも登録。
+// スタッフが奢りを承認（承認済）。この時点では注文を作らない。
+// 実際の提供（注文＝未提供）と売上計上は drinkOnlineTreat（奢り管理の「飲む」）で行う。
 exports.approveOnlineTreat = functions
   .https.onCall(async (data, context) => {
     if (!context.auth || (context.auth.token.role !== 'owner' && context.auth.token.role !== 'staff')) {
@@ -2586,63 +2587,135 @@ exports.approveOnlineTreat = functions
     const tref = db.collection('onlineTreats').doc(treatId);
     const tsnap = await tref.get();
     if (!tsnap.exists) throw new functions.https.HttpsError('not-found', '奢りが見つかりません');
-    const t = tsnap.data();
-    if (t.status !== 'paid') throw new functions.https.HttpsError('failed-precondition', 'この奢りは承認できません（状態: ' + t.status + '）');
+    if (tsnap.data().status !== 'paid') throw new functions.https.HttpsError('failed-precondition', 'この奢りは承認できません（状態: ' + tsnap.data().status + '）');
+    await tref.update({ status: 'approved', approvedAt: admin.firestore.FieldValue.serverTimestamp(), approvedByUid: context.auth.uid });
+    return { ok: true };
+  });
 
-    // 来場照合は members ドキュメントID(realId)で行う（visits.memberId は realId）。
+// スタッフが奢り管理で「飲む」→ 受取会員(来場中)の注文（未提供 served:1）を作成。ストレートは飲酒ログにも登録。
+// 売上は「飲んだ日・奢り者」に計上するため、奢り者(fromMember)の売上専用の仮想来場(virtual:true)を
+// その日に作り、金額付きオーダー(isGiftPayer)を紐づける。受取人側は ¥0 の消費オーダー(isGiftRecipient)。
+exports.drinkOnlineTreat = functions
+  .https.onCall(async (data, context) => {
+    if (!context.auth || (context.auth.token.role !== 'owner' && context.auth.token.role !== 'staff')) {
+      throw new functions.https.HttpsError('permission-denied', 'スタッフ権限が必要です');
+    }
+    const treatId = String((data && data.treatId) || '');
+    if (!treatId) throw new functions.https.HttpsError('invalid-argument', 'treatId が必要です');
+    const tref = db.collection('onlineTreats').doc(treatId);
+    const tsnap = await tref.get();
+    if (!tsnap.exists) throw new functions.https.HttpsError('not-found', '奢りが見つかりません');
+    const t = tsnap.data();
+    if (t.status !== 'approved') throw new functions.https.HttpsError('failed-precondition', 'この奢りは「飲む」にできません（状態: ' + t.status + '）');
+    // 旧フロー（承認時に注文を作成していた）で承認済みのものは二重登録になるため拒否。
+    if (Array.isArray(t.orderIds) && t.orderIds.length) throw new functions.https.HttpsError('failed-precondition', 'この奢りは旧方式で既に注文登録済みです（手動で提供してください）');
+
+    // 受取会員(来場中)の実来場を特定（visits.memberId は members ドキュメントID=realId）。
     const recipientKey = t.toMemberDocId || t.toMemberId;
     const vsnap = await db.collection('visits').where('memberId', '==', recipientKey).get();
     const active = vsnap.docs.map((d) => Object.assign({ id: d.id }, d.data())).filter((v) => !v.checkoutTime && !v.checkoutPayTime);
-    if (!active.length) throw new functions.https.HttpsError('failed-precondition', '受取会員が来場中ではありません。来場後に承認してください。');
+    if (!active.length) throw new functions.https.HttpsError('failed-precondition', '受取会員が来場中ではありません。来場後に操作してください。');
     active.sort((a, b) => String(b.visitDate || b.id).localeCompare(String(a.visitDate || a.id)));
     const visit = active[0];
     const visitKey = visit.id;
     const useDate = String(visit.visitDate || visitKey.slice(0, 6));
+    const orderTime = _treatHms();
+    const payerName = t.fromMemberName || t.fromMemberId;
+    // 奢り者の売上専用・仮想来場。来場者数には数えない(virtual)。docId は実来場と衝突しないよう
+    // 'T'+treatId を付けつつ先頭は営業日(6桁)を維持。売上集計は visitDate フィールドで拾われる。
+    const payerVisitKey = useDate + 'T' + treatId;
 
-    const lines = [{ productType: 'tequila', productCode: t.baseProductCode, productName: t.baseName, qty: t.ml, unit: 'ml', unitPrice: t.unitPrice10 }];
-    if (t.soda) lines.push({ productType: 'misc', productCode: 'SODA', productName: 'ソーダ割り（ソーダ代）', qty: 1, unit: '杯', unitPrice: 100 });
-
-    const vkSnap = await db.collection('orders').where('visitKey', '==', visitKey).get();
-    const usedG = vkSnap.docs.map((d) => parseInt((d.data().orderGroupId || '').slice(visitKey.length)) || 0);
-    const orderGroupId = visitKey + String((usedG.length ? Math.max.apply(null, usedG) : 0) + 1).padStart(2, '0');
-
+    // 注文ID採番（受取人分 + 奢り者分）
+    const nLines = t.soda ? 2 : 1;
     const dateSnap = await db.collection('orders').where('orderDate', '==', useDate).get();
     let maxSeq = 0, maxBatch = 0;
     dateSnap.docs.forEach((d) => {
       const id = d.id; if (id.slice(0, 6) === useDate) { const s = parseInt(id.slice(6)) || 0; if (s > maxSeq) maxSeq = s; }
       const bid = d.data().batchId || ''; if (bid.slice(0, 6) === useDate) { const bs = parseInt(bid.slice(6)) || 0; if (bs > maxBatch) maxBatch = bs; }
     });
+    const vkSnap = await db.collection('orders').where('visitKey', '==', visitKey).get();
+    const usedG = vkSnap.docs.map((d) => parseInt((d.data().orderGroupId || '').slice(visitKey.length)) || 0);
+    const orderGroupId = visitKey + String((usedG.length ? Math.max.apply(null, usedG) : 0) + 1).padStart(2, '0');
+    const payerGroupId = payerVisitKey + '01';
+
     const counterRef = db.collection('counters').doc('orderSeq');
     const seqStart = await db.runTransaction(async (tx) => {
       const cs = await tx.get(counterRef);
       const cur = cs.exists ? (cs.data()[useDate] || 0) : 0;
       const start = Math.max(cur, maxSeq);
-      const upd = {}; upd[useDate] = start + lines.length;
+      const upd = {}; upd[useDate] = start + nLines * 2;
       tx.set(counterRef, upd, { merge: true });
       return start;
     });
     const batchId = useDate + String(maxBatch + 1).padStart(3, '0');
-    const orderTime = _treatHms();
     let seq = seqStart;
     const batch = db.batch();
     const orderIds = [];
-    lines.forEach((ln, i) => {
+
+    // 奢り者の仮想来場（会計済で作成＝開かない。virtual で来場者数・バッジから除外）
+    const payerVisitRef = db.collection('visits').doc(payerVisitKey);
+    batch.set(payerVisitRef, {
+      visitDate: useDate, visitTime: orderTime.slice(0, 4), seq: 0,
+      memberId: t.fromMemberId, checkinGroupId: null,
+      tequilaAmount: 0, amount: t.amount || 0, payment: 'online', receiptIssued: '0',
+      checkoutTime: orderTime, checkoutPayTime: orderTime,
+      virtual: true, isOnlineTreatPayer: true, treatId,
+      note: 'オンライン奢り（' + payerName + ' → ' + (t.toMemberName || '') + '）',
+    });
+
+    // ① 受取人の消費オーダー（¥0, isGiftRecipient）— 実来場に紐づく。飲酒は受取人側に計上。
+    {
       const docId = useDate + String(++seq).padStart(3, '0');
       orderIds.push(docId);
-      const rec = {
+      batch.set(db.collection('orders').doc(docId), {
         orderDate: useDate, orderTime, customerId: recipientKey, visitKey, orderGroupId, batchId,
-        itemSeq: i + 1, productCode: ln.productCode, productName: ln.productName, productType: ln.productType,
-        qty: ln.qty, unit: ln.unit, unitPrice: ln.unitPrice,
+        itemSeq: 1, productCode: t.baseProductCode, productName: t.baseName, productType: 'tequila',
+        qty: t.ml, unit: 'ml', unitPrice: 0, baseProductCode: t.baseProductCode,
         blindId: 0, blindMarkId: null, served: 1,
-        isGiftRecipient: true, giftFromName: t.fromMemberName, giftFromMemberId: t.fromMemberId,
+        isGiftRecipient: true, giftFromName: payerName, giftFromMemberId: t.fromMemberId, giftFromVisitKey: payerVisitKey,
         isOnlineTreat: true, treatId,
-      };
-      if (ln.productType === 'tequila') rec.baseProductCode = t.baseProductCode;
-      batch.set(db.collection('orders').doc(docId), rec);
-    });
+      });
+    }
+    if (t.soda) {
+      const docId = useDate + String(++seq).padStart(3, '0');
+      orderIds.push(docId);
+      batch.set(db.collection('orders').doc(docId), {
+        orderDate: useDate, orderTime, customerId: recipientKey, visitKey, orderGroupId, batchId,
+        itemSeq: 2, productCode: 'SODA', productName: 'ソーダ割り（ソーダ代）', productType: 'misc',
+        qty: 1, unit: '杯', unitPrice: 0,
+        blindId: 0, blindMarkId: null, served: 1,
+        isGiftRecipient: true, giftFromName: payerName, giftFromMemberId: t.fromMemberId, giftFromVisitKey: payerVisitKey,
+        isOnlineTreat: true, treatId,
+      });
+    }
+
+    // ② 奢り者の課金オーダー（金額）— 仮想来場に紐づく。served:3（会計済・提供待ち行列には出さない）。
+    //    isGiftPayer で飲酒ml集計からは除外。注文一覧(キッチン)には virtual 来場なので表示されない。
+    {
+      const docId = useDate + String(++seq).padStart(3, '0');
+      batch.set(db.collection('orders').doc(docId), {
+        orderDate: useDate, orderTime, customerId: t.fromMemberId, visitKey: payerVisitKey, orderGroupId: payerGroupId, batchId,
+        itemSeq: 1, productCode: t.baseProductCode, productName: t.baseName, productType: 'tequila',
+        qty: t.ml, unit: 'ml', unitPrice: t.unitPrice10, baseProductCode: t.baseProductCode,
+        blindId: 0, blindMarkId: null, served: 3,
+        isGiftPayer: true, giftCount: 1, giftTo: [{ name: t.toMemberName || '', memberId: t.toMemberId, visitKey: visitKey }],
+        isOnlineTreatPayer: true, treatId,
+      });
+    }
+    if (t.soda) {
+      const docId = useDate + String(++seq).padStart(3, '0');
+      batch.set(db.collection('orders').doc(docId), {
+        orderDate: useDate, orderTime, customerId: t.fromMemberId, visitKey: payerVisitKey, orderGroupId: payerGroupId, batchId,
+        itemSeq: 2, productCode: 'SODA', productName: 'ソーダ割り（ソーダ代）', productType: 'misc',
+        qty: 1, unit: '杯', unitPrice: 100,
+        blindId: 0, blindMarkId: null, served: 3,
+        isOnlineTreatPayer: true, treatId,
+      });
+    }
+
     batch.update(tref, {
-      status: 'approved', approvedAt: admin.firestore.FieldValue.serverTimestamp(),
-      recipientVisitKey: visitKey, orderIds, orderDate: useDate, approvedByUid: context.auth.uid,
+      status: 'drinking', drinkAt: admin.firestore.FieldValue.serverTimestamp(),
+      recipientVisitKey: visitKey, payerVisitKey, orderIds, orderDate: useDate, drinkByUid: context.auth.uid,
     });
     await batch.commit();
 
@@ -2654,7 +2727,7 @@ exports.approveOnlineTreat = functions
           authUid: rUid, memberId: t.toMemberId,
           bottleId: t.baseBottleId, bottleName: t.baseName,
           amountMl: t.ml, source: 'onlineTreat', treatId,
-          note: 'オンライン奢り（' + t.fromMemberName + 'より）', rating: null,
+          note: 'オンライン奢り（' + payerName + 'より）', rating: null,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
       } catch (e) { console.error('treat tequilaLog error', e && e.message); }
@@ -2677,12 +2750,13 @@ exports.cancelOnlineTreat = functions
     const isStaff = role === 'owner' || role === 'staff';
     const isOwnerMember = t.fromUid === context.auth.uid;
     if (!isStaff && !isOwnerMember) throw new functions.https.HttpsError('permission-denied', 'キャンセル権限がありません');
-    if (t.status === 'approved' || t.status === 'served') throw new functions.https.HttpsError('failed-precondition', '承認後のためキャンセルできません');
+    // 飲む(drinking)＝注文作成済みのためキャンセル不可。承認済(approved)は注文未作成なので返金キャンセル可。
+    if (t.status === 'drinking' || t.status === 'served') throw new functions.https.HttpsError('failed-precondition', '提供手続き後のためキャンセルできません');
     if (t.status === 'cancelled') return { ok: true, already: true };
-    if (t.status !== 'paid' && t.status !== 'created') throw new functions.https.HttpsError('failed-precondition', 'この状態ではキャンセルできません（' + t.status + '）');
+    if (t.status !== 'paid' && t.status !== 'created' && t.status !== 'approved') throw new functions.https.HttpsError('failed-precondition', 'この状態ではキャンセルできません（' + t.status + '）');
 
     let refundId = null;
-    if (t.status === 'paid' && t.paymentIntentId) {
+    if ((t.status === 'paid' || t.status === 'approved') && t.paymentIntentId) {
       const stripe = require('stripe')(stripeSecretKey.value());
       try {
         const r = await stripe.refunds.create({ payment_intent: t.paymentIntentId });
@@ -2748,7 +2822,7 @@ exports.onTreatOrderServed = functions.firestore
     if (before.served !== 3 && after.served === 3) {
       const tref = db.collection('onlineTreats').doc(after.treatId);
       const tsnap = await tref.get();
-      if (tsnap.exists && tsnap.data().status === 'approved') {
+      if (tsnap.exists && (tsnap.data().status === 'drinking' || tsnap.data().status === 'approved')) {
         await tref.update({ status: 'served', servedAt: admin.firestore.FieldValue.serverTimestamp() });
       }
     }

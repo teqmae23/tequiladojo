@@ -41,7 +41,7 @@ button{cursor:pointer;font-family:var(--sans)}
 .c-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .c-who{font-size:15px;font-weight:700}
 .st{font-size:10px;font-weight:700;border-radius:10px;padding:2px 9px;white-space:nowrap}
-.st-created{background:#eee;color:#777}.st-paid{background:#fde7cf;color:#8a5a10}.st-approved{background:#dcefe1;color:#1a6640}.st-served{background:#d7ecff;color:#0c4a7c}.st-cancelled{background:#f3d9d4;color:#8c2818}
+.st-created{background:#eee;color:#777}.st-paid{background:#fde7cf;color:#8a5a10}.st-approved{background:#e5e0f5;color:#5a3fa0}.st-drinking{background:#dcefe1;color:#1a6640}.st-served{background:#d7ecff;color:#0c4a7c}.st-cancelled{background:#f3d9d4;color:#8c2818}
 .c-meta{font-size:12.5px;color:var(--ink2);margin-top:6px;line-height:1.55}
 .c-sub{font-size:11px;color:var(--ink3);margin-top:3px;font-variant-numeric:tabular-nums}
 .c-msg{font-size:12.5px;color:var(--ink2);background:var(--cream);border-radius:8px;padding:7px 10px;margin-top:8px;line-height:1.5}
@@ -84,7 +84,8 @@ button{cursor:pointer;font-family:var(--sans)}
       <div class="filters" id="rec-filters">
         <span class="fchip on" data-st="" onclick="setRecFilter('')">すべて</span>
         <span class="fchip" data-st="paid" onclick="setRecFilter('paid')">承認待ち</span>
-        <span class="fchip" data-st="approved" onclick="setRecFilter('approved')">提供準備中</span>
+        <span class="fchip" data-st="approved" onclick="setRecFilter('approved')">承認済</span>
+        <span class="fchip" data-st="drinking" onclick="setRecFilter('drinking')">提供準備中</span>
         <span class="fchip" data-st="served" onclick="setRecFilter('served')">提供済み</span>
         <span class="fchip" data-st="cancelled" onclick="setRecFilter('cancelled')">キャンセル</span>
       </div>
@@ -106,7 +107,7 @@ function toast(m,t){var d=document.createElement("div");d.className="toast"+(t?"
 function tsStr(ts){ try{ var d=ts&&ts.toDate?ts.toDate():null; if(!d)return""; var p=function(n){return String(n).padStart(2,"0");}; return (d.getFullYear())+"/"+p(d.getMonth()+1)+"/"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes()); }catch(e){ return ""; } }
 
 var allTreats=[], curTab='pending', recFilter='';
-function stLabel(s){ return {created:'決済前',paid:'承認待ち',approved:'提供準備中',served:'提供済み',cancelled:'キャンセル'}[s]||s; }
+function stLabel(s){ return {created:'決済前',paid:'承認待ち',approved:'承認済（飲む待ち）',drinking:'提供準備中（未提供）',served:'提供済み',cancelled:'キャンセル'}[s]||s; }
 function tsMs(t){ return (t.createdAt&&t.createdAt.seconds)?t.createdAt.seconds:0; }
 var bdById={}; // bottleData: id -> doc（Es名解決用）
 function treatName(t){
@@ -138,6 +139,10 @@ function cardHtml(t, withActions){
   if(withActions && t.status==='paid'){
     acts='<div class="c-acts"><button class="btn-ok" onclick="approve(\''+esc(t.treatId)+'\',this)">承認する</button>'
       +'<button class="btn-cancel" onclick="cancel(\''+esc(t.treatId)+'\',this)">キャンセル（返金）</button></div>';
+  } else if(withActions && t.status==='approved'){
+    // 承認済 → 「飲む」で注文(未提供)作成・売上計上。受取会員の来場中が必要。
+    acts='<div class="c-acts"><button class="btn-ok" onclick="drink(\''+esc(t.treatId)+'\',this)">🥃 飲む（提供へ）</button>'
+      +'<button class="btn-cancel" onclick="cancel(\''+esc(t.treatId)+'\',this)">キャンセル（返金）</button></div>';
   }
   return '<div class="card"><div class="c-top"><span class="c-who">'+esc(t.fromMemberName||'')+' → '+esc(t.toMemberName||'')+'</span>'
     +'<span class="st st-'+t.status+'">'+stLabel(t.status)+'</span>'+closed+'</div>'
@@ -146,7 +151,9 @@ function cardHtml(t, withActions){
     +msg+rep+acts+'</div>';
 }
 function render(){
-  var pend=allTreats.filter(function(t){return t.status==='paid';}).sort(function(a,b){return tsMs(a)-tsMs(b);});
+  // 要対応＝承認待ち(paid) と 承認済で飲む待ち(approved)。paid を先、次に approved、各々古い順。
+  var pend=allTreats.filter(function(t){return t.status==='paid'||t.status==='approved';})
+    .sort(function(a,b){ var r={paid:0,approved:1}; return (r[a.status]-r[b.status])||(tsMs(a)-tsMs(b)); });
   var pb=g('pend-badge'); if(pb){ pb.style.display=pend.length?'inline-block':'none'; pb.textContent=pend.length; }
   if(curTab==='pending'){
     g('pending-list').innerHTML=pend.length?pend.map(function(t){return cardHtml(t,true);}).join(''):'<div class="ec">承認待ちの奢りはありません</div>';
@@ -159,8 +166,13 @@ function render(){
 
 async function approve(id,btn){
   btn.disabled=true; btn.textContent='承認中…';
-  try{ var r=await fnsC.httpsCallable('approveOnlineTreat')({treatId:id}); toast('承認しました。注文（未提供）に登録しました。'); }
+  try{ var r=await fnsC.httpsCallable('approveOnlineTreat')({treatId:id}); toast('承認しました。受取会員の来場中に「飲む」で提供・計上できます。'); }
   catch(e){ toast('承認できません: '+((e&&e.message)||e),'err'); btn.disabled=false; btn.textContent='承認する'; }
+}
+async function drink(id,btn){
+  btn.disabled=true; btn.textContent='処理中…';
+  try{ await fnsC.httpsCallable('drinkOnlineTreat')({treatId:id}); toast('提供手続き完了。注文（未提供）に登録しました。'); }
+  catch(e){ toast('「飲む」にできません: '+((e&&e.message)||e),'err'); btn.disabled=false; btn.textContent='🥃 飲む（提供へ）'; }
 }
 async function cancel(id,btn){
   if(!confirm('この奢りをキャンセルしますか？（決済済みは返金されます）')) return;
