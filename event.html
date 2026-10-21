@@ -664,9 +664,9 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
     <div class="mhd"><span id="act-title">実時間</span><button class="x" onclick="closeActEdit()">閉じる</button></div>
     <div class="mbd">
       <div id="act-note" style="font-size:12px;color:var(--gold-d);margin-bottom:8px"></div>
-      <div class="fg"><label class="fl" id="act-label">実時間（HH:MM）</label>
+      <div class="fg"><label class="fl" id="act-label">実時間（HH:MM / HH:MM:SS）</label>
         <div style="display:flex;gap:8px;align-items:center">
-          <input class="fi" id="act-time" type="text" inputmode="numeric" placeholder="HH:MM（深夜は25:30）" onblur="_fmtTimeField(this)" style="flex:1">
+          <input class="fi" id="act-time" type="text" inputmode="numeric" placeholder="HH:MM / HH:MM:SS（深夜は25:30）" onblur="_fmtTimeFieldS(this)" style="flex:1">
           <button class="btn bs" id="act-clear" onclick="clearActField()" title="この実時間を消去" style="flex:0 0 auto">✖ 消去</button>
         </div>
       </div>
@@ -2385,10 +2385,25 @@ function _normHM(s){
 }
 // 時刻入力欄を離れたら HH:MM に自動整形（数字のみ入力に対応）
 function _fmtTimeField(el){ if(!el) return; var v=_normHM(el.value); if(v) el.value=v; }
+// 実時間(CI/CO)用: HH:MM / HH:MM:SS のほか数字のみ(例 1057→10:57 / 105741→10:57:41 / 2530→25:30 / 253000→25:30:00)も受付。
+// 秒が与えられた時は HH:MM:SS、無ければ HH:MM を返す。深夜は 30:00(:00) まで。
+function _normHMS(s){
+  s=String(s==null?'':s).trim(); if(!s) return '';
+  var hh, mm, ss=null, m;
+  if(m=s.match(/^(\d{1,2}):([0-5]\d)(?::([0-5]\d))?$/)){ hh=+m[1]; mm=+m[2]; if(m[3]!=null) ss=+m[3]; }
+  else if(m=s.match(/^(\d{5,6})$/)){ var d=(m[1].length===5?'0':'')+m[1]; hh=+d.slice(0,2); mm=+d.slice(2,4); ss=+d.slice(4,6); if(mm>59||ss>59) return null; }
+  else if(m=s.match(/^(\d{3,4})$/)){ var d2=(m[1].length===3?'0':'')+m[1]; hh=+d2.slice(0,2); mm=+d2.slice(2); if(mm>59) return null; }
+  else return null;
+  var tot=hh*60+mm; if(tot<0||tot>1800) return null;
+  var base=(hh<10?'0'+hh:''+hh)+':'+('0'+mm).slice(-2);
+  return (ss!=null)?(base+':'+('0'+ss).slice(-2)):base;
+}
+function _fmtTimeFieldS(el){ if(!el) return; var v=_normHMS(el.value); if(v) el.value=v; }
 function _msFromWallHM(dateStr, hm){
-  var m=String(hm||'').match(/^(\d{1,2}):([0-5]\d)$/), p=(dateStr||'').split('-');
+  var m=String(hm||'').match(/^(\d{1,2}):([0-5]\d)(?::([0-5]\d))?$/), p=(dateStr||'').split('-');
   if(!m||p.length<3) return Date.now();
-  return new Date(+p[0],+p[1]-1,+p[2],0,0,0).getTime()+((+m[1])*60+(+m[2]))*60000;
+  var ss=(m[3]!=null)?+m[3]:0;
+  return new Date(+p[0],+p[1]-1,+p[2],0,0,0).getTime()+(((+m[1])*60+(+m[2]))*60+ss)*1000;
 }
 // 実時間の自動記録。baseDate の翌朝6時までに記録した場合は 24〜29時として同一日付に格納（朝帰り対応）。
 function _nowRecFor(baseDate){
@@ -2429,10 +2444,10 @@ function openActEdit(id, which, presetHM, note){
   if(!_canSchedEdit()) return;
   var it=_schedItems.find(function(x){return x.id===id;}); if(!it) return;
   _actId=id; _actWhich=which;
-  var cur=_hm((which==='start')?(it.actualStart||''):(it.actualEnd||''));
+  var cur=_normHMS((which==='start')?(it.actualStart||''):(it.actualEnd||''))||'';
   var lbl=(which==='start')?'開始(CI)':'終了(CO)';
   g('act-title').textContent=lbl+'の実時間';
-  g('act-label').textContent=lbl+'の実時間（HH:MM）';
+  g('act-label').textContent=lbl+'の実時間（HH:MM / HH:MM:SS）';
   g('act-time').value=presetHM||cur||_nowHM();
   g('act-err').textContent='';
   if(g('act-note')) g('act-note').textContent=note||'';
@@ -2449,8 +2464,8 @@ function closeActEdit(){ g('act-modal').classList.remove('open'); _actId=null; _
 function saveActEdit(){
   if(!_actId||!_canSchedEdit()) return;
   var it=_schedItems.find(function(x){return x.id===_actId;}); if(!it){ closeActEdit(); return; }
-  var v=_normHM(g('act-time').value);
-  if(v===null || v===''){ g('act-err').textContent='HH:MM 形式で入力してください（深夜は25:30など30:00まで）'; return; }
+  var v=_normHMS(g('act-time').value);
+  if(v===null || v===''){ g('act-err').textContent='HH:MM / HH:MM:SS 形式で入力してください（HHMM・HHMMSS可。深夜は25:30など30:00まで）'; return; }
   var which=_actWhich;
   var dateStr=((which==='start')?(it.actualStartDate||it.date):(it.actualEndDate||it.date))||it.date||'';
   var ms=dateStr?_msFromWallHM(dateStr, v):Date.now();
