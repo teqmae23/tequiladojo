@@ -108,7 +108,15 @@ function tsStr(ts){ try{ var d=ts&&ts.toDate?ts.toDate():null; if(!d)return""; v
 var allTreats=[], curTab='pending', recFilter='';
 function stLabel(s){ return {created:'決済前',paid:'承認待ち',approved:'提供準備中',served:'提供済み',cancelled:'キャンセル'}[s]||s; }
 function tsMs(t){ return (t.createdAt&&t.createdAt.seconds)?t.createdAt.seconds:0; }
-function treatLine(t){ return (t.style==='soda'?'ソーダ割り':'ストレート')+' '+t.ml+'ml・'+esc(t.baseName||'')+'（NOM '+esc(t.nom||'')+'）'; }
+var bdById={}; // bottleData: id -> doc（Es名解決用）
+function treatName(t){
+  var nm=t.baseName||'';
+  // baseName がボトルID(フォールバック)の場合は Es 名に解決
+  if((!nm||nm===t.baseBottleId)&&t.baseBottleId&&bdById[t.baseBottleId]){ nm=AuthRole.bdName(bdById[t.baseBottleId],'es')||nm; }
+  return nm;
+}
+function treatLine(t){ return (t.style==='soda'?'ソーダ割り':'ストレート')+' '+t.ml+'ml・'+esc(treatName(t))+'（NOM '+esc(t.nom||'')+'）'; }
+function loadBottles(){ db.collection('bottleData').get().then(function(snap){ snap.forEach(function(d){ bdById[d.id]=Object.assign({id:d.id},d.data()); }); render(); }).catch(function(){}); }
 
 function setTab(tab){
   curTab=tab;
@@ -170,7 +178,7 @@ function subscribe(){
 
 AuthRole.requireStaff(auth,function(user){
   g('login-screen').style.display='none'; g('app').style.display='block'; g('temail').textContent=user.email;
-  subscribe();
+  loadBottles(); subscribe();
 },function(){ g('login-screen').style.display='flex'; g('app').style.display='none'; });
 g('lbtn').addEventListener('click',function(){
   var e=gv('lemail'),p=g('lpass').value; g('lerr').textContent='';
