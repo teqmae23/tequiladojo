@@ -2497,7 +2497,13 @@ exports.createTreatCheckout = functions
     const b = bsnap.data();
     const price10 = parseInt(b.price != null ? b.price : (b.unitPrice != null ? b.unitPrice : b.price10), 10) || 0;
     if (price10 < 300) throw new functions.https.HttpsError('failed-precondition', 'このテキーラは対象外です（10ml 300円以上のみ）');
-    const baseName = b.bottleEn || b.bottleName || b.name || baseBottleId;
+    // テキーラは Es 名（bottleEs）が正式名称。AuthRole.bdName(b,'es') と同じ優先順で解決し、
+    // 空のときのみ ID にフォールバックする（従来は bottleEs を見ずに ID になっていた）。
+    let baseName = b.bottleEsBase || b.bottleEs || b.bottleJaBase || b.bottleJa || b.bottleEn || b.bottleName || b.name || baseBottleId;
+    {
+      const sfx = String(b.suffix || '').trim();
+      if (sfx) baseName = baseName.replace(new RegExp(' ?\\(' + sfx.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\)$'), '') + ' (' + sfx + ')';
+    }
     const nom = String(b.nom || (baseBottleId.length >= 4 ? baseBottleId.slice(0, 4) : '') || '');
 
     const tequilaAmount = Math.round(price10 * ml / 10);
