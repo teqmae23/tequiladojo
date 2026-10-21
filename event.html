@@ -268,6 +268,7 @@ a{color:var(--gold-d)}
 .sc-ttl{font-size:14px;font-weight:600;color:var(--ink)}
 .sc-wx-in{font-size:11.5px;font-weight:700;color:var(--ink2);white-space:nowrap;margin-left:4px}
 .sc-wx-in .pop{color:var(--teal);font-weight:700}
+.sc-wx-err{font-size:11px;font-weight:700;color:var(--red);white-space:nowrap;margin-left:4px}
 .sc-note{font-size:12px;color:var(--ink);line-height:1.6;margin-top:2px;white-space:pre-wrap}
 .sc-pgal{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .sc-pgal-th{width:64px;height:64px;border-radius:8px;overflow:hidden;border:1px solid var(--border);cursor:pointer;padding:0;background:none}
@@ -2941,16 +2942,30 @@ function _fillDayWx(span, wx){
     +' <span class="hi">'+(wx.hi!=null?Math.round(wx.hi)+'°':'—')+'</span>/<span class="lo">'+(wx.lo!=null?Math.round(wx.lo)+'°':'—')+'</span>'
     +(wx.pop!=null?' <span class="pop">💧'+wx.pop+'%</span>':'')+'</span>';
 }
+// 日別天気のスナップショット保存（当日以前・権限あり・未保存のみ）。イベント終了時にはこの値で固定される。
+function _maybeSaveDayWxSnap(date, wx, canWrite, todayStr){
+  if(!canWrite || date>todayStr) return;
+  var snap={ code:wx.code, hi:(wx.hi!=null?Math.round(wx.hi):null), lo:(wx.lo!=null?Math.round(wx.lo):null), pop:(wx.pop!=null?wx.pop:null) };
+  var cur=_ev&&_ev.wxDaySnap&&_ev.wxDaySnap[date];
+  if(cur && cur.code===snap.code && cur.hi===snap.hi && cur.lo===snap.lo && cur.pop===snap.pop) return; // 変化なしなら書かない
+  if(!_ev.wxDaySnap) _ev.wxDaySnap={}; _ev.wxDaySnap[date]=snap;
+  // set+merge で wxDaySnap マップにその日のキーだけ追加（ハイフン入りキーでも安全・他の日は保持）
+  try{ var m={}; m[date]=snap; db.collection('events').doc(eventId).set({wxDaySnap:m},{merge:true})['catch'](function(){}); }catch(e){}
+}
 function _loadSchedDayWeather(sections, dayItemsMap){
-  var today=new Date(); today.setHours(0,0,0,0);
+  var todayStr=_nowDate();
+  var today=new Date(todayStr+'T00:00:00');
   var maxD=new Date(today.getTime()+15*86400000); // 予報は本日〜16日先
+  var canWrite=_canWxWrite(), ended=_wxEventEnded();
   (sections||[]).forEach(function(gp, idx){
     var span=g('sc-day-wx-'+idx); if(!span) return;
     var ll=_dayRefLL(dayItemsMap[gp.day]); if(!ll) return;
-    var dt=new Date(gp.day+'T00:00:00'); if(isNaN(dt.getTime())) return;
-    if(dt<today || dt>maxD) return; // 予報範囲外（過去／16日超）は表示しない（近づくと表示）
+    var isPast=(gp.day<todayStr);
+    // 過去 or 終了済み: 記録済みスナップショットがあれば固定表示
+    if((isPast||ended) && _ev && _ev.wxDaySnap && _ev.wxDaySnap[gp.day]){ _fillDayWx(span, _ev.wxDaySnap[gp.day]); return; }
+    var dt=new Date(gp.day+'T00:00:00'); if(isNaN(dt.getTime())||dt<today||dt>maxD) return; // 予報範囲外は空
     var key=gp.day+'|'+ll.lat.toFixed(3)+'|'+ll.lng.toFixed(3);
-    if(_schWxCache[key]){ _fillDayWx(span, _schWxCache[key]); return; }
+    if(_schWxCache[key]){ _fillDayWx(span, _schWxCache[key]); _maybeSaveDayWxSnap(gp.day, _schWxCache[key], canWrite, todayStr); return; }
     var url='https://api.open-meteo.com/v1/forecast?latitude='+encodeURIComponent(ll.lat)+'&longitude='+encodeURIComponent(ll.lng)
       +'&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto'
       +'&start_date='+gp.day+'&end_date='+gp.day;
@@ -2960,23 +2975,43 @@ function _loadSchedDayWeather(sections, dayItemsMap){
                pop:(d.daily.precipitation_probability_max?d.daily.precipitation_probability_max[0]:null) };
       _schWxCache[key]=wx;
       _fillDayWx(g('sc-day-wx-'+idx), wx);
+      _maybeSaveDayWxSnap(gp.day, wx, canWrite, todayStr);
     }).catch(function(){});
   });
 }
 /* ── 各項目の「その場所・時刻」の1時間毎予報（Open-Meteo・本日〜約16日先）。
    場所=項目の座標（移動は出発地）・時刻=予定開始時刻の時。位置を伏せる項目は非表示。 ── */
 var _wxHourlyCache={};
-function _itemWxLL(it){ if(!it||_locHidden(it)) return null; if(it.lat!=null&&it.lng!=null) return {lat:+it.lat, lng:+it.lng}; if(it.isMove&&it.toLat!=null&&it.toLng!=null) return {lat:+it.toLat, lng:+it.toLng}; return null; } // 移動: 発に座標が無ければ着で代用（両端の天気はほぼ同じ）
+// 項目の天気の基準座標：移動は「始点（出発地）」で判定。座標が無ければ null。
+function _itemWxLL(it){ if(!it||_locHidden(it)) return null; if(it.lat!=null&&it.lng!=null) return {lat:+it.lat, lng:+it.lng}; return null; }
+// イベントが終了済みか（終了後は天気を取得済みの値で固定表示する）
+function _wxEventEnded(){ try{ var b=_eventBounds(_schedItems); return (b.endMs!=null && nowMs()>=b.endMs); }catch(e){ return false; } }
+function _canWxWrite(){ return (typeof _canSchedEdit==='function') && _canSchedEdit(); }
+function _fillItemWx(span, code, temp, pop, titleExtra){
+  if(!span) return; var w=_wmo(code);
+  span.innerHTML=' <span class="sc-wx-in" title="'+esc(w.t)+(titleExtra||'')+'">'+w.i+(temp!=null?Math.round(temp)+'°':'')+(pop!=null?' <span class="pop">💧'+pop+'%</span>':'')+'</span>';
+}
 function _loadItemWeather(items){
-  var today=new Date(); today.setHours(0,0,0,0);
+  var todayStr=_nowDate();
+  var today=new Date(todayStr+'T00:00:00');
   var maxD=new Date(today.getTime()+15*86400000); // 予報は本日〜16日先
+  var canWrite=_canWxWrite(), ended=_wxEventEnded();
   var groups={}; // locKey -> {lat,lng,dates:{},items:[{it,date,hour}]}
   (items||[]).forEach(function(it){
-    var ll=_itemWxLL(it); if(!ll||!isFinite(ll.lat)||!isFinite(ll.lng)) return;
-    if(!it.date) return;
-    var dt=new Date(it.date+'T00:00:00'); if(isNaN(dt.getTime())||dt<today||dt>maxD) return;
+    var span=g('sc-wx-'+it.id); if(!span) return;
+    if(_locHidden(it)) return;            // 位置を伏せる項目は天気も出さない
+    if(!it.date) return;                  // 日付なしは対象外（エラーも出さない）
     var hm=_hm(it.time||it.actualStart||''); var hh=(hm.match(/^(\d{1,2}):/)||[])[1];
-    if(hh==null || +hh>23) return; // 時刻なし・深夜表記(24:00+)は対象外
+    if(hh==null || +hh>23) return;        // 時刻なし・深夜表記(24:00+)は対象外
+    var ll=_itemWxLL(it);
+    if(!ll||!isFinite(ll.lat)||!isFinite(ll.lng)){ // 座標なし → エラー表示（管理者のみ）
+      if(canWrite) span.innerHTML=' <span class="sc-wx-err" title="この項目は座標が未設定のため天気を表示できません。場所管理などで座標を設定してください。">⚠ 座標なし</span>';
+      return;
+    }
+    var isPast=(it.date<todayStr);
+    // 過去 or 終了済み: 記録済みスナップショットがあれば固定表示（イベント終了後は当時の値で固定）
+    if((isPast||ended) && it.wxSnap && it.wxSnap.c!=null){ _fillItemWx(span, it.wxSnap.c, it.wxSnap.t, it.wxSnap.p, '（記録値）'); return; }
+    var dt=new Date(it.date+'T00:00:00'); if(isNaN(dt.getTime())||dt<today||dt>maxD) return; // 予報範囲外（過去でスナップ無し/16日超）は空
     var key=ll.lat.toFixed(3)+'|'+ll.lng.toFixed(3);
     groups[key]=groups[key]||{lat:ll.lat, lng:ll.lng, dates:{}, items:[]};
     groups[key].dates[it.date]=1;
@@ -2987,8 +3022,17 @@ function _loadItemWeather(items){
     function apply(h){
       gpd.items.forEach(function(o){ var span=g('sc-wx-'+o.it.id); if(!span) return;
         var i=h.index[o.date+'T'+o.hour+':00']; if(i==null) return;
-        var t=h.temp[i], pop=h.pop[i], w=_wmo(h.code[i]);
-        span.innerHTML=' <span class="sc-wx-in" title="'+esc(w.t)+'（'+esc(o.date+' '+o.hour+':00')+'・現地）">'+w.i+(t!=null?Math.round(t)+'°':'')+(pop!=null?' <span class="pop">💧'+pop+'%</span>':'')+'</span>';
+        var code=h.code[i], t=h.temp[i], pop=h.pop[i];
+        _fillItemWx(span, code, t, pop, '（'+esc(o.date+' '+o.hour+':00')+'・現地）');
+        // 固定用スナップショット保存（当日以前・権限あり）。値が変わった時だけ書込＝当日中は最新に追従し、過去日は再取得しないので固定される。
+        if(canWrite && o.date<=todayStr){
+          var snap={c:code, t:(t!=null?Math.round(t):null), p:(pop!=null?pop:null), d:o.date, h:o.hour};
+          var cur=o.it.wxSnap;
+          if(!cur || cur.d!==snap.d || cur.c!==snap.c || cur.t!==snap.t || cur.p!==snap.p){
+            o.it.wxSnap=snap;
+            try{ _schedDoc(o.it.id).update({wxSnap:snap})['catch'](function(){}); }catch(e){}
+          }
+        }
       });
     }
     if(_wxHourlyCache[key]){ apply(_wxHourlyCache[key]); return; }
