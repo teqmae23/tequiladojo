@@ -2463,7 +2463,7 @@ function renderSchedItem(it, leg){
   // 会員の写真投稿・閲覧ボタン: コンテナ右上に大きめ表示（📷閲覧／📤投稿・管理）
   var photoCorner='';
   if(photos.length) photoCorner+='<button type="button" class="sc-photo-big" onclick="event.stopPropagation();openLb(\''+did+'\',0)" title="写真を見る">📷 写真('+photos.length+')</button>';
-  if(_isReal) photoCorner+='<button type="button" class="sc-photo-big up" onclick="event.stopPropagation();openItemPhotoMgr(\''+did+'\')" title="写真を投稿・管理">📤 投稿</button>';
+  if(_canPost()) photoCorner+='<button type="button" class="sc-photo-big up" onclick="event.stopPropagation();openItemPhotoMgr(\''+did+'\')" title="写真を投稿・管理">📤 投稿</button>';
   // プリセット写真: 投稿ボタンの下に、ボタン幅と同じサムネイル（クリックで閲覧）
   var presetThumb=aphotos.length?('<button type="button" class="sc-right-thumb" onclick="event.stopPropagation();openItemPhotos(\''+did+'\',0)" title="写真を見る"><img src="'+esc(aphotos[0].url)+'" alt="" loading="lazy">'+(aphotos.length>1?'<span class="sc-thumb-n">'+aphotos.length+'</span>':'')+'</button>'):'';
   // 班バッジ・名前
@@ -2800,7 +2800,7 @@ function nowSectionHtml(visEnr){
   var h='<div class="sc-now live"><div class="sc-now-lbl">'+(cur?'▶ 現在のイベント':'⏭ まもなく')+'<span class="sc-live-badge" id="sc-live-badge" style="display:none">🔴 ライブ</span></div>'
     +'<div class="sc-now-item">'+tline+'<span class="sc-now-ic">'+ic+'</span><span class="sc-now-ttl">'+esc(it.title||'')+'</span></div>'
     +(function(){
-       var pb=_isReal?('<button class="sc-photo-btn" style="margin-left:auto" onclick="openItemPhotoMgr(\''+esc(it.id)+'\')">📷'+((_photosByItem[it.id]||[]).length?(' '+(_photosByItem[it.id]||[]).length):'')+'</button>'):'';
+       var pb=_canPost()?('<button class="sc-photo-btn" style="margin-left:auto" onclick="openItemPhotoMgr(\''+esc(it.id)+'\')">📷'+((_photosByItem[it.id]||[]).length?(' '+(_photosByItem[it.id]||[]).length):'')+'</button>'):'';
        if(!it.date && !pb) return '';
        return '<div class="sc-now-sub" style="display:flex;align-items:center;gap:8px">'+(it.date?(esc(fmtDate(it.date))+' '+wday(it.date)):'')+pb+'</div>';
      })()
@@ -2932,6 +2932,8 @@ function _buildSchedTree(units){
 function _placeIsPrivate(nm){ nm=(nm||'').trim(); return !!(nm && _placePrivateMap[nm]); }
 function _itemPrivate(it){ return !!(it && (_placeIsPrivate(it.placeName) || (it.isMove && _placeIsPrivate(it.toName)))); }
 function _canSeePrivate(){ return !!(_isStaff||_isCoAdmin||_isParticipant||_isFamily); }
+// 写真投稿ボタンは参加者・現地ホスト（＝_isParticipant）とスタッフのみ
+function _canPost(){ return !!(_isStaff||_isCoAdmin||_isParticipant); }
 function _privHidden(it){ return !_canSeePrivate() && _itemPrivate(it); }
 // 非公開場所の写真を下部に集約（閲覧不可の人のみ・場所は伏せ写真のみ・会員投稿＋場所登録）
 function _privatePhotosHtml(){
@@ -2962,7 +2964,7 @@ function renderSchedule(items){
   // 日付ごとの項目（その日のルートマップ用）。並びはJST順。
   var dayItemsMap={};
   visEnr.forEach(function(e){ var d=e.it.date||''; (dayItemsMap[d]=dayItemsMap[d]||[]).push(e.it); });
-  var h='<div class="card"><div class="sec-row"><div class="sec">🗓 スケジュール</div>'+((_isStaff||_isCoAdmin)?'<a class="ph-btn" style="text-decoration:none" href="/admin_events.html?sched='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛠 管理ページで編集</a><a class="ph-btn" style="text-decoration:none" href="/event_live.html?ev='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛰 ライブ中継</a>':'')+(_isReal?'<button class="ph-btn" onclick="openPh()">📷 写真を追加</button>':'')+'</div>';
+  var h='<div class="card"><div class="sec-row"><div class="sec">🗓 スケジュール</div>'+((_isStaff||_isCoAdmin)?'<a class="ph-btn" style="text-decoration:none" href="/admin_events.html?sched='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛠 管理ページで編集</a><a class="ph-btn" style="text-decoration:none" href="/event_live.html?ev='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛰 ライブ中継</a>':'')+(_canPost()?'<button class="ph-btn" onclick="openPh()">📷 写真を追加</button>':'')+'</div>';
   h+=debugTimeBar();
   var useG=SchedGroups.used(items); // 班（2班・3班）を使っている場合のみ右端バー表示
   var myG=useG?_viewerGroup(enr):1;
@@ -3062,7 +3064,7 @@ function renderSchedule(items){
     var hasMap=dayItems.some(_dayMappable);
     if(hasMap){ _daySchedItems[idx]=dayItems; _dayDateOf[idx]=gp.day; }
     var mapHtml=hasMap?('<div class="sc-daymap" id="sc-daymap-'+idx+'"></div>'):'';
-    return '<div class="sc-day sc-day-toggle" onclick="toggleSchedDay('+idx+')"><span class="sc-day-caret" id="sc-day-caret-'+idx+'">▸</span> '+esc(fmtDate(gp.day))+' '+wday(gp.day)+' <span class="sc-day-count">（'+gp.n+'件）</span>'+(_isReal?'<button type="button" onclick="event.stopPropagation();openPh()" title="写真を投稿" style="margin-left:8px;font-size:11px;border:1px solid var(--border2);border-radius:6px;padding:1px 8px;background:var(--cream2);color:var(--ink2);cursor:pointer;font-weight:600">📤 投稿</button>':'')+'<span class="sc-day-wx" id="sc-day-wx-'+idx+'"></span></div>'
+    return '<div class="sc-day sc-day-toggle" onclick="toggleSchedDay('+idx+')"><span class="sc-day-caret" id="sc-day-caret-'+idx+'">▸</span> '+esc(fmtDate(gp.day))+' '+wday(gp.day)+' <span class="sc-day-count">（'+gp.n+'件）</span>'+(_canPost()?'<button type="button" onclick="event.stopPropagation();openPh()" title="写真を投稿" style="margin-left:8px;font-size:11px;border:1px solid var(--border2);border-radius:6px;padding:1px 8px;background:var(--cream2);color:var(--ink2);cursor:pointer;font-weight:600">📤 投稿</button>':'')+'<span class="sc-day-wx" id="sc-day-wx-'+idx+'"></span></div>'
       +'<div class="sc-day-body" id="sc-day-body-'+idx+'" style="display:none">'+_daySumHtml(gp.day)+mapHtml+gp.html+'</div>';
   }).join('');
   if(hiddenCount>0) h+='<div class="sc-hiddennote">🙈 未完了の非公開アイテムが '+hiddenCount+' 件あります（完了後に表示されます）。</div>';
