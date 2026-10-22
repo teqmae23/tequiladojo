@@ -247,6 +247,7 @@ a{color:var(--gold-d)}
 #sc-rosterpop .rp-host{display:flex;align-items:center;gap:8px;margin:5px 0}
 #sc-rosterpop .rp-av{width:24px;height:24px;border-radius:50%;object-fit:cover;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;background:#5a4a30;color:#fff;font-size:10px;font-weight:700;text-transform:uppercase}
 #sc-rosterpop .rp-av-lg{width:56px;height:56px;font-size:18px}
+#sc-rosterpop .rp-av-xl{width:128px;height:128px;font-size:46px}
 #sc-rosterpop .rp-chev{margin-left:auto;color:var(--gold-l);font-weight:700}
 #sc-rosterpop .rp-prof{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;margin:6px 0 4px}
 #sc-rosterpop .rp-prof-nm{font-weight:700;font-size:13px;color:#fff}
@@ -1241,18 +1242,41 @@ function renderRoster(){
   var r=g('roster'); if(!r) return;
   var hosts=(_ev&&Array.isArray(_ev.localHosts))?_ev.localHosts:[];
   if(!_participants.length && !hosts.length){ r.innerHTML='<div style="font-size:12px;color:var(--ink3)">まだ参加登録者がいません。</div>'; return; }
-  var html=_participants.map(function(p){
-    return '<div class="pt-card'+(p.id===_uid?' pt-me':'')+'">'+ptAvatar(p)+'<div class="pt-tx"><div class="pt-nm">'+esc(p.nickname||'（会員）')+'</div>'+(p.bio?'<div class="pt-bio">'+esc(p.bio)+'</div>':'')+'</div></div>';
+  var html=_participants.map(function(p,i){
+    return '<div class="pt-card'+(p.id===_uid?' pt-me':'')+'">'
+      +'<span class="pt-avwrap" style="cursor:pointer;display:inline-flex" title="アイコンを拡大" onclick="event.stopPropagation();showRosterAvatar(\'p\','+i+',this)">'+ptAvatar(p)+'</span>'
+      +'<div class="pt-tx"><div class="pt-nm" style="cursor:pointer" title="プロフィールを表示" onclick="event.stopPropagation();showRosterProfile(\'p\','+i+',this)">'+esc(p.nickname||'（会員）')+'</div>'+(p.bio?'<div class="pt-bio">'+esc(p.bio)+'</div>':'')+'</div></div>';
   }).join('');
   if(hosts.length){
     html+='<div class="pt-hostsep"></div><div class="pt-hosttitle">現地ホスト</div>'
-      + hosts.map(function(h){
+      + hosts.map(function(h,i){
           var hp={iconUrl:h.iconUrl||'', nickname:h.name||'現地ホスト'};
-          return '<div class="pt-card pt-host">'+ptAvatar(hp)+'<div class="pt-tx"><div class="pt-nm">'+esc(h.name||'現地ホスト')+'</div></div></div>';
+          return '<div class="pt-card pt-host">'
+            +'<span class="pt-avwrap" style="cursor:pointer;display:inline-flex" title="アイコンを拡大" onclick="event.stopPropagation();showRosterAvatar(\'h\','+i+',this)">'+ptAvatar(hp)+'</span>'
+            +'<div class="pt-tx"><div class="pt-nm" style="cursor:pointer" title="プロフィールを表示" onclick="event.stopPropagation();showRosterProfile(\'h\','+i+',this)">'+esc(h.name||'現地ホスト')+'</div></div></div>';
         }).join('');
   }
   r.innerHTML=html;
 }
+// 参加者/現地ホスト: アイコンクリック→拡大アイコン, 名前クリック→プロフィール（#sc-rosterpop 再利用）
+function _rosterPerson(type, idx){
+  if(type==='h'){ var h=((_ev&&Array.isArray(_ev.localHosts))?_ev.localHosts:[])[idx]; return h?{name:h.name||'現地ホスト', iconUrl:h.iconUrl||'', bio:h.bio||''}:null; }
+  var p=_participants[idx]; return p?{name:p.nickname||'（会員）', iconUrl:p.iconUrl||'', bio:p.bio||''}:null;
+}
+function _personAvatar(ps, size){ var cls='rp-av '+(size==='xl'?'rp-av-xl':'rp-av-lg'); return ps.iconUrl?('<img class="'+cls+'" src="'+esc(ps.iconUrl)+'" alt="">'):('<span class="'+cls+'">'+esc(initials(ps.name))+'</span>'); }
+function _openRosterPop(type, idx, el, withBio){
+  var ps=_rosterPerson(type, idx); if(!ps) return;
+  var pop=g('sc-rosterpop'); if(!pop){ pop=document.createElement('div'); pop.id='sc-rosterpop'; document.body.appendChild(pop); }
+  var bioHtml=withBio?('<div class="rp-prof-bio">'+((ps.bio&&ps.bio.trim())?esc(ps.bio):'（プロフィール情報はありません）')+'</div>'):'';
+  pop.innerHTML=_RPX+'<div class="rp-prof">'+_personAvatar(ps,withBio?'lg':'xl')+'<div class="rp-prof-nm">'+esc(ps.name)+'</div></div>'+bioHtml;
+  pop.style.display='block';
+  var r=(el&&el.getBoundingClientRect)?el.getBoundingClientRect():{bottom:80,top:80,left:40};
+  var ph=withBio?210:200;
+  var top=r.bottom+6; if(top+ph>window.innerHeight) top=Math.max(8,r.top-ph);
+  pop.style.top=top+'px'; pop.style.left=Math.max(8, Math.min((r.left||0), window.innerWidth-270))+'px';
+}
+function showRosterAvatar(type, idx, el){ _openRosterPop(type, idx, el, false); }
+function showRosterProfile(type, idx, el){ _openRosterPop(type, idx, el, true); }
 function renderMypageBar(){
   var noteEl=g('mypage-note'), actEl=g('mypage-actions');
   if(!noteEl && !actEl) return;
