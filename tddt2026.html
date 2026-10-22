@@ -128,7 +128,12 @@ a{color:var(--gold-d)}
 .fx-plot{position:relative}
 .fx-y{position:absolute;right:2px;transform:translateY(-50%);font-size:9px;color:var(--ink2);background:rgba(255,255,255,.72);padding:0 3px;border-radius:2px;font-variant-numeric:tabular-nums;pointer-events:none}
 .fx-xends{display:flex;justify-content:space-between;font-size:9px;color:var(--ink3);margin-top:2px;font-variant-numeric:tabular-nums}
-.fx-card{flex:1 1 260px;min-width:0;background:var(--cream);border:1px solid var(--border);border-radius:12px;padding:8px 10px}
+.fx-ctl{display:flex;flex-direction:column;gap:3px;margin:3px 0 5px}
+.fx-ctl-row{display:flex;flex-wrap:wrap;align-items:center;gap:3px;max-width:100%}
+.fx-ctl-lb{font-size:9px;color:var(--ink3);margin-right:1px}
+.fx-chip{flex:0 0 auto;font-size:9.5px;line-height:1;padding:3px 6px;border:1px solid var(--border2,rgba(160,130,100,.32));border-radius:10px;background:var(--white,#fff);color:var(--ink2);white-space:nowrap;cursor:pointer}
+.fx-chip.on{background:var(--gold-d);color:#fff;border-color:var(--gold-d)}
+.fx-card{flex:1 1 260px;min-width:0;max-width:100%;background:var(--cream);border:1px solid var(--border);border-radius:12px;padding:8px 10px;overflow:hidden}
 .fx-hd{font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:2px}
 .fx-cur{font-size:12px;color:var(--ink3);margin-bottom:2px}
 .fx-rate{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums}
@@ -833,6 +838,9 @@ function toggleHours(){ var b=g('ev-hours'),btn=g('hours-btn'); if(!b)return; va
 
 /* ════════ 世界時計＆為替レートチャート（詳細と参加者の間） ════════ */
 var _clkTimer=null, _fxTimer=null;
+// 為替チャートの期間・縦軸モード（カード別）。既定は2ヶ月・期間内最大最小。
+var _fxState={};
+var _FX_PERIODS=[['2週',14],['1ヶ月',30],['2ヶ月',63],['6ヶ月',182],['1年',365],['5年',1826]];
 function initIntlWidgets(){
   var ev=_ev||{};
   if(ev.region==='国内'){
@@ -971,13 +979,44 @@ function loadFxCharts(){
   var pairs=(Array.isArray(ev.fxPairs)?ev.fxPairs:[]).filter(function(p){return p&&p.base&&p.quote;}).slice(0,2);
   if(!pairs.length){ el.innerHTML=''; return; }
   if(!el.getAttribute('data-init')){
-    el.innerHTML='<div class="fx-title">💱 為替レート</div><div class="fx-cards">'+pairs.map(function(p,i){ return '<div class="fx-card"><div class="fx-hd">'+esc(p.base)+' / '+esc(p.quote)+'</div><div class="fx-body" id="fx-body-'+i+'"><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div></div>'; }).join('')+'</div>';
+    el.innerHTML='<div class="fx-title">💱 為替レート</div><div class="fx-cards">'+pairs.map(function(p,i){ return '<div class="fx-card"><div class="fx-hd">'+esc(p.base)+' / '+esc(p.quote)+'</div><div class="fx-ctl" id="fx-ctl-'+i+'"></div><div class="fx-body" id="fx-body-'+i+'"><div style="font-size:12px;color:var(--ink3)">読み込み中…</div></div></div>'; }).join('')+'</div>';
     el.setAttribute('data-init','1');
   }
-  pairs.forEach(function(p,i){ _fetchFx(p.base, p.quote, i); });
+  pairs.forEach(function(p,i){
+    if(!_fxState[i]) _fxState[i]={base:p.base, quote:p.quote, days:63, axis:'minmax', cache:{}};
+    else { _fxState[i].base=p.base; _fxState[i].quote=p.quote; }
+    _fxRenderCtl(i);
+    _fxState[i].cache[_fxState[i].days]=null; // 定期更新では現在の期間を取り直す
+    _fetchFx(i);
+  });
 }
-function _fetchFx(base, quote, i){
-  var end=new Date(), start=new Date(end.getTime()-63*86400000);
+// カード別コントロール（期間チップ＋縦軸モード）を描画
+function _fxRenderCtl(i){
+  var box=g('fx-ctl-'+i), st=_fxState[i]; if(!box||!st) return;
+  var pc=_FX_PERIODS.map(function(p){ return '<button class="fx-chip'+(st.days===p[1]?' on':'')+'" onclick="_fxSetPeriod('+i+','+p[1]+')">'+p[0]+'</button>'; }).join('');
+  var ac='<button class="fx-chip'+(st.axis==='minmax'?' on':'')+'" onclick="_fxSetAxis('+i+',\'minmax\')">最大最小</button>'
+       +'<button class="fx-chip'+(st.axis==='zero'?' on':'')+'" onclick="_fxSetAxis('+i+',\'zero\')">0〜最大</button>';
+  box.innerHTML='<div class="fx-ctl-row">'+pc+'</div><div class="fx-ctl-row"><span class="fx-ctl-lb">縦軸</span>'+ac+'</div>';
+}
+function _fxSetPeriod(i, days){
+  var st=_fxState[i]; if(!st) return;
+  st.days=days; _fxRenderCtl(i);
+  if(st.cache[days]){ st.series=st.cache[days]; _fxRenderChart(i); }
+  else { var b=g('fx-body-'+i); if(b) b.innerHTML='<div style="font-size:12px;color:var(--ink3)">読み込み中…</div>'; _fetchFx(i); }
+}
+function _fxSetAxis(i, mode){
+  var st=_fxState[i]; if(!st) return;
+  st.axis=mode; _fxRenderCtl(i); _fxRenderChart(i); // 再取得不要・描画のみ
+}
+function _fxRenderChart(i){
+  var st=_fxState[i], body=g('fx-body-'+i); if(!st||!body) return;
+  if(!st.series||!st.series.length){ body.innerHTML='<div style="font-size:12px;color:var(--ink3)">レートを取得できませんでした</div>'+_bankRatesHtml(st.base); return; }
+  body.innerHTML=_fxChartSvg(st.base, st.quote, st.series, st.axis)+_bankRatesHtml(st.base);
+}
+function _fetchFx(i){
+  var st=_fxState[i]; if(!st) return;
+  var base=st.base, quote=st.quote, days=st.days;
+  var end=new Date(), start=new Date(end.getTime()-days*86400000);
   var f=function(d){ return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); };
   var range=f(start)+'..'+f(end);
   // 取得先フォールバック（frankfurter.dev → frankfurter.app）
@@ -986,12 +1025,13 @@ function _fetchFx(base, quote, i){
     'https://api.frankfurter.app/'+range+'?from='+encodeURIComponent(base)+'&to='+encodeURIComponent(quote)
   ];
   var tryUrl=function(k){
-    if(k>=urls.length){ var b0=g('fx-body-'+i); if(b0) b0.innerHTML='<div style="font-size:12px;color:var(--ink3)">レートを取得できませんでした</div>'+_bankRatesHtml(base); return; }
+    if(k>=urls.length){ st.series=null; _fxRenderChart(i); return; }
     fetch(urls[k]).then(function(r){ if(!r.ok) throw new Error('http '+r.status); return r.json(); }).then(function(d){
       var rates=(d&&d.rates)||{};
       var series=Object.keys(rates).sort().map(function(kk){ return {date:kk, rate:(rates[kk]&&rates[kk][quote])}; }).filter(function(s){ return s.rate!=null; });
       if(!series.length) throw new Error('empty');
-      var body=g('fx-body-'+i); if(body) body.innerHTML=_fxChartSvg(base, quote, series)+_bankRatesHtml(base);
+      // 期間が変わっていなければ反映（連打時の取り違え防止）
+      if(_fxState[i] && _fxState[i].days===days){ st.cache[days]=series; st.series=series; _fxRenderChart(i); }
     }).catch(function(){ tryUrl(k+1); });
   };
   tryUrl(0);
@@ -1010,11 +1050,13 @@ function _bankRatesHtml(cur){
   var asof=ev.bankRatesAsOf?('（'+esc(ev.bankRatesAsOf)+'時点・参考）'):'（参考）';
   return '<div class="br-box"><div class="br-hd">🏦 窓口レート <span class="br-asof">'+asof+'</span><span class="br-unit">円/1'+esc(cur)+'</span></div>'+rows+'</div>';
 }
-function _fxChartSvg(base, quote, series){
+function _fxChartSvg(base, quote, series, axis){
   if(!series.length) return '<div style="font-size:12px;color:var(--ink3)">レートを取得できませんでした</div>';
   var W=320, H=100, padL=4, padR=4, padT=6, padB=6;
   var vals=series.map(function(s){return s.rate;});
-  var min=Math.min.apply(null,vals), max=Math.max.apply(null,vals), range=(max-min)||1;
+  var dmin=Math.min.apply(null,vals), dmax=Math.max.apply(null,vals);
+  // 縦軸モード: 'zero'＝0〜最大, それ以外＝期間内最大最小
+  var min=(axis==='zero')?0:dmin, max=dmax, range=(max-min)||1;
   var n=series.length;
   var X=function(idx){ return padL+(W-padL-padR)*(n<=1?0:(idx/(n-1))); };
   var Y=function(v){ return padT+(H-padT-padB)*(1-(v-min)/range); };
