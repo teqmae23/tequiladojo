@@ -1117,7 +1117,24 @@ table.pl-tbl select.pl-in{padding-left:3px;padding-right:2px}
       <div id="pl-filter"></div>
       <div id="pl-list"><div class="ec">読み込み中…</div></div>
     </div>
-    <div class="mft"><button class="btn bs ca-only-hide" onclick="openPlaceCatMgr()">🏷 分類編集</button><button class="btn bs" id="pl-revgeo-btn" onclick="backfillPlaceCurrencies()" title="チェックした座標ありの場所について、座標から国を判定して通貨を自動設定。">🌐 座標から通貨判定</button><button class="btn bs" id="pl-revaddr-btn" onclick="backfillPlaceAddresses()" title="チェックした場所について、地点名で検索して住所（と未設定なら座標）を自動設定。">🌐 名前から住所取得</button><button class="btn bs" onclick="migrateSchedPhotosToPlaces()" title="開いているイベントのスケジュール項目の写真を、地点名が一致する場所へ移管">📷 写真を場所へ移管</button><div style="flex:1"></div><button class="btn bp" onclick="savePlaceAll()">💾 全行を保存</button><button class="btn bs" onclick="closePlaceMgr()">閉じる</button></div>
+    <div class="mft"><button class="btn bs ca-only-hide" onclick="openPlaceCatMgr()">🏷 分類編集</button><button class="btn bs" id="pl-revgeo-btn" onclick="backfillPlaceCurrencies()" title="チェックした座標ありの場所について、座標から国を判定して通貨を自動設定。">🌐 座標から通貨判定</button><button class="btn bs" id="pl-revaddr-btn" onclick="backfillPlaceAddresses()" title="チェックした場所について、地点名で検索して住所（と未設定なら座標）を自動設定。">🌐 名前から住所取得</button><button class="btn bs" onclick="migrateSchedPhotosToPlaces()" title="開いているイベントのスケジュール項目の写真を、地点名が一致する場所へ移管">📷 写真を場所へ移管</button><button class="btn bs" onclick="openPlaceCopy()" title="他のイベントに登録済みの場所を、当該イベントにコピー登録">📋 他イベントからコピー</button><div style="flex:1"></div><button class="btn bp" onclick="savePlaceAll()">💾 全行を保存</button><button class="btn bs" onclick="closePlaceMgr()">閉じる</button></div>
+  </div>
+</div>
+
+<!-- 他イベントから場所をコピー -->
+<div class="mbg" id="pl-copy-modal" style="z-index:235" onclick="if(event.target===this)closePlaceCopy()">
+  <div class="modal" style="max-width:640px;width:94vw">
+    <div class="mhd"><span>📋 他イベントから場所をコピー</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closePlaceCopy()">✕</button></div>
+    <div class="mbd">
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:8px">コピー元イベントの場所を、当該イベント（<b id="plc-dest-name"></b>）に複製します。同名・近接座標の場所が既にある場合はスキップします。</div>
+      <div class="fg"><label class="fl">コピー元イベント</label><select class="fi" id="plc-src-ev" onchange="renderPlaceCopyList()"></select></div>
+      <div style="display:flex;gap:8px;align-items:center;margin:6px 0">
+        <button type="button" class="btn bs sm" onclick="plcToggleAll(true)">全選択</button>
+        <button type="button" class="btn bs sm" onclick="plcToggleAll(false)">全解除</button>
+      </div>
+      <div id="plc-list"><div class="ec">コピー元イベントを選択してください。</div></div>
+    </div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bp" id="plc-do" onclick="doPlaceCopy()">選択した場所をコピー</button><button class="btn bs" onclick="closePlaceCopy()">閉じる</button></div>
   </div>
 </div>
 
@@ -3241,6 +3258,63 @@ function _evName(id){ var ev=(events||[]).find(function(x){return x.id===id;}); 
 function openPlaceMgr(){ g('pl-mgr-modal').classList.add('open'); _ensurePlaceFilterDefault(); renderPlaceFilterBars(); loadPlaces().then(renderPlaceList); }
 function closePlaceMgr(){ g('pl-mgr-modal').classList.remove('open'); }
 function renderPlaceMgr(){ loadPlaces().then(renderPlaceList); }
+// 他イベントの場所を当該イベントへコピー登録
+function _curEventId(){ return _coAdminMode ? _coAdminEventId : (_schEventId||''); }
+function _placeExistsInEvent(eid, p){
+  return (_places||[]).some(function(x){
+    if(x.eventId!==eid) return false;
+    if(p.name && _normNm(x.name)===_normNm(p.name)) return true;
+    if(p.lat!=null&&p.lng!=null&&x.lat!=null&&x.lng!=null&&Math.abs(x.lat-p.lat)<0.0005&&Math.abs(x.lng-p.lng)<0.0005) return true;
+    return false;
+  });
+}
+function openPlaceCopy(){
+  var dest=_curEventId();
+  if(!dest){ toast('先に対象イベントを開いてください'); return; }
+  g('plc-dest-name').textContent=_evName(dest);
+  g('plc-src-ev').innerHTML='<option value="">（選択してください）</option>'
+    +(events||[]).filter(function(ev){ return ev.id!==dest; }).map(function(ev){ return '<option value="'+esc(ev.id)+'">'+esc(ev.name||ev.id)+'</option>'; }).join('');
+  g('plc-list').innerHTML='<div class="ec">コピー元イベントを選択してください。</div>';
+  g('pl-copy-modal').classList.add('open');
+}
+function closePlaceCopy(){ g('pl-copy-modal').classList.remove('open'); }
+function renderPlaceCopyList(){
+  var box=g('plc-list'); if(!box) return;
+  var sid=g('plc-src-ev').value;
+  if(!sid){ box.innerHTML='<div class="ec">コピー元イベントを選択してください。</div>'; return; }
+  var dest=_curEventId();
+  var list=(_places||[]).filter(function(p){ return p.eventId===sid; }).slice().sort(function(a,b){ return String(a.name||'').localeCompare(String(b.name||'')); });
+  if(!list.length){ box.innerHTML='<div class="ec">このイベントには場所がありません。</div>'; return; }
+  box.innerHTML=list.map(function(p){
+    var dup=_placeExistsInEvent(dest, p);
+    return '<label style="display:flex;align-items:center;gap:8px;padding:5px 2px;border-bottom:1px solid var(--border)">'
+      +'<input type="checkbox" class="plc-chk" data-id="'+esc(p.id)+'"'+(dup?'':' checked')+'>'
+      +'<span style="flex:1;min-width:0"><b>'+esc(p.name||'（無題）')+'</b>'+(p.category?' <span style="font-size:10px;color:var(--ink3)">['+esc(placeCatName(p.category))+']</span>':'')+(p.address?'<br><span style="font-size:11px;color:var(--ink3)">'+esc(p.address)+'</span>':'')+'</span>'
+      +(dup?'<span style="font-size:10px;color:var(--gold-d);white-space:nowrap">既に存在</span>':'')+'</label>';
+  }).join('');
+}
+function plcToggleAll(on){ [].forEach.call(document.querySelectorAll('#plc-list .plc-chk'), function(c){ c.checked=!!on; }); }
+function doPlaceCopy(){
+  var dest=_curEventId(); if(!dest){ toast('対象イベントがありません'); return; }
+  var ids=[].map.call(document.querySelectorAll('#plc-list .plc-chk:checked'), function(c){ return c.getAttribute('data-id'); });
+  if(!ids.length){ toast('コピーする場所を選択してください'); return; }
+  var btn=g('plc-do'); if(btn){ btn.disabled=true; btn.textContent='コピー中…'; }
+  var batch=db.batch(), cnt=0, skip=0;
+  ids.forEach(function(id){
+    var p=(_places||[]).find(function(x){ return x.id===id; }); if(!p) return;
+    if(_placeExistsInEvent(dest, p)){ skip++; return; }
+    var data={ name:p.name||'', nameEn:p.nameEn||'', address:p.address||'', mapUrl:p.mapUrl||'', mapMode:(p.mapMode==='coord'?'coord':'name'), category:p.category||'', currency:p.currency||'', eventId:dest, createdAt:firebase.firestore.FieldValue.serverTimestamp() };
+    if(p.lat!=null) data.lat=p.lat; if(p.lng!=null) data.lng=p.lng;
+    if(Array.isArray(p.photos)&&p.photos.length) data.photos=p.photos.map(function(x){ return {url:x.url||'', path:x.path||'', name:x.name||''}; });
+    batch.set(db.collection('places').doc(), data); cnt++;
+  });
+  if(!cnt){ if(btn){ btn.disabled=false; btn.textContent='選択した場所をコピー'; } toast(skip?('すべて既存のためスキップしました（'+skip+'件）'):'コピー対象がありません'); return; }
+  batch.commit().then(function(){
+    toast(cnt+'件コピーしました'+(skip?('（'+skip+'件スキップ）'):''));
+    closePlaceCopy();
+    loadPlaces().then(function(){ if(_placeMgrOpen()) renderPlaceList(); });
+  }).catch(function(e){ if(btn){ btn.disabled=false; btn.textContent='選択した場所をコピー'; } toast('コピー失敗: '+e.message); });
+}
 // 場所マスタ1件の地図リンク（_siMap と同じ基準）。
 function _placeMapLink(p){
   return _mapLink(p.name, p.lat, p.lng, p.mapUrl, p.mapMode);
