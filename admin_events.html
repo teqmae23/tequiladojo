@@ -1139,6 +1139,25 @@ table.pl-tbl select.pl-in{padding-left:3px;padding-right:2px}
   </div>
 </div>
 
+<!-- 本日の概要（日別） -->
+<style>
+.se-daysum{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--cream2);border:1px dashed var(--border2);border-radius:var(--r);padding:6px 10px;margin:4px 0 8px;font-size:12px}
+.se-daysum-lb{font-weight:700;color:var(--ink2);white-space:nowrap}
+.se-daysum-tx{flex:1 1 180px;min-width:0;color:var(--ink);white-space:pre-wrap}
+.se-daysum-empty{flex:1 1 180px;color:var(--ink3)}
+</style>
+<div class="mbg" id="day-summary-modal" style="z-index:236" onclick="if(event.target===this)closeDaySummary()">
+  <div class="modal" style="max-width:560px;width:94vw">
+    <div class="mhd"><span id="ds-title">📝 本日の概要</span><button class="hdr-nav" style="margin-left:auto;color:var(--ink3);border-color:var(--border2)" onclick="closeDaySummary()">✕</button></div>
+    <div class="mbd">
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:8px">その日の予定の概要を記入します。会員のイベントページで、その日のスケジュール冒頭に表示されます。</div>
+      <textarea class="fi" id="ds-text" style="min-height:120px;width:100%" placeholder="例: 本日は午前にテキーラ蒸留所を2か所見学、午後はグアダラハラ市内観光。夜は現地ホスト案内のバル巡り。"></textarea>
+      <div class="err" id="ds-err"></div>
+    </div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bp" id="ds-save" onclick="saveDaySummary()">💾 保存</button><button class="btn bs" onclick="closeDaySummary()">閉じる</button></div>
+  </div>
+</div>
+
 <!-- 場所の写真モーダル -->
 <div class="mbg" id="place-photo-modal" style="z-index:230">
   <div class="modal">
@@ -3305,6 +3324,7 @@ function doPlaceCopy(){
     var p=(_places||[]).find(function(x){ return x.id===id; }); if(!p) return;
     if(_placeExistsInEvent(dest, p)){ skip++; return; }
     var data={ name:p.name||'', nameEn:p.nameEn||'', address:p.address||'', mapUrl:p.mapUrl||'', mapMode:(p.mapMode==='coord'?'coord':'name'), category:p.category||'', currency:p.currency||'', eventId:dest, createdAt:firebase.firestore.FieldValue.serverTimestamp() };
+    if(p.private) data.private=true;
     if(p.lat!=null) data.lat=p.lat; if(p.lng!=null) data.lng=p.lng;
     if(Array.isArray(p.photos)&&p.photos.length) data.photos=p.photos.map(function(x){ return {url:x.url||'', path:x.path||'', name:x.name||''}; });
     batch.set(db.collection('places').doc(), data); cnt++;
@@ -3381,11 +3401,19 @@ function renderPlaceList(){
       +'<td>'+_plCurSel(id, p.currency||_curFromAddr(p.address))+'</td>'
       +'<td>'+evCell+'</td>'
       +'<td class="pl-co" id="pl-co-'+id+'">'+esc(_plCoText(p))+'</td>'
-      +'<td class="pl-act">'+mapBtn+'<button class="btn bs sm" onclick="openPlacePhotoMgr(\''+id+'\')" title="写真を管理">🖼'+(p.photos&&p.photos.length?(' '+p.photos.length):'')+'</button> <button class="btn bs sm" onclick="savePlaceRow(\''+id+'\')" title="この行を保存">💾</button> <button class="rm" title="削除" onclick="delPlace(\''+id+'\')">×</button></td>'
+      +'<td class="pl-act">'+mapBtn+'<button class="btn bs sm" onclick="togglePlacePrivate(\''+id+'\')" title="非公開場所の切替（参加者・現地ホスト・家族のみ地図/ルート閲覧可。他の閲覧者には非公開表示）"'+(p.private?' style="background:var(--red,#8c2818);color:#fff;border-color:var(--red,#8c2818)"':'')+'>'+(p.private?'🔒非公開':'🔓公開')+'</button> <button class="btn bs sm" onclick="openPlacePhotoMgr(\''+id+'\')" title="写真を管理">🖼'+(p.photos&&p.photos.length?(' '+p.photos.length):'')+'</button> <button class="btn bs sm" onclick="savePlaceRow(\''+id+'\')" title="この行を保存">💾</button> <button class="rm" title="削除" onclick="delPlace(\''+id+'\')">×</button></td>'
       +'</tr>';
   }).join('');
   box.innerHTML='<div class="pl-tblwrap"><table class="pl-tbl"><colgroup><col style="width:34px"><col class="c-name"><col class="c-en"><col class="c-addr"><col class="c-url"><col class="c-mode"><col class="c-cat"><col class="c-cur"><col class="c-ev"><col class="c-co"><col class="c-act"></colgroup>'+head+'<tbody>'+newRow+rows+'</tbody></table></div>'
     +(list.length?'':'<div class="ec" style="margin-top:8px">該当する場所はありません（分類タブ・イベント選択の絞り込みを確認）。上段の行から新規追加できます。</div>');
+}
+// 非公開場所の切替（即時保存）。非公開＝参加者・現地ホスト・家族のみ地図/ルート閲覧可。
+function togglePlacePrivate(pid){
+  var p=_places.find(function(x){return x.id===pid;}); if(!p) return;
+  var np=!p.private;
+  db.collection('places').doc(pid).set({private:np, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).then(function(){
+    p.private=np; if(_placeMgrOpen()) renderPlaceList(); toast(np?'🔒 非公開に設定しました':'🔓 公開に戻しました');
+  }).catch(function(e){ toast('保存失敗: '+e.message,'err'); });
 }
 // 1行を保存（地点名・英語名・住所・地図URL・表示方法・分類・イベント）。座標はURLから再取得。
 function savePlaceRow(pid){
@@ -5396,9 +5424,12 @@ function renderSchedList(){
       sec.html+=SchedGroups.wrapHtml(colsH, b.active, {paneHead:function(n){ return '<button class="btn bs sm se-day-add" onclick="event.stopPropagation();openSchedForDay(\''+esc(b.day)+'\','+n+')">＋ '+n+'班に追加</button>'; }});
     });
   }
+  var _evObj=events.find(function(x){return x.id===_schEventId;})||{}, _dsum=_evObj.daySummaries||{};
   g('sch-list').innerHTML=sections.map(function(gp,idx){
     var exp=!!_schExpandedDays[gp.day];
-    var body=gp.html;
+    var ds=((_dsum[gp.day]||'')+'').trim();
+    var sumRow=gp.day?('<div class="se-daysum"><span class="se-daysum-lb">📝 本日の概要</span>'+(ds?'<span class="se-daysum-tx">'+esc(ds)+'</span>':'<span class="se-daysum-empty">（未記入）</span>')+'<button class="btn bs sm" onclick="event.stopPropagation();openDaySummary(\''+esc(gp.day)+'\')">'+(ds?'編集':'記入')+'</button></div>'):'';
+    var body=sumRow+gp.html;
     return '<div class="se-day se-day-toggle">'
       +'<span class="se-day-hd" onclick="toggleDay('+idx+',\''+esc(gp.day)+'\')"><span class="se-caret" id="se-caret-'+idx+'">'+(exp?'▼':'▶')+'</span> '+esc(gp.day||'日付未設定')+' <span style="font-weight:400;color:var(--ink3);font-size:11px">（'+gp.n+'件）</span></span>'
       +'<button class="btn bs sm se-day-add" onclick="openSchedForDay(\''+esc(gp.day)+'\')">＋ 追加</button></div>'
@@ -5407,6 +5438,28 @@ function renderSchedList(){
   g('sch-total').textContent='計 '+_schItems.length+'項目 / 概算 ¥'+Math.round(total).toLocaleString();
 }
 
+// 本日の概要（日別・event.daySummaries[date] に保存）
+var _dsDay=null;
+function openDaySummary(day){
+  _dsDay=day;
+  var ev=events.find(function(x){return x.id===_schEventId;})||{};
+  g('ds-title').textContent='📝 本日の概要 — '+day;
+  g('ds-text').value=((ev.daySummaries||{})[day]||'');
+  g('ds-err').textContent='';
+  g('day-summary-modal').classList.add('open');
+  setTimeout(function(){ try{ g('ds-text').focus(); }catch(e){} },50);
+}
+function closeDaySummary(){ g('day-summary-modal').classList.remove('open'); }
+function saveDaySummary(){
+  if(!_dsDay) return;
+  var txt=(g('ds-text').value||'').trim();
+  var btn=g('ds-save'); btn.disabled=true;
+  var upd={}; upd[_dsDay]=(txt||firebase.firestore.FieldValue.delete());
+  db.collection('events').doc(_schEventId).set({daySummaries:upd},{merge:true}).then(function(){
+    var ev=events.find(function(x){return x.id===_schEventId;}); if(ev){ ev.daySummaries=ev.daySummaries||{}; if(txt) ev.daySummaries[_dsDay]=txt; else delete ev.daySummaries[_dsDay]; }
+    btn.disabled=false; closeDaySummary(); renderSchedList(); toast('本日の概要を保存しました');
+  }).catch(function(e){ btn.disabled=false; g('ds-err').textContent='保存失敗: '+e.message; });
+}
 function catOptions(sel){ g('se-cat').innerHTML=_cats.map(function(c){ return '<option value="'+esc(c.id)+'"'+(sel===c.id?' selected':'')+'>'+esc((c.icon?c.icon+' ':'')+(c.name||''))+'</option>'; }).join(''); }
 function toggleMove(){ g('se-move-box').style.display=g('se-move').checked?'block':'none'; }
 function openSchedEd(id, presetDate, presetGroup){
