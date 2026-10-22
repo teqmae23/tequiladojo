@@ -349,6 +349,12 @@ a{color:var(--gold-d)}
 .sc-names-lbl{display:inline-block;background:var(--teal);color:#fff;font-size:11px;font-weight:700;padding:1px 8px;border-radius:9px;margin-right:2px}
 .sc-now .sc-names{margin-top:6px}
 .sc-hiddennote{margin-top:8px;font-size:12px;color:var(--ink3);background:var(--cream2);border-radius:var(--r);padding:8px 10px}
+.sc-daysum{display:flex;gap:7px;align-items:flex-start;background:linear-gradient(180deg,#fff8ec,#fdf1dd);border:1px solid var(--border2);border-left:3px solid var(--gold-d);border-radius:var(--r);padding:9px 12px;margin:2px 0 12px;font-size:13px;line-height:1.7;color:var(--ink)}
+.sc-daysum .sc-daysum-ic{flex:0 0 auto}
+.sc-daysum .sc-daysum-tx{flex:1;min-width:0;white-space:pre-wrap}
+.pp-grid{display:flex;flex-wrap:wrap;gap:6px}
+.pp-th{width:88px;height:88px;border-radius:8px;overflow:hidden;border:1px solid var(--border);display:block;padding:0;background:none;cursor:pointer}
+.pp-th img{width:100%;height:100%;object-fit:cover;display:block}
 .sc-item.has-geo{cursor:pointer}
 .sc-item.has-geo:hover{box-shadow:0 2px 8px rgba(0,0,0,.12)}
 /* ネスト容器（時間帯で自動ネスト・最大3階層） */
@@ -1504,7 +1510,7 @@ function itemIcon(it){
   return catIcon(it.category);
 }
 function catBg(id){ var c=catById(id); return (c&&c.bg)?c.bg:'#f5f3ee'; }
-var _schedItems=[], _photosByItem={}, _tripTracks=[], _placeAddrMap={}, _placeCurMap={}, _placePhotoMap={};
+var _schedItems=[], _photosByItem={}, _tripTracks=[], _placeAddrMap={}, _placeCurMap={}, _placePhotoMap={}, _placePrivateMap={};
 function phSort(a,b){ var ka=(a.takenAt||a.createdMs||0), kb=(b.takenAt||b.createdMs||0); return ka-kb; }
 // 項目の住所解決：まず場所マスタの住所、無ければ地図URLから抽出。
 function _itemAddr(name, mapUrl){
@@ -1521,7 +1527,7 @@ function loadSchedule(){
     ref.collection('tracks').get().catch(function(){ return {docs:[]}; }), // 旅の足跡（GPX軌跡）
     db.collection('places').get().catch(function(){ return {docs:[]}; }) // 場所マスタ（住所表示用）
   ]).then(function(res){
-    _placeAddrMap={}; _placeCurMap={}; _placePhotoMap={};
+    _placeAddrMap={}; _placeCurMap={}; _placePhotoMap={}; _placePrivateMap={};
     (res[4]&&res[4].docs?res[4].docs:[]).map(function(d){ return d.data()||{}; }).forEach(function(p){
       var nm=(p.name||'').trim(); if(!nm) return;
       var ad=(p.address||'').trim();
@@ -1531,6 +1537,7 @@ function loadSchedule(){
       if(ad){ if(own) _placeAddrMap[nm]=ad; else if(!(nm in _placeAddrMap)) _placeAddrMap[nm]=ad; }
       if(cur){ if(own) _placeCurMap[nm]=cur; else if(!(nm in _placeCurMap)) _placeCurMap[nm]=cur; }
       if(ph.length){ if(own) _placePhotoMap[nm]=ph; else if(!(nm in _placePhotoMap)) _placePhotoMap[nm]=ph; }
+      if(own) _placePrivateMap[nm]=!!p.private; else if(!(nm in _placePrivateMap)) _placePrivateMap[nm]=!!p.private; // 非公開場所
     });
     _schedItems=res[0].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
     _normalizeMoveDest(_schedItems); // 移動の到着座標はGoogleマップURLを優先
@@ -2262,18 +2269,20 @@ function _schSubLine(it){
 function renderSchedItem(it, leg){
   var ic=itemIcon(it);
   var geo=(it.lat!=null&&it.lng!=null);
-  var hideLoc=_locHidden(it); // ストーカー対策: 滞在中は位置を伏せる
+  var privLoc=_privHidden(it); // 非公開場所: 閲覧不可の人には地図・ルートを伏せる
+  var hideLoc=_locHidden(it)||privLoc; // ストーカー対策/非公開場所
   var did=esc(it.id);
   var meta=[];
   // 場所写真: 2点間移動以外は、紐づく場所（地点名一致）の写真を使用（1枚目=サムネイル、詳細で全表示）
   var aphotos=(!it.isMove)?((_placePhotoMap[(it.placeName||'').trim()])||[]):[];
   var photos=_photosByItem[it.id]||[];               // 会員がアップロードした写真
+  if(privLoc){ aphotos=[]; photos=[]; } // 非公開場所の写真は行に出さず、下部の集約欄に回す
   var ct=costLineFor(it); if(ct) meta.push('<span class="sc-cost">'+esc(ct)+'</span>');
   if(it.linkUrl && /^https?:\/\//i.test(it.linkUrl)) meta.push('<a class="sc-map" href="'+esc(it.linkUrl)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">🔗 参考URL</a>');
   // アイコンの並び: 参加者 → 現地ホスト → 地図 → ルート → 住所（プリセット写真は右上の投稿ボタン下にサムネイル）
   var rb=rosterBtnHtml(it); if(rb) meta.push(rb); // 参加者＋現地ホスト
   if(hideLoc){
-    meta.push('<span class="sc-loclock">'+(_isLodging(it)?'🏨 ホテル情報はチェックアウト後に公開されます':'📍 位置情報は滞在終了後に公開されます')+'</span>');
+    meta.push('<span class="sc-loclock">'+(privLoc?'🔒 地図・ルートは非公開です':(_isLodging(it)?'🏨 ホテル情報はチェックアウト後に公開されます':'📍 位置情報は滞在終了後に公開されます'))+'</span>');
   } else {
     var _flm=(it.travelMode==='flight'||it.category==='flight'); // 空路は「✈️ ルート」で経路画面を開き、Googleマップ上で✈️フライトに切替可能
     var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
@@ -2355,7 +2364,7 @@ function nowSectionHtml(visEnr){
   var cur=null, next=null;
   (visEnr||[]).forEach(function(e){ if(e.ms<=now) cur=e; else if(!next) next=e; });
   var entry=cur||next; if(!entry) return '';
-  var it=entry.it, hideLoc=_locHidden(it), geo=(it.lat!=null&&it.lng!=null)&&!hideLoc;
+  var it=entry.it, hideLoc=_locHidden(it)||_privHidden(it), geo=(it.lat!=null&&it.lng!=null)&&!hideLoc;
   _nowMapItem=geo?it:null;
   var ic=itemIcon(it);
   var tline=(it.time||it.endTime)?('<span class="sc-now-t">'+esc(it.time||'—')+(it.isMove&&it.toTime?' → '+esc(it.toTime):(!it.isMove&&it.endTime?' → '+esc(it.endTime):''))+'</span>'):'';
@@ -2364,7 +2373,7 @@ function nowSectionHtml(visEnr){
     +(it.date?'<div class="sc-now-sub">'+esc(fmtDate(it.date))+' '+wday(it.date)+'</div>':'')
     +schedNamesHtml(it);
   if(geo && window.L) h+='<div id="sc-now-map"></div>';
-  else if(hideLoc) h+='<div class="sc-now-sub sc-loclock">'+(_isLodging(it)?'🏨 ホテル情報はチェックアウト後に公開されます':'📍 位置情報は滞在終了後に公開されます')+'</div>';
+  else if(hideLoc) h+='<div class="sc-now-sub sc-loclock">'+(_privHidden(it)?'🔒 地図・ルートは非公開です':(_isLodging(it)?'🏨 ホテル情報はチェックアウト後に公開されます':'📍 位置情報は滞在終了後に公開されます'))+'</div>';
   if(cur && next) h+='<div class="sc-now-next">次: '+(next.it.time?esc(next.it.time)+' ':'')+esc(next.it.title||'')+'</div>';
   h+='</div>';
   return h;
@@ -2453,6 +2462,24 @@ function _buildSchedTree(units){
   });
   return roots;
 }
+// ── 非公開場所: 参加者・現地ホスト・家族のみ地図/ルート閲覧可。それ以外は非表示（写真は下に集約） ──
+function _placeIsPrivate(nm){ nm=(nm||'').trim(); return !!(nm && _placePrivateMap[nm]); }
+function _itemPrivate(it){ return !!(it && (_placeIsPrivate(it.placeName) || (it.isMove && _placeIsPrivate(it.toName)))); }
+function _canSeePrivate(){ return !!(_isStaff||_isCoAdmin||_isParticipant||_isFamily); }
+function _privHidden(it){ return !_canSeePrivate() && _itemPrivate(it); }
+// 非公開場所の写真を下部に集約（閲覧不可の人のみ・場所は伏せ写真のみ・会員投稿＋場所登録）
+function _privatePhotosHtml(){
+  if(_canSeePrivate()) return '';
+  var urls=[];
+  (_schedItems||[]).forEach(function(it){ if(!_itemPrivate(it)) return; (_photosByItem[it.id]||[]).forEach(function(p){ if(p&&p.url) urls.push(p.url); }); });
+  Object.keys(_placePrivateMap||{}).forEach(function(nm){ if(!_placePrivateMap[nm]) return; (_placePhotoMap[nm]||[]).forEach(function(p){ if(p&&p.url) urls.push(p.url); }); });
+  var seen={}, pics=[]; urls.forEach(function(u){ if(!seen[u]){ seen[u]=1; pics.push(u); } });
+  if(!pics.length) return '';
+  var cells=pics.map(function(u){ return '<a class="pp-th" href="'+esc(u)+'" target="_blank" rel="noopener"><img src="'+esc(u)+'" alt="" loading="lazy"></a>'; }).join('');
+  return '<div class="card"><div class="sec">🔒 非公開場所の写真</div><div style="font-size:12px;color:var(--ink3);margin-bottom:8px">場所は伏せていますが、写真はご覧いただけます。</div><div class="pp-grid">'+cells+'</div></div>';
+}
+// 本日の概要（その日のスケジュール冒頭に表示）
+function _daySumHtml(day){ var ds=(((_ev&&_ev.daySummaries)?(_ev.daySummaries[day]||''):'')+'').trim(); return ds?('<div class="sc-daysum"><span class="sc-daysum-ic">📝</span><span class="sc-daysum-tx">'+esc(ds)+'</span></div>'):''; }
 function renderSchedule(items){
   var el=g('schedule-cont'); if(!el) return;
   if(!items.length){ el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div>'+debugTimeBar()+'<div style="font-size:12px;color:var(--ink3)">スケジュールは準備中です。</div></div>'; return; }
@@ -2555,10 +2582,11 @@ function renderSchedule(items){
   visEnr.forEach(function(e){ var d=e.it.date||''; (dayItemsMap[d]=dayItemsMap[d]||[]).push(e.it); });
   h+=sections.map(function(gp,idx){
     return '<div class="sc-day sc-day-toggle" onclick="toggleSchedDay('+idx+')"><span class="sc-day-caret" id="sc-day-caret-'+idx+'">▸</span> '+esc(fmtDate(gp.day))+' '+wday(gp.day)+' <span class="sc-day-count">（'+gp.n+'件）</span><span class="sc-day-wx" id="sc-day-wx-'+idx+'"></span></div>'
-      +'<div class="sc-day-body" id="sc-day-body-'+idx+'" style="display:none">'+gp.html+'</div>';
+      +'<div class="sc-day-body" id="sc-day-body-'+idx+'" style="display:none">'+_daySumHtml(gp.day)+gp.html+'</div>';
   }).join('');
   if(hiddenCount>0) h+='<div class="sc-hiddennote">🙈 未完了の非公開アイテムが '+hiddenCount+' 件あります（完了後に表示されます）。</div>';
   h+='</div>';
+  h+=_privatePhotosHtml(); // 非公開場所の写真（閲覧不可の人向け集約欄）
   el.innerHTML=h;
   _loadSchedDayWeather(sections, dayItemsMap); // 各日ヘッダに天気（その日の最後の場所基準）
   if(_nowMapItem && window.L) initNowMap(_nowMapItem);
