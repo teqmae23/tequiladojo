@@ -1071,6 +1071,7 @@ table.pl-tbl select.pl-in{padding-left:3px;padding-right:2px}
       </div>
       <label class="reqlbl"><input type="checkbox" id="se-overnight"> 宿泊</label>
       <label class="reqlbl"><input type="checkbox" id="se-hideuntildone"> 閲覧者に隠す（完了後に公開）— クローズイベントで、参加者・家族以外にはこのアイテムを完了まで非表示</label>
+      <label class="reqlbl"><input type="checkbox" id="se-secret"> 🔒 シークレット（サプライズ）— この項目のCIを記録するまで会員ページに非表示（スタッフには印付きで表示）。入れ子で作るのが基本。</label>
       <label class="reqlbl"><input type="checkbox" id="se-shownames" onchange="onSeShowNames()"> 参加者名を表示（合流／離脱など）</label>
       <div id="se-names-box" style="display:none;border:1px solid var(--border);border-radius:var(--r);padding:8px 10px;margin-top:4px">
         <label class="reqlbl" style="margin-top:0"><input type="checkbox" id="se-spot" onchange="onSeSpot()"> この項目だけの参加（次の項目の前に自動で外れる／現地ホスト等）</label>
@@ -4252,6 +4253,7 @@ function renderSchedItemRow(it){
   var _ri=_moveInfoHtml(it); if(_ri) markers.push(_ri);
   if(it.isMove) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();openRouteEdit(\''+esc(it.id)+'\')" title="実ルートを地図で手動補完"><span style="color:var(--teal)">🛤補完</span>'+(Array.isArray(it.track)&&it.track.length?'('+it.track.length+')':'')+'</span>');
   if(it.hideUntilDone) markers.push('🙈完了後公開');
+  if(it.secret) markers.push('<span style="font-weight:700;color:'+(it.actualStart?'var(--teal,#1a6e58)':'var(--red,#8c2818)')+'" title="シークレット: CIを記録すると会員ページに公開されます">🔒'+(it.actualStart?'公開済(CI済)':'未公開')+'</span>');
   // 合流/離脱（クリックで名前ポップアップ）
   if(it.showNames&&(it.nameParticipants||[]).length&&!it.spotOnly) markers.push('<span class="se-maplink" style="cursor:pointer" onclick="event.stopPropagation();showSchedNames(\''+esc(it.id)+'\',this)">👥'+esc(it.nameLabel||'名前')+' '+it.nameParticipants.length+'名</span>');
   if(it.roomingEnabled&&(it.rooms||[]).length) markers.push('🛏部屋割り'+it.rooms.length);
@@ -4880,7 +4882,7 @@ function doTransitImport(){
         mapUrl:'', lat:(fg.lat!=null?fg.lat:null), lng:(fg.lng!=null?fg.lng:null), placeName:r.from||'', mapMode:'name',
         isMove:true, toTime:r.toTime||'', toMapUrl:'', toLat:(tg.lat!=null?tg.lat:null), toLng:(tg.lng!=null?tg.lng:null), toName:r.to||'', toMapMode:'name',
         travelMode:r.mode||'train',
-        overnight:false, hideUntilDone:false, showNames:false, spotOnly:false, nameLabel:'', nameParticipants:[],
+        overnight:false, hideUntilDone:false, secret:false, showNames:false, spotOnly:false, nameLabel:'', nameParticipants:[],
         roomingEnabled:false, hotelName:'', useBuildings:false, buildings:[], rooms:[],
         group:1, groupOp:'', groupFrom:null, groupTo:null, groupMembers:[],
         createdAt:FV.serverTimestamp(), updatedAt:FV.serverTimestamp(), seq:baseSeq+idx };
@@ -4971,7 +4973,7 @@ function doGmapImport(){
         mapUrl:'', lat:(a.lat!=null?a.lat:null), lng:(a.lng!=null?a.lng:null), placeName:a.name||'', mapMode:'name',
         isMove:true, toTime:'', toMapUrl:'', toLat:(b.lat!=null?b.lat:null), toLng:(b.lng!=null?b.lng:null), toName:b.name||'', toMapMode:'name',
         travelMode:mode,
-        overnight:false, hideUntilDone:false, showNames:false, spotOnly:false, nameLabel:'', nameParticipants:[],
+        overnight:false, hideUntilDone:false, secret:false, showNames:false, spotOnly:false, nameLabel:'', nameParticipants:[],
         roomingEnabled:false, hotelName:'', useBuildings:false, buildings:[], rooms:[],
         group:1, groupOp:'', groupFrom:null, groupTo:null, groupMembers:[],
         createdAt:FV.serverTimestamp(), updatedAt:FV.serverTimestamp(), seq:baseSeq+idx };
@@ -5113,7 +5115,7 @@ function doPdfImport(){
         mapUrl:'', lat:(fg.lat!=null?fg.lat:null), lng:(fg.lng!=null?fg.lng:null), placeName:lg.from||'', mapMode:'name',
         isMove:true, toTime:lg.arr||'', toMapUrl:'', toLat:(tg.lat!=null?tg.lat:null), toLng:(tg.lng!=null?tg.lng:null), toName:lg.to||'', toMapMode:'name',
         travelMode:lg.travel||'train',
-        overnight:false, hideUntilDone:false, showNames:false, spotOnly:false, nameLabel:'', nameParticipants:[],
+        overnight:false, hideUntilDone:false, secret:false, showNames:false, spotOnly:false, nameLabel:'', nameParticipants:[],
         roomingEnabled:false, hotelName:'', useBuildings:false, buildings:[], rooms:[],
         group:1, groupOp:'', groupFrom:null, groupTo:null, groupMembers:[],
         createdAt:FV.serverTimestamp(), updatedAt:FV.serverTimestamp(), seq:baseSeq+idx };
@@ -5446,6 +5448,7 @@ function openSchedEd(id, presetDate, presetGroup){
   g('se-travelmode').value=_tm;
   g('se-overnight').checked=!!(it&&it.overnight);
   g('se-hideuntildone').checked=!!(it&&it.hideUntilDone);
+  g('se-secret').checked=!!(it&&it.secret);
   g('se-shownames').checked=!!(it&&it.showNames);
   g('se-nametext').value=(it&&it.nameLabel)||'';
   g('se-spot').checked=!!(it&&it.spotOnly);
@@ -5497,6 +5500,7 @@ function saveSched(){
     toName:(g('se-toplace').value||'').trim(), toMapMode:(g('se-tomapmode').value==='name'?'name':'coord'), travelMode:g('se-travelmode').value||'',
     overnight:!!g('se-overnight').checked,
     hideUntilDone:!!g('se-hideuntildone').checked,
+    secret:!!g('se-secret').checked,
     showNames:!!g('se-shownames').checked,
     spotOnly:!!(g('se-shownames').checked&&g('se-spot').checked), // この項目だけの参加（持ち越さない）
     nameLabel:(g('se-nametext').value||'').trim(),

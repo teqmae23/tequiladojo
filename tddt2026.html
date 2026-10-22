@@ -1829,6 +1829,25 @@ function _itemHidden(it){
   var rev=_revealMap[it.id]; if(!rev) return false;
   return nowMs() < rev;
 }
+// シークレット: 管理者がCI(actualStart)を記録するまで会員ページに非表示。スタッフには表示（印付き）。
+function _secretHidden(it){
+  if(!it||!it.secret) return false;
+  if(it.actualStart) return false;   // CI済み＝公開
+  if(_isStaff) return false;         // スタッフには表示（renderSchedItemで🔒印）
+  return true;
+}
+// enr(JST順)から、非表示にすべき項目ID集合を算出（シークレット項目＋その入れ子配下）。
+function _secretHiddenSet(enr){
+  var set={}, stack=[]; // stack: 開いているシークレット容器 {endMin}
+  for(var i=0;i<enr.length;i++){
+    var it=enr[i].it, startMin=_uStartMin(it);
+    while(stack.length && stack[stack.length-1].endMin<=startMin) stack.pop();
+    var underSecret=stack.length>0, selfSecret=_secretHidden(it);
+    if(selfSecret||underSecret) set[it.id]=true;
+    if(selfSecret){ var em=_uEndMin(it); if(em!=null && em>startMin) stack.push({endMin:em}); } // 容器なら配下も隠す
+  }
+  return set;
+}
 // 参加者名の表示（合流/離脱など・自由ラベル）
 function schedNamesHtml(it, inline){
   if(!it||!it.showNames||it.spotOnly||!Array.isArray(it.nameParticipants)||!it.nameParticipants.length) return ''; // 現地ホスト(spotOnly)はインライン表示せず「現地ホスト」ボタンで表示
@@ -2181,7 +2200,13 @@ function renderCostBanner(){
   else { el.innerHTML=''; }
 }
 function openCostView(){
-  g('cost-view-body').innerHTML=costViewHtml((_ev&&_ev.costItems)||[], (_ev&&_ev.costMembers)||[], _myCostTid());
+  // シークレット未公開項目に紐づく費用は会員に出さない（存在・タイトルの間接的な漏れを防ぐ）
+  var citems=((_ev&&_ev.costItems)||[]).filter(function(ci){
+    if(!ci||!ci.schedItemId) return true;
+    var s=_schedItems.find(function(x){ return x.id===ci.schedItemId; });
+    return !(s && _secretHidden(s));
+  });
+  g('cost-view-body').innerHTML=costViewHtml(citems, (_ev&&_ev.costMembers)||[], _myCostTid());
   g('cost-view-modal').classList.add('open');
 }
 function closeCostView(){ g('cost-view-modal').classList.remove('open'); }
@@ -2281,7 +2306,7 @@ function renderSchedItem(it, leg){
   var rightCol=(photoCorner||presetThumb)?('<div class="sc-right">'+photoCorner+presetThumb+'</div>'):'';
   // 折畳時に見えるのは「時間・イベントアイコン・タイトル・写真」のみ
   return '<div class="sc-item'+(clickable?' has-geo':'')+'" style="background:'+catBg(it.category)+'"'+(clickable?' onclick="onSchedItemClick(\''+did+'\','+(geo?'1':'0')+')"':'')+'>'+schedTimeHtml(it,leg)+'<span class="sc-ic sc-ic-pop" title="'+esc(catName(it.category))+'" onclick="event.stopPropagation();showCatPop(event,\''+esc(it.category)+'\')">'+ic+'</span>'
-    +'<div class="sc-body"><div class="sc-ttl">'+esc(it.title||'')+(hasDetail?'<span class="sc-caret2" id="scc-'+did+'">詳細表示</span>':'')+'</div>'+_schSubLine(it)
+    +'<div class="sc-body"><div class="sc-ttl">'+esc(it.title||'')+((_isStaff&&it.secret)?(' <span style="font-size:10px;font-weight:700;border-radius:9px;padding:1px 7px;white-space:nowrap;'+(it.actualStart?'background:rgba(26,110,88,.12);color:var(--teal,#1a6e58)':'background:rgba(140,40,24,.1);color:var(--red,#8c2818)')+'" title="シークレット: この項目のCIを記録すると会員に公開されます">🔒'+(it.actualStart?'公開済':'未公開')+'</span>'):'')+(hasDetail?'<span class="sc-caret2" id="scc-'+did+'">詳細表示</span>':'')+'</div>'+_schSubLine(it)
     +detail
     +'</div>'
     +rightCol
@@ -2436,14 +2461,17 @@ function renderSchedule(items){
   _rosterMap=_computeRosters(enr); // 合流/離脱にそった各時点の参加メンバー（全アイテム順で算出）
   _rosterFeatureOn=enr.some(function(e){ return e.it.showNames && !e.it.spotOnly; })||SchedGroups.used(items); // 合流/離脱・班を使うイベントか
   // restricted閲覧者には hideUntilDone のアイテムを完了まで非表示
-  var visEnr=enr.filter(function(e){ return !_itemHidden(e.it); });
+  // シークレット項目（＋入れ子配下）は、CI記録まで非スタッフに非表示
+  var _secretSet=_secretHiddenSet(enr);
+  var visEnr=enr.filter(function(e){ return !_itemHidden(e.it) && !_secretSet[e.it.id]; });
   _nowMapItem=null;
   var h='<div class="card"><div class="sec-row"><div class="sec">🗓 スケジュール</div>'+((_isStaff||_isCoAdmin)?'<a class="ph-btn" style="text-decoration:none" href="/admin_events.html?sched='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛠 管理ページで編集</a>':'')+(_isReal?'<button class="ph-btn" onclick="openPh()">📷 写真を追加</button>':'')+'</div>';
   h+=debugTimeBar();
   var useG=SchedGroups.used(items); // 班（2班・3班）を使っている場合のみ右端バー表示
   var myG=useG?_viewerGroup(enr):1;
   h+=nowSectionHtml(useG?visEnr.filter(function(e){ return SchedGroups.inGroup(e.it, myG); }):visEnr);
-  var hiddenCount=enr.length-visEnr.length;
+  // 件数表示は hideUntilDone のみ（シークレットは存在自体を悟られないよう件数に含めない）
+  var hiddenCount=enr.filter(function(e){ return _itemHidden(e.it) && !_secretSet[e.it.id]; }).length;
   // 日付ごとにまとめ、日付クリックで開閉（既定は畳んだ状態）。並び順はJST、見出しは現地日付。
   // 空路で日付変更線を跨ぎ翌日着となる移動は「出発」「到着」の2レグに分割し、到着は到着日の枠へ。
   var legs=[], arrLegs=[];
