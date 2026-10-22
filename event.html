@@ -747,6 +747,10 @@ var _ev=null, _participants=[], _myPt=null;
 // 閲覧権限（参加者/家族=full・リアルタイム、無料/有料会員=restricted・遅延+位置伏せ）
 var _member=null, _plans=[], _planLevel=0;
 var _isParticipant=false, _isFamily=false, _viewClass='full', _viewDelayMs=0, _previewTier='';
+// 管理者ロールプレビュー（?as=）: 実スタッフのみ、各ロールの見え方をシミュレート
+var _realStaff=false, _previewRole='';
+var _PREVIEW_ROLES={admin:'管理者',participant:'参加者',family:'家族閲覧者',paid:'有料会員',free:'一般会員'};
+function _normPreviewRole(v){ v=String(v||'').trim().toLowerCase(); return _PREVIEW_ROLES[v]?v:''; }
 
 auth.onAuthStateChanged(function(user){
   if(!user){ g('wrap').innerHTML='<div class="msg">このページの閲覧には会員ログインが必要です。<br><br><a href="/member.html">▶ 会員コンテンツでログイン</a></div>'; return; }
@@ -754,6 +758,7 @@ auth.onAuthStateChanged(function(user){
   _isReal=!!(user.providerData&&user.providerData.length) || (user.isAnonymous===false);
   user.getIdTokenResult().then(function(r){
     _isStaff=(r.claims&&(r.claims.role==='owner'||r.claims.role==='staff'))||false;
+    _realStaff=_isStaff; _previewRole=_realStaff?_normPreviewRole(qs('as')):'';
   }).catch(function(){}).then(function(){
     // 会員プロフィール＋グレード（プラン）を取得
     return Promise.all([
@@ -840,6 +845,13 @@ function computeViewAccess(ev, selfReg){
   _isParticipant=_uidInParticipants(ev) || !!selfReg;
   var fam=(ev&&Array.isArray(ev.familyViewerIds))?ev.familyViewerIds:[];
   _isFamily = (fam.indexOf(_uid)>=0) || (!!_memberId && fam.indexOf(String(_memberId))>=0);
+  // 管理者ロールプレビュー: 実スタッフが ?as=（管理者以外）を指定したら、そのロールにフラグを降格し、
+  // 管理UI・セクション表示・地図・遅延すべてをそのロールの見え方にシミュレートする。
+  if(_realStaff && _previewRole && _previewRole!=='admin'){
+    _isStaff=false; _isCoAdmin=false;
+    _isParticipant=(_previewRole==='participant');
+    _isFamily=(_previewRole==='family');
+  }
   // オープンイベント: 誰でも全内容をリアルタイム閲覧可（遅延・非表示なし）
   if((ev&&ev.eventType)==='open' && !(_isStaff&&_previewTier)){ _viewClass='full'; _viewDelayMs=0; return {allowed:true}; }
   if(_isStaff || _isParticipant || _isFamily){ _viewClass='full'; _viewDelayMs=0; }
@@ -851,7 +863,7 @@ function computeViewAccess(ev, selfReg){
       var ok=(_viewReqStatus==='approved')||(appr.indexOf(_uid)>=0)||(!!_memberId && appr.indexOf(String(_memberId))>=0);
       if(!ok) return {allowed:false, gate:'request', msg:'このイベントの閲覧には申請が必要です。'};
     }
-    var paid=(_planLevel>=1)||!!(_member&&_member.eventViewRight);
+    var paid=(_realStaff&&(_previewRole==='paid'||_previewRole==='free'))?(_previewRole==='paid'):((_planLevel>=1)||!!(_member&&_member.eventViewRight));
     var h=paid?(ev.viewDelayPaidH!=null?ev.viewDelayPaidH:3):(ev.viewDelayFreeH!=null?ev.viewDelayFreeH:24);
     _viewClass='restricted'; _viewDelayMs=Math.max(0,Number(h)||0)*3600000;
   }
@@ -893,7 +905,9 @@ function _setAccBadge(type, text){ var el=g('accbadge-'+type); if(el) el.textCon
 function render(ev){
   _ev=ev;
   var period=fmtDate(ev.startDate)+(ev.endDate&&ev.endDate!==ev.startDate?(' 〜 '+fmtDate(ev.endDate)):'');
-  var html='<div class="hero"><div class="ev-title">'+esc(ev.name||'（無題イベント）')+(ev.published?'':'<span class="pill">非公開（プレビュー）</span>')+'</div>'
+  // 管理者ロールプレビュー中のバナー（管理UIがそのロールの見え方で消えるため明示）
+  var _pvBanner=(_realStaff&&_previewRole)?('<div style="position:sticky;top:0;z-index:500;background:#8a2818;color:#fff;font-size:12px;font-weight:700;text-align:center;padding:6px 10px">🛠 プレビュー中：'+esc(_PREVIEW_ROLES[_previewRole]||_previewRole)+'としての表示（管理者のみ）　<a href="/event.html?id='+encodeURIComponent(eventId||'')+'" style="color:#ffd9b0;text-decoration:underline">通常表示に戻る</a></div>'):'';
+  var html=_pvBanner+'<div class="hero"><div class="ev-title">'+esc(ev.name||'（無題イベント）')+(ev.published?'':'<span class="pill">非公開（プレビュー）</span>')+'</div>'
     +'<div class="ev-period">📅 '+esc(period)+'</div></div>'
     +'<div id="cost-banner"></div>'
     +'<div id="now-top"></div>';
