@@ -217,6 +217,10 @@ a{color:var(--gold-d)}
 .fam-st.ok{background:#dff3e6;color:#1f7a44}
 .fam-st.wait{background:#fbf1d6;color:#8a6a1e}
 .fam-st.no{background:#fbdcd6;color:#a5341f}
+.fam-rej{display:flex;align-items:center;gap:8px;background:#fbdcd6;border:1px solid #e9b4a8;border-radius:10px;padding:9px 11px;margin-bottom:8px}
+.fam-rej-ic{flex:0 0 auto;font-size:15px}
+.fam-rej-tx{flex:1;min-width:0;font-size:12.5px;color:#8a2d1a;line-height:1.5}
+.fam-rej-ok{flex:0 0 auto;background:#a5341f;color:#fff;border:none;border-radius:16px;padding:6px 16px;font-size:12.5px;font-weight:700;cursor:pointer}
 .mpbtn.off{background:var(--cream3);color:var(--ink3);cursor:default}
 .soon-card{background:var(--white);border:1px dashed var(--border2);border-radius:var(--rl);padding:20px;margin-bottom:14px;text-align:center;color:var(--ink3);font-size:13px}
 .sc-day{font-size:13px;font-weight:700;color:var(--gold-d);margin:14px 0 6px}
@@ -1326,24 +1330,39 @@ function renderMypageBar(){
   if(actEl) actEl.innerHTML=acts.join('');
 }
 // ③(閲覧) 家族閲覧者 欄（現地ホストの下）: 承認済みの家族閲覧者を表示し、招待ボタンを内包
-var _famViewers=[];
+var _famViewers=[], _famRejected=[];
+// 却下通知の「OK（確認済み）」はこの端末に保存（招待者本人のみに表示する通知のため）
+function _famRejAckKey(){ return 'famRejAck_'+(eventId||''); }
+function _famRejAckList(){ try{ return JSON.parse(localStorage.getItem(_famRejAckKey())||'[]')||[]; }catch(e){ return []; } }
+function _famRejAck(id){ try{ var a=_famRejAckList(); if(a.indexOf(id)<0){ a.push(id); localStorage.setItem(_famRejAckKey(), JSON.stringify(a)); } }catch(e){} }
+function dismissFamRej(id){ _famRejAck(id); _famRejected=_famRejected.filter(function(iv){ return iv.id!==id; }); renderFamSection(); }
 function loadFamViewers(){
-  if(!_isReal){ renderFamSection(); return; }
+  if(!_isReal){ _famViewers=[]; _famRejected=[]; renderFamSection(); return; }
   db.collection('events').doc(eventId).collection('familyInvites').get().then(function(snap){
-    _famViewers=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).filter(function(iv){ return iv.status==='approved'; });
+    var all=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    _famViewers=all.filter(function(iv){ return iv.status==='approved'; });
+    // 却下された招待は「招待した本人」だけに通知表示（この端末で未確認のもの）
+    var ack=_famRejAckList();
+    _famRejected=all.filter(function(iv){ return iv.status==='rejected' && iv.invitedBy===_uid && ack.indexOf(iv.id)<0; });
     renderFamSection();
-  }).catch(function(){ _famViewers=[]; renderFamSection(); });
+  }).catch(function(){ _famViewers=[]; _famRejected=[]; renderFamSection(); });
 }
 function renderFamSection(){
   var el=g('fam-section'); if(!el) return;
   var ev=_ev||{};
   var canInvite=_isReal && ev.eventType!=='open' && _isParticipant && !(_myPt&&_myPt.status==='pending');
-  if(!_famViewers.length && !canInvite){ el.innerHTML=''; return; }
+  var hasRej=_isReal && _famRejected.length>0;
+  if(!_famViewers.length && !canInvite && !hasRej){ el.innerHTML=''; return; }
+  // 却下通知（招待者本人のみ・OKで非表示）
+  var rej=hasRej?_famRejected.map(function(iv){
+    var nm=(iv.memberId||'')+((iv.memberName)?'（'+iv.memberName+'）':'');
+    return '<div class="fam-rej"><span class="fam-rej-ic">⚠️</span><span class="fam-rej-tx">家族閲覧の招待'+(nm?'（'+esc(nm)+'）':'')+'は管理者により却下されました。</span><button class="fam-rej-ok" onclick="dismissFamRej(\''+esc(iv.id)+'\')">OK</button></div>';
+  }).join(''):'';
   var chips=_famViewers.map(function(iv){
     var nm=iv.memberName||iv.memberId||'（会員）';
     return '<div class="pt-card"><span class="pt-av">'+esc((nm||'？').slice(0,1))+'</span><div class="pt-tx"><div class="pt-nm">'+esc(nm)+'</div></div></div>';
   }).join('');
-  var html='<div class="fam-sec"><div class="fam-sec-hd">家族閲覧者</div>'
+  var html='<div class="fam-sec">'+rej+'<div class="fam-sec-hd">家族閲覧者</div>'
     +'<div class="pt-grid">'+(chips||'<div style="font-size:12px;color:var(--ink3)">まだ家族閲覧者はいません。</div>')+'</div>';
   if(canInvite) html+='<div style="margin-top:8px"><button class="mpbtn" style="background:var(--teal)" onclick="inviteFamily()">👨‍👩‍👧 家族を閲覧に招待</button></div>';
   html+='</div>';
