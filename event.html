@@ -357,6 +357,9 @@ a{color:var(--gold-d)}
 .pp-grid{display:flex;flex-wrap:wrap;gap:6px}
 .pp-th{width:88px;height:88px;border-radius:8px;overflow:hidden;border:1px solid var(--border);display:block;padding:0;background:none;cursor:pointer}
 .pp-th img{width:100%;height:100%;object-fit:cover;display:block}
+.sc-free-photos{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 2px}
+.sc-fp-th{width:76px;height:76px;border-radius:7px;overflow:hidden;border:1px solid var(--border);display:block;padding:0;background:none;cursor:pointer}
+.sc-fp-th img{width:100%;height:100%;object-fit:cover;display:block}
 .sc-item.has-geo{cursor:pointer}
 .sc-item.has-geo:hover{box-shadow:0 2px 8px rgba(0,0,0,.12)}
 /* ネスト容器（時間帯で自動ネスト・最大3階層） */
@@ -864,13 +867,13 @@ function computeViewAccess(ev, selfReg){
       if(!ok) return {allowed:false, gate:'request', msg:'このイベントの閲覧には申請が必要です。'};
     }
     var paid=(_realStaff&&(_previewRole==='paid'||_previewRole==='free'))?(_previewRole==='paid'):((_planLevel>=1)||!!(_member&&_member.eventViewRight));
-    var h=paid?(ev.viewDelayPaidH!=null?ev.viewDelayPaidH:3):(ev.viewDelayFreeH!=null?ev.viewDelayFreeH:24);
-    _viewClass='restricted'; _viewDelayMs=Math.max(0,Number(h)||0)*3600000;
+    if(paid){ _viewClass='full'; _viewDelayMs=0; } // 有料会員: 時差なし（スケジュールはリアルタイム）
+    else { var h=(ev.viewDelayFreeH!=null?ev.viewDelayFreeH:24); _viewClass='restricted'; _viewDelayMs=Math.max(0,Number(h)||0)*3600000; } // 一般会員: 時差あり
   }
-  // 管理者プレビュー: 権限クラスの上書き（デバッグ）
+  // 管理者プレビュー: 権限クラスの上書き（デバッグ）。有料は時差なし。
   if(_isStaff && _previewTier){
-    if(_previewTier==='full'){ _viewClass='full'; _viewDelayMs=0; }
-    else { _viewClass='restricted'; var hh=(_previewTier==='paid')?(ev.viewDelayPaidH!=null?ev.viewDelayPaidH:3):(ev.viewDelayFreeH!=null?ev.viewDelayFreeH:24); _viewDelayMs=Math.max(0,Number(hh)||0)*3600000; }
+    if(_previewTier==='full'||_previewTier==='paid'){ _viewClass='full'; _viewDelayMs=0; }
+    else { _viewClass='restricted'; var hh=(ev.viewDelayFreeH!=null?ev.viewDelayFreeH:24); _viewDelayMs=Math.max(0,Number(hh)||0)*3600000; }
   }
   return {allowed:true};
 }
@@ -2441,6 +2444,7 @@ function renderSchedItem(it, leg){
   var geo=(it.lat!=null&&it.lng!=null);
   var privLoc=_privHidden(it); // 非公開場所: 閲覧不可の人には地図・ルートを伏せる
   var hideLoc=_locHidden(it) || privLoc; // ストーカー対策/非公開場所
+  var _free=_isFreeViewer(); // 一般会員: 2点間ルート非表示・写真は項目下に一覧
   var did=esc(it.id);
   var meta=[];
   // 場所写真: 2点間移動以外は、紐づく場所（地点名一致）の写真を使用（1枚目=サムネイル、詳細で全表示）
@@ -2456,13 +2460,15 @@ function renderSchedItem(it, leg){
   } else {
     var _flm=(it.travelMode==='flight'||it.category==='flight'); // 空路は「✈️ ルート」で経路画面を開き、Googleマップ上で✈️フライトに切替可能
     var ml=gmapLink(it); if(ml) meta.push('<a class="sc-map" href="'+esc(ml)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📍 地図</a>');
-    if(it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="'+esc(routeLink(it))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+(_flm?'✈️ ルート':'🚗 ルート')+'</a>');
+    if(!_free && it.isMove&&it.toLat!=null&&it.toLng!=null&&it.lat!=null&&it.lng!=null) meta.push('<a class="sc-map" href="'+esc(routeLink(it))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+(_flm?'✈️ ルート':'🚗 ルート')+'</a>');
     var _ri=_moveInfoHtml(it); if(_ri) meta.push(_ri);
   }
   // 会員の写真投稿・閲覧ボタン: コンテナ右上に大きめ表示（📷閲覧／📤投稿・管理）
   var photoCorner='';
-  if(photos.length) photoCorner+='<button type="button" class="sc-photo-big" onclick="event.stopPropagation();openLb(\''+did+'\',0)" title="写真を見る">📷 写真('+photos.length+')</button>';
+  if(photos.length && !_free) photoCorner+='<button type="button" class="sc-photo-big" onclick="event.stopPropagation();openLb(\''+did+'\',0)" title="写真を見る">📷 写真('+photos.length+')</button>';
   if(_canPost()) photoCorner+='<button type="button" class="sc-photo-big up" onclick="event.stopPropagation();openItemPhotoMgr(\''+did+'\')" title="写真を投稿・管理">📤 投稿</button>';
+  // 一般会員: 写真はマップに出さず、項目下にサムネイル一覧で表示
+  var freePhotoStrip=(_free && photos.length)?('<div class="sc-free-photos">'+photos.map(function(p,i){ return '<button type="button" class="sc-fp-th" onclick="event.stopPropagation();openLb(\''+did+'\','+i+')"><img src="'+esc(p.url)+'" alt="" loading="lazy"></button>'; }).join('')+'</div>'):'';
   // プリセット写真: 投稿ボタンの下に、ボタン幅と同じサムネイル（クリックで閲覧）
   var presetThumb=aphotos.length?('<button type="button" class="sc-right-thumb" onclick="event.stopPropagation();openItemPhotos(\''+did+'\',0)" title="写真を見る"><img src="'+esc(aphotos[0].url)+'" alt="" loading="lazy">'+(aphotos.length>1?'<span class="sc-thumb-n">'+aphotos.length+'</span>':'')+'</button>'):'';
   // 班バッジ・名前
@@ -2485,7 +2491,7 @@ function renderSchedItem(it, leg){
   var rightCol=(photoCorner||presetThumb)?('<div class="sc-right">'+photoCorner+presetThumb+'</div>'):'';
   // 折畳時に見えるのは「時間・イベントアイコン・タイトル・写真」のみ（参加者/ホスト/名前/費用は展開で表示）
   return '<div class="sc-item'+(clickable?' has-geo':'')+'" style="background:'+catBg(it.category)+'"'+(clickable?' onclick="onSchedItemClick(\''+did+'\','+(geo?'1':'0')+')"':'')+'>'+schedTimeHtml(it,leg)+'<span class="sc-ic sc-ic-pop" title="'+esc(catName(it.category))+'" onclick="event.stopPropagation();showCatPop(event,\''+esc(it.category)+'\')">'+ic+'</span>'
-    +'<div class="sc-body"><div class="sc-ttl">'+esc(it.title||'')+((_isStaff&&it.secret)?(' <span style="font-size:10px;font-weight:700;border-radius:9px;padding:1px 7px;white-space:nowrap;'+(it.actualStart?'background:rgba(26,110,88,.12);color:var(--teal,#1a6e58)':'background:rgba(140,40,24,.1);color:var(--red,#8c2818)')+'" title="シークレット: この項目のCIを記録すると会員に公開されます">🔒'+(it.actualStart?'公開済':'未公開')+'</span>'):'')+'<span class="sc-wx" id="sc-wx-'+did+'"></span>'+(hasDetail?'<span class="sc-caret2" id="scc-'+did+'">詳細表示</span>':'')+'</div>'+_schSubLine(it)
+    +'<div class="sc-body"><div class="sc-ttl">'+esc(it.title||'')+((_isStaff&&it.secret)?(' <span style="font-size:10px;font-weight:700;border-radius:9px;padding:1px 7px;white-space:nowrap;'+(it.actualStart?'background:rgba(26,110,88,.12);color:var(--teal,#1a6e58)':'background:rgba(140,40,24,.1);color:var(--red,#8c2818)')+'" title="シークレット: この項目のCIを記録すると会員に公開されます">🔒'+(it.actualStart?'公開済':'未公開')+'</span>'):'')+'<span class="sc-wx" id="sc-wx-'+did+'"></span>'+(hasDetail?'<span class="sc-caret2" id="scc-'+did+'">詳細表示</span>':'')+'</div>'+_schSubLine(it)+freePhotoStrip
     +_cicoControls(it)
     +detail
     +'</div>'
@@ -2933,6 +2939,13 @@ function _itemPrivate(it){ return !!(it && (_placeIsPrivate(it.placeName) || (it
 function _canSeePrivate(){ return !!(_isStaff||_isCoAdmin||_isParticipant||_isFamily); }
 // 写真投稿ボタンは参加者・現地ホスト（＝_isParticipant）とスタッフのみ
 function _canPost(){ return !!(_isStaff||_isCoAdmin||_isParticipant); }
+// 一般会員（非参加・非家族・非有料・非スタッフ）: 日別公開ゲート／2点間ルート非表示／写真は項目単位一覧
+function _isFreeViewer(){
+  if(_isStaff||_isCoAdmin||_isParticipant||_isFamily) return false;
+  if(_realStaff && _previewRole) return _previewRole==='free';
+  var paid=(_planLevel>=1)||!!(_member&&_member.eventViewRight);
+  return !paid;
+}
 function _privHidden(it){ return !_canSeePrivate() && _itemPrivate(it); }
 // 非公開場所の写真を下部に集約（閲覧不可の人のみ・場所は伏せ写真のみ・会員投稿＋場所登録）
 function _privatePhotosHtml(){
@@ -2958,6 +2971,15 @@ function renderSchedule(items){
   // シークレット項目（＋入れ子配下）は、CI記録まで非スタッフに非表示
   var _secretSet=_secretHiddenSet(enr);
   var visEnr=enr.filter(function(e){ return !_itemHidden(e.it) && !_secretSet[e.it.id]; });
+  // 一般会員: その日の最初の項目が公開時間（最初の項目時刻＋遅延）に達した日のみ、その日の全項目を表示
+  var _freeDayGated=0;
+  if(_isFreeViewer()){
+    var _dayFirst={}; enr.forEach(function(e){ var d=e.it.date||''; if(_dayFirst[d]==null||e.ms<_dayFirst[d]) _dayFirst[d]=e.ms; });
+    var _nm=nowMs(), _shownDays={}, _allDays={};
+    enr.forEach(function(e){ _allDays[e.it.date||'']=1; });
+    visEnr=visEnr.filter(function(e){ var d=e.it.date||''; var ok=(_nm >= (_dayFirst[d]!=null?_dayFirst[d]:e.ms)); if(ok)_shownDays[d]=1; return ok; });
+    _freeDayGated=Object.keys(_allDays).filter(function(d){ return !_shownDays[d]; }).length;
+  }
   _nowMapItem=null;
   _dayMapsReset(); // 既存の日別マップを破棄（再描画のたびに作り直す）
   // 日付ごとの項目（その日のルートマップ用）。並びはJST順。
@@ -3067,6 +3089,7 @@ function renderSchedule(items){
       +'<div class="sc-day-body" id="sc-day-body-'+idx+'" style="display:none">'+_daySumHtml(gp.day)+mapHtml+gp.html+'</div>';
   }).join('');
   if(hiddenCount>0) h+='<div class="sc-hiddennote">🙈 未完了の非公開アイテムが '+hiddenCount+' 件あります（完了後に表示されます）。</div>';
+  if(_freeDayGated>0) h+='<div class="sc-hiddennote">🗓 この先の予定（'+_freeDayGated+'日分）は、各日の開始時刻になると表示されます。</div>';
   h+='</div>';
   h+=_privatePhotosHtml(); // 非公開場所の写真（閲覧不可の人向け集約欄）
   el.innerHTML=h;
@@ -3216,6 +3239,7 @@ function _buildDayMap(idx){
   if(!el||!window.L||!items||!items.length) return;
   var map=L.map(el,{scrollWheelZoom:false}); _dayMapObj[idx]=map;
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+  var _free=_isFreeViewer(); // 一般会員: ルート線・写真ピンは描かない（地点ピンのみ）
   var bounds=[], refLng=null, photoPts=[];
   items.forEach(function(it){
     if(_locHidden(it)||_privHidden(it)) return;
@@ -3227,22 +3251,24 @@ function _buildDayMap(idx){
       bounds.push([it.lat,plng]);
       if(it.isMove&&it.toLat!=null&&it.toLng!=null){
         var tplng=_unwrapLng(it.toLng, refLng); refLng=tplng;
-        var arc=_drawMoveRoute(map, it, [it.lat,plng], [it.toLat,tplng]);
+        if(!_free){ var arc=_drawMoveRoute(map, it, [it.lat,plng], [it.toLat,tplng]); arc.forEach(function(p){ bounds.push(p); }); }
+        else { bounds.push([it.lat,plng]); bounds.push([it.toLat,tplng]); }
         L.circleMarker([it.toLat,tplng],{radius:5,color:'#7a5610',fillColor:'#c8921e',fillOpacity:1}).addTo(map).bindPopup('着: '+esc(it.toName||it.title||''));
-        arc.forEach(function(p){ bounds.push(p); });
       }
     }
-    // 写真: 各写真を自身の座標(EXIF)に配置。座標が無い写真のみ項目座標にフォールバック。
-    var ph=_photosByItem[it.id]||[];
-    ph.forEach(function(p,pidx){
-      var ll=null;
-      if(p.lat!=null&&p.lng!=null){ ll=[p.lat, _unwrapLng(p.lng, refLng!=null?refLng:p.lng)]; refLng=ll[1]; }
-      else if(it.lat!=null&&it.lng!=null){ ll=[it.lat, (itemPlng!=null?itemPlng:_unwrapLng(it.lng, refLng!=null?refLng:it.lng))]; }
-      if(ll){ photoPts.push({ll:ll, iid:it.id, idx:pidx}); bounds.push(ll); }
-    });
+    // 写真ピン（一般会員には出さない。写真は項目下の一覧で表示）
+    if(!_free){
+      var ph=_photosByItem[it.id]||[];
+      ph.forEach(function(p,pidx){
+        var ll=null;
+        if(p.lat!=null&&p.lng!=null){ ll=[p.lat, _unwrapLng(p.lng, refLng!=null?refLng:p.lng)]; refLng=ll[1]; }
+        else if(it.lat!=null&&it.lng!=null){ ll=[it.lat, (itemPlng!=null?itemPlng:_unwrapLng(it.lng, refLng!=null?refLng:it.lng))]; }
+        if(ll){ photoPts.push({ll:ll, iid:it.id, idx:pidx}); bounds.push(ll); }
+      });
+    }
   });
-  _drawTripTracks(map, _dayDateOf[idx]||null, bounds); // 旅の足跡（該当日）
-  _addPhotoCluster(map, photoPts); // 縮尺に応じて近接写真をまとめる
+  if(!_free) _drawTripTracks(map, _dayDateOf[idx]||null, bounds); // 旅の足跡（GPX）も一般会員には出さない
+  _addPhotoCluster(map, photoPts); // 縮尺に応じて近接写真をまとめる（一般会員は photoPts 空）
   if(bounds.length) map.fitBounds(bounds,{padding:[24,24],maxZoom:14}); else map.setView([35.68,139.76],9);
   setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} },140);
 }
