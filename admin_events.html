@@ -2561,16 +2561,17 @@ function _caSec(it){ return (it&&it.createdAt&&it.createdAt.seconds)||0; } // �
 // 壁時計の秒（HH:MM / HH:MM:SS → 当日内の秒。14:24:30=51870 / 25:30=91800）。予定(HH:MM)と実時間(HH:MM:SS)の共通比較キー。
 function _hmSec(s){ var m=String(s==null?'':s).match(/^(\d{1,2}):([0-5]\d)(?::([0-5]\d))?/); if(!m) return null; return (+m[1])*3600+(+m[2])*60+(m[3]!=null?+m[3]:0); }
 function _sortByJst(items){
-  // 日付（現地日付）でまとめ、同じ日の中で「実時間(あれば)→予定時刻」の順に並べる。
-  // 実時間が翌日にまたがっても日付グループは予定日のまま（日またぎで並びが割れないように）。
+  // 日付（現地日付）でまとめ、同じ日の中は常に「予定時刻」順に並べる。
+  // スケジュールが遅れCI時刻が次の予定より後になっても並びは入れ替えない
+  //（CI済みの項目も予定どおりの位置＝CI前と同じ位置に表示する）。
   return items.map(function(it,i){
     var d=_schedInstant(it); var sms=d?d.getTime():0;
     var ams=(it.actualStartMs!=null)?it.actualStartMs:null;
-    var ms=(ams!=null)?ams:sms; // 絶対時刻用。
-    // 同日内の並び用キー: 予定日(it.date)＋「実時間HH:MM:SS優先 / 無ければ予定HH:MM」の壁時計を項目TZで実時刻化し、秒も加算。
-    // actualStartMs(記録した実日時=CI押下日が別日のことがある)ではなく予定日基準なので、押下日がずれても正しく並ぶ。TZ跨ぎも実時刻で比較。
+    var ms=(ams!=null)?ams:sms; // 絶対時刻用（現在/NEXT判定等。実時間を反映）。
+    // 同日内の並び用キー: 予定日(it.date)＋「予定HH:MM（無ければ実時間）」の壁時計を項目TZで実時刻化し、秒も加算。
+    // 並びは常に予定時刻基準なので、CI時刻が前後しても順序は固定。TZ跨ぎも予定の実時刻で比較。
     var tz=(it.lat!=null&&it.lng!=null)?(_safeTz(it.lat,it.lng)||'Asia/Tokyo'):'Asia/Tokyo';
-    var effT=it.actualStart||it.time||'23:59';
+    var effT=it.time||it.actualStart||'23:59';
     var di=_wallInstant(it.date, effT, tz);
     var sortMs=di?(di.getTime()+(((_hmSec(effT)||0)%60)*1000)):ms;
     return {it:it, ms:ms, sortMs:sortMs, day:(it.date||'9999-99-99'), em:_endMark(it), ca:_caSec(it), seq:it.seq||0, i:i};
