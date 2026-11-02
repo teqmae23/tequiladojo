@@ -2828,3 +2828,106 @@ exports.onTreatOrderServed = functions.firestore
     }
     return null;
   });
+
+// ── イベント動画の変換（1080p H.264 MP4 + ポスター生成） ───────────────────
+// 会員が event_videos_raw/{eventId}/{mediaId}.{ext} に動画をアップロードすると、
+// このトリガーが ffmpeg で 1080p H.264(MP4/+faststart) に変換し、ポスター画像とともに
+// event_videos/{eventId}/ に出力する。完了後 events/{eventId}/photos/{mediaId} を
+// status:'ready' に更新し、元の生ファイルは削除する（保存容量の節約）。
+// 全端末での再生互換（iPhoneのHEVC .mov → H.264）と容量/通信の抑制が目的。
+function _storageDownloadUrl(bucket, objPath, token) {
+  return 'https://firebasestorage.googleapis.com/v0/b/' + bucket +
+    '/o/' + encodeURIComponent(objPath) + '?alt=media&token=' + token;
+}
+function _runFfmpeg(ffmpegPath, args) {
+  const { spawn } = require('child_process');
+  return new Promise((resolve, reject) => {
+    const p = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = '';
+    p.stderr.on('data', (d) => { err += d.toString(); if (err.length > 20000) err = err.slice(-20000); });
+    p.on('error', reject);
+    p.on('close', (code) => code === 0 ? resolve() : reject(new Error('ffmpeg exit ' + code + ': ' + err.slice(-800))));
+  });
+}
+exports.transcodeEventVideo = functions.region('asia-northeast1')
+  .runWith({ memory: '2GB', timeoutSeconds: 540 })
+  .storage.object().onFinalize(async (obj) => {
+    const name = obj.name || '';
+    if (!name.startsWith('event_videos_raw/')) return null; // 対象パス以外は無視
+    const m = name.match(/^event_videos_raw\/([^/]+)\/([^/.]+)\.[^./]+$/);
+    if (!m) { console.warn('transcodeEventVideo: unexpected path', name); return null; }
+    const eventId = m[1], mediaId = m[2];
+    const path = require('path');
+    const os = require('os');
+    const fs = require('fs');
+    const crypto = require('crypto');
+    const ffmpegPath = require('ffmpeg-static');
+    const docRef = db.collection('events').doc(eventId).collection('photos').doc(mediaId);
+    const bucket = admin.storage().bucket(obj.bucket);
+    const tmpIn = path.join(os.tmpdir(), mediaId + '_in');
+    const tmpOut = path.join(os.tmpdir(), mediaId + '.mp4');
+    const tmpPoster = path.join(os.tmpdir(), mediaId + '.jpg');
+    const outBase = 'event_videos/' + eventId + '/' + mediaId;
+    const cleanup = () => [tmpIn, tmpOut, tmpPoster].forEach((p) => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {} });
+    try {
+      await docRef.set({ status: 'processing' }, { merge: true });
+      await bucket.file(name).download({ destination: tmpIn });
+      // 1080p相当（長辺1920に収める・寸法は偶数化）・H.264・+faststart(ストリーミング最適化)・AAC
+      await _runFfmpeg(ffmpegPath, ['-y', '-i', tmpIn,
+        '-vf', "scale='min(1920,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+        '-c:a', 'aac', '-b:a', '128k', '-max_muxing_queue_size', '1024', tmpOut]);
+      // ポスター（1秒地点の1フレーム・長辺1280）。失敗しても本体は続行。
+      let hasPoster = false;
+      try {
+        await _runFfmpeg(ffmpegPath, ['-y', '-ss', '1', '-i', tmpIn, '-frames:v', '1',
+          '-vf', "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease", '-q:v', '4', tmpPoster]);
+        hasPoster = fs.existsSync(tmpPoster);
+      } catch (e) { console.warn('poster failed', mediaId, e && e.message); }
+      const vTok = crypto.randomUUID();
+      await bucket.upload(tmpOut, { destination: outBase + '.mp4', resumable: false, metadata: {
+        contentType: 'video/mp4', cacheControl: 'public,max-age=31536000',
+        metadata: { firebaseStorageDownloadTokens: vTok } } });
+      const videoUrl = _storageDownloadUrl(obj.bucket, outBase + '.mp4', vTok);
+      let posterUrl = null;
+      if (hasPoster) {
+        const pTok = crypto.randomUUID();
+        await bucket.upload(tmpPoster, { destination: outBase + '_poster.jpg', resumable: false, metadata: {
+          contentType: 'image/jpeg', cacheControl: 'public,max-age=31536000',
+          metadata: { firebaseStorageDownloadTokens: pTok } } });
+        posterUrl = _storageDownloadUrl(obj.bucket, outBase + '_poster.jpg', pTok);
+      }
+      const upd = {
+        status: 'ready', mediaType: 'video', url: videoUrl, videoUrl: videoUrl,
+        posterUrl: posterUrl, storagePath: outBase, storagePathRaw: admin.firestore.FieldValue.delete(),
+        transcodedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      if (posterUrl) upd.thumbUrl = posterUrl; // 既存ギャラリーはthumbUrlでサムネ表示するため兼用
+      await docRef.set(upd, { merge: true });
+      await bucket.file(name).delete().catch(() => {}); // 生ファイル削除
+    } catch (e) {
+      console.error('transcodeEventVideo error', eventId, mediaId, e);
+      await docRef.set({ status: 'error', errorMsg: String((e && e.message) || e).slice(0, 300) }, { merge: true }).catch(() => {});
+      await bucket.file(name).delete().catch(() => {}); // 失敗時も生ファイルは残さない
+    } finally {
+      cleanup();
+    }
+    return null;
+  });
+
+// ── 動画削除時のStorageクリーンアップ ──────────────────────────────────
+// events/{eventId}/photos/{photoId} の削除時、動画(mediaType==='video')なら
+// 変換後のMP4・ポスター・残っていれば生ファイルをAdmin権限で削除する。
+// （クライアントは event_videos/ への書込=削除ができないため、ここで後始末する）
+exports.cleanupEventVideo = functions.region('asia-northeast1')
+  .firestore.document('events/{eventId}/photos/{photoId}')
+  .onDelete(async (snap, context) => {
+    const d = snap.data() || {};
+    if (d.mediaType !== 'video') return null;
+    const bucket = admin.storage().bucket();
+    const targets = [];
+    if (d.storagePath) { targets.push(d.storagePath + '.mp4'); targets.push(d.storagePath + '_poster.jpg'); }
+    if (d.storagePathRaw) targets.push(d.storagePathRaw);
+    await Promise.all(targets.map((p) => bucket.file(p).delete().catch(() => {})));
+    return null;
+  });

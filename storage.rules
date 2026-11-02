@@ -67,6 +67,24 @@ service firebase.storage {
       allow delete: if isStaffRole();
     }
 
+    // イベント動画（生アップロード）: 実会員（匿名不可）が投稿。Cloud Functions が
+    // ffmpeg で 1080p H.264 に変換し event_videos/ に出力後、この生ファイルは削除される。
+    // 一時ファイルのため閲覧は staff/owner のみ。上限400MB・動画拡張子のみ。
+    match /event_videos_raw/{eventId}/{fileName} {
+      allow read: if isStaffRole();
+      allow create: if request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.resource.size < 400 * 1024 * 1024
+        && fileName.matches('[A-Za-z0-9_.-]+\\.(mp4|mov|m4v|webm|MP4|MOV|M4V)');
+      allow update, delete: if isStaffRole();
+    }
+    // イベント動画（変換後）＋ポスター画像: 認証ユーザーは閲覧可。
+    // 書き込みは変換関数（Admin SDK, ルールをバイパス）のみ＝クライアントからは不可。
+    match /event_videos/{eventId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
     // イベント ドキュメント/提出書類: 実会員（匿名不可）が書込可、認証ユーザーは閲覧可。
     match /event_docs/{eventId}/{fileName=**} {
       allow read: if request.auth != null;
