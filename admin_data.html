@@ -909,7 +909,14 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         </div>
         <div class="tbl-wrap">
           <table id="tbl-news">
-            <thead><tr><th>種別</th><th>タイトル</th><th>公開開始</th><th>公開終了</th><th>公開</th><th>✏️ 操作</th></tr></thead>
+            <thead><tr>
+              <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="newsSortBy('type')" title="クリックで並び替え">種別<span id="nwar-type" style="margin-left:3px;font-size:10px;color:var(--gold-d)"></span></th>
+              <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="newsSortBy('title')" title="クリックで並び替え">タイトル<span id="nwar-title" style="margin-left:3px;font-size:10px;color:var(--gold-d)"></span></th>
+              <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="newsSortBy('publishStart')" title="クリックで並び替え">公開開始<span id="nwar-publishStart" style="margin-left:3px;font-size:10px;color:var(--gold-d)"></span></th>
+              <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="newsSortBy('publishEnd')" title="クリックで並び替え">公開終了<span id="nwar-publishEnd" style="margin-left:3px;font-size:10px;color:var(--gold-d)"></span></th>
+              <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="newsSortBy('published')" title="クリックで並び替え">公開<span id="nwar-published" style="margin-left:3px;font-size:10px;color:var(--gold-d)"></span></th>
+              <th>✏️ 操作</th>
+            </tr></thead>
             <tbody id="tbody-news"><tr><td colspan="6" class="ec">読み込み中...</td></tr></tbody>
           </table>
         </div>
@@ -7111,9 +7118,33 @@ function loadNews(){
   }).catch(function(e){toast('ニュース読み込みエラー: '+e.message,'err');});
 }
 
+// 並び替え状態（既定: 公開開始の新しい順）
+var newsSort={key:'publishStart',dir:'desc'};
+function newsSortBy(key){
+  if(newsSort.key===key){ newsSort.dir=(newsSort.dir==='asc'?'desc':'asc'); }
+  else { newsSort.key=key; newsSort.dir=(key==='title'||key==='type')?'asc':'desc'; }
+  renderNews(cache.news);
+}
+function _newsSortRows(rows){
+  var k=newsSort.key, dir=(newsSort.dir==='asc'?1:-1);
+  function val(r){
+    if(k==='type') return (NEWS_TYPES[r.type]||r.type||'');
+    if(k==='title') return (r.title||'');
+    if(k==='published') return r.published?1:0;
+    return (r[k]||''); // publishStart / publishEnd は ISO文字列なので辞書順＝時系列順
+  }
+  return rows.slice().sort(function(a,b){
+    var va=val(a), vb=val(b);
+    if(k==='publishStart'||k==='publishEnd'){ var ea=!va, eb=!vb; if(ea&&!eb) return 1; if(!ea&&eb) return -1; } // 空（無期限/未設定）は常に末尾
+    if(typeof va==='string') return va<vb?-dir:(va>vb?dir:0);
+    return (va-vb)*dir;
+  });
+}
+function _newsArrows(){ ['type','title','publishStart','publishEnd','published'].forEach(function(k){ var el=g('nwar-'+k); if(el) el.textContent=(newsSort.key===k)?(newsSort.dir==='asc'?'▲':'▼'):''; }); }
 function renderNews(rows){
   var q=(g('s-news')||{}).value||'';
   if(q) rows=rows.filter(function(r){return (r.title||'').includes(q);});
+  rows=_newsSortRows(rows); _newsArrows();
   var tbody=g('tbody-news'); if(!tbody) return;
   if(!rows.length){tbody.innerHTML='<tr><td colspan="6" class="ec">データなし</td></tr>';return;}
   tbody.innerHTML=rows.map(function(r){
@@ -7131,6 +7162,7 @@ function renderNews(rows){
       +'<td>'+pub+'</td>'
       +'<td><div class="acts">'
         +'<button class="btn bs sm" onclick="openNewsModal(this.dataset.id)" data-id="'+eid+'">編集</button>'
+        +'<button class="btn bs sm" onclick="copyNews(this.dataset.id)" data-id="'+eid+'" title="この記事を複製して新規作成">複製</button>'
         +'<button class="btn bd sm" onclick="delNews(this.dataset.id)" data-id="'+eid+'">削除</button>'
       +'</div></td>'
     +'</tr>';
@@ -7165,6 +7197,20 @@ function openNewsModal(id){
     g('nw-publish').checked=false;
   }
   openM('m-news');
+}
+
+// 記事コピー: 既存記事の内容を引き継いで「新規」として開く（誤公開防止のため既定は非公開・タイトルに（コピー））
+function copyNews(id){
+  var r=cache.news.find(function(x){return x.id===id;}); if(!r){ toast('記事が見つかりません','err'); return; }
+  openNewsModal(null); // 新規作成として開く（editId無し）
+  rebuildNewsTypeSelect();
+  sv('nw-type', r.type||'info');
+  sv('nw-title', '（コピー）'+(r.title||''));
+  nwSetBody(r.body||'');
+  sv('nw-start', nwNowDt());
+  sv('nw-end', '');
+  g('nw-publish').checked=false;
+  g('mt-news').textContent='ニュース登録（複製）';
 }
 
 function delNews(id){
