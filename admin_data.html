@@ -906,6 +906,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <div class="card">
         <div class="toolbar">
           <div class="sbox"><input type="text" id="s-news" placeholder="タイトルで検索..."></div>
+          <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);cursor:pointer;white-space:nowrap"><input type="checkbox" id="s-news-live"> 公開中のみ表示</label>
         </div>
         <div class="tbl-wrap">
           <table id="tbl-news">
@@ -7118,6 +7119,15 @@ function loadNews(){
   }).catch(function(e){toast('ニュース読み込みエラー: '+e.message,'err');});
 }
 
+// ニュースの公開状態を判定（公開期間を考慮）: 非公開 / 公開予定(開始前) / 公開中 / 公開終了(期限切れ)
+function _newsStatus(r){
+  if(!r.published) return {label:'非公開', color:'var(--ink3)', bold:false, rank:0};
+  var now=Date.now();
+  if(r.publishEnd && !isNaN(Date.parse(r.publishEnd)) && Date.parse(r.publishEnd) < now) return {label:'公開終了', color:'#B0442E', bold:true, rank:1};
+  if(r.publishStart && !isNaN(Date.parse(r.publishStart)) && Date.parse(r.publishStart) > now) return {label:'公開予定', color:'#D4730A', bold:true, rank:2};
+  return {label:'公開中', color:'#2CA44E', bold:true, rank:3};
+}
+function _newsLive(r){ return _newsStatus(r).rank===3; } // いま実際に公開中か
 // 並び替え状態（既定: 公開開始の新しい順）
 var newsSort={key:'publishStart',dir:'desc'};
 function newsSortBy(key){
@@ -7130,7 +7140,7 @@ function _newsSortRows(rows){
   function val(r){
     if(k==='type') return (NEWS_TYPES[r.type]||r.type||'');
     if(k==='title') return (r.title||'');
-    if(k==='published') return r.published?1:0;
+    if(k==='published') return _newsStatus(r).rank;
     return (r[k]||''); // publishStart / publishEnd は ISO文字列なので辞書順＝時系列順
   }
   return rows.slice().sort(function(a,b){
@@ -7144,13 +7154,15 @@ function _newsArrows(){ ['type','title','publishStart','publishEnd','published']
 function renderNews(rows){
   var q=(g('s-news')||{}).value||'';
   if(q) rows=rows.filter(function(r){return (r.title||'').includes(q);});
+  if(g('s-news-live') && g('s-news-live').checked) rows=rows.filter(_newsLive); // 公開中のみ表示
   rows=_newsSortRows(rows); _newsArrows();
   var tbody=g('tbody-news'); if(!tbody) return;
   if(!rows.length){tbody.innerHTML='<tr><td colspan="6" class="ec">データなし</td></tr>';return;}
   tbody.innerHTML=rows.map(function(r){
     var tl=NEWS_TYPES[r.type]||r.type||'—';
     var tc=NEWS_TYPE_COLORS[r.type]||'#666';
-    var pub=r.published?'<span style="color:#2CA44E;font-weight:600">公開中</span>':'<span style="color:var(--ink3)">非公開</span>';
+    var _st=_newsStatus(r);
+    var pub='<span style="color:'+_st.color+';'+(_st.bold?'font-weight:600':'')+'">'+_st.label+'</span>';
     var startStr=r.publishStart?r.publishStart.slice(0,16).replace('T',' '):'—';
     var endStr=r.publishEnd?r.publishEnd.slice(0,16).replace('T',' '):'（無期限）';
     var eid=escHtml(r.id);
@@ -7263,6 +7275,10 @@ function delNews(id){
 (function(){
   var el=g('s-news'); if(!el) return;
   el.addEventListener('input',function(){renderNews(cache.news);});
+})();
+(function(){
+  var el=g('s-news-live'); if(!el) return;
+  el.addEventListener('change',function(){renderNews(cache.news);});
 })();
 (function(){
   var btn=g('btn-open-news'); if(!btn) return;
