@@ -2914,3 +2914,20 @@ exports.transcodeEventVideo = functions.region('asia-northeast1')
     }
     return null;
   });
+
+// ── 動画削除時のStorageクリーンアップ ──────────────────────────────────
+// events/{eventId}/photos/{photoId} の削除時、動画(mediaType==='video')なら
+// 変換後のMP4・ポスター・残っていれば生ファイルをAdmin権限で削除する。
+// （クライアントは event_videos/ への書込=削除ができないため、ここで後始末する）
+exports.cleanupEventVideo = functions.region('asia-northeast1')
+  .firestore.document('events/{eventId}/photos/{photoId}')
+  .onDelete(async (snap, context) => {
+    const d = snap.data() || {};
+    if (d.mediaType !== 'video') return null;
+    const bucket = admin.storage().bucket();
+    const targets = [];
+    if (d.storagePath) { targets.push(d.storagePath + '.mp4'); targets.push(d.storagePath + '_poster.jpg'); }
+    if (d.storagePathRaw) targets.push(d.storagePathRaw);
+    await Promise.all(targets.map((p) => bucket.file(p).delete().catch(() => {})));
+    return null;
+  });

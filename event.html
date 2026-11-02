@@ -386,6 +386,11 @@ a{color:var(--gold-d)}
 #lightbox{position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:300;display:none;align-items:center;justify-content:center;flex-direction:column}
 #lightbox.open{display:flex}
 #lb-img{max-width:94vw;max-height:80vh;border-radius:6px}
+#lb-vid{max-width:94vw;max-height:80vh;border-radius:6px;background:#000}
+.md-play{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:30px;height:30px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:13px;display:flex;align-items:center;justify-content:center;pointer-events:none;padding-left:2px}
+.md-state{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:11px;font-weight:700;color:var(--ink2);background:var(--cream2,#f3efe6);text-align:center;line-height:1.15}
+.md-state.err{color:var(--red,#8c2818)}
+.sc-fp-th{position:relative}.phx{cursor:pointer}
 #lb-cap{color:#fff;font-size:13px;margin-top:10px;text-align:center;max-width:90vw;padding:0 12px}
 #lb-del{margin-top:12px;padding:8px 16px;border:1px solid #e0836b;background:rgba(176,68,46,.85);color:#fff;font-size:13px;font-weight:700;border-radius:18px;cursor:pointer}
 #lb-nav-prev,#lb-nav-next{position:fixed;top:50%;transform:translateY(-50%);color:#fff;font-size:44px;cursor:pointer;padding:0 14px;user-select:none;opacity:.7}
@@ -659,6 +664,22 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closePh()">キャンセル</button><button class="btn bp" id="ph-up" onclick="saveReview()" disabled>保存</button></div>
   </div>
 </div>
+<!-- 動画アップロード（サーバーで1080p H.264に変換） -->
+<div class="mbg" id="vid-modal">
+  <div class="modal">
+    <div class="mhd"><span>🎬 動画を追加</span><button class="x" onclick="closeVid()">閉じる</button></div>
+    <div class="mbd">
+      <div class="fg"><label class="fl">動画（1本・90秒／400MBまで）</label><input class="fi" id="vid-file" type="file" accept="video/*"></div>
+      <div id="vid-info" style="font-size:12px;color:var(--ink2);margin:2px 0"></div>
+      <div class="mnote">アップロード後、サーバーで全端末向けに1080p（H.264）へ自動変換します。変換が終わると写真と同じ一覧・拡大表示で再生できます（数十秒〜数分）。きれいな映像を保ちつつ容量・通信を抑えます。</div>
+      <div class="fg"><label class="fl">スケジュール項目</label><select class="fi" id="vid-item"></select></div>
+      <div class="fg"><label class="fl">キャプション（場所・説明・任意）</label><input class="fi" id="vid-cap" placeholder="場所や説明"></div>
+      <div class="sv-err" id="vid-err"></div>
+      <div id="vid-prog" style="font-size:12px;color:var(--ink3);margin-top:6px"></div>
+    </div>
+    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeVid()">キャンセル</button><button class="btn bp" id="vid-up" onclick="vidUpload()" disabled>アップロード</button></div>
+  </div>
+</div>
 <!-- 割込イベント追加（管理者のみ） -->
 <div class="mbg" id="ins-modal">
   <div class="modal">
@@ -728,7 +749,7 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
   </div>
 </div>
 <!-- ライトボックス -->
-<div id="lightbox" onclick="closeLb()"><span id="lb-nav-prev" onclick="event.stopPropagation();lbNav(-1)">‹</span><img id="lb-img" src="" alt="" onclick="event.stopPropagation()"><span id="lb-nav-next" onclick="event.stopPropagation();lbNav(1)">›</span><div id="lb-cap"></div><button id="lb-capedit" onclick="event.stopPropagation();editLbCaption()">✏ キャプション</button><button id="lb-timeedit" onclick="event.stopPropagation();editLbTime()">🕐 時刻</button><button id="lb-del" style="display:none" onclick="event.stopPropagation();deletePhoto()">🗑 この写真を削除</button></div>
+<div id="lightbox" onclick="closeLb()"><span id="lb-nav-prev" onclick="event.stopPropagation();lbNav(-1)">‹</span><img id="lb-img" src="" alt="" onclick="event.stopPropagation()"><video id="lb-vid" controls playsinline preload="metadata" style="display:none" onclick="event.stopPropagation()"></video><span id="lb-nav-next" onclick="event.stopPropagation();lbNav(1)">›</span><div id="lb-cap"></div><button id="lb-capedit" onclick="event.stopPropagation();editLbCaption()">✏ キャプション</button><button id="lb-timeedit" onclick="event.stopPropagation();editLbTime()">🕐 時刻</button><button id="lb-del" style="display:none" onclick="event.stopPropagation();deletePhoto()">🗑 この写真を削除</button></div>
 
 <script>
 firebase.initializeApp(FIREBASE_CONFIG);
@@ -2485,10 +2506,10 @@ function renderSchedItem(it, leg){
   }
   // 会員の写真投稿・閲覧ボタン: コンテナ右上に大きめ表示（📷閲覧／📤投稿・管理）
   var photoCorner='';
-  if(photos.length && !_free) photoCorner+='<button type="button" class="sc-photo-big" onclick="event.stopPropagation();openLb(\''+did+'\',0)" title="写真を見る">📷 写真('+photos.length+')</button>';
+  if(photos.length && !_free){ var _vn=photos.filter(_isVid).length; var _lbl=_vn?('🎬 写真・動画('+photos.length+')'):('📷 写真('+photos.length+')'); photoCorner+='<button type="button" class="sc-photo-big" onclick="event.stopPropagation();openLb(\''+did+'\',0)" title="写真・動画を見る">'+_lbl+'</button>'; }
   if(_canPost()) photoCorner+='<button type="button" class="sc-photo-big up" onclick="event.stopPropagation();openItemPhotoMgr(\''+did+'\')" title="写真を投稿・管理">📤 投稿</button>';
   // 一般会員: 写真はマップに出さず、項目下にサムネイル一覧で表示
-  var freePhotoStrip=(_free && photos.length)?('<div class="sc-free-photos">'+photos.map(function(p,i){ return '<button type="button" class="sc-fp-th" onclick="event.stopPropagation();openLb(\''+did+'\','+i+')"><img src="'+esc(p.url)+'" alt="" loading="lazy"></button>'; }).join('')+'</div>'):'';
+  var freePhotoStrip=(_free && photos.length)?('<div class="sc-free-photos">'+photos.map(function(p,i){ return '<button type="button" class="sc-fp-th'+(_isVid(p)?' vid':'')+'" onclick="event.stopPropagation();openLb(\''+did+'\','+i+')">'+_mediaThumbInner(p)+'</button>'; }).join('')+'</div>'):'';
   // プリセット写真: 投稿ボタンの下に、ボタン幅と同じサムネイル（クリックで閲覧）
   var presetThumb=aphotos.length?('<button type="button" class="sc-right-thumb" onclick="event.stopPropagation();openItemPhotos(\''+did+'\',0)" title="写真を見る"><img src="'+esc(aphotos[0].url)+'" alt="" loading="lazy">'+(aphotos.length>1?'<span class="sc-thumb-n">'+aphotos.length+'</span>':'')+'</button>'):'';
   // 班バッジ・名前
@@ -3100,7 +3121,7 @@ function renderSchedule(items){
   // 日付ごとの項目（その日のルートマップ用）。並びはJST順。
   var dayItemsMap={};
   visEnr.forEach(function(e){ var d=e.it.date||''; (dayItemsMap[d]=dayItemsMap[d]||[]).push(e.it); });
-  var h='<div class="card"><div class="sec-row"><div class="sec">🗓 スケジュール</div>'+((_isStaff||_isCoAdmin)?'<a class="ph-btn" style="text-decoration:none" href="/admin_events.html?sched='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛠 管理ページで編集</a><a class="ph-btn" style="text-decoration:none" href="/event_live.html?ev='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛰 ライブ中継</a>':'')+(_canPost()?'<button class="ph-btn" onclick="openPh()">📷 投稿</button>':'')+(_canSeePrivate()?'<button class="ph-btn" onclick="exportOfflineSchedule()" title="時刻・場所・住所・地図リンクを1枚にまとめて出力（写真なし）。保存・印刷してオフラインでご確認いただけます">📄 資料出力</button>':'')+'</div>';
+  var h='<div class="card"><div class="sec-row"><div class="sec">🗓 スケジュール</div>'+((_isStaff||_isCoAdmin)?'<a class="ph-btn" style="text-decoration:none" href="/admin_events.html?sched='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛠 管理ページで編集</a><a class="ph-btn" style="text-decoration:none" href="/event_live.html?ev='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛰 ライブ中継</a>':'')+(_canPost()?'<button class="ph-btn" onclick="openPh()">📷 投稿</button><button class="ph-btn" onclick="openVid()">🎬 動画</button>':'')+(_canSeePrivate()?'<button class="ph-btn" onclick="exportOfflineSchedule()" title="時刻・場所・住所・地図リンクを1枚にまとめて出力（写真なし）。保存・印刷してオフラインでご確認いただけます">📄 資料出力</button>':'')+'</div>';
   h+=debugTimeBar();
   var useG=SchedGroups.used(items); // 班（2班・3班）を使っている場合のみ右端バー表示
   var myG=useG?_viewerGroup(enr):1;
@@ -3557,10 +3578,10 @@ function renderExisting(){
   if(!_phTarget){ box.innerHTML=''; return; }
   var list=(_photosByItem[_phTarget]||[]);
   if(!list.length){ box.innerHTML='<div class="phx-head">この項目の写真はまだありません。</div>'; return; }
-  box.innerHTML='<div class="phx-head">この項目の写真（'+list.length+'枚）・タップで拡大／キャプション編集</div>'+list.map(function(p){
+  box.innerHTML='<div class="phx-head">この項目の写真・動画（'+list.length+'件）・タップで拡大／キャプション編集</div>'+list.map(function(p){
     var canDel=(_isStaff || (p.uploaderUid && p.uploaderUid===_uid));
-    return '<div class="phx-wrap"><div class="phx"><img src="'+esc(p.thumbUrl||p.url)+'" alt="" loading="lazy" onclick="openLb(\''+esc(_phTarget)+'\','+list.indexOf(p)+')">'
-      +(canDel?'<button class="phx-del" title="削除" onclick="deleteExistingPhoto(\''+esc(p.id)+'\')">✕</button>':'')+'</div>'
+    return '<div class="phx-wrap"><div class="phx'+(_isVid(p)?' vid':'')+'" onclick="openLb(\''+esc(_phTarget)+'\','+list.indexOf(p)+')">'+_mediaThumbInner(p)
+      +(canDel?'<button class="phx-del" title="削除" onclick="event.stopPropagation();deleteExistingPhoto(\''+esc(p.id)+'\')">✕</button>':'')+'</div>'
       +(p.caption?'<div class="phx-cap" title="'+esc(p.caption)+'">'+esc(p.caption)+'</div>':'')+'</div>';
   }).join('');
 }
@@ -3568,14 +3589,69 @@ function deleteExistingPhoto(pid){
   var list=(_photosByItem[_phTarget]||[]);
   var p=list.find(function(x){return x.id===pid;}); if(!p) return;
   if(!(_isStaff || (p.uploaderUid && p.uploaderUid===_uid))) return;
-  if(!confirm('この写真を削除しますか？（元に戻せません）')) return;
+  if(!confirm((_isVid(p)?'この動画':'この写真')+'を削除しますか？（元に戻せません）')) return;
   db.collection('events').doc(eventId).collection('photos').doc(pid).delete().then(function(){
-    if(p.storagePath&&storage){ storage.ref(p.storagePath+'.jpg').delete().catch(function(){}); storage.ref(p.storagePath+'_thumb.jpg').delete().catch(function(){}); }
+    _deleteMediaStorage(p);
     var i=list.indexOf(p); if(i>=0) list.splice(i,1); _phDirty=true; renderExisting(); toast('削除しました');
   }).catch(function(e){ toast('削除失敗: '+e.message); });
 }
 function closePh(){ g('ph-modal').classList.remove('open'); _phReview.forEach(function(r){ if(r._url) URL.revokeObjectURL(r._url); }); _phReview=[]; var dirty=_phDirty; _phDirty=false; _phTarget=null; if(dirty) loadSchedule(); }
 g('ph-modal').addEventListener('click',function(e){ if(e.target===g('ph-modal')) closePh(); });
+
+/* ── 動画アップロード（サーバー変換で1080p H.264へ・写真とは別フロー） ── */
+var VID_MAX_SEC=90, VID_MAX_MB=400, _vidFile=null, _vidDur=0;
+function openVid(itemId){
+  if(!_isReal) return;
+  _vidFile=null; _vidDur=0;
+  g('vid-file').value=''; g('vid-cap').value=''; g('vid-err').textContent=''; g('vid-prog').textContent=''; g('vid-info').textContent='';
+  g('vid-up').disabled=true;
+  g('vid-item').innerHTML='<option value="">— 項目を選択 —</option>'+_schedItems.map(function(it){ return '<option value="'+esc(it.id)+'"'+(it.id===itemId?' selected':'')+'>'+esc(_itemLabel(it))+'</option>'; }).join('');
+  g('vid-modal').classList.add('open');
+}
+function closeVid(){ g('vid-modal').classList.remove('open'); _vidFile=null; }
+g('vid-modal').addEventListener('click',function(e){ if(e.target===g('vid-modal')) closeVid(); });
+g('vid-file').addEventListener('change',function(){
+  var f=this.files&&this.files[0]; _vidFile=null; g('vid-err').textContent=''; g('vid-info').textContent=''; g('vid-up').disabled=true;
+  if(!f) return;
+  if(f.size > VID_MAX_MB*1024*1024){ g('vid-err').textContent='ファイルが大きすぎます（'+Math.round(f.size/1048576)+'MB）。'+VID_MAX_MB+'MB以内にしてください。'; return; }
+  var url=URL.createObjectURL(f), v=document.createElement('video'); v.preload='metadata';
+  v.onloadedmetadata=function(){ try{URL.revokeObjectURL(url);}catch(e){} var dur=v.duration||0;
+    if(dur>VID_MAX_SEC+0.5){ g('vid-err').textContent='動画が長すぎます（'+Math.round(dur)+'秒）。'+VID_MAX_SEC+'秒以内にしてください。'; return; }
+    _vidFile=f; _vidDur=Math.round(dur);
+    g('vid-info').textContent='長さ '+_vidDur+'秒 ・ '+(Math.round(f.size/1048576*10)/10)+'MB（アップロード後、サーバーで1080pに変換します）';
+    g('vid-up').disabled=false;
+  };
+  v.onerror=function(){ try{URL.revokeObjectURL(url);}catch(e){} g('vid-err').textContent='この動画を読み込めませんでした。別の形式（MP4/MOV）をお試しください。'; };
+  v.src=url;
+});
+function vidUpload(){
+  if(!_isReal||!_vidFile){ return; }
+  if(!storage){ g('vid-err').textContent='ストレージが利用できません'; return; }
+  var itemId=g('vid-item').value; if(!itemId){ g('vid-err').textContent='スケジュール項目を選択してください'; return; }
+  var it=_schedItems.find(function(x){return x.id===itemId;})||{};
+  var f=_vidFile, cap=(g('vid-cap').value||'').trim();
+  var ext=((f.name.match(/\.([A-Za-z0-9]+)$/)||[])[1]||'mp4').toLowerCase(); if(['mp4','mov','m4v','webm'].indexOf(ext)<0) ext='mp4';
+  var col=db.collection('events').doc(eventId).collection('photos'), pid=col.doc().id;
+  var raw='event_videos_raw/'+eventId+'/'+pid+'.'+ext;
+  g('vid-up').disabled=true; g('vid-err').textContent=''; g('vid-prog').textContent='アップロード中… 0%';
+  var task=storage.ref(raw).put(f,{contentType:f.type||'video/mp4'});
+  task.on('state_changed',
+    function(s){ var pct=s.totalBytes?Math.round(s.bytesTransferred/s.totalBytes*100):0; g('vid-prog').textContent='アップロード中… '+pct+'%'; },
+    function(err){ g('vid-prog').textContent=''; g('vid-up').disabled=false; g('vid-err').textContent='アップロード失敗: '+err.message; },
+    function(){
+      col.doc(pid).set({
+        scheduleItemId:itemId, mediaType:'video', status:'processing',
+        uploaderUid:_uid, uploaderName:_memberName||'',
+        caption:(cap||null), storagePathRaw:raw, durationSec:_vidDur,
+        lat:(it.lat!=null?it.lat:null), lng:(it.lng!=null?it.lng:null),
+        takenAt:(_itemEndMs(it)||Date.now()), timeInherited:true,
+        createdMs:Date.now(), createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      }).then(function(){
+        g('vid-prog').textContent=''; toast('動画をアップロードしました。変換が終わると表示されます（数十秒〜数分）。');
+        closeVid(); loadSchedule();
+      }).catch(function(e){ g('vid-up').disabled=false; g('vid-err').textContent='保存失敗: '+e.message; });
+    });
+}
 // 項目の基準時刻(ms): 実時間(CI)優先、無ければ予定時刻。終了も実時間(CO)優先。
 function _itemStartMs(it){ if(it.actualStartMs) return it.actualStartMs; if(it.date) return new Date(it.date+'T'+(it.time||'12:00')+':00').getTime(); return 0; }
 function _itemEndMs(it){ if(it.actualEndMs) return it.actualEndMs; var e=it.isMove?it.toTime:it.endTime; if(it.date&&e) return new Date(it.date+'T'+e+':00').getTime(); return 0; }
@@ -3907,6 +3983,20 @@ function saveReview(){
 }
 
 /* ── ライトボックス ── */
+// ── メディア（写真/動画）共通ヘルパー ──
+function _isVid(p){ return !!(p && p.mediaType==='video'); }
+function _vidReady(p){ return _isVid(p) && p.status==='ready' && !!p.url; }
+function _mediaThumbSrc(p){ return _isVid(p) ? (p.posterUrl||p.thumbUrl||'') : (p.thumbUrl||p.url||''); }
+// サムネイル1枚分の中身HTML（動画はポスター＋▶、変換中/失敗は状態表示）
+function _mediaThumbInner(p){
+  if(_isVid(p)){
+    if(p.status==='processing') return '<span class="md-state">⏳<br>変換中</span>';
+    if(p.status==='error') return '<span class="md-state err">⚠<br>失敗</span>';
+    var s=_mediaThumbSrc(p);
+    return (s?'<img src="'+esc(s)+'" alt="" loading="lazy">':'<span class="md-state">🎬</span>')+'<span class="md-play">▶</span>';
+  }
+  return '<img src="'+esc(_mediaThumbSrc(p))+'" alt="" loading="lazy">';
+}
 var _lbList=[], _lbIdx=0, _lbNoDelete=false;
 function openLb(itemId, idx){
   _lbList=(_photosByItem[itemId]||[]).slice(); _lbIdx=idx||0; _lbNoDelete=false;
@@ -3923,9 +4013,18 @@ function openItemPhotos(itemId, idx){
 }
 function showLb(){
   var p=_lbList[_lbIdx]; if(!p) return;
-  g('lb-img').src=p.url||p.thumbUrl||'';
+  var img=g('lb-img'), vid=g('lb-vid');
+  if(_isVid(p)){
+    img.style.display='none'; img.src='';
+    if(_vidReady(p)){ if(vid){ vid.style.display=''; vid.src=p.url; if(p.posterUrl){vid.poster=p.posterUrl;}else{vid.removeAttribute('poster');} try{vid.load();}catch(e){} } }
+    else if(vid){ try{vid.pause();}catch(e){} vid.removeAttribute('src'); vid.style.display='none'; }
+  } else {
+    if(vid){ try{vid.pause();}catch(e){} vid.removeAttribute('src'); vid.style.display='none'; }
+    img.style.display=''; img.src=p.url||p.thumbUrl||'';
+  }
   var tTxt=p.takenAt?('🕐 '+_fmtDbg(p.takenAt)+(p.timeInherited?'（推定）':'')):'';
-  g('lb-cap').textContent=(p.caption?('🏷 '+p.caption+'　'):'')+(p.uploaderName?('投稿: '+p.uploaderName+'　'):'')+(tTxt?(tTxt+'　'):'')+(_lbIdx+1)+'/'+_lbList.length;
+  var stTxt=_isVid(p)?(p.status==='processing'?'⏳ 変換中… ':(p.status==='error'?'⚠ 変換に失敗しました ':'🎬 ')):'';
+  g('lb-cap').textContent=stTxt+(p.caption?('🏷 '+p.caption+'　'):'')+(p.uploaderName?('投稿: '+p.uploaderName+'　'):'')+(tTxt?(tTxt+'　'):'')+(_lbIdx+1)+'/'+_lbList.length;
   g('lb-nav-prev').style.visibility=_lbList.length>1?'visible':'hidden';
   g('lb-nav-next').style.visibility=_lbList.length>1?'visible':'hidden';
   // 削除・キャプション/時刻編集は投稿者本人または管理者（項目添付写真は管理画面で管理するため不可）
@@ -3957,13 +4056,18 @@ function lbNav(d){ _lbIdx=(_lbIdx+d+_lbList.length)%_lbList.length; showLb(); }
 function deletePhoto(){
   var p=_lbList[_lbIdx]; if(!p) return;
   if(!(_isStaff || (p.uploaderUid && p.uploaderUid===_uid))) return; // 投稿者本人または管理者のみ
-  if(!confirm('この写真を削除しますか？（元に戻せません）')) return;
+  if(!confirm((_isVid(p)?'この動画':'この写真')+'を削除しますか？（元に戻せません）')) return;
   db.collection('events').doc(eventId).collection('photos').doc(p.id).delete().then(function(){
-    if(p.storagePath&&storage){ storage.ref(p.storagePath+'.jpg').delete().catch(function(){}); storage.ref(p.storagePath+'_thumb.jpg').delete().catch(function(){}); }
+    _deleteMediaStorage(p);
     toast('削除しました'); closeLb(); loadSchedule();
   }).catch(function(e){ toast('削除失敗: '+e.message); });
 }
-function closeLb(){ g('lightbox').classList.remove('open'); g('lb-img').src=''; }
+function closeLb(){ g('lightbox').classList.remove('open'); g('lb-img').src=''; var vid=g('lb-vid'); if(vid){ try{vid.pause();}catch(e){} vid.removeAttribute('src'); vid.style.display='none'; } }
+// メディアのStorage実体を削除（画像のみクライアントで削除。動画は変換関数/クリーンアップ関数がAdmin権限で削除）
+function _deleteMediaStorage(p){
+  if(!storage||!p||_isVid(p)) return; // 動画は onDelete トリガーが削除
+  if(p.storagePath){ storage.ref(p.storagePath+'.jpg').delete().catch(function(){}); storage.ref(p.storagePath+'_thumb.jpg').delete().catch(function(){}); }
+}
 document.addEventListener('keydown',function(e){ if(!g('lightbox').classList.contains('open'))return; if(e.key==='Escape')closeLb(); else if(e.key==='ArrowLeft')lbNav(-1); else if(e.key==='ArrowRight')lbNav(1); });
 
 /* ════════ タスクリスト（③・会員側） ════════ */
