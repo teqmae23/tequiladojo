@@ -33,6 +33,7 @@ var FIREBASE_CONFIG = {
 <script src="/keepbottle.js?v=20260912a"></script>
 <script src="/member-plan.js?v=20260810"></script>
 <script src="/admin-notify.js?v=20260929"></script>
+<script src="/cal-autopublish.js?v=20260915"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=DM+Mono:wght@400;500&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -2004,6 +2005,30 @@ function reservationWho(r){
   }
   return (r.customerName||r.memberName)||'非会員';
 }
+// 公開カレンダーの自動更新（reservations.html と同じ best-effort。トークン未設定端末では no-op）
+function _ciAutoPublishCal(yymmdd){
+  try{
+    if(!window.CalAutoPublish || !yymmdd) return;
+    CalAutoPublish.forMonth(yymmdd).then(function(r){
+      if(r && r.ok){ toast('公開カレンダーを更新しました（'+r.ym.slice(0,4)+'/'+r.ym.slice(4,6)+'）','inf'); }
+      else if(r && r.reason==='no-token'){ toast('公開カレンダーHTMLは自動更新されませんでした（この端末にGitHubトークン未設定）。営業カレンダー画面の「HTML公開」で反映してください','inf'); }
+    });
+  }catch(e){}
+}
+// 本日の予約一覧からの予約キャンセル（＝予約を削除。reservations.html の削除と同等）
+function cancelReservation(rid){
+  var r=(_todayReservations||[]).find(function(x){ return x.id===rid; })||{};
+  var who=reservationWho(r);
+  if(!confirm('この予約をキャンセルしますか？（元に戻せません）\n'+who+'　'+(r.guests||'?')+'名')) return;
+  var date=r.reservationDate||null;
+  db.collection('reservations').doc(rid).delete().then(function(){
+    try{ writeJournal('delete','reservations',rid,r,null); }catch(e){}
+    if(_checkinFromRsvId===rid) _checkinFromRsvId=null;
+    toast('予約をキャンセルしました');
+    loadTodayReservations();
+    _ciAutoPublishCal(date); // 公開カレンダーを更新（貸切等の反映のため）
+  }).catch(function(e){ toast('キャンセル失敗: '+e.message,'err'); });
+}
 function loadTodayReservations(){
   var today=todayStr6();
   db.collection('reservations').where('reservationDate','==',today).get().then(function(snap){
@@ -2030,6 +2055,7 @@ function renderTodayReservations(){
         +'<div style="flex:0 0 auto;font-weight:700;font-size:12px;font-variant-numeric:tabular-nums;min-width:86px">'+tf+'</div>'
         +'<div style="flex:1;min-width:0"><div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+escHtml(who)+' <span style="font-size:11px;color:var(--ink3)">'+cnt+'名</span>'+charter+'</div>'+memo+'</div>'
         +'<button class="btn bp sm" style="flex:0 0 auto;padding:5px 10px;font-size:12px" onclick="checkinFromReservation(\''+escHtml(r.id)+'\')"'+(open?'':' disabled title="閉店中は登録できません"')+'>＋来店登録</button>'
+        +'<button class="btn bd sm" style="flex:0 0 auto;padding:5px 10px;font-size:12px" onclick="cancelReservation(\''+escHtml(r.id)+'\')" title="この予約をキャンセル（取消）します">キャンセル</button>'
         +'</div>';
     }).join('');
 }
