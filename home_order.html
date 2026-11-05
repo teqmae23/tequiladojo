@@ -2644,6 +2644,13 @@ function isPastDateVisit(v){
 
 async function confirmOrder(){
   if(!flow.visits.length||!flow.cart.length)return;
+  // 会計後・退場前の再注文 → 注文者が会計済(在店)なら、追加セッション(再来場)として登録する確認。
+  // 前回の来場は退場でクローズし、新しい来場に今回の注文を紐づける（奢られる相手は対象外）。
+  const _paidOrderers=flow.visits.filter(function(v){ return v.checkoutPayTime && !v.checkoutTime; });
+  if(_paidOrderers.length){
+    const _rn=_paidOrderers.map(function(v){ const m=v.memberId&&allMembers[v.memberId]; return m?(m.nickname||m.name):('ゲスト（'+v.id+'）'); }).join('、');
+    if(!confirm(_rn+' は会計済です。\n追加の来場（再来場）として登録し、前回の来場を退場（クローズ）して注文を続けますか？')) return;
+  }
   const isBlind=document.getElementById('blind-check').checked;
   // 手動登録（営業ツリーの「＋注文」= popup=1）は、すでに提供済みの注文を後から記録する用途が
   // 主のため、提供状態のデフォルトを「提供済み(3)」にする。通常のカウンター注文(1=未提供)と区別。
@@ -2729,6 +2736,33 @@ async function confirmOrder(){
 
   try{
     const fsBatch=db.batch();
+
+    // ── 会計後・退場前の再注文 → 再来場（追加セッション） ──
+    // 会計済(在店)の注文者それぞれに新しい来場を作成し、元の来場は退場でクローズ。
+    // 以降の注文は新しい来場（checkoutTime未設定＝在店中）に紐づく。
+    const _reNewVisits=[], _reClosedVisits=[];
+    if(_paidOrderers.length){
+      const _FV=firebase.firestore.FieldValue;
+      // 当日の最大来場seq（ローカルallVisits＋Firestoreの実値）
+      let _reSeq=0;
+      allVisits.forEach(function(v){ if((v.visitDate||(v.id||'').slice(0,6))===useDate){ const s=parseInt((v.id||'').slice(6,8))||0; if(s>_reSeq)_reSeq=s; } });
+      try{ const _vs=await db.collection('visits').where('visitDate','==',useDate).get(); _vs.docs.forEach(function(d){ const s=parseInt(d.id.slice(6,8))||0; if(s>_reSeq)_reSeq=s; }); }catch(e){}
+      const _coTime=(AuthRole.nowBusinessTime(currentSessionBT&&currentSessionBT.openTime)||'').slice(0,4);
+      for(const _old of _paidOrderers){
+        _reSeq++;
+        let _newKey=useDate+String(_reSeq).padStart(2,'0');
+        try{ let _ex=await db.collection('visits').doc(_newKey).get(); while(_ex.exists){ _reSeq++; _newKey=useDate+String(_reSeq).padStart(2,'0'); _ex=await db.collection('visits').doc(_newKey).get(); } }catch(e){}
+        const _nv={ visitDate:useDate, visitTime:_coTime, seq:_reSeq, memberId:_old.memberId||null, checkinGroupId:_old.checkinGroupId||null,
+          referredBy:null, source:'reorder', reentryOf:_old.id, tequilaAmount:0, amount:0, payment:'0', receiptIssued:'0', checkoutTime:null, createdAt:_FV.serverTimestamp() };
+        fsBatch.set(db.collection('visits').doc(_newKey), _nv);
+        fsBatch.update(db.collection('visits').doc(_old.id), { checkoutTime:_coTime, reentryTo:_newKey });
+        _reNewVisits.push({ id:_newKey, data:Object.assign({},_nv,{createdAt:null}) });
+        _reClosedVisits.push({ id:_old.id, before:{checkoutTime:(_old.checkoutTime||null)}, after:{checkoutTime:_coTime, reentryTo:_newKey} });
+        // 以降の注文を新しい来場に紐づけるため flow.visits を差し替え
+        const _nvObj=Object.assign({id:_newKey}, _nv);
+        for(let _fi=0;_fi<flow.visits.length;_fi++){ if(flow.visits[_fi].id===_old.id) flow.visits[_fi]=_nvObj; }
+      }
+    }
 
     // orderGroupIdを全参加者分まとめて採番（書き込み前に確定）
     const orderGroupIdMap={};
@@ -2865,6 +2899,10 @@ async function confirmOrder(){
     journalEntries.forEach(function(e){
       writeJournal('create',e.col||'orders',e.docId,null,e.data);
     });
+    // 再来場（追加セッション）の記録
+    _reNewVisits.forEach(function(v){ try{ writeJournal('create','visits',v.id,null,v.data); }catch(e){} });
+    _reClosedVisits.forEach(function(c){ try{ writeJournal('update','visits',c.id,c.before,c.after); }catch(e){} });
+    if(_reNewVisits.length) showToast(_reNewVisits.length+'名を再来場（追加セッション）として登録しました','success');
     showStep(3);
     const giftSuffix=isGift?` (+奢り${giftCount}人)`:'';
     document.getElementById('complete-sub').textContent=
