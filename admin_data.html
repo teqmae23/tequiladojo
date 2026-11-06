@@ -880,6 +880,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
             <button class="btn bs" style="font-size:11px" onclick="calToggleCopyMode()" id="cal-copy-btn">📋 コピー</button>
             <button class="btn bs" style="font-size:11px" onclick="calToggleRange()" id="cal-range-btn">📅 表示期間</button>
             <button class="btn bs" style="font-size:11px" id="cal-publish">🌐 HTML公開</button>
+            <button class="btn bs" style="font-size:11px" onclick="gcalOpen()">📅 Google連携</button>
           </div>
         </div>
         <div id="cal-copy-bar" style="display:none;background:#fdf0d0;border:1px solid rgba(200,146,30,.3);border-radius:var(--r);padding:8px 12px;margin-bottom:0;gap:8px;align-items:center;flex-wrap:wrap"></div>
@@ -1427,6 +1428,36 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
         </div>
       </div>
       <div class="nwp-body" id="nwp-body"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Googleカレンダー連携（一方通行・iCalフィード） -->
+<div class="mbg" id="m-gcal">
+  <div class="modal" style="max-width:560px;width:95vw">
+    <div class="mhead"><div class="mtitle">📅 Googleカレンダー連携（一方通行）</div><button class="mx" data-close="m-gcal">✕</button></div>
+    <div class="mbody">
+      <div style="font-size:13px;color:var(--ink2);line-height:1.7;margin-bottom:10px">
+        営業予定とあなたの個人予定を <b>iCal（.ics）フィード</b>として公開し、Googleカレンダーで購読します（<b>Google側は読み取り専用＝一方通行</b>）。<br>
+        反映はGoogle側の都合で<b>数時間〜最大1日ほど遅れる</b>ことがあります。内容を変えたら「公開/更新」を押してください。
+      </div>
+      <div class="fg"><label class="fl">購読用URL（このURLをGoogleカレンダーに追加）</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input class="fi mono" id="gcal-url" readonly placeholder="「公開/更新」で発行されます" style="flex:1;font-size:12px;background:var(--cream2)">
+          <button type="button" class="btn bs sm" onclick="gcalCopy()">コピー</button>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--ink3);line-height:1.7;background:var(--cream2);border-radius:var(--r);padding:8px 12px;margin-bottom:8px">
+        Googleカレンダー左の「他のカレンダー ＋」→「<b>URLで追加</b>」にこのURLを貼り付けます。<br>
+        ※ URLを知ると誰でも閲覧できます（個人予定を含むため）。共有にご注意ください。URLを変えたいときは「URL再発行」。
+      </div>
+      <div class="sv-err" id="gcal-err" style="color:var(--red)"></div>
+      <div id="gcal-status" style="font-size:12px;color:var(--ink3);margin-top:6px"></div>
+    </div>
+    <div class="mfoot">
+      <button class="btn bg2" style="margin-right:auto;font-size:11px" onclick="gcalReissue()">URL再発行</button>
+      <button class="btn bg2" data-close="m-gcal">閉じる</button>
+      <button class="btn bp" id="gcal-publish-btn" onclick="gcalPublish()">公開/更新</button>
     </div>
   </div>
 </div>
@@ -3169,6 +3200,99 @@ function deployToGitHub(files,statusEl){
   var chain=Promise.resolve();
   files.forEach(function(f){ chain=chain.then(function(){ return ghPutFile(f.path,f.content,statusEl); }); });
   return chain;
+}
+
+// ── Googleカレンダー連携（iCal .ics フィード・一方通行：カレンダー管理→Google） ──
+var SITE_BASE='https://www.tequiladojo.com';
+function _gUid(){ return (auth.currentUser&&auth.currentUser.uid)||null; }
+function _gRandToken(){ try{ return crypto.randomUUID().replace(/-/g,''); }catch(e){ return (Date.now().toString(36)+Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2)).slice(0,32); } }
+function _icsEsc(s){ return String(s==null?'':s).replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\r?\n/g,'\\n'); }
+function _icsStamp(){ var d=new Date(); function p(n){return ('0'+n).slice(-2);} return d.getUTCFullYear()+p(d.getUTCMonth()+1)+p(d.getUTCDate())+'T'+p(d.getUTCHours())+p(d.getUTCMinutes())+p(d.getUTCSeconds())+'Z'; }
+function _icsNextDate(d8){ var dt=new Date(+d8.slice(0,4),+d8.slice(4,6)-1,+d8.slice(6,8)+1); function p(n){return ('0'+n).slice(-2);} return ''+dt.getFullYear()+p(dt.getMonth()+1)+p(dt.getDate()); }
+function _hhmm4(t){ return /^\d{4}$/.test(String(t||'')); }
+function _hm2min(t){ return (+t.slice(0,2))*60+(+t.slice(2,4)); }
+// RFC5545 行折り（75オクテットで折返し・継続行は先頭空白）。マルチバイトを壊さない。
+function _icsFold(line){
+  var enc=new TextEncoder(), out='', cur='', bytes=0;
+  for(var i=0;i<line.length;i++){ var ch=line[i], b=enc.encode(ch).length;
+    if(bytes+b>73){ out+=(out?'\r\n ':'')+cur; cur=ch; bytes=b; } else { cur+=ch; bytes+=b; } }
+  return out+(out?'\r\n ':'')+cur;
+}
+function _icsEvent(uid,date8,sum,desc,allDay,start,end){
+  var L=['BEGIN:VEVENT','UID:'+uid,'DTSTAMP:'+_icsStamp()];
+  if(allDay){ L.push('DTSTART;VALUE=DATE:'+date8); L.push('DTEND;VALUE=DATE:'+_icsNextDate(date8)); }
+  else {
+    var s=start, e=end, endDate=date8;
+    if(!_hhmm4(e)){ var mm=_hm2min(s)+60, eh=Math.floor(mm/60), em=mm%60; if(eh>=24){ eh-=24; endDate=_icsNextDate(date8); } e=('0'+eh).slice(-2)+('0'+em).slice(-2); }
+    else if(_hm2min(e)<=_hm2min(s)){ endDate=_icsNextDate(date8); }
+    L.push('DTSTART:'+date8+'T'+s+'00'); L.push('DTEND:'+endDate+'T'+e+'00');
+  }
+  L.push('SUMMARY:'+_icsEsc(sum));
+  if(desc) L.push('DESCRIPTION:'+_icsEsc(desc));
+  L.push('END:VEVENT');
+  return L;
+}
+function buildIcsFeed(schedules, personalEvents, calName){
+  var L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//tequiladojo//cal//JA','CALSCALE:GREGORIAN','METHOD:PUBLISH','X-WR-CALNAME:'+_icsEsc(calName),'X-WR-TIMEZONE:Asia/Tokyo'];
+  (schedules||[]).forEach(function(s){
+    var d8=String(s.scheduleId||s.id||''); if(!/^\d{8}$/.test(d8)) return;
+    var bt=parseInt(s.businessType)||0, label=CAL_BT_LABEL[bt]||'';
+    var hasOpen=_hhmm4(s.openTime), desc=s.memo||'';
+    if(hasOpen) L=L.concat(_icsEvent('biz-'+d8+'@tequiladojo.com',d8,'営業: '+label,desc,false,s.openTime,s.closeTime));
+    else L=L.concat(_icsEvent('biz-'+d8+'@tequiladojo.com',d8,label||'（予定）',desc,true));
+  });
+  (personalEvents||[]).forEach(function(p){
+    var d8=String(p.date||''); if(!/^\d{8}$/.test(d8)) return;
+    var allDay=!!p.allDay||!_hhmm4(p.start);
+    L=L.concat(_icsEvent('pe-'+p.id+'@tequiladojo.com',d8,p.title||'（予定）','',allDay,p.start,p.end));
+  });
+  L.push('END:VCALENDAR');
+  return L.map(_icsFold).join('\r\n')+'\r\n';
+}
+function _gFeedPath(token){ return 'cal/u-'+token+'.ics'; }
+function _gFeedUrl(token){ return SITE_BASE+'/'+_gFeedPath(token); }
+function gcalEnsureToken(){
+  var uid=_gUid(); if(!uid) return Promise.reject(new Error('ログイン情報が取得できません'));
+  return db.collection('calFeeds').doc(uid).get().then(function(doc){
+    if(doc.exists&&doc.data().token) return doc.data().token;
+    var tk=_gRandToken();
+    return db.collection('calFeeds').doc(uid).set({uid:uid,token:tk,createdAt:new Date().toISOString()},{merge:true}).then(function(){ return tk; });
+  });
+}
+function gcalOpen(){
+  g('gcal-err').textContent=''; g('gcal-status').textContent=''; g('gcal-url').value='';
+  gcalEnsureToken().then(function(tk){ g('gcal-url').value=_gFeedUrl(tk); }).catch(function(e){ g('gcal-err').textContent=e.message; });
+  openM('m-gcal');
+}
+function gcalCopy(){ var i=g('gcal-url'); if(!i.value){ toast('先に「公開/更新」でURLを発行してください','err'); return; } i.removeAttribute('readonly'); i.select(); try{ document.execCommand('copy'); toast('URLをコピーしました'); }catch(e){ toast('コピーできませんでした','err'); } i.setAttribute('readonly','readonly'); }
+function gcalReissue(){
+  if(!confirm('URLを再発行しますか？\n以前のURLは無効になり、Googleカレンダー側は購読し直しが必要です。')) return;
+  var uid=_gUid(); if(!uid){ toast('ログイン情報が取得できません','err'); return; }
+  var tk=_gRandToken();
+  db.collection('calFeeds').doc(uid).set({uid:uid,token:tk,createdAt:new Date().toISOString()},{merge:true}).then(function(){
+    g('gcal-url').value=_gFeedUrl(tk); g('gcal-status').textContent='URLを再発行しました。「公開/更新」で新URLへ配信してください。'; toast('URLを再発行しました');
+  }).catch(function(e){ toast('再発行失敗: '+e.message,'err'); });
+}
+function gcalPublish(){
+  var uid=_gUid(); if(!uid){ g('gcal-err').textContent='ログイン情報が取得できません'; return; }
+  var token=localStorage.getItem('gh_token')||GH_TOKEN||'';
+  if(!token){ g('gcal-err').textContent='この端末にGitHubトークン（gh_token）が未設定のため公開できません。「🌐 HTML公開」と同じ設定が必要です。'; return; }
+  GH_TOKEN=token;
+  var btn=g('gcal-publish-btn'); btn.disabled=true; var st=g('gcal-status'); st.textContent='データ取得中…'; g('gcal-err').textContent='';
+  var tk;
+  gcalEnsureToken().then(function(t){ tk=t; g('gcal-url').value=_gFeedUrl(tk);
+    return Promise.all([ db.collection('schedules').get(), db.collection('personalEvents').where('uid','==',uid).get() ]);
+  }).then(function(res){
+    var schedules=res[0].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    var pes=res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    var ics=buildIcsFeed(schedules,pes,'テキーラ道場 営業＋個人予定');
+    st.textContent='公開中…';
+    return ghPutFile(_gFeedPath(tk),ics,st);
+  }).then(function(){
+    db.collection('calFeeds').doc(uid).set({publishedAt:new Date().toISOString()},{merge:true}).catch(function(){});
+    st.textContent='公開しました。Googleカレンダーへの反映は数時間〜最大1日ほどかかる場合があります。';
+    toast('フィードを公開しました');
+  }).catch(function(e){ g('gcal-err').textContent='公開失敗: '+e.message; st.textContent=''; }).finally(function(){ btn.disabled=false; });
 }
 
 // ── HTML生成関数 ──────────────────────────────────────────────
