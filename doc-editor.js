@@ -47,11 +47,32 @@
       +'.de-imgdlg{background:#1a1a1a;border:1px solid #555;border-radius:6px;padding:12px;margin-top:6px;display:none}'
       +'.de-imgdlg.show{display:block}'
       +'.de-imgdlg .fi{width:100%;box-sizing:border-box;font-size:12px;padding:6px 8px;background:#111;border:1px solid #555;color:#ddd;border-radius:4px;margin-bottom:8px}'
-      +'.de-hint{font-size:11px;color:#8a8a8a;padding:6px 2px 0}';
+      +'.de-hint{font-size:11px;color:#8a8a8a;padding:6px 2px 0}'
+      // 画像の拡大表示（ライトボックス・共通）
+      +'.de-lb{position:fixed;inset:0;z-index:4000;background:rgba(0,0,0,.86);display:none;align-items:center;justify-content:center;padding:20px}'
+      +'.de-lb.show{display:flex}'
+      +'.de-lb img{max-width:94vw;max-height:90vh;border-radius:4px;object-fit:contain}'
+      +'.de-lb-x{position:absolute;top:14px;right:16px;width:38px;height:38px;border-radius:50%;border:none;background:rgba(255,255,255,.15);color:#fff;font-size:18px;cursor:pointer}';
     var s=document.createElement('style'); s.id=STYLE_ID; s.textContent=css; document.head.appendChild(s);
   }
 
   function el(tag, cls, html){ var e=document.createElement(tag); if(cls)e.className=cls; if(html!=null)e.innerHTML=html; return e; }
+
+  // ── 画像の拡大表示（共通ライトボックス。エディタ・プレビュー・書庫などで再利用） ──
+  var _lb=null;
+  function closeLightbox(){ if(_lb){ _lb.classList.remove('show'); var im=_lb.querySelector('img'); if(im) im.removeAttribute('src'); } }
+  function openImage(src){
+    if(!src) return;
+    if(!_lb){
+      injectCSS();
+      _lb=document.createElement('div'); _lb.className='de-lb';
+      _lb.innerHTML='<button type="button" class="de-lb-x" aria-label="閉じる">✕</button><img alt="">';
+      _lb.addEventListener('click',function(e){ if(e.target===_lb || (e.target.className||'').indexOf('de-lb-x')>=0) closeLightbox(); });
+      document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeLightbox(); });
+      document.body.appendChild(_lb);
+    }
+    _lb.querySelector('img').src=src; _lb.classList.add('show');
+  }
 
   function mount(host, opts){
     opts=opts||{};
@@ -93,6 +114,7 @@
       +'<button type="button" class="de-ib" data-al="left" title="左寄せ（回り込み）">◧左</button>'
       +'<button type="button" class="de-ib" data-al="center" title="中央">▣中央</button>'
       +'<button type="button" class="de-ib" data-al="right" title="右寄せ（回り込み）">右◨</button>'
+      +'<button type="button" class="de-ib" data-zoom="1" title="拡大表示">🔍</button>'
       +'<button type="button" class="de-ib del" data-del="1" title="画像を削除">🗑</button>';
     var handles={};
     ['nw','ne','sw','se'].forEach(function(k){ var h=el('div','de-rh '+k); h.dataset.h=k; handles[k]=h; });
@@ -169,6 +191,7 @@
     imgbar.addEventListener('click',function(e){
       var b=e.target.closest('button'); if(!b||!selImg) return;
       if(b.dataset.del){ var p=selImg; selectImg(null); p.remove(); emitChange(); return; }
+      if(b.dataset.zoom){ openImage(selImg.currentSrc||selImg.src); return; }
       if(b.dataset.al){ applyAlign(selImg,b.dataset.al); schedulePos(); emitChange(); }
     });
 
@@ -280,5 +303,5 @@
     return { getHTML:getHTML, setHTML:setHTML, focus:focus, uploadInlineImages:uploadInlineImages, canvas:canvas, host:host };
   }
 
-  window.DocEditor={ mount:mount };
+  window.DocEditor={ mount:mount, openImage:openImage, closeImage:closeLightbox };
 })();
