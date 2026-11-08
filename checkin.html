@@ -2866,6 +2866,19 @@ function resetCardTerminal(){
   var c=g('ct-cancel'); if(c) c.style.display='none';
   var sb=g('ct-slip'); if(sb) sb.style.display='none';
 }
+// 新規決済の前に、過去の未処理(pending)・古い処理中(processing)の terminalPayments を掃除する。
+// これらが残っていると、端末アプリが古いリクエスト（例: 以前キャンセルした金額）を拾い続け、
+// 実際の会計額に関わらず同じ額が端末に出続けることがある。
+async function _ctCleanupStale(){
+  try{
+    var FV=firebase.firestore.FieldValue, now=Date.now(), batch=db.batch(), n=0;
+    var pend=await db.collection('terminalPayments').where('status','==','pending').get();
+    pend.docs.forEach(function(d){ batch.set(d.ref,{status:'canceled',errorMessage:'superseded（新しい会計で自動キャンセル）',updatedAt:FV.serverTimestamp()},{merge:true}); n++; });
+    var proc=await db.collection('terminalPayments').where('status','==','processing').get();
+    proc.docs.forEach(function(d){ var dt=d.data()||{}; var ms=(dt.updatedAt&&dt.updatedAt.toMillis)?dt.updatedAt.toMillis():0; if(!ms||(now-ms)>10*60*1000){ batch.set(d.ref,{status:'canceled',errorMessage:'stale-processing（応答なしのため自動キャンセル）',updatedAt:FV.serverTimestamp()},{merge:true}); n++; } });
+    if(n) await batch.commit();
+  }catch(e){ /* 掃除失敗は致命的でないので続行 */ }
+}
 async function startTerminalPayment(){
   var amount=parseInt(g('ct-amount').value)||0;
   if(amount<=0){ toast('金額を入力してください','err'); return; }
@@ -2873,6 +2886,7 @@ async function startTerminalPayment(){
   if(_ctUnsub){ try{_ctUnsub();}catch(e){} _ctUnsub=null; }
   _cardResult=null;
   g('ct-start').disabled=true;
+  await _ctCleanupStale(); // 以前のゴミ（未処理pending等）を掃除してから新規作成
   g('ct-cancel').style.display='inline-flex';
   g('ct-status').textContent='端末に送信中...'; g('ct-status').style.color='var(--ink2)';
   try{
