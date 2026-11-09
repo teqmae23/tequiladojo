@@ -130,6 +130,9 @@ select[multiple]{height:96px;}
 .seg-btn{border:none;background:var(--cream);color:var(--ink2);font-size:12px;font-weight:700;padding:5px 14px;cursor:pointer;font-family:inherit;}
 .seg-btn+.seg-btn{border-left:1px solid var(--cream3);}
 .seg-btn.active{background:var(--gold);color:#fff;}
+.sel-all{display:inline-flex;gap:3px;margin-left:6px;}
+.sel-all button{font-size:9px;line-height:1;padding:2px 5px;border:1px solid var(--cream3);background:var(--cream);color:var(--ink2);border-radius:4px;cursor:pointer;font-family:inherit;}
+.sel-all button:hover{background:var(--gold);color:#fff;border-color:var(--gold);}
 .cmap-unclassified td{background:#fcebe8;}
 .cmap-unclassified .inp-region{border-color:#e0a89c;}
 
@@ -198,19 +201,19 @@ select[multiple]{height:96px;}
         </select>
       </div>
       <div class="filter-group grow">
-        <div class="filter-label">国 (複数選択可)</div>
+        <div class="filter-label">国 (複数選択可)<span class="sel-all"><button type="button" onclick="selMultiAll('f-pais',true)">全選択</button><button type="button" onclick="selMultiAll('f-pais',false)">全解除</button></span></div>
         <select id="f-pais" multiple></select>
       </div>
       <div class="filter-group grow">
-        <div class="filter-label">Clase</div>
+        <div class="filter-label">Clase<span class="sel-all"><button type="button" onclick="selMultiAll('f-clase',true)">全選択</button><button type="button" onclick="selMultiAll('f-clase',false)">全解除</button></span></div>
         <select id="f-clase" multiple></select>
       </div>
       <div class="filter-group grow">
-        <div class="filter-label">Categoria</div>
+        <div class="filter-label">Categoria<span class="sel-all"><button type="button" onclick="selMultiAll('f-categoria',true)">全選択</button><button type="button" onclick="selMultiAll('f-categoria',false)">全解除</button></span></div>
         <select id="f-categoria" multiple></select>
       </div>
       <div class="filter-group grow">
-        <div class="filter-label">地域</div>
+        <div class="filter-label">地域<span class="sel-all"><button type="button" onclick="selMultiAll('f-grupo',true)">全選択</button><button type="button" onclick="selMultiAll('f-grupo',false)">全解除</button></span></div>
         <select id="f-grupo" multiple></select>
       </div>
     </div>
@@ -319,6 +322,14 @@ select[multiple]{height:96px;}
       <canvas id="trend-chart"></canvas>
     </div>
     <div id="trend-placeholder" class="placeholder">絞り込みを実行するとグラフが表示されます</div>
+    <div style="margin-top:16px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <div style="font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;flex:1;">対象国（折れ線のON/OFF）</div>
+        <button class="btn btn-ghost btn-sm" onclick="trendSelectAll(true)">全選択</button>
+        <button class="btn btn-ghost btn-sm" onclick="trendSelectAll(false)">全解除</button>
+      </div>
+      <div id="trend-country-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));border:1px solid var(--cream3);border-radius:var(--r);background:var(--cream);max-height:260px;overflow-y:auto;"></div>
+    </div>
   </div>
 
   <!-- Table tab -->
@@ -1134,6 +1145,7 @@ function applyFilter() {
   renderTable();
   renderChartCountryList();
   renderChart();
+  renderTrendCountryList();
   renderImportTrend();
   renderRank();
   renderCompCountryList('comp');
@@ -1151,6 +1163,12 @@ function clearFilter() {
   });
   populateFilters();
   applyFilter();
+}
+// 複数選択セレクトの全選択／全解除（押しただけでは再絞り込みしない。従来どおり「絞り込み」ボタンで適用）
+function selMultiAll(id, on) {
+  var sel = document.getElementById(id);
+  if (!sel) return;
+  Array.from(sel.options).forEach(function(o) { o.selected = !!on; });
 }
 
 // ─────────────────────────────────────────────────────────
@@ -1388,6 +1406,7 @@ function drawChart(canvas, type, labels, datasets, groupBy, stacked) {
 // ─────────────────────────────────────────────────────────
 var trendPeriod = 'ym';   // 'ym'(月) | 'quarter' | 'half' | 'year'
 var trendChartInst = null;
+var TREND_DEFAULT_ON = 10; // 初期表示する国数（輸入量上位）
 function trendSetPeriod(p) {
   trendPeriod = p;
   var panel = document.getElementById('tab-trend');
@@ -1396,15 +1415,43 @@ function trendSetPeriod(p) {
   });
   renderImportTrend();
 }
+function trendSelectedCountries() {
+  var listEl = document.getElementById('trend-country-list');
+  var out = [];
+  if (listEl) listEl.querySelectorAll('input[type=checkbox]:checked').forEach(function(cb) { out.push(cb.value); });
+  return out;
+}
+// 絞り込み結果の国（＝選択した地域の国）をチェックリスト化。初回/絞り込み毎に上位N国をON。
+function renderTrendCountryList() {
+  var listEl = document.getElementById('trend-country-list');
+  if (!listEl) return;
+  if (!allRows.length) { listEl.innerHTML = ''; return; }
+  var vol = {};
+  allRows.forEach(function(r) { vol[r.Pais] = (vol[r.Pais] || 0) + (r.Litros_40 || 0); });
+  var countries = Object.keys(vol).sort(function(a, b) { return vol[b] - vol[a]; });
+  var allOn = countries.length <= 15; // 国数が少なければ全てON、多ければ上位N国のみON
+  listEl.innerHTML = countries.map(function(pais, idx) {
+    var checked = allOn || idx < TREND_DEFAULT_ON; // 多数の折れ線で潰れないように
+    return '<label class="comp-country-item">'
+      + '<input type="checkbox" value="' + esc(pais) + '"' + (checked ? ' checked' : '') + ' onchange="renderImportTrend()">'
+      + '<span>' + esc(nameOf(pais)) + '</span>'
+      + '<span class="comp-country-vol">' + fmtK(Math.round(vol[pais])) + 'L</span>'
+      + '</label>';
+  }).join('');
+}
+function trendSelectAll(checked) {
+  document.getElementById('trend-country-list').querySelectorAll('input[type=checkbox]').forEach(function(cb) { cb.checked = checked; });
+  renderImportTrend();
+}
 function renderImportTrend() {
   var placeholder = document.getElementById('trend-placeholder');
   var canvas = document.getElementById('trend-chart');
   if (!allRows.length) {
+    placeholder.textContent = '絞り込みを実行するとグラフが表示されます';
     placeholder.style.display = ''; canvas.style.display = 'none';
     if (trendChartInst) { trendChartInst.destroy(); trendChartInst = null; }
     return;
   }
-  placeholder.style.display = 'none'; canvas.style.display = '';
   var axis = trendPeriod;
   function keyOf(r) {
     if (axis === 'ym')      return r.Año + '/' + pad(r.Mes);
@@ -1413,21 +1460,48 @@ function renderImportTrend() {
     if (axis === 'quarter') return r.Año + '-Q' + Math.ceil(parseInt(r.Mes||0)/3);
     return String(r.Año);
   }
-  var agg = {};
-  allRows.forEach(function(r) { var k = keyOf(r); agg[k] = (agg[k] || 0) + (r.Litros_40 || 0); });
+  var selected = trendSelectedCountries();
+  if (!selected.length) {
+    placeholder.textContent = '表示する国が選択されていません（下の「対象国」でON/OFF）';
+    placeholder.style.display = ''; canvas.style.display = 'none';
+    if (trendChartInst) { trendChartInst.destroy(); trendChartInst = null; }
+    return;
+  }
+  placeholder.style.display = 'none'; canvas.style.display = '';
+
   var isPeriod = (axis === 'half' || axis === 'quarter');
-  var labels = Object.keys(agg).sort(function(a, b) { return isPeriod ? periodSort(a, b) : String(a).localeCompare(String(b)); });
-  var data = labels.map(function(k) { return Math.round(agg[k]); });
+  var selSet = {}; selected.forEach(function(c) { selSet[c] = true; });
+  var periodSet = {}, byCountry = {}, totalVol = {};
+  allRows.forEach(function(r) {
+    if (!selSet[r.Pais]) return;
+    var pk = keyOf(r);
+    periodSet[pk] = true;
+    if (!byCountry[r.Pais]) byCountry[r.Pais] = {};
+    byCountry[r.Pais][pk] = (byCountry[r.Pais][pk] || 0) + (r.Litros_40 || 0);
+    totalVol[r.Pais] = (totalVol[r.Pais] || 0) + (r.Litros_40 || 0);
+  });
+  var labels = Object.keys(periodSet).sort(function(a, b) { return isPeriod ? periodSort(a, b) : String(a).localeCompare(String(b)); });
+  // 国を輸入量合計の多い順に並べて折れ線データセット化
+  var paises = selected.slice().sort(function(a, b) { return (totalVol[b]||0) - (totalVol[a]||0); });
+  var datasets = paises.map(function(pais, i) {
+    var col = PALETTE[i % PALETTE.length];
+    return {
+      label: nameOf(pais),
+      data: labels.map(function(pk) { return (byCountry[pais] && byCountry[pais][pk]) ? Math.round(byCountry[pais][pk]) : 0; }),
+      borderColor: col, backgroundColor: col, fill: false, tension: 0.2, pointRadius: 2, borderWidth: 2
+    };
+  });
 
   if (trendChartInst) { trendChartInst.destroy(); trendChartInst = null; }
   trendChartInst = new Chart(canvas, {
-    type: 'bar',
-    data: { labels: labels, datasets: [{ label: '輸入量 (Litros 40°)', data: data, backgroundColor: PALETTE[0], borderColor: PALETTE[0] }] },
+    type: 'line',
+    data: { labels: labels, datasets: datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'nearest', intersect: false },
       plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: function(ctx) { return '輸入量: ' + fmt(ctx.parsed.y) + ' L'; } } }
+        legend: { position: 'top', labels: { font: { family: "'DM Mono', monospace", size: 10 }, boxWidth: 12 } },
+        tooltip: { callbacks: { label: function(ctx) { return ctx.dataset.label + ': ' + fmt(ctx.parsed.y) + ' L'; } } }
       },
       scales: {
         x: { ticks: { font: { family: "'DM Mono', monospace", size: isPeriod?9:10 }, maxRotation: isPeriod?90:60, autoSkip: (axis === 'ym') } },
