@@ -238,6 +238,7 @@ select[multiple]{height:96px;}
   <!-- Tabs -->
   <div class="tab-bar">
     <button class="tab-btn active" onclick="switchTab('chart')">グラフ</button>
+    <button class="tab-btn" onclick="switchTab('trend')">輸入量推移</button>
     <button class="tab-btn" onclick="switchTab('table')">テーブル</button>
     <button class="tab-btn" onclick="switchTab('rank')">国別ランキング</button>
     <button class="tab-btn" onclick="switchTab('comp')">国別クラス構成比</button>
@@ -282,6 +283,23 @@ select[multiple]{height:96px;}
       <canvas id="main-chart"></canvas>
     </div>
     <div id="chart-placeholder" class="placeholder">絞り込みを実行するとグラフが表示されます</div>
+  </div>
+
+  <!-- Import volume trend tab (年月輸入量) -->
+  <div class="tab-panel" id="tab-trend">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
+      <span style="font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;">横軸（期間）</span>
+      <div class="seg-toggle">
+        <button class="seg-btn" data-period="year" onclick="trendSetPeriod('year')">年</button>
+        <button class="seg-btn" data-period="half" onclick="trendSetPeriod('half')">半年</button>
+        <button class="seg-btn" data-period="quarter" onclick="trendSetPeriod('quarter')">四半期</button>
+        <button class="seg-btn active" data-period="ym" onclick="trendSetPeriod('ym')">月</button>
+      </div>
+    </div>
+    <div class="chart-wrap" style="height:420px;">
+      <canvas id="trend-chart"></canvas>
+    </div>
+    <div id="trend-placeholder" class="placeholder">絞り込みを実行するとグラフが表示されます</div>
   </div>
 
   <!-- Table tab -->
@@ -1086,6 +1104,7 @@ function applyFilter() {
   currentPage = 0;
   renderTable();
   renderChart();
+  renderImportTrend();
   renderRank();
   renderCompCountryList('comp');
   renderCompCountryList('comp2');
@@ -1288,6 +1307,64 @@ function drawChart(canvas, type, labels, datasets, groupBy, stacked) {
       scales: {
         x: { stacked: !!stacked, ticks: xTickOpts },
         y: { stacked: !!stacked, ticks: { font: { family: "'DM Mono', monospace", size: 10 }, callback: function(v) { return fmtK(v); } } }
+      }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────
+// 年月輸入量グラフ（輸入量推移）: 縦軸=輸入量、横軸=年/半年/四半期/月
+// ─────────────────────────────────────────────────────────
+var trendPeriod = 'ym';   // 'ym'(月) | 'quarter' | 'half' | 'year'
+var trendChartInst = null;
+function trendSetPeriod(p) {
+  trendPeriod = p;
+  var panel = document.getElementById('tab-trend');
+  if (panel) panel.querySelectorAll('.seg-btn').forEach(function(b) {
+    b.classList.toggle('active', b.getAttribute('data-period') === p);
+  });
+  renderImportTrend();
+}
+function renderImportTrend() {
+  var placeholder = document.getElementById('trend-placeholder');
+  var canvas = document.getElementById('trend-chart');
+  if (!allRows.length) {
+    placeholder.style.display = ''; canvas.style.display = 'none';
+    if (trendChartInst) { trendChartInst.destroy(); trendChartInst = null; }
+    return;
+  }
+  placeholder.style.display = 'none'; canvas.style.display = '';
+  var axis = trendPeriod;
+  function keyOf(r) {
+    if (axis === 'ym')      return r.Año + '/' + pad(r.Mes);
+    if (axis === 'year')    return String(r.Año);
+    if (axis === 'half')    return r.Año + '-H' + (parseInt(r.Mes||0)<=6?'1':'2');
+    if (axis === 'quarter') return r.Año + '-Q' + Math.ceil(parseInt(r.Mes||0)/3);
+    return String(r.Año);
+  }
+  var agg = {};
+  allRows.forEach(function(r) { var k = keyOf(r); agg[k] = (agg[k] || 0) + (r.Litros_40 || 0); });
+  var isPeriod = (axis === 'half' || axis === 'quarter');
+  var labels = Object.keys(agg).sort(function(a, b) { return isPeriod ? periodSort(a, b) : String(a).localeCompare(String(b)); });
+  var data = labels.map(function(k) { return Math.round(agg[k]); });
+
+  if (trendChartInst) { trendChartInst.destroy(); trendChartInst = null; }
+  trendChartInst = new Chart(canvas, {
+    type: 'bar',
+    data: { labels: labels, datasets: [{ label: '輸入量 (Litros 40°)', data: data, backgroundColor: PALETTE[0], borderColor: PALETTE[0] }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: function(ctx) { return '輸入量: ' + fmt(ctx.parsed.y) + ' L'; } } }
+      },
+      scales: {
+        x: { ticks: { font: { family: "'DM Mono', monospace", size: isPeriod?9:10 }, maxRotation: isPeriod?90:60, autoSkip: (axis === 'ym') } },
+        y: {
+          beginAtZero: true,
+          title: { display: true, text: '輸入量 (Litros 40°)', font: { family: "'DM Mono', monospace", size: 11 }, color: '#6b5a3a' },
+          ticks: { font: { family: "'DM Mono', monospace", size: 10 }, callback: function(v) { return fmtK(v); } }
+        }
       }
     }
   });
@@ -1533,13 +1610,14 @@ function renderCompChart(key) {
 // Tab switching
 // ─────────────────────────────────────────────────────────
 function switchTab(name) {
-  var names = ['chart','table','rank','comp','comp2','cmap'];
+  var names = ['chart','trend','table','rank','comp','comp2','cmap'];
   document.querySelectorAll('.tab-btn').forEach(function(b, i) {
     b.classList.toggle('active', names[i] === name);
   });
   document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
   document.getElementById('tab-' + name).classList.add('active');
   if (name === 'cmap') { renderCmapEditor(); autoSaveDefaults(); }
+  if (name === 'trend') { renderImportTrend(); }
   if (name === 'comp') { renderCompCountryList('comp'); }
   if (name === 'comp2') { renderCompCountryList('comp2'); }
 }
