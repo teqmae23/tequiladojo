@@ -159,6 +159,56 @@
     return html;
   }
 
+  // 公開カレンダー: 日付クリックで営業内容を大きく表示するポップアップ（X＋前後日の矢印）
+  function _calDayModalBlk(y,m2,schMap,rsvMap){
+    var _amap=calBuildAnnivMap(y,m2);
+    var _lastD=new Date(y,m2+1,0).getDate();
+    var _PDOW=['日','月','火','水','木','金','土'];
+    var _dd=[];
+    for(var _i=1;_i<=_lastD;_i++){
+      var _key=calDkey(y,m2,_i);
+      var _s=schMap[_i]||null;
+      var _btn=_s?parseInt(_s.businessType)||0:-1;
+      var _ans=[];
+      if(_amap[_key]) _amap[_key].forEach(function(a){ var nm=a.name||a.nameJa||''; if(nm) _ans.push(nm); });
+      if(calIsC23(m2,_i) && _ans.indexOf('テキーラの日')<0) _ans.push('テキーラの日');
+      var _rv=(rsvMap[_i]||[]).slice().sort(function(a,b){return String(a.startTime||'').localeCompare(String(b.startTime||''));}).map(function(r){return {c:(r.charterType===1||r.charterType==='1')?1:0,s:calFmtT(r.startTime),e:calFmtT(r.endTime),g:(r.guests!=null&&r.guests!=='')?r.guests:''};});
+      _dd.push({d:_i,dow:_PDOW[new Date(y,m2,_i).getDay()],hol:calHolidays[_key]||'',an:_ans,btl:_btn>=0?(CAL_BT_LABEL[_btn]||''):'',bt:_btn,o:(_s&&_s.openTime)?calFmtT(_s.openTime):'',cl:(_s&&_s.closeTime)?calFmtT(_s.closeTime):'',memo:(_s&&_s.memo)||'',rv:_rv});
+    }
+    var _json=JSON.stringify(_dd).replace(/</g,'\\u003c');
+    var modal='<div id="cal-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.45);align-items:center;justify-content:center;padding:14px">'
+      +'<div style="background:#fff;border-radius:14px;max-width:420px;width:100%;max-height:85vh;overflow:auto;box-shadow:0 12px 44px rgba(0,0,0,.3);position:relative">'
+      +'<button id="cm-close" aria-label="閉じる" style="position:absolute;top:6px;right:8px;border:none;background:transparent;font-size:22px;line-height:1;color:#888;cursor:pointer;padding:4px 8px">✕</button>'
+      +'<div style="display:flex;align-items:center;gap:6px;padding:16px 14px 6px">'
+      +'<button id="cm-prev" aria-label="前の日" style="border:1px solid #ddd;background:#fff;border-radius:8px;font-size:20px;line-height:1;color:#333;cursor:pointer;padding:5px 13px">&#8249;</button>'
+      +'<div id="cm-date" style="flex:1;text-align:center;font-weight:700"></div>'
+      +'<button id="cm-next" aria-label="次の日" style="border:1px solid #ddd;background:#fff;border-radius:8px;font-size:20px;line-height:1;color:#333;cursor:pointer;padding:5px 13px">&#8250;</button>'
+      +'</div><div id="cm-body" style="padding:4px 20px 22px"></div></div></div>';
+    var js='<script>(function(){var DD='+_json+';var byD={};DD.forEach(function(x){byD[x.d]=x;});var cur=null;'
+      +'var modal=document.getElementById("cal-modal"),elDate=document.getElementById("cm-date"),elBody=document.getElementById("cm-body"),elPrev=document.getElementById("cm-prev"),elNext=document.getElementById("cm-next");'
+      +'function esc(s){return String(s==null?"":s).replace(/[&<>\\"]/g,function(c){return({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"})[c];});}'
+      +'function render(d){var x=byD[d];if(!x)return;cur=d;var dc=x.dow==="日"?"#E24B4A":x.dow==="土"?"#378ADD":"#333";'
+      +'elDate.innerHTML=\'<span style="font-size:26px;color:\'+dc+\'">\'+x.d+\'</span><span style="font-size:14px;color:\'+dc+\'"> 日（\'+x.dow+\'）</span>\';'
+      +'var h="";if(x.hol)h+=\'<div style="color:#E24B4A;font-weight:600;margin-bottom:3px">\'+esc(x.hol)+\'</div>\';'
+      +'x.an.forEach(function(a){h+=\'<div style="color:#993556;font-weight:600;margin-bottom:3px">\'+esc(a)+\'</div>\';});'
+      +'var bt=x.bt;'
+      +'if(bt===4||bt===5||bt===8){h+=\'<div style="font-size:20px;font-weight:700;margin:12px 0">\'+(bt===4?"定休日":bt===8?"臨時休業":"休業日")+\'</div>\';}'
+      +'else if(x.o&&x.cl){h+=\'<div style="margin:12px 0"><span style="display:inline-block;font-size:12px;font-weight:700;background:\'+(bt===7?"#f4e2c6":"#FEF9C3")+\';color:\'+(bt===7?"#9a5800":"#333")+\';border-radius:5px;padding:2px 8px;margin-right:8px">\'+esc(x.btl||(bt===7?"貸切":"営業"))+\'</span><span style="font-size:24px;font-weight:700;font-family:monospace">\'+esc(x.o)+"〜"+esc(x.cl)+\'</span></div>\';}'
+      +'else if(x.btl){h+=\'<div style="font-size:20px;font-weight:700;margin:12px 0">\'+esc(x.btl)+\'</div>\';}'
+      +'else{h+=\'<div style="font-size:16px;color:#999;margin:12px 0">予定未定</div>\';}'
+      +'if(x.memo)h+=\'<div style="font-size:14px;color:#444;margin:6px 0;white-space:pre-wrap">\'+esc(x.memo)+\'</div>\';'
+      +'if(x.rv&&x.rv.length){h+=\'<div style="margin-top:14px;border-top:1px solid #eee;padding-top:10px"><div style="font-size:12px;color:#999;margin-bottom:6px">ご予約</div>\';'
+      +'x.rv.forEach(function(r){var ic=r.c?"background:#c0392b;color:#fff":"background:#185FA5;color:#fff";var tc=r.c?"#c0392b":"#185FA5";'
+      +'h+=\'<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px"><span style="font-size:11px;font-weight:700;\'+ic+\';border-radius:3px;padding:1px 6px">\'+(r.c?"貸":"予")+\'</span><span style="font-size:15px;font-weight:700;font-family:monospace;color:\'+tc+\'">\'+esc(r.s)+"〜"+esc(r.e)+\'</span><span style="font-size:14px;color:#555">\'+esc(r.g)+"名"+(r.c?"（貸切）":"")+\'</span></div>\';});h+="</div>";}'
+      +'elBody.innerHTML=h;elPrev.style.visibility=byD[d-1]?"visible":"hidden";elNext.style.visibility=byD[d+1]?"visible":"hidden";}'
+      +'function openD(d){render(d);modal.style.display="flex";}function closeD(){modal.style.display="none";}'
+      +'document.getElementById("cm-close").onclick=closeD;elPrev.onclick=function(){if(byD[cur-1])render(cur-1);};elNext.onclick=function(){if(byD[cur+1])render(cur+1);};'
+      +'modal.addEventListener("click",function(e){if(e.target===modal)closeD();});'
+      +'document.addEventListener("keydown",function(e){if(modal.style.display==="none"||modal.style.display==="")return;if(e.key==="Escape")closeD();else if(e.key==="ArrowLeft"&&byD[cur-1])render(cur-1);else if(e.key==="ArrowRight"&&byD[cur+1])render(cur+1);});'
+      +'document.querySelectorAll("[data-date]").forEach(function(el){el.style.cursor="pointer";el.addEventListener("click",function(){var k=el.getAttribute("data-date");if(!k)return;var d=parseInt(k.split("-")[2],10);if(d&&byD[d])openD(d);});});'
+      +'})();<\/script>';
+    return modal+js;
+  }
   function genCalPublicHtml(y,m2,schMap,rsvMap,mode){
     var PDOWS=['日','月','火','水','木','金','土'];
     var PBT=['cbt0','cbt1','cbt2','cbt3','cbt4','cbt5','cbt6','cbt7','cbt8'];
@@ -185,7 +235,7 @@
     var body=mode==='cal'?genPubGrid(y,m2,schMap,rsvMap,PDOWS,PBT):genPubList(y,m2,schMap,rsvMap,PDOWS,PBT);
     var legend='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:16px">'+CAL_BT_LABEL.map(function(lbl,i){var c=CAL_BT_COLORS[i]||CAL_BT_DEFAULT_BG[i];return '<div style="display:flex;align-items:center;gap:4px;font-size:11px;color:#666"><div style="width:10px;height:10px;border-radius:2px;background:'+c+';border:0.5px solid rgba(0,0,0,0.15)"></div>'+lbl+'</div>';}).join('')+'</div>';
     var css='<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:sans-serif;background:#f9f7f2;color:#333}.cal-grid{display:grid;grid-template-columns:repeat(7,minmax(56px,1fr));gap:4px}.cal-dow{text-align:center;font-size:11px;font-weight:500;padding:4px 0;color:#888}.cal-dow.sun{color:#E24B4A}.cal-dow.sat{color:#378ADD}.cal-cell{min-height:90px;border:0.5px solid #ddd;border-radius:6px;padding:4px 5px;overflow:hidden;background:#fff}.cal-cell.cal-other{opacity:0.3}.cal-cell.cal-today{border:2px solid #185FA5}'+(function(){var s='';CAL_BT_COLORS.forEach(function(c,i){s+='.cbt'+i+'{background:'+c+'}'});return s;}())+'.cal-day-num{font-size:20px;font-weight:500;line-height:1;flex-shrink:0}.cal-drow{display:flex;align-items:center;gap:3px;margin-bottom:2px;min-height:26px}.cal-hname{font-size:9px;color:#E24B4A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}.cal-aname{font-size:9px;color:#993556;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}.cal-ei{font-size:11px;font-weight:600;background:#444;color:#fff;border-radius:3px;padding:1px 5px;line-height:1.6}.cal-ttime{font-size:10px;color:#666;font-family:monospace}.litem{border:0.5px solid #ddd;border-radius:6px;overflow:hidden;margin-bottom:6px}.litem.ltoday{border:3px solid #185FA5}.lhead{display:flex;align-items:center;gap:6px;padding:6px 10px}.ldate{font-size:20px;font-weight:500;line-height:1}.ldate.lsun,.ldate.lhol{color:#E24B4A}.ldate.lsat{color:#378ADD}.ldow{font-size:13px;font-weight:500;color:#333}.ldow.lsun,.ldow.lhol{color:#E24B4A}.ldow.lsat{color:#378ADD}.leitime{display:flex;align-items:center;gap:4px;flex-shrink:0}.ltime{font-size:14px;font-weight:500;font-family:monospace}@media(max-width:480px){.cal-cell{min-height:70px}.cal-day-num{font-size:16px}}</style>';
-    return '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>テキーラ道場 営業カレンダー '+y+'年'+(m2+1)+'月</title>'+css+'</head><body><div style="max-width:900px;margin:0 auto;padding:8px 6px"><div style="text-align:center;margin-bottom:10px"><h1 style="font-size:17px;font-weight:600;color:#333">🌵 テキーラ道場 営業カレンダー</h1></div>'+nav+body+legend+(function(){var _g=new Date(),_pz=function(n){return String(n).padStart(2,'0');};return '<div style="text-align:right;font-size:10px;color:#999;margin-top:10px">最終出力 '+_g.getFullYear()+'/'+_pz(_g.getMonth()+1)+'/'+_pz(_g.getDate())+' '+_pz(_g.getHours())+':'+_pz(_g.getMinutes())+'</div>';})()+'</div><script>(function(){var t=new Date();var today=t.getFullYear()+"-"+(t.getMonth()+1).toString().padStart(2,"0")+"-"+t.getDate().toString().padStart(2,"0");document.querySelectorAll("[data-date]").forEach(function(el){var isToday=el.dataset.date===today;var badge=el.querySelector(".today-badge");var litem=el.closest(".litem");if(isToday){el.classList.add("cal-today");if(badge)badge.style.display="inline";if(litem)litem.classList.add("ltoday");}else{el.classList.remove("cal-today");if(badge)badge.style.display="none";if(litem)litem.classList.remove("ltoday");}});})();<\/script><script defer src="https://www.tequiladojo.com/calendar/cal-nav.js"><\/script></body></html>';
+    return '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>テキーラ道場 営業カレンダー '+y+'年'+(m2+1)+'月</title>'+css+'</head><body><div style="max-width:900px;margin:0 auto;padding:8px 6px"><div style="text-align:center;margin-bottom:10px"><h1 style="font-size:17px;font-weight:600;color:#333">🌵 テキーラ道場 営業カレンダー</h1></div>'+nav+body+legend+(function(){var _g=new Date(),_pz=function(n){return String(n).padStart(2,'0');};return '<div style="text-align:right;font-size:10px;color:#999;margin-top:10px">最終出力 '+_g.getFullYear()+'/'+_pz(_g.getMonth()+1)+'/'+_pz(_g.getDate())+' '+_pz(_g.getHours())+':'+_pz(_g.getMinutes())+'</div>';})()+'</div><script>(function(){var t=new Date();var today=t.getFullYear()+"-"+(t.getMonth()+1).toString().padStart(2,"0")+"-"+t.getDate().toString().padStart(2,"0");document.querySelectorAll("[data-date]").forEach(function(el){var isToday=el.dataset.date===today;var badge=el.querySelector(".today-badge");var litem=el.closest(".litem");if(isToday){el.classList.add("cal-today");if(badge)badge.style.display="inline";if(litem)litem.classList.add("ltoday");}else{el.classList.remove("cal-today");if(badge)badge.style.display="none";if(litem)litem.classList.remove("ltoday");}});})();<\/script><script defer src="https://www.tequiladojo.com/calendar/cal-nav.js"><\/script>'+_calDayModalBlk(y,m2,schMap,rsvMap)+'</body></html>';
   }
   // 共通ナビJS（月セレクト＆前後ボタンを現在の公開レンジで動的生成）。publish毎に FROM/TO を更新して出力。
   // 旧ページもこのJSを読み込むため、各月HTMLを再生成しなくても月一覧が常に最新になる。
