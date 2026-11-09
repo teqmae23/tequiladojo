@@ -91,9 +91,9 @@
         var sorted2=rvs2.slice().sort(function(a,b){return String(a.startTime||'').localeCompare(String(b.startTime||''));});
         var chips2=sorted2.slice(0,2).map(function(r2){
           var _c2=(r2.charterType===1||r2.charterType==="1");
-          var _ic2=_c2?'background:#7a5610;color:#e8b84a':'background:#185FA5;color:#fff';
-          var _tx2=_c2?'background:#F7ECD9;color:#7a5610':'background:#E7F0FA;color:#185FA5';
-          return '<span style="display:inline-flex;align-items:center;gap:2px;white-space:nowrap"><span style="font-size:9px;font-weight:700;'+_ic2+';border-radius:2px;padding:0 3px;line-height:1.5">'+(_c2?'貸':'予')+'</span><span style="font-size:9px;font-weight:600;'+_tx2+';border-radius:2px;padding:0 4px;line-height:1.5">'+calFmtT(r2.startTime)+' '+(r2.guests||'?')+'名</span></span>';
+          var _ic2=_c2?'background:#c0392b;color:#fff':'background:#185FA5;color:#E6F1FB';
+          var _tc2=_c2?'#c0392b':'#185FA5';
+          return '<span style="display:inline-flex;align-items:center;gap:2px;white-space:nowrap"><span style="font-size:9px;font-weight:500;'+_ic2+';border-radius:2px;padding:0 3px;line-height:1.5">'+(_c2?'貸':'予')+'</span><span style="font-size:10px;font-weight:700;color:'+_tc2+';font-family:monospace;padding-left:1px">'+calFmtT(r2.startTime)+' '+(r2.guests||'?')+'名</span></span>';
         });
         if(sorted2.length>2) chips2.push('<span style="font-size:9px;color:#888">他'+(sorted2.length-2)+'件</span>');
         rsvRow2='<div style="display:flex;gap:3px;align-items:center;flex-wrap:wrap;margin-top:2px">'+chips2.join('')+'</div>';
@@ -146,9 +146,9 @@
         var sorted3=rvs3.slice().sort(function(a,b){return String(a.startTime||'').localeCompare(String(b.startTime||''));});
         var chips3=sorted3.map(function(r3){
           var _c3=(r3.charterType===1||r3.charterType==="1");
-          var _ic3=_c3?'background:#7a5610;color:#e8b84a':'background:#185FA5;color:#fff';
-          var _tx3=_c3?'background:#F7ECD9;color:#7a5610':'background:#E7F0FA;color:#185FA5';
-          return '<span style="display:inline-flex;align-items:center;gap:3px;white-space:nowrap"><span style="font-size:10px;font-weight:700;'+_ic3+';border-radius:3px;padding:0 5px;line-height:1.6">'+(_c3?'貸':'予')+'</span><span style="font-size:10px;font-weight:600;'+_tx3+';border-radius:3px;padding:0 6px;line-height:1.6">'+calFmtT(r3.startTime)+(r3.endTime?'〜'+calFmtT(r3.endTime):'')+' '+(r3.guests||'?')+'名</span></span>';
+          var _ic3=_c3?'background:#c0392b;color:#fff':'background:#185FA5;color:#E6F1FB';
+          var _tc3=_c3?'#c0392b':'#185FA5';
+          return '<span style="display:inline-flex;align-items:center;gap:3px;white-space:nowrap"><span style="font-size:10px;font-weight:500;'+_ic3+';border-radius:3px;padding:0 5px;line-height:1.6">'+(_c3?'貸':'予')+'</span><span style="font-size:11px;font-weight:700;color:'+_tc3+';font-family:monospace">'+calFmtT(r3.startTime)+(r3.endTime?'〜'+calFmtT(r3.endTime):'')+' '+(r3.guests||'?')+'名</span></span>';
         });
         rsvPart3='<div style="padding:2px 10px 4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center">'+chips3.join('')+'</div>';
       }
