@@ -2766,6 +2766,17 @@ function calRenderLegend(){
       +'<div class="cal-legend-dot" style="background:var(--cbt'+i+','+CAL_BT_DEFAULT_BG[i]+')"></div>'+l+'</div>';
   }).join('');
 }
+// カレンダー上の予約（文字）クリックで予約編集モーダルを開く。
+// 予約タブ未訪問等で cache.reservations 未ロード/該当なしのときは取得してから開く。
+function calOpenRsvEdit(rid){
+  if(!rid) return;
+  var has=cache.reservations&&cache.reservations.some(function(r){return r.id===rid;});
+  if(has){ openReservationModal(rid); return; }
+  db.collection('reservations').get().then(function(snap){
+    cache.reservations=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    openReservationModal(rid);
+  }).catch(function(e){ toast('予約の読込に失敗: '+e.message,'err'); });
+}
 var _calAuthWaiting=false;
 function calRenderMonth(){
   // 認証未確定（auth.currentUser が null）だと、公開読み取り可能な schedules は出るが
@@ -2798,7 +2809,7 @@ function calRenderMonth(){
       var rd=d.data().reservationDate||'';
       if(rd.length>=6){
         var ryy=parseInt('20'+rd.slice(0,2)),rmm=parseInt(rd.slice(2,4));
-        if(ryy===y&&rmm===m+1){ var rday=parseInt(rd.slice(4,6)); if(!rsvMap[rday])rsvMap[rday]=[]; rsvMap[rday].push(d.data()); }
+        if(ryy===y&&rmm===m+1){ var rday=parseInt(rd.slice(4,6)); if(!rsvMap[rday])rsvMap[rday]=[]; rsvMap[rday].push(Object.assign({id:d.id},d.data())); }
       }
     });
   }).catch(function(){});
@@ -2850,7 +2861,7 @@ function calRenderGrid(y,m,schMap,rsvMap,annivMap,peMap){
       // 予アイコン＋「HH:MM-HH:MM N名」を青太字で。予約者名は非表示（予アイコンクリックでID・ニックネームをポップアップ）。
       rvs.slice().sort(function(a,b){return (a.startTime||'').localeCompare(b.startTime||'');}).forEach(function(r){
         var _ch=(r.charterType===1||r.charterType==='1');
-        html+='<div class="cal-rrow"><span class="cal-rico" data-rsv-btn title="'+(_ch?'貸切予約':'予約者を表示')+'"'+(_ch?' style="background:#c0392b;color:#fff"':'')+'>'+(_ch?'貸':'予')+'</span><span class="cal-rtime2"'+(_ch?' style="color:#c0392b"':'')+'>'+calFmtT(r.startTime)+'-'+calFmtT(r.endTime)+' '+(r.guests||'?')+'名</span></div>';
+        html+='<div class="cal-rrow"><span class="cal-rico" data-rsv-btn title="'+(_ch?'貸切予約':'予約者を表示')+'"'+(_ch?' style="background:#c0392b;color:#fff"':'')+'>'+(_ch?'貸':'予')+'</span><span class="cal-rtime2" data-rsv-edit="'+(r.id||'')+'" title="クリックで予約編集" style="cursor:pointer'+(_ch?';color:#c0392b':'')+'">'+calFmtT(r.startTime)+'-'+calFmtT(r.endTime)+' '+(r.guests||'?')+'名</span></div>';
       });
     }
     var pe=(peMap||{})[d]||[];
@@ -2870,6 +2881,7 @@ function calRenderGrid(y,m,schMap,rsvMap,annivMap,peMap){
     });
     var rvs2=rsvMap[d]||[];
     cell.querySelectorAll('[data-rsv-btn]').forEach(function(ribtn){ ribtn.onclick=function(e){ e.stopPropagation(); calShowRsvPopup(rvs2,ribtn); }; });
+    cell.querySelectorAll('[data-rsv-edit]').forEach(function(red){ red.onclick=function(e){ e.stopPropagation(); var rid=red.getAttribute('data-rsv-edit'); if(rid) calOpenRsvEdit(rid); }; });
   });
 }
 function calRenderList(y,m,schMap,rsvMap,annivMap,peMap){
@@ -2905,7 +2917,7 @@ function calRenderList(y,m,schMap,rsvMap,annivMap,peMap){
       html+='<div class="cal-rsum'+(_sm2.full?' full':'')+'">'+_sm2.text+'</div>';
       rvs.sort(function(a,b){return (a.startTime||'').localeCompare(b.startTime||'');}).forEach(function(r){
         var _chl=(r.charterType===1||r.charterType==='1');
-        html+='<div class="cal-rrow"><span class="cal-rico"'+(_chl?' style="background:#c0392b;color:#fff"':'')+'>'+(_chl?'貸':'予')+'</span><span class="cal-rtime"'+(_chl?' style="color:#c0392b"':'')+'>'+calFmtT(r.startTime)+'-'+calFmtT(r.endTime)+'</span><span class="cal-rpax"'+(_chl?' style="color:#c0392b"':'')+'>'+( r.guests||'')+'名'+(_chl?'（貸切）':'')+'</span><span class="cal-rwho" style="flex:1;margin-left:6px">'+calRsvWho(r)+'</span>'+(r.memo?'<span class="cal-rtime">'+r.memo+'</span>':'')+'</div>';
+        html+='<div class="cal-rrow" data-rsv-edit="'+(r.id||'')+'" title="クリックで予約編集" style="cursor:pointer"><span class="cal-rico"'+(_chl?' style="background:#c0392b;color:#fff"':'')+'>'+(_chl?'貸':'予')+'</span><span class="cal-rtime"'+(_chl?' style="color:#c0392b"':'')+'>'+calFmtT(r.startTime)+'-'+calFmtT(r.endTime)+'</span><span class="cal-rpax"'+(_chl?' style="color:#c0392b"':'')+'>'+( r.guests||'')+'名'+(_chl?'（貸切）':'')+'</span><span class="cal-rwho" style="flex:1;margin-left:6px">'+calRsvWho(r)+'</span>'+(r.memo?'<span class="cal-rtime">'+r.memo+'</span>':'')+'</div>';
       });
       html+='</div>';
     }
@@ -2921,6 +2933,8 @@ function calRenderList(y,m,schMap,rsvMap,annivMap,peMap){
   wrap.querySelectorAll('.cal-litem').forEach(function(item){
     item.addEventListener('click',function(e){
       if(e.target.closest('button')) return;
+      var _red=e.target.closest('[data-rsv-edit]');
+      if(_red){ var _rid=_red.getAttribute('data-rsv-edit'); if(_rid){ e.stopPropagation(); calOpenRsvEdit(_rid); return; } }
       var key2=item.dataset.date; if(!key2) return;
       var parts=key2.split('-');
       var ly=parseInt(parts[0]),lm2=parseInt(parts[1])-1,ld=parseInt(parts[2]);
@@ -3416,9 +3430,9 @@ function genPubGrid(y,m2,schMap,rsvMap,PDOWS,PBT){
       var sorted2=rvs2.slice().sort(function(a,b){return String(a.startTime||'').localeCompare(String(b.startTime||''));});
       var chips2=sorted2.slice(0,2).map(function(r2){
         var _c2=(r2.charterType===1||r2.charterType==="1");
-        var _ic2=_c2?'background:#7a5610;color:#e8b84a':'background:#185FA5;color:#fff';
-        var _tx2=_c2?'background:#F7ECD9;color:#7a5610':'background:#E7F0FA;color:#185FA5';
-        return '<span style="display:inline-flex;align-items:center;gap:2px;white-space:nowrap"><span style="font-size:9px;font-weight:700;'+_ic2+';border-radius:2px;padding:0 3px;line-height:1.5">'+(_c2?'貸':'予')+'</span><span style="font-size:9px;font-weight:600;'+_tx2+';border-radius:2px;padding:0 4px;line-height:1.5">'+calFmtT(r2.startTime)+' '+(r2.guests||'?')+'名</span></span>';
+        var _ic2=_c2?'background:#c0392b;color:#fff':'background:#185FA5;color:#E6F1FB';
+        var _tc2=_c2?'#c0392b':'#185FA5';
+        return '<span style="display:inline-flex;align-items:center;gap:2px;white-space:nowrap"><span style="font-size:9px;font-weight:500;'+_ic2+';border-radius:2px;padding:0 3px;line-height:1.5">'+(_c2?'貸':'予')+'</span><span style="font-size:10px;font-weight:700;color:'+_tc2+';font-family:monospace;padding-left:1px">'+calFmtT(r2.startTime)+' '+(r2.guests||'?')+'名</span></span>';
       });
       if(sorted2.length>2) chips2.push('<span style="font-size:9px;color:#888">他'+(sorted2.length-2)+'件</span>');
       rsvRow2='<div style="display:flex;gap:3px;align-items:center;flex-wrap:wrap;margin-top:2px">'+chips2.join('')+'</div>';
@@ -3471,9 +3485,9 @@ function genPubList(y,m2,schMap,rsvMap,PDOWS,PBT){
       var sorted3=rvs3.slice().sort(function(a,b){return String(a.startTime||'').localeCompare(String(b.startTime||''));});
       var chips3=sorted3.map(function(r3){
         var _c3=(r3.charterType===1||r3.charterType==="1");
-        var _ic3=_c3?'background:#7a5610;color:#e8b84a':'background:#185FA5;color:#fff';
-        var _tx3=_c3?'background:#F7ECD9;color:#7a5610':'background:#E7F0FA;color:#185FA5';
-        return '<span style="display:inline-flex;align-items:center;gap:3px;white-space:nowrap"><span style="font-size:10px;font-weight:700;'+_ic3+';border-radius:3px;padding:0 5px;line-height:1.6">'+(_c3?'貸':'予')+'</span><span style="font-size:10px;font-weight:600;'+_tx3+';border-radius:3px;padding:0 6px;line-height:1.6">'+calFmtT(r3.startTime)+(r3.endTime?'〜'+calFmtT(r3.endTime):'')+' '+(r3.guests||'?')+'名</span></span>';
+        var _ic3=_c3?'background:#c0392b;color:#fff':'background:#185FA5;color:#E6F1FB';
+        var _tc3=_c3?'#c0392b':'#185FA5';
+        return '<span style="display:inline-flex;align-items:center;gap:3px;white-space:nowrap"><span style="font-size:10px;font-weight:500;'+_ic3+';border-radius:3px;padding:0 5px;line-height:1.6">'+(_c3?'貸':'予')+'</span><span style="font-size:11px;font-weight:700;color:'+_tc3+';font-family:monospace">'+calFmtT(r3.startTime)+(r3.endTime?'〜'+calFmtT(r3.endTime):'')+' '+(r3.guests||'?')+'名</span></span>';
       });
       rsvPart3='<div style="padding:2px 10px 4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center">'+chips3.join('')+'</div>';
     }
