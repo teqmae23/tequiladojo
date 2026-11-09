@@ -88,13 +88,15 @@
       var rvs2=(!isOther)?rsvMap[day]:null;
       var rsvRow2='';
       if(rvs2&&rvs2.length){
-        var hasC2=rvs2.some(function(r2){return r2.charterType===1||r2.charterType==="1";});
         var sorted2=rvs2.slice().sort(function(a,b){return String(a.startTime||'').localeCompare(String(b.startTime||''));});
         var chips2=sorted2.slice(0,2).map(function(r2){
-          return '<span style="font-size:9px;font-weight:600;background:#FBEAF0;color:#C44873;border-radius:2px;padding:0 4px;line-height:1.5;white-space:nowrap">'+calFmtT(r2.startTime)+' '+(r2.guests||'?')+'名</span>';
+          var _c2=(r2.charterType===1||r2.charterType==="1");
+          var _ic2=_c2?'background:#7a5610;color:#e8b84a':'background:#185FA5;color:#fff';
+          var _tx2=_c2?'background:#F7ECD9;color:#7a5610':'background:#E7F0FA;color:#185FA5';
+          return '<span style="display:inline-flex;align-items:center;gap:2px;white-space:nowrap"><span style="font-size:9px;font-weight:700;'+_ic2+';border-radius:2px;padding:0 3px;line-height:1.5">'+(_c2?'貸':'予')+'</span><span style="font-size:9px;font-weight:600;'+_tx2+';border-radius:2px;padding:0 4px;line-height:1.5">'+calFmtT(r2.startTime)+' '+(r2.guests||'?')+'名</span></span>';
         });
         if(sorted2.length>2) chips2.push('<span style="font-size:9px;color:#888">他'+(sorted2.length-2)+'件</span>');
-        rsvRow2='<div style="display:flex;gap:3px;align-items:center;flex-wrap:wrap;margin-top:2px">'+(hasC2?'<span style="font-size:9px;font-weight:600;background:#7a5610;color:#e8b84a;border-radius:2px;padding:0 4px;line-height:1.5">貸切</span>':'')+chips2.join('')+'</div>';
+        rsvRow2='<div style="display:flex;gap:3px;align-items:center;flex-wrap:wrap;margin-top:2px">'+chips2.join('')+'</div>';
       }
       html+='<div class="'+cls+'" data-date="'+key+'"><div class="cal-drow">'+dayPart+namePart+'<span class="today-badge" style="font-size:8px;font-weight:600;background:#185FA5;color:#fff;border-radius:2px;padding:0 3px;margin-left:auto;display:none;">当日</span></div>'+trow+rsvRow2+'</div>';
     }
@@ -141,12 +143,14 @@
       var todayPart='<span class="today-badge" style="font-size:10px;font-weight:600;background:#185FA5;color:#fff;border-radius:3px;padding:0 5px;margin-left:auto;flex-shrink:0;display:none;">当日</span>';
       var rsvPart3='';
       if(rvs3&&rvs3.length){
-        var hasC3=rvs3.some(function(r3){return r3.charterType===1||r3.charterType==="1";});
         var sorted3=rvs3.slice().sort(function(a,b){return String(a.startTime||'').localeCompare(String(b.startTime||''));});
         var chips3=sorted3.map(function(r3){
-          return '<span style="font-size:10px;font-weight:600;background:#FBEAF0;color:#C44873;border-radius:3px;padding:0 6px;line-height:1.6;white-space:nowrap">'+calFmtT(r3.startTime)+(r3.endTime?'〜'+calFmtT(r3.endTime):'')+' '+(r3.guests||'?')+'名</span>';
+          var _c3=(r3.charterType===1||r3.charterType==="1");
+          var _ic3=_c3?'background:#7a5610;color:#e8b84a':'background:#185FA5;color:#fff';
+          var _tx3=_c3?'background:#F7ECD9;color:#7a5610':'background:#E7F0FA;color:#185FA5';
+          return '<span style="display:inline-flex;align-items:center;gap:3px;white-space:nowrap"><span style="font-size:10px;font-weight:700;'+_ic3+';border-radius:3px;padding:0 5px;line-height:1.6">'+(_c3?'貸':'予')+'</span><span style="font-size:10px;font-weight:600;'+_tx3+';border-radius:3px;padding:0 6px;line-height:1.6">'+calFmtT(r3.startTime)+(r3.endTime?'〜'+calFmtT(r3.endTime):'')+' '+(r3.guests||'?')+'名</span></span>';
         });
-        rsvPart3='<div style="padding:2px 10px 4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center">'+(hasC3?'<span style="font-size:10px;font-weight:600;background:#7a5610;color:#e8b84a;border-radius:3px;padding:0 6px;line-height:1.6">貸切</span>':'')+chips3.join('')+'</div>';
+        rsvPart3='<div style="padding:2px 10px 4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center">'+chips3.join('')+'</div>';
       }
       html+='<div class="'+cls+'" data-date="'+key+'"><div class="'+headCls+'"><div style="display:flex;align-items:center;gap:3px;flex-shrink:0">'+datePart+dowPart+'</div>'+timePart+namesPart+todayPart+'</div>'+(sch&&sch.memo?'<div style="font-size:11px;color:#222;padding:2px 10px 4px">'+sch.memo+'</div>':'')+rsvPart3+'</div>';
     }
