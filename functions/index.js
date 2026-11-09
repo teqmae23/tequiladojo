@@ -743,10 +743,11 @@ exports.getReservationSummary = functions.region('asia-northeast1')
       const rd = String(r.reservationDate || '');
       if (rd.length < 6) return;
       if (rd < from || rd > to) return;
-      if (!summary[rd]) summary[rd] = { guests: 0, count: 0, start: '', end: '' };
+      if (!summary[rd]) summary[rd] = { guests: 0, count: 0, start: '', end: '', charter: false };
       const s = summary[rd];
       s.guests += parseInt(r.guests, 10) || 0;
       s.count += 1;
+      if (r.charterType === 1 || r.charterType === '1') s.charter = true;
       const st = String(r.startTime || '');
       const et = String(r.endTime || '');
       if (st && (!s.start || st < s.start)) s.start = st;
