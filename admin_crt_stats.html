@@ -188,6 +188,15 @@ select[multiple]{height:96px;}
           <option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
         </select>
       </div>
+      <div class="filter-group">
+        <div class="filter-label">輸入量TOP</div>
+        <select id="f-topn">
+          <option value="0">すべて</option>
+          <option value="5">TOP 5</option>
+          <option value="10">TOP 10</option>
+          <option value="20">TOP 20</option>
+        </select>
+      </div>
       <div class="filter-group grow">
         <div class="filter-label">国 (複数選択可)</div>
         <select id="f-pais" multiple></select>
@@ -279,10 +288,20 @@ select[multiple]{height:96px;}
         </select>
       </div>
     </div>
-    <div class="chart-wrap">
-      <canvas id="main-chart"></canvas>
+    <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
+      <div style="flex:0 0 220px;min-width:170px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <div style="font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;flex:1;">対象国（表示ON/OFF）</div>
+          <button class="btn btn-ghost btn-sm" onclick="chartSelectAll(true)">全選択</button>
+          <button class="btn btn-ghost btn-sm" onclick="chartSelectAll(false)">解除</button>
+        </div>
+        <div id="chart-country-list" style="max-height:380px;overflow-y:auto;border:1px solid var(--cream3);border-radius:var(--r);background:var(--cream);"></div>
+      </div>
+      <div style="flex:1;min-width:300px;">
+        <div class="chart-wrap"><canvas id="main-chart"></canvas></div>
+        <div id="chart-placeholder" class="placeholder">絞り込みを実行するとグラフが表示されます</div>
+      </div>
     </div>
-    <div id="chart-placeholder" class="placeholder">絞り込みを実行するとグラフが表示されます</div>
   </div>
 
   <!-- Import volume trend tab (年月輸入量) -->
@@ -1083,6 +1102,16 @@ function applyFilter() {
     });
   }
 
+  // 輸入量TOP N（上記までで絞り込んだ範囲で、国別合計の上位Nか国のみ残す）
+  var topN = parseInt(document.getElementById('f-topn').value) || 0;
+  if (topN > 0) {
+    var byCountry = {};
+    allRows.forEach(function(r) { byCountry[r.Pais] = (byCountry[r.Pais] || 0) + (r.Litros_40 || 0); });
+    var topSet = {};
+    Object.keys(byCountry).sort(function(a, b) { return byCountry[b] - byCountry[a]; }).slice(0, topN).forEach(function(c) { topSet[c] = true; });
+    allRows = allRows.filter(function(r) { return topSet[r.Pais]; });
+  }
+
   var total = allRows.reduce(function(s, r) { return s + (r.Litros_40 || 0); }, 0);
   var countries = new Set(allRows.map(function(r) { return r.Pais; })).size;
   var anos = allRows.map(function(r) { return r.Año; });
@@ -1103,6 +1132,7 @@ function applyFilter() {
   doSort();
   currentPage = 0;
   renderTable();
+  renderChartCountryList();
   renderChart();
   renderImportTrend();
   renderRank();
@@ -1114,6 +1144,7 @@ function applyFilter() {
 
 function clearFilter() {
   ['f-year-from','f-year-to'].forEach(function(id) { document.getElementById(id).value = ''; });
+  document.getElementById('f-topn').value = '0';
   ['f-month-from','f-month-to','f-pais','f-clase','f-categoria','f-grupo'].forEach(function(id) {
     var sel = document.getElementById(id);
     Array.from(sel.options).forEach(function(o) { o.selected = false; });
@@ -1211,6 +1242,37 @@ function periodSort(a, b) {
   return String(a).localeCompare(String(b));
 }
 
+// グラフタブの「対象国 ON/OFF」リスト
+function chartFilteredRows() {
+  var listEl = document.getElementById('chart-country-list');
+  if (!listEl || !listEl.querySelector('input[type=checkbox]')) return allRows;
+  var checked = {};
+  listEl.querySelectorAll('input[type=checkbox]:checked').forEach(function(cb) { checked[cb.value] = true; });
+  return allRows.filter(function(r) { return checked[r.Pais]; });
+}
+function renderChartCountryList() {
+  var listEl = document.getElementById('chart-country-list');
+  if (!listEl) return;
+  if (!allRows.length) { listEl.innerHTML = ''; return; }
+  var vol = {};
+  allRows.forEach(function(r) { vol[r.Pais] = (vol[r.Pais] || 0) + (r.Litros_40 || 0); });
+  var countries = Object.keys(vol).sort(function(a, b) { return vol[b] - vol[a]; });
+  var prev = {};
+  listEl.querySelectorAll('input[type=checkbox]').forEach(function(cb) { prev[cb.value] = cb.checked; });
+  listEl.innerHTML = countries.map(function(pais) {
+    var checked = (pais in prev) ? prev[pais] : true;
+    return '<label class="comp-country-item">'
+      + '<input type="checkbox" value="' + esc(pais) + '"' + (checked ? ' checked' : '') + ' onchange="renderChart()">'
+      + '<span>' + esc(nameOf(pais)) + '</span>'
+      + '<span class="comp-country-vol">' + fmtK(Math.round(vol[pais])) + 'L</span>'
+      + '</label>';
+  }).join('');
+}
+function chartSelectAll(checked) {
+  document.getElementById('chart-country-list').querySelectorAll('input[type=checkbox]').forEach(function(cb) { cb.checked = checked; });
+  renderChart();
+}
+
 function renderChart() {
   var placeholder = document.getElementById('chart-placeholder');
   var canvas = document.getElementById('main-chart');
@@ -1219,14 +1281,23 @@ function renderChart() {
     if (chartInst) { chartInst.destroy(); chartInst = null; }
     return;
   }
-  placeholder.style.display = 'none';
-  canvas.style.display = '';
-
   var groupBy = document.getElementById('chart-group').value;
   var chartTypeVal = document.getElementById('chart-type').value;
   var stacked = chartTypeVal === 'bar-stacked';
   var chartType = stacked ? 'bar' : chartTypeVal;
   var splitBy = document.getElementById('chart-split').value;
+
+  // 対象国のON/OFF（チェックされた国のみグラフに反映）
+  var rows = chartFilteredRows();
+  if (!rows.length) {
+    placeholder.textContent = '表示する国が選択されていません（左の「対象国」でON/OFF）';
+    placeholder.style.display = ''; canvas.style.display = 'none';
+    if (chartInst) { chartInst.destroy(); chartInst = null; }
+    return;
+  }
+  placeholder.textContent = '絞り込みを実行するとグラフが表示されます';
+  placeholder.style.display = 'none';
+  canvas.style.display = '';
 
   function keyOf(r, axis) {
     if (axis === 'ym')      return r.Año + '/' + pad(r.Mes);
@@ -1246,7 +1317,7 @@ function renderChart() {
 
   if (!splitBy) {
     var agg = {};
-    allRows.forEach(function(r) {
+    rows.forEach(function(r) {
       var k = keyOf(r, groupBy);
       agg[k] = (agg[k] || 0) + (r.Litros_40 || 0);
     });
@@ -1255,7 +1326,7 @@ function renderChart() {
     drawChart(canvas, chartType, labels, [{label:'Litros 40°', data:data, backgroundColor:PALETTE[0], borderColor:PALETTE[0], fill:false}], groupBy, stacked);
   } else {
     var splitKeys = [], splitSeen = {}, xKeys = [], xSeen = {};
-    allRows.forEach(function(r) {
+    rows.forEach(function(r) {
       var sk = keyOf(r, splitBy), xk = keyOf(r, groupBy);
       if (!splitSeen[sk]) { splitSeen[sk] = true; splitKeys.push(sk); }
       if (!xSeen[xk]) { xSeen[xk] = true; xKeys.push(xk); }
@@ -1264,7 +1335,7 @@ function renderChart() {
     splitKeys = (splitBy === 'clase') ? claseSort(splitKeys) : sortKeys(splitKeys, splitBy);
     if (splitKeys.length > 12) splitKeys = splitKeys.slice(0, 12);
     var agg2 = {};
-    allRows.forEach(function(r) {
+    rows.forEach(function(r) {
       var sk = keyOf(r, splitBy), xk = keyOf(r, groupBy);
       if (!agg2[sk]) agg2[sk] = {};
       agg2[sk][xk] = (agg2[sk][xk] || 0) + (r.Litros_40 || 0);
