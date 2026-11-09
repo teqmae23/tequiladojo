@@ -290,20 +290,23 @@ select[multiple]{height:96px;}
           <option value="categoria">Categoria</option>
         </select>
       </div>
+      <div class="filter-group">
+        <div class="filter-label">指標</div>
+        <select id="chart-metric" onchange="renderChart()">
+          <option value="vol">輸入量</option>
+          <option value="rank">順位（選択国内）</option>
+        </select>
+      </div>
     </div>
-    <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
-      <div style="flex:0 0 220px;min-width:170px;">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-          <div style="font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;flex:1;">対象国（表示ON/OFF）</div>
-          <button class="btn btn-ghost btn-sm" onclick="chartSelectAll(true)">全選択</button>
-          <button class="btn btn-ghost btn-sm" onclick="chartSelectAll(false)">解除</button>
-        </div>
-        <div id="chart-country-list" style="max-height:380px;overflow-y:auto;border:1px solid var(--cream3);border-radius:var(--r);background:var(--cream);"></div>
+    <div class="chart-wrap"><canvas id="main-chart"></canvas></div>
+    <div id="chart-placeholder" class="placeholder">絞り込みを実行するとグラフが表示されます</div>
+    <div style="margin-top:16px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <div style="font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;flex:1;">対象国（表示ON/OFF）</div>
+        <button class="btn btn-ghost btn-sm" onclick="chartSelectAll(true)">全選択</button>
+        <button class="btn btn-ghost btn-sm" onclick="chartSelectAll(false)">全解除</button>
       </div>
-      <div style="flex:1;min-width:300px;">
-        <div class="chart-wrap"><canvas id="main-chart"></canvas></div>
-        <div id="chart-placeholder" class="placeholder">絞り込みを実行するとグラフが表示されます</div>
-      </div>
+      <div id="chart-country-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));border:1px solid var(--cream3);border-radius:var(--r);background:var(--cream);max-height:260px;overflow-y:auto;"></div>
     </div>
   </div>
 
@@ -1308,7 +1311,7 @@ function renderChart() {
   // 対象国のON/OFF（チェックされた国のみグラフに反映）
   var rows = chartFilteredRows();
   if (!rows.length) {
-    placeholder.textContent = '表示する国が選択されていません（左の「対象国」でON/OFF）';
+    placeholder.textContent = '表示する国が選択されていません（下の「対象国」でON/OFF）';
     placeholder.style.display = ''; canvas.style.display = 'none';
     if (chartInst) { chartInst.destroy(); chartInst = null; }
     return;
@@ -1316,6 +1319,9 @@ function renderChart() {
   placeholder.textContent = '絞り込みを実行するとグラフが表示されます';
   placeholder.style.display = 'none';
   canvas.style.display = '';
+
+  // 指標=順位: 選択国内の順位推移（バンプチャート）
+  if (document.getElementById('chart-metric').value === 'rank') { renderChartRank(rows, groupBy); return; }
 
   function keyOf(r, axis) {
     if (axis === 'ym')      return r.Año + '/' + pad(r.Mes);
@@ -1396,6 +1402,71 @@ function drawChart(canvas, type, labels, datasets, groupBy, stacked) {
       scales: {
         x: { stacked: !!stacked, ticks: xTickOpts },
         y: { stacked: !!stacked, ticks: { font: { family: "'DM Mono', monospace", size: 10 }, callback: function(v) { return fmtK(v); } } }
+      }
+    }
+  });
+}
+
+// 指標=順位: 選択国内での順位推移を折れ線（バンプチャート）で表示
+function renderChartRank(rows, groupBy) {
+  var canvas = document.getElementById('main-chart');
+  var timeAxes = { ym:1, year:1, half:1, quarter:1 };
+  var axis = timeAxes[groupBy] ? groupBy : 'year'; // 時間軸でなければ年別にフォールバック
+  var isPeriod = (axis === 'half' || axis === 'quarter');
+  function pkey(r) {
+    if (axis === 'ym')      return r.Año + '/' + pad(r.Mes);
+    if (axis === 'half')    return r.Año + '-H' + (parseInt(r.Mes||0)<=6?'1':'2');
+    if (axis === 'quarter') return r.Año + '-Q' + Math.ceil(parseInt(r.Mes||0)/3);
+    return String(r.Año);
+  }
+  var periodSet = {}, vol = {}, totals = {};
+  rows.forEach(function(r) {
+    var pk = pkey(r); periodSet[pk] = 1;
+    if (!vol[r.Pais]) vol[r.Pais] = {};
+    vol[r.Pais][pk] = (vol[r.Pais][pk] || 0) + (r.Litros_40 || 0);
+    totals[r.Pais] = (totals[r.Pais] || 0) + (r.Litros_40 || 0);
+  });
+  var labels = Object.keys(periodSet).sort(function(a, b) { return isPeriod ? periodSort(a, b) : String(a).localeCompare(String(b)); });
+  var paises = Object.keys(vol);
+  // 各期間ごとに、その期間に実績のある国を輸入量降順で順位付け
+  var rank = {}; // country -> period -> rank
+  labels.forEach(function(pk) {
+    var arr = paises.map(function(c) { return { c: c, v: (vol[c] && vol[c][pk]) || 0 }; }).filter(function(x) { return x.v > 0; });
+    arr.sort(function(a, b) { return b.v - a.v; });
+    arr.forEach(function(x, i) { if (!rank[x.c]) rank[x.c] = {}; rank[x.c][pk] = i + 1; });
+  });
+  var ordered = paises.slice().sort(function(a, b) { return (totals[b]||0) - (totals[a]||0); });
+  var datasets = ordered.map(function(c, i) {
+    var col = PALETTE[i % PALETTE.length];
+    return {
+      label: nameOf(c),
+      data: labels.map(function(pk) { return (rank[c] && rank[c][pk] != null) ? rank[c][pk] : null; }),
+      vols: labels.map(function(pk) { return (vol[c] && vol[c][pk]) || 0; }),
+      borderColor: col, backgroundColor: col, fill: false, tension: 0.2, pointRadius: 3, borderWidth: 2, spanGaps: true
+    };
+  });
+  if (chartInst) { chartInst.destroy(); chartInst = null; }
+  chartInst = new Chart(canvas, {
+    type: 'line',
+    data: { labels: labels, datasets: datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'nearest', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { font: { family: "'DM Mono', monospace", size: 10 }, boxWidth: 12 } },
+        tooltip: { callbacks: { label: function(ctx) {
+          if (ctx.parsed.y == null) return ctx.dataset.label + ': —';
+          var v = (ctx.dataset.vols && ctx.dataset.vols[ctx.dataIndex]) || 0;
+          return ctx.dataset.label + ': ' + ctx.parsed.y + '位 (' + fmtK(Math.round(v)) + 'L)';
+        } } }
+      },
+      scales: {
+        x: { ticks: { font: { family: "'DM Mono', monospace", size: isPeriod?9:10 }, maxRotation: isPeriod?90:60, autoSkip: (axis === 'ym') } },
+        y: {
+          reverse: true, min: 1, max: Math.max(1, ordered.length),
+          title: { display: true, text: '順位（選択国内）', font: { family: "'DM Mono', monospace", size: 11 }, color: '#6b5a3a' },
+          ticks: { stepSize: 1, precision: 0, font: { family: "'DM Mono', monospace", size: 10 }, callback: function(v) { return Number.isInteger(v) ? v + '位' : ''; } }
+        }
       }
     }
   });
