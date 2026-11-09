@@ -101,7 +101,7 @@ select[multiple]{height:96px;}
 .r{text-align:right;}
 .sort-arrow{font-size:9px;margin-left:3px;opacity:.5;}
 
-.chart-wrap{position:relative;height:340px;margin-bottom:24px;}
+.chart-wrap{position:relative;height:340px;margin-bottom:24px;resize:vertical;overflow:hidden;min-height:220px;}
 .export-bar{display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;}
 
 .pager{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;color:var(--ink3);}
@@ -1356,14 +1356,26 @@ function renderChart() {
       if (!xSeen[xk]) { xSeen[xk] = true; xKeys.push(xk); }
     });
     xKeys = sortKeys(xKeys, groupBy);
-    splitKeys = (splitBy === 'clase') ? claseSort(splitKeys) : sortKeys(splitKeys, splitBy);
-    if (splitKeys.length > 12) splitKeys = splitKeys.slice(0, 12);
     var agg2 = {};
     rows.forEach(function(r) {
       var sk = keyOf(r, splitBy), xk = keyOf(r, groupBy);
       if (!agg2[sk]) agg2[sk] = {};
       agg2[sk][xk] = (agg2[sk][xk] || 0) + (r.Litros_40 || 0);
     });
+    // 凡例・色の並び: Claseは固定順、その他は「最終データ（右端）の輸入量」降順
+    var lastXK = xKeys.length ? xKeys[xKeys.length - 1] : null;
+    if (splitBy === 'clase') {
+      splitKeys = claseSort(splitKeys);
+    } else {
+      splitKeys.sort(function(a, b) {
+        var va = (lastXK && agg2[a] && agg2[a][lastXK]) || 0;
+        var vb = (lastXK && agg2[b] && agg2[b][lastXK]) || 0;
+        if (vb !== va) return vb - va;
+        var ta = Object.values(agg2[a]||{}).reduce(function(s,v){return s+v;},0);
+        var tb = Object.values(agg2[b]||{}).reduce(function(s,v){return s+v;},0);
+        return tb - ta;
+      });
+    }
     var datasets = splitKeys.map(function(sk, i) {
       var col = getSeriesColor(sk, i);
       return {
@@ -1398,7 +1410,7 @@ function drawChart(canvas, type, labels, datasets, groupBy, stacked) {
     data: { labels: labels, datasets: datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { font: { family: "'DM Mono', monospace", size: 11 }, boxWidth: 14 } } },
+      plugins: { legend: { position: 'top', align: 'start', labels: { font: { family: "'DM Mono', monospace", size: 11 }, boxWidth: 14 } } },
       scales: {
         x: { stacked: !!stacked, ticks: xTickOpts },
         y: { stacked: !!stacked, ticks: { font: { family: "'DM Mono', monospace", size: 10 }, callback: function(v) { return fmtK(v); } } }
@@ -1484,7 +1496,7 @@ function renderChartRank(rows, groupBy) {
       layout: { padding: { right: 104, top: 6, bottom: 6 } }, // 右=国名ラベル、上下=余白
       interaction: { mode: 'nearest', intersect: false },
       plugins: {
-        legend: { position: 'top', labels: { font: { family: "'DM Mono', monospace", size: 10 }, boxWidth: 12 } },
+        legend: { position: 'top', align: 'start', labels: { font: { family: "'DM Mono', monospace", size: 10 }, boxWidth: 12 } },
         tooltip: { callbacks: { label: function(ctx) {
           if (ctx.parsed.y == null) return ctx.dataset.label + ': —';
           var v = (ctx.dataset.vols && ctx.dataset.vols[ctx.dataIndex]) || 0;
@@ -1609,7 +1621,7 @@ function renderImportTrend() {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'nearest', intersect: false },
       plugins: {
-        legend: { position: 'top', labels: { font: { family: "'DM Mono', monospace", size: 10 }, boxWidth: 12 } },
+        legend: { position: 'top', align: 'start', labels: { font: { family: "'DM Mono', monospace", size: 10 }, boxWidth: 12 } },
         tooltip: { callbacks: { label: function(ctx) { return ctx.dataset.label + ': ' + fmt(ctx.parsed.y) + ' L'; } } }
       },
       scales: {
