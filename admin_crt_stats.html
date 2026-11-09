@@ -300,6 +300,7 @@ select[multiple]{height:96px;}
     </div>
     <div class="chart-wrap"><canvas id="main-chart"></canvas></div>
     <div id="chart-placeholder" class="placeholder">絞り込みを実行するとグラフが表示されます</div>
+    <div id="chart-table-wrap" style="overflow-x:auto;margin-top:6px;max-height:300px;overflow-y:auto;"></div>
     <div style="margin-top:16px;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
         <div style="font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase;flex:1;">対象国（表示ON/OFF）</div>
@@ -1294,12 +1295,39 @@ function chartSelectAll(checked) {
   renderChart();
 }
 
+// グラフと対象国の間に、各ポイント（期間×系列）の輸入量テーブルを表示
+function renderChartTable(labels, rows) {
+  var wrap = document.getElementById('chart-table-wrap');
+  if (!wrap) return;
+  if (!labels || !labels.length || !rows || !rows.length) { wrap.innerHTML = ''; return; }
+  var colTot = labels.map(function() { return 0; });
+  var h = '<table class="data-table" style="min-width:100%;white-space:nowrap;"><thead><tr><th>系列</th>';
+  labels.forEach(function(l) { h += '<th class="r">' + esc(l) + '</th>'; });
+  h += '<th class="r">合計</th></tr></thead><tbody>';
+  rows.forEach(function(row) {
+    var rowTot = 0;
+    h += '<tr><td style="white-space:nowrap;">' + esc(row.label) + '</td>';
+    labels.forEach(function(l, i) {
+      var v = (row.values && row.values[i] != null) ? row.values[i] : 0;
+      rowTot += v; colTot[i] += v;
+      h += '<td class="r mono">' + (v ? fmtK(Math.round(v)) : '-') + '</td>';
+    });
+    h += '<td class="r mono" style="font-weight:700;">' + fmtK(Math.round(rowTot)) + '</td></tr>';
+  });
+  var grand = colTot.reduce(function(s, v) { return s + v; }, 0);
+  h += '</tbody><tfoot><tr><td style="font-weight:700;">合計</td>';
+  colTot.forEach(function(v) { h += '<td class="r mono" style="font-weight:700;">' + fmtK(Math.round(v)) + '</td>'; });
+  h += '<td class="r mono" style="font-weight:700;">' + fmtK(Math.round(grand)) + '</td></tr></tfoot></table>';
+  wrap.innerHTML = h;
+}
+
 function renderChart() {
   var placeholder = document.getElementById('chart-placeholder');
   var canvas = document.getElementById('main-chart');
   if (!allRows.length) {
     placeholder.style.display = ''; canvas.style.display = 'none';
     if (chartInst) { chartInst.destroy(); chartInst = null; }
+    renderChartTable(null, null);
     return;
   }
   var groupBy = document.getElementById('chart-group').value;
@@ -1314,6 +1342,7 @@ function renderChart() {
     placeholder.textContent = '表示する国が選択されていません（下の「対象国」でON/OFF）';
     placeholder.style.display = ''; canvas.style.display = 'none';
     if (chartInst) { chartInst.destroy(); chartInst = null; }
+    renderChartTable(null, null);
     return;
   }
   placeholder.textContent = '絞り込みを実行するとグラフが表示されます';
@@ -1348,6 +1377,7 @@ function renderChart() {
     var labels = sortKeys(Object.keys(agg), groupBy);
     var data = labels.map(function(k) { return Math.round(agg[k]); });
     drawChart(canvas, chartType, labels, [{label:'Litros 40°', data:data, backgroundColor:PALETTE[0], borderColor:PALETTE[0], fill:false}], groupBy, stacked);
+    renderChartTable(labels, [{ label: '合計', values: data }]);
   } else {
     var splitKeys = [], splitSeen = {}, xKeys = [], xSeen = {};
     rows.forEach(function(r) {
@@ -1387,6 +1417,7 @@ function renderChart() {
       };
     });
     drawChart(canvas, chartType, xKeys, datasets, groupBy, stacked);
+    renderChartTable(xKeys, datasets.map(function(d) { return { label: d.label, values: d.data }; }));
   }
 }
 
@@ -1514,6 +1545,7 @@ function renderChartRank(rows, groupBy) {
       }
     }
   });
+  renderChartTable(labels, datasets.map(function(d) { return { label: d.label, values: d.vols }; }));
 }
 
 // ─────────────────────────────────────────────────────────
