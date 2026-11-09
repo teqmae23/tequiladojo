@@ -2560,15 +2560,19 @@ async function saveReservationNew(){
   if(!/^([01]\d|2[0-3])[0-5]\d$/.test(end)){ toast("終了時間は HHMM（4桁）で入力してください","err"); return; }
   if(start>=end){ toast("終了時間は開始時間より後にしてください","err"); return; }
   var memCodes=_rsvSlotCodes('mem'), guestCodes=_rsvSlotCodes('guest');
-  var newNicks=_rsvSlotVals('new').map(function(v){return (v||'').trim();}).filter(Boolean);
-  var total=memCodes.length+guestCodes.length+newNicks.length;
+  // 新規顧客は「新規顧客」人数ぶんのスロットをそのまま採用（名前未入力でも頭数に数える）
+  var cnNew=parseInt(gv('rsv-cnt-new'))||0;
+  var newVals=_rsvSlotVals('new').slice(0,cnNew).map(function(v){return (v||'').trim();});
+  var total=memCodes.length+guestCodes.length+cnNew;
   if(total<1){ toast("参加者を1名以上選択してください","err"); return; }
   var btn=g("btn-save-reservation"); btn.disabled=true;
   try{
     // 新規顧客→ゲストアカウント作成（編集時、元からあった名前は作り直さない）
+    // 名前ありはゲストアカウント作成、名前なしは匿名（頭数のみ）として記録
     var newParts=[];
-    for(var i=0;i<newNicks.length;i++){ var nk=newNicks[i];
-      if(_rsvOrigNames[nk]){ newParts.push({code:'', name:nk, realId:null}); }
+    for(var i=0;i<newVals.length;i++){ var nk=newVals[i];
+      if(!nk){ newParts.push({code:'', name:'', realId:null}); }
+      else if(_rsvOrigNames[nk]){ newParts.push({code:'', name:nk, realId:null}); }
       else { var gp=await _rsvCreateGuest(nk); newParts.push({code:gp.code, name:gp.name, realId:gp.realId}); }
     }
     var parts=[].concat(memCodes.map(_rsvResolveExisting), guestCodes.map(_rsvResolveExisting), newParts);
@@ -2583,7 +2587,7 @@ async function saveReservationNew(){
     var _rsvData={
       reservationId:id, reservationDate:date, startTime:start6, endTime:end6,
       customerCode:custCode, customerName:(nonMember?(parts[0]?parts[0].name:null):null), nonMember:nonMember,
-      guests:total, guestNames:parts.map(function(p){return p.name;}),
+      guests:parts.length, guestNames:parts.map(function(p){return p.name;}),
       memberIds:parts.map(function(p){return p.realId||null;}).filter(Boolean),
       charterType:parseInt(gv("rsv-charter")||"0"), memo:gv("rsv-memo")||null,
       createdAt:firebase.firestore.FieldValue.serverTimestamp()
