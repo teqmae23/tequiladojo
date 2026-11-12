@@ -3096,6 +3096,7 @@ function exportOfflineSchedule(){
   w.document.write('<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc(evName)+' スケジュール</title><style>'+_offSchedCss()+'</style></head><body>'+H.join('')+'<script>'+saveJs+'<\/script></body></html>');
   w.document.close(); w.focus();
 }
+var _openSchedDays={}, _schedDayDates=[]; // 日付の開閉状態を再描画後も保持（キー=日付）
 function renderSchedule(items){
   var el=g('schedule-cont'); if(!el) return;
   if(!items.length){ var _nt0=g('now-top'); if(_nt0) _nt0.innerHTML=''; el.innerHTML='<div class="card"><div class="sec">🗓 スケジュール</div>'+debugTimeBar()+'<div style="font-size:12px;color:var(--ink3)">スケジュールは準備中です。</div></div>'; return; }
@@ -3117,6 +3118,7 @@ function renderSchedule(items){
     _freeDayGated=Object.keys(_allDays).filter(function(d){ return !_shownDays[d]; }).length;
   }
   _nowMapItem=null;
+  _schedDayDates=[]; // idx→日付の対応を作り直す（開閉状態の復元用）
   _dayMapsReset(); // 既存の日別マップを破棄（再描画のたびに作り直す）
   // 日付ごとの項目（その日のルートマップ用）。並びはJST順。
   var dayItemsMap={};
@@ -3220,22 +3222,25 @@ function renderSchedule(items){
     var dayItems=dayItemsMap[gp.day]||[];
     var hasMap=dayItems.some(_dayMappable);
     if(hasMap){ _daySchedItems[idx]=dayItems; _dayDateOf[idx]=gp.day; }
+    _schedDayDates[idx]=gp.day;              // idx→日付（開閉復元用）
+    var _open=!!_openSchedDays[gp.day];      // 再描画前に開いていた日は開いたまま
     var mapHtml=hasMap?('<div class="sc-daymap" id="sc-daymap-'+idx+'"></div>'):'';
-    return '<div class="sc-day sc-day-toggle" onclick="toggleSchedDay('+idx+')"><span class="sc-day-caret" id="sc-day-caret-'+idx+'">▸</span> '+esc(fmtDate(gp.day))+' '+wday(gp.day)+' <span class="sc-day-count">（'+gp.n+'件）</span>'+(_canPost()?'<button type="button" onclick="event.stopPropagation();openPh()" title="写真を投稿" style="margin-left:8px;font-size:11px;border:1px solid var(--border2);border-radius:6px;padding:1px 8px;background:var(--cream2);color:var(--ink2);cursor:pointer;font-weight:600">📤 投稿</button>':'')+'<span class="sc-day-wx" id="sc-day-wx-'+idx+'"></span></div>'
-      +'<div class="sc-day-body" id="sc-day-body-'+idx+'" style="display:none">'+_daySumHtml(gp.day)+mapHtml+gp.html+'</div>';
+    return '<div class="sc-day sc-day-toggle" onclick="toggleSchedDay('+idx+')"><span class="sc-day-caret" id="sc-day-caret-'+idx+'">'+(_open?'▾':'▸')+'</span> '+esc(fmtDate(gp.day))+' '+wday(gp.day)+' <span class="sc-day-count">（'+gp.n+'件）</span>'+(_canPost()?'<button type="button" onclick="event.stopPropagation();openPh()" title="写真を投稿" style="margin-left:8px;font-size:11px;border:1px solid var(--border2);border-radius:6px;padding:1px 8px;background:var(--cream2);color:var(--ink2);cursor:pointer;font-weight:600">📤 投稿</button>':'')+'<span class="sc-day-wx" id="sc-day-wx-'+idx+'"></span></div>'
+      +'<div class="sc-day-body" id="sc-day-body-'+idx+'" style="display:'+(_open?'':'none')+'">'+_daySumHtml(gp.day)+mapHtml+gp.html+'</div>';
   }).join('');
   if(hiddenCount>0) h+='<div class="sc-hiddennote">🙈 未完了の非公開アイテムが '+hiddenCount+' 件あります（完了後に表示されます）。</div>';
   if(_freeDayGated>0) h+='<div class="sc-hiddennote">🗓 この先の予定（'+_freeDayGated+'日分）は、各日の開始時刻になると表示されます。</div>';
   h+='</div>';
   h+=_privatePhotosHtml(); // 非公開場所の写真（閲覧不可の人向け集約欄）
   el.innerHTML=h;
+  sections.forEach(function(gp,idx){ if(_openSchedDays[gp.day]) _buildDayMap(idx); }); // 開いたまま復元した日のマップを再構築
   _loadSchedDayWeather(sections, dayItemsMap); // 各日ヘッダに天気（その日の最後の場所基準）
   _loadItemWeather(_schedItems); // 各項目にその場所・時刻の1時間毎予報（本日〜約16日先）
   var nt=g('now-top'); if(nt) nt.innerHTML=_nowHtml; // 現在のイベント／NEXTをTOPに表示
   if(_nowMapItem && window.L) initNowMap(_nowMapItem);
   _startNowTimer();
 }
-function toggleSchedDay(idx){ var b=g('sc-day-body-'+idx), c=g('sc-day-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▸':'▾'; if(!open) _buildDayMap(idx); }
+function toggleSchedDay(idx){ var b=g('sc-day-body-'+idx), c=g('sc-day-caret-'+idx); if(!b)return; var open=b.style.display!=='none'; b.style.display=open?'none':''; if(c)c.textContent=open?'▸':'▾'; var d=_schedDayDates[idx]; if(d!=null){ if(open) delete _openSchedDays[d]; else _openSchedDays[d]=1; } if(!open) _buildDayMap(idx); }
 /* ── 各日ヘッダの天気予報（基準＝その日の最後の場所。移動なら到着地）。Open-Meteo・本日〜約16日先のみ ── */
 var _schWxCache={};
 function _itemEndLL(it){
@@ -3989,7 +3994,12 @@ function saveReview(){
       _phReview.forEach(function(r){ if(r._url) URL.revokeObjectURL(r._url); }); _phReview=[];
       g('ph-file').value=''; g('ph-review').innerHTML=''; btn.disabled=true;
       var p=loadSchedule(); if(p&&p.then) p.then(renderExisting); else renderExisting();
-    } else { closePh(); loadSchedule(); }
+    } else {
+      // グローバル投稿も開いたままにして続けて投稿できるように（日付の開閉状態は保持）
+      _phReview.forEach(function(r){ if(r._url) URL.revokeObjectURL(r._url); }); _phReview=[];
+      g('ph-file').value=''; g('ph-review').innerHTML=''; btn.disabled=true; _phDirty=true;
+      loadSchedule(); // 枚数バッジ更新（スケジュールは閉じない）
+    }
   }).catch(function(e){ btn.disabled=false; g('ph-prog').textContent=''; g('ph-err').textContent='保存に失敗しました: '+e.message; });
 }
 
@@ -4008,7 +4018,12 @@ function _mediaThumbInner(p){
   }
   return '<img src="'+esc(_mediaThumbSrc(p))+'" alt="" loading="lazy">';
 }
-var _lbList=[], _lbIdx=0, _lbNoDelete=false;
+var _lbList=[], _lbIdx=0, _lbNoDelete=false, _lbDirty=false;
+// ローカルの写真配列からも除去（ライトボックス・項目別一覧の両方）
+function _removePhotoLocal(pid, itemId){
+  if(itemId && _photosByItem[itemId]){ var a=_photosByItem[itemId]; for(var i=a.length-1;i>=0;i--){ if(a[i].id===pid) a.splice(i,1); } }
+  for(var k=_lbList.length-1;k>=0;k--){ if(_lbList[k] && _lbList[k].id===pid) _lbList.splice(k,1); }
+}
 function openLb(itemId, idx){
   _lbList=(_photosByItem[itemId]||[]).slice(); _lbIdx=idx||0; _lbNoDelete=false;
   if(!_lbList.length) return;
@@ -4068,12 +4083,19 @@ function deletePhoto(){
   var p=_lbList[_lbIdx]; if(!p) return;
   if(!(_isStaff || (p.uploaderUid && p.uploaderUid===_uid))) return; // 投稿者本人または管理者のみ
   if(!confirm((_isVid(p)?'この動画':'この写真')+'を削除しますか？（元に戻せません）')) return;
-  db.collection('events').doc(eventId).collection('photos').doc(p.id).delete().then(function(){
+  var pid=p.id, itemId=p.scheduleItemId;
+  db.collection('events').doc(eventId).collection('photos').doc(pid).delete().then(function(){
     _deleteMediaStorage(p);
-    toast('削除しました'); closeLb(); loadSchedule();
+    _removePhotoLocal(pid, itemId); // ローカル配列から除去（_lbList含む）
+    _lbDirty=true; _phDirty=true;   // 閉じる時にスケジュール枚数を更新
+    toast('削除しました');
+    // ライトボックスは開いたまま、続けて次の写真を表示（連続削除）
+    if(!_lbList.length){ closeLb(); }
+    else { if(_lbIdx>=_lbList.length) _lbIdx=_lbList.length-1; showLb(); }
+    if(g('ph-modal').classList.contains('open')) renderExisting(); // 項目別一覧も更新
   }).catch(function(e){ toast('削除失敗: '+e.message); });
 }
-function closeLb(){ g('lightbox').classList.remove('open'); g('lb-img').src=''; var vid=g('lb-vid'); if(vid){ try{vid.pause();}catch(e){} vid.removeAttribute('src'); vid.style.display='none'; } }
+function closeLb(){ g('lightbox').classList.remove('open'); g('lb-img').src=''; var vid=g('lb-vid'); if(vid){ try{vid.pause();}catch(e){} vid.removeAttribute('src'); vid.style.display='none'; } if(_lbDirty){ _lbDirty=false; renderSchedule(_schedItems); } } // 日付の開閉を保ったまま枚数バッジを更新
 // メディアのStorage実体を削除（画像のみクライアントで削除。動画は変換関数/クリーンアップ関数がAdmin権限で削除）
 function _deleteMediaStorage(p){
   if(!storage||!p||_isVid(p)) return; // 動画は onDelete トリガーが削除
