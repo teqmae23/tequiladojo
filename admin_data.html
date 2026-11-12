@@ -3261,6 +3261,8 @@ function _icsStamp(){ var d=new Date(); function p(n){return ('0'+n).slice(-2);}
 function _icsNextDate(d8){ var dt=new Date(+d8.slice(0,4),+d8.slice(4,6)-1,+d8.slice(6,8)+1); function p(n){return ('0'+n).slice(-2);} return ''+dt.getFullYear()+p(dt.getMonth()+1)+p(dt.getDate()); }
 function _hhmm4(t){ return /^\d{4}$/.test(String(t||'')); }
 function _hm2min(t){ return (+t.slice(0,2))*60+(+t.slice(2,4)); }
+// date8の0:00からの通算分を、日付繰り上げ＋HHMMに正規化（24:00→翌日0:00、日またぎ対応）
+function _rollMin(date8,total){ var days=Math.floor(total/1440), rem=((total%1440)+1440)%1440, hh=Math.floor(rem/60), mm=rem%60, d8=date8; for(var i=0;i<days;i++) d8=_icsNextDate(d8); return { d8:d8, hm:('0'+hh).slice(-2)+('0'+mm).slice(-2) }; }
 // RFC5545 行折り（75オクテットで折返し・継続行は先頭空白）。マルチバイトを壊さない。
 function _icsFold(line){
   var enc=new TextEncoder(), out='', cur='', bytes=0;
@@ -3272,10 +3274,14 @@ function _icsEvent(uid,date8,sum,desc,allDay,start,end){
   var L=['BEGIN:VEVENT','UID:'+uid,'DTSTAMP:'+_icsStamp()];
   if(allDay){ L.push('DTSTART;VALUE=DATE:'+date8); L.push('DTEND;VALUE=DATE:'+_icsNextDate(date8)); }
   else {
-    var s=start, e=end, endDate=date8;
-    if(!_hhmm4(e)){ var mm=_hm2min(s)+60, eh=Math.floor(mm/60), em=mm%60; if(eh>=24){ eh-=24; endDate=_icsNextDate(date8); } e=('0'+eh).slice(-2)+('0'+em).slice(-2); }
-    else if(_hm2min(e)<=_hm2min(s)){ endDate=_icsNextDate(date8); }
-    L.push('DTSTART:'+date8+'T'+s+'00'); L.push('DTEND:'+endDate+'T'+e+'00');
+    var s=start, e=end;
+    if(!_hhmm4(e)){ var mmd=_hm2min(s)+60; e=('0'+Math.floor(mmd/60)).slice(-2)+('0'+(mmd%60)).slice(-2); } // 終了未指定は開始＋1時間
+    var sMin=_hm2min(s), eMin=_hm2min(e);
+    if(eMin<=sMin) eMin+=1440; // 終了が開始以下は翌日（日またぎ）
+    var sr=_rollMin(date8,sMin), er=_rollMin(date8,eMin);
+    // タイムゾーンを明示（TZID=Asia/Tokyo）してGoogle側の日付ずれを防ぐ
+    L.push('DTSTART;TZID=Asia/Tokyo:'+sr.d8+'T'+sr.hm+'00');
+    L.push('DTEND;TZID=Asia/Tokyo:'+er.d8+'T'+er.hm+'00');
   }
   L.push('SUMMARY:'+_icsEsc(sum));
   if(desc) L.push('DESCRIPTION:'+_icsEsc(desc));
@@ -3283,7 +3289,8 @@ function _icsEvent(uid,date8,sum,desc,allDay,start,end){
   return L;
 }
 function buildIcsFeed(schedules, personalEvents, calName){
-  var L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//tequiladojo//cal//JA','CALSCALE:GREGORIAN','METHOD:PUBLISH','X-WR-CALNAME:'+_icsEsc(calName),'X-WR-TIMEZONE:Asia/Tokyo'];
+  var L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//tequiladojo//cal//JA','CALSCALE:GREGORIAN','METHOD:PUBLISH','X-WR-CALNAME:'+_icsEsc(calName),'X-WR-TIMEZONE:Asia/Tokyo',
+    'BEGIN:VTIMEZONE','TZID:Asia/Tokyo','BEGIN:STANDARD','DTSTART:19700101T000000','TZOFFSETFROM:+0900','TZOFFSETTO:+0900','TZNAME:JST','END:STANDARD','END:VTIMEZONE'];
   (schedules||[]).forEach(function(s){
     var d8=String(s.scheduleId||s.id||''); if(!/^\d{8}$/.test(d8)) return;
     var bt=parseInt(s.businessType)||0, label=CAL_BT_LABEL[bt]||'';
