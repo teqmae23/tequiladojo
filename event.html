@@ -656,7 +656,7 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
     <div class="mbd">
       <div id="ph-existing"></div>
       <div class="fg"><label class="fl" id="ph-file-label">写真（複数選択可）</label><input class="fi" id="ph-file" type="file" accept="image/*" multiple></div>
-      <div class="mnote" id="ph-note">撮影時刻と位置情報（GPS）から該当するスケジュール項目を自動で判定します。分類が違うときは各写真の項目名（セレクト）をタップして、前後6時間の候補から選び直せます。保存前に長辺〜1600pxへ圧縮します。</div>
+      <div class="mnote" id="ph-note">撮影時刻と位置情報（GPS）から該当するスケジュール項目を自動で判定します。分類が違うときは各写真の項目名（セレクト）をタップして、同じ日付の全項目（時系列順）と前後の候補から選び直せます。保存前に長辺〜1600pxへ圧縮します。</div>
       <div id="ph-review"></div>
       <div class="sv-err" id="ph-err"></div>
       <div id="ph-prog" style="font-size:12px;color:var(--ink3);margin-top:6px"></div>
@@ -3556,7 +3556,7 @@ function openPh(){
   g('ph-title').textContent='📷 写真を追加';
   g('ph-existing').innerHTML='';
   g('ph-file-label').textContent='写真（複数選択可）';
-  g('ph-note').textContent='撮影時刻と位置情報（GPS）から該当するスケジュール項目を自動で判定します。分類が違うときは各写真の項目名（セレクト）をタップして、前後6時間の候補から選び直せます。不要な写真は各行の × で保存対象から除外できます。保存前に長辺〜1600pxへ圧縮します。';
+  g('ph-note').textContent='撮影時刻と位置情報（GPS）から該当するスケジュール項目を自動で判定します。分類が違うときは各写真の項目名（セレクト）をタップして、同じ日付の全項目（時系列順）と前後の候補から選び直せます。不要な写真は各行の × で保存対象から除外できます。保存前に長辺〜1600pxへ圧縮します。';
   _resetPh();
   g('ph-modal').classList.add('open');
 }
@@ -3761,8 +3761,12 @@ function renderReview(){
   if(!_phReview.length){ g('ph-review').innerHTML=''; g('ph-up').disabled=true; return; }
   g('ph-review').innerHTML='<div class="phr-count">選択中 <b>'+_phReview.length+'</b> 枚　<span style="font-weight:400;color:var(--ink3)">— 不要な写真は右の × で除外できます</span></div>'+_phReview.map(function(r,i){
     var cands=_itemsWithin(r.ex.time, 6);
+    // 撮影日と同じ日付の項目は全て候補に入れる（日付変更をまたいでも、その日の全項目から選べるように）
+    if(r.ex.time){ var _pd=_ymd(new Date(r.ex.time)); _schedItems.forEach(function(it){ if((it.date||'')===_pd && !cands.some(function(c){return c.id===it.id;})) cands.push(it); }); }
     // 候補に現在の選択が含まれていなければ加える
-    if(r.itemId && !cands.some(function(it){return it.id===r.itemId;})){ var cur=_schedItems.find(function(it){return it.id===r.itemId;}); if(cur) cands=[cur].concat(cands); }
+    if(r.itemId && !cands.some(function(it){return it.id===r.itemId;})){ var cur=_schedItems.find(function(it){return it.id===r.itemId;}); if(cur) cands.push(cur); }
+    // 時系列順（開始時刻の昇順）に並べて選びやすく
+    cands=cands.slice().sort(function(a,b){ return (_itemStartMs(a)||0)-(_itemStartMs(b)||0); });
     var opts='<option value="">— 未分類 —</option>'+cands.map(function(it){ return '<option value="'+esc(it.id)+'"'+(it.id===r.itemId?' selected':'')+'>'+esc(_itemLabel(it))+'</option>'; }).join('');
     var byTxt=r.by==='target'?'この項目に追加':(r.by==='時刻+座標'?'🕐📍 時刻＋位置で判定':(r.by==='時刻近接+座標'?'🕐📍 撮影時刻が近く位置も合う項目に割当':(r.by==='位置情報'?'📍 位置情報で判定':(r.by==='撮影時刻'?'🕐 撮影時刻で判定':'⚠ 自動判定できません（項目を選択）'))));
     var byCls=(r.by==='位置情報')?'geo':((r.by==='撮影時刻'||r.by==='時刻+座標'||r.by==='時刻近接+座標'||r.by==='target')?'time':'none');
@@ -3889,6 +3893,13 @@ function suggestItem(ex){
     if(inWin.length){
       // 座標があれば、該当項目のうち「座標も合う」入れ子優先（狭い方が先）の最初の項目をセット。
       if(hasGeo){ for(var i=0;i<inWin.length;i++){ if(_geoInItem(inWin[i].it,ex.lat,ex.lng).hit) return {id:inWin[i].it.id, by:'時刻+座標'}; } }
+      // 時間帯は一致するが座標が合わない → 同じ頃(±6h)で座標が明確に合う別項目を優先
+      //（同じ日付で位置情報が大きく異なる項目があるケース対策）
+      if(hasGeo){
+        var gAlt=null, gBest=1e9;
+        _schedItems.forEach(function(it){ var gi=_geoInItem(it,ex.lat,ex.lng); if(!gi.hit||gi.dist==null) return; var s2=_itemStartMs(it); if(!s2) return; var e2=_itemEndMs(it)||s2; var tgap=(ex.time<s2)?(s2-ex.time):((ex.time>e2)?(ex.time-e2):0); if(tgap<=6*3600000 && gi.dist<gBest){ gBest=gi.dist; gAlt=it; } });
+        if(gAlt) return {id:gAlt.id, by:'時刻近接+座標'};
+      }
       // 座標が無い／座標が一致しない場合は、入れ子優先（最も狭い時間帯）の項目。
       return {id:inWin[0].it.id, by:'撮影時刻'};
     }
