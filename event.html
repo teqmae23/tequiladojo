@@ -4165,7 +4165,7 @@ function renderGal(){
   if(_canPost()){
     tb.style.display='flex';
     if(_galReorder){
-      tb.innerHTML='<span style="font-size:12px;color:var(--gold-d);font-weight:700">↕ ドラッグで並び替え中</span><button class="gal-tbtn" style="margin-left:auto" onclick="galReorderMode(false)">完了</button>';
+      tb.innerHTML='<span style="font-size:12px;color:var(--gold-d);font-weight:700">↕ ドラッグで並び替え中</span><button class="gal-tbtn" onclick="galResetOrder()">⟲ 時間順に戻す</button><button class="gal-tbtn" style="margin-left:auto" onclick="galReorderMode(false)">完了</button>';
     } else if(_galSelMode){
       var n=Object.keys(_galSel).length;
       tb.innerHTML='<button class="gal-tbtn" onclick="galSelAll()">全選択</button>'
@@ -4190,6 +4190,20 @@ function renderGal(){
   if(_galReorder && window.Sortable){
     _galSortable=Sortable.create(g('gal-grid'), { animation:150, delay:120, delayOnTouchOnly:true, ghostClass:'gal-ghost', onEnd:galReorderEnd });
   }
+}
+// 既定（撮影時間順）に戻す: order 属性を全削除（確認つき）
+function galResetOrder(){
+  if(!_galCanReorder()){ toast('権限がありません'); return; }
+  var list=_photosByItem[_galItemId]||[];
+  if(!list.some(function(p){ return p.order!=null; })){ toast('すでに時間順です'); return; }
+  if(!confirm('並び順を既定（撮影時間順）に戻します。\nよろしいですか？')) return;
+  var col=db.collection('events').doc(eventId).collection('photos'), batch=db.batch(), any=false;
+  list.forEach(function(p){ if(p.order!=null){ batch.update(col.doc(p.id), {order:firebase.firestore.FieldValue.delete()}); any=true; } });
+  if(!any) return;
+  batch.commit().then(function(){
+    list.forEach(function(p){ delete p.order; }); list.sort(phSort);
+    toast('時間順に戻しました'); renderGal(); renderSchedule(_schedItems);
+  }).catch(function(e){ toast('戻すのに失敗: '+e.message); });
 }
 function galReorderMode(on){
   if(on && !window.Sortable){ toast('並び替えを読み込めませんでした。再読み込みしてお試しください。'); return; }
