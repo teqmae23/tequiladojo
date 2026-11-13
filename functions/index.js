@@ -2505,7 +2505,10 @@ exports.createTreatCheckout = functions
       const sfx = String(b.suffix || '').trim();
       if (sfx) baseName = baseName.replace(new RegExp(' ?\\(' + sfx.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\)$'), '') + ' (' + sfx + ')';
     }
-    const nom = String(b.nom || (baseBottleId.length >= 4 ? baseBottleId.slice(0, 4) : '') || '');
+    // NOMは4桁数字のみ採用。ボトルのnom優先、無ければID先頭4桁が4桁数字のときだけ。"T000"等の仮IDは保存しない。
+    const _rawNom = String((b.nom != null ? b.nom : '')).trim();
+    const _idNom = (baseBottleId.length >= 4) ? baseBottleId.slice(0, 4) : '';
+    const nom = /^\d{4}$/.test(_rawNom) ? _rawNom : (/^\d{4}$/.test(_idNom) ? _idNom : '');
 
     const tequilaAmount = Math.round(price10 * ml / 10);
     const sodaFee = style === 'soda' ? 100 : 0;
