@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>セミナー参加 — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
+};
+</script>
+<style>
+:root{--ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;--gold:#c8921e;--gold-d:#7a5610;--cream:#faf7f1;--white:#fff;--red:#b03020;--teal:#1a6e58;--border2:rgba(160,130,100,.32)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif;background:var(--cream);color:var(--ink);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{width:100%;max-width:400px;background:var(--white);border:1px solid var(--border2);border-radius:16px;padding:26px 24px;box-shadow:0 8px 36px rgba(24,17,10,.13);text-align:center}
+.logo{font-size:38px;margin-bottom:4px}
+.brand{font-size:13px;letter-spacing:.14em;color:var(--gold-d);margin-bottom:18px}
+.title{font-size:20px;font-weight:800;line-height:1.35;margin-bottom:8px}
+.meta{font-size:13px;color:var(--ink2);line-height:1.9;margin-bottom:20px}
+.btn{width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit}
+.btn.join{background:var(--teal);color:#fff}
+.btn.join:disabled{opacity:.5;cursor:default}
+.btn.login{background:var(--gold-d);color:#fff;text-decoration:none;display:inline-block}
+.note{font-size:12px;color:var(--ink3);margin-top:14px;line-height:1.7}
+.ok{color:var(--teal);font-weight:700}
+.ended{color:var(--red);font-weight:700}
+.lnk{color:var(--gold-d);font-weight:700;text-decoration:none}
+.msg{font-size:14px;color:var(--ink2);line-height:1.9}
+input{width:100%;padding:11px 12px;border:1px solid var(--border2);border-radius:8px;font-size:13px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="card" id="card"><div class="msg">読み込み中…</div></div>
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+var Q=new URLSearchParams(location.search);
+var EID=Q.get('e')||'', SID=Q.get('sid')||'';
+var _ses=null, _member=null, _user=null;
+
+function card(html){ g('card').innerHTML='<div class="logo">🎓</div><div class="brand">テキーラ道場 セミナー</div>'+html; }
+
+if(!EID||!SID){ card('<div class="msg">セミナーが指定されていません。</div>'); }
+else auth.onAuthStateChanged(function(user){ _user=user||null; start(); });
+
+function sesRef(){ return db.collection('events').doc(EID).collection('seminarSessions').doc(SID); }
+function joinRef(){ return db.collection('seminarMyJoins').doc(_user.uid+'_'+SID); }
+function endedOf(s){ if(!s||!s.date) return false; var today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()); return s.date<today; }
+function metaHtml(s){ var dt=(s.date||'')+(s.time?(' '+s.time):''); return '<div class="meta">📅 '+esc(dt)+(s.place?('<br>📍 '+esc(s.place)):'')+'</div>'; }
+
+async function start(){
+  try{
+    var snap=await sesRef().get();
+    if(!snap.exists){ card('<div class="msg">このセミナーは見つかりませんでした。</div>'); return; }
+    _ses=snap.data();
+  }catch(e){ card('<div class="msg">このセミナーの閲覧にはログインが必要です。</div><a class="btn login" href="/member.html">▶ 道場オンラインにログイン</a>'); return; }
+  var ttl='<div class="title">'+esc(_ses.title||'セミナー')+'</div>'+metaHtml(_ses);
+  if(!_user){ card(ttl+'<div class="note">参加登録には道場オンラインへのログインが必要です。</div><a class="btn login" href="/member.html" style="margin-top:8px">▶ ログイン / 登録</a>'); return; }
+  // 会員情報
+  try{ var ms=await db.collection('members').where('authUid','==',_user.uid).limit(1).get(); _member=ms.empty?null:Object.assign({id:ms.docs[0].id},ms.docs[0].data()); }catch(e){ _member=null; }
+  var ended=endedOf(_ses);
+  // すでに参加登録済みか
+  var joined=false; try{ var pj=await joinRef().get(); joined=pj.exists; }catch(e){}
+  if(joined){ card(ttl+'<div class="ok">✓ 参加登録済みです</div>'+(ended?'<div class="ended" style="margin-top:8px">このセミナーは終了しました</div>':'')+'<div class="note">マイページにセミナーのご案内が表示されます。</div><a class="lnk" href="/mypage.html">▶ マイページへ</a>'); return; }
+  if(ended){ card(ttl+'<div class="ended">このセミナーは終了しました</div><div class="note">新規の参加登録は受け付けていません。</div><a class="lnk" href="/mypage.html">▶ マイページへ</a>'); return; }
+  card(ttl+'<button class="btn join" id="joinbtn" onclick="doJoin()">このセミナーに参加する</button><div class="note">「参加する」を押すと参加者一覧に登録され、マイページにご案内が表示されます。</div>');
+}
+
+function doJoin(){
+  var b=g('joinbtn'); if(b){ b.disabled=true; b.textContent='登録中…'; }
+  var nick=(_member&&(_member.nickname||_member.name))||(_user.displayName||'')||'';
+  var mid=(_member&&(_member.displayId||_member.memberId||_member.id))||'';
+  joinRef().set({
+    uid:_user.uid, memberId:mid, nickname:nick,
+    eventId:EID, sessionId:SID, title:(_ses.title||''), place:(_ses.place||''), date:(_ses.date||''), time:(_ses.time||''),
+    joinedAt:firebase.firestore.FieldValue.serverTimestamp()
+  }).then(function(){
+    card('<div class="title">'+esc(_ses.title||'セミナー')+'</div>'+metaHtml(_ses)+'<div class="ok">✓ 参加登録が完了しました</div><div class="note">マイページにセミナーのご案内が表示されます。当日は会場でお会いしましょう。</div><a class="lnk" href="/mypage.html">▶ マイページへ</a>');
+  }).catch(function(e){ if(b){ b.disabled=false; b.textContent='このセミナーに参加する'; } card((g('card').innerHTML)+'<div class="ended" style="margin-top:8px">登録に失敗しました: '+esc(e&&e.message||e)+'</div>'); });
+}
+</script>
+</body>
+</html>
