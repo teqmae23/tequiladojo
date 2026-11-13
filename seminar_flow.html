@@ -117,6 +117,7 @@ var _syncOn=true, _liveStep=0, _started=false, _live=false, _pstate='';
 
 // ── 座標・ルート ユーティリティ（event.html の挙動を踏襲） ──
 function _mkLL(la,ln){ return (isFinite(la)&&isFinite(ln)&&la>=-90&&la<=90&&ln>=-180&&ln<=180)?{lat:la,lng:ln}:null; }
+function _haversine(la1,ln1,la2,ln2){ var R=6371,toR=Math.PI/180; var dLa=(la2-la1)*toR, dLn=(ln2-ln1)*toR; var a=Math.sin(dLa/2)*Math.sin(dLa/2)+Math.cos(la1*toR)*Math.cos(la2*toR)*Math.sin(dLn/2)*Math.sin(dLn/2); return 2*R*Math.asin(Math.min(1,Math.sqrt(a))); }
 function _coordsFromGmapUrl(url){
   if(!url) return null; var s=String(url).replace(/%2C/gi,','),m;
   m=s.match(/!3d(-?\d{1,2}(?:\.\d+)?)!4d(-?\d{1,3}(?:\.\d+)?)/); if(m){ var a=_mkLL(+m[1],+m[2]); if(a) return a; }
@@ -285,11 +286,23 @@ function drawMap(it){
     var pts=[];
     var o=_mkLL(+it.lat,+it.lng);
     if(it.isMove){
-      var d=(it.toLat!=null&&it.toLng!=null)?_mkLL(+it.toLat,+it.toLng):null;
-      if(it._trk && it._trk.length>=2){ L.polyline(it._trk,{color:'#d8b56b',weight:4,opacity:.9}).addTo(_map); it._trk.forEach(function(p){pts.push(p);}); }
-      else if(o&&d){ L.polyline([[o.lat,o.lng],[d.lat,d.lng]],{color:'#d8b56b',weight:3,dashArray:'6,6',opacity:.9}).addTo(_map); }
-      if(o){ L.circleMarker([o.lat,o.lng],{radius:7,color:'#fff',weight:2,fillColor:'#4bb79a',fillOpacity:1}).addTo(_map); pts.push([o.lat,o.lng]); }
-      if(d){ L.circleMarker([d.lat,d.lng],{radius:7,color:'#fff',weight:2,fillColor:'#e26a6a',fillOpacity:1}).addTo(_map); pts.push([d.lat,d.lng]); }
+      if(it._trk && it._trk.length>=2){
+        // 実ルート(track)が登録されていればそれを最優先。始点/終点の座標が誤ジオコード
+        // （例: 目的地が別の国に解決）でも、地図はトラック範囲だけで描く。
+        L.polyline(it._trk,{color:'#d8b56b',weight:4,opacity:.9}).addTo(_map);
+        var a=it._trk[0], b=it._trk[it._trk.length-1];
+        L.circleMarker(a,{radius:7,color:'#fff',weight:2,fillColor:'#4bb79a',fillOpacity:1}).addTo(_map);
+        L.circleMarker(b,{radius:7,color:'#fff',weight:2,fillColor:'#e26a6a',fillOpacity:1}).addTo(_map);
+        it._trk.forEach(function(p){ pts.push(p); });
+      } else {
+        var d=(it.toLat!=null&&it.toLng!=null)?_mkLL(+it.toLat,+it.toLng):null;
+        // トラックが無いときは2点間直線。ただし極端に離れている（誤ジオコードの疑い）場合は
+        // 始点のみ表示して世界地図になるのを防ぐ。
+        var farBad=(o&&d)?(_haversine(o.lat,o.lng,d.lat,d.lng)>2000):false; // 2000km超は異常とみなす
+        if(o&&d&&!farBad){ L.polyline([[o.lat,o.lng],[d.lat,d.lng]],{color:'#d8b56b',weight:3,dashArray:'6,6',opacity:.9}).addTo(_map); }
+        if(o){ L.circleMarker([o.lat,o.lng],{radius:7,color:'#fff',weight:2,fillColor:'#4bb79a',fillOpacity:1}).addTo(_map); pts.push([o.lat,o.lng]); }
+        if(d&&!farBad){ L.circleMarker([d.lat,d.lng],{radius:7,color:'#fff',weight:2,fillColor:'#e26a6a',fillOpacity:1}).addTo(_map); pts.push([d.lat,d.lng]); }
+      }
     } else if(o){ L.circleMarker([o.lat,o.lng],{radius:8,color:'#fff',weight:2,fillColor:'#d8b56b',fillOpacity:1}).addTo(_map); pts.push([o.lat,o.lng]); }
     if(pts.length>1){ _map.fitBounds(pts,{padding:[30,30]}); }
     else if(pts.length===1){ _map.setView(pts[0],14); }
