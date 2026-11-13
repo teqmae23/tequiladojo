@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>振り返りセミナー — テキーラ道場</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:"G-KMS18946JQ"
+};
+</script>
+<style>
+:root{--bg:#141210;--panel:#1e1b18;--ink:#f4efe7;--ink3:#b8ae9c;--gold:#d8b56b;--gold-d:#b8934a;--line:rgba(255,255,255,.14);--teal:#4bb79a}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;overflow:hidden}
+#screen{height:100%;display:flex;flex-direction:column}
+.msg{margin:auto;text-align:center;color:var(--ink3);font-size:14px;padding:24px;line-height:1.9;max-width:92%}
+.msg a{color:var(--gold);font-weight:700}
+.hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
+.hd-ttl{font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.hd-live{font-size:10px;font-weight:700;color:#e26a6a;white-space:nowrap;margin-left:auto}
+.hd-live .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#e26a6a;margin-right:3px;vertical-align:middle;animation:blink 1.4s infinite}
+@keyframes blink{50%{opacity:.3}}
+.stage{flex:1 1 auto;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
+.step{padding:12px 12px 22px;max-width:900px;margin:0 auto}
+.smap{height:200px;border-radius:12px;overflow:hidden;background:#23201c;border:1px solid var(--line)}
+.smap .leaflet-container{height:100%;background:#23201c}
+.sitem{margin:12px 2px 10px}
+.sitem .t{font-size:19px;font-weight:800;line-height:1.3}
+.sitem .tm{font-size:13px;color:var(--gold);font-weight:700;margin-top:3px}
+.sitem .pl{font-size:12px;color:var(--ink3);margin-top:3px}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:4px}
+.mcell{position:relative;aspect-ratio:4/3;border-radius:10px;overflow:hidden;background:#23201c;border:1px solid var(--line);cursor:pointer}
+.mcell img{width:100%;height:100%;object-fit:cover;display:block}
+.mcell .pv{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:16px;display:flex;align-items:center;justify-content:center;padding-left:3px;pointer-events:none}
+.mcell .st{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--ink3);text-align:center}
+.mcell .cap{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(transparent,rgba(0,0,0,.72));color:#fff;font-size:11px;padding:10px 6px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nomedia{color:var(--ink3);font-size:12px;padding:16px 2px}
+/* 360 step */
+.step360{height:100%;display:flex;flex-direction:column}
+.v360{flex:1 1 auto;position:relative;background:#000}
+.v360 iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.v360-ttl{position:absolute;top:10px;left:12px;background:rgba(0,0,0,.5);color:#fff;font-size:12px;font-weight:700;padding:4px 10px;border-radius:8px;z-index:2}
+/* nav bar */
+.nav{flex:0 0 auto;display:flex;align-items:center;gap:10px;justify-content:center;padding:8px 12px;background:var(--panel);border-top:1px solid var(--line)}
+.nav button{background:var(--gold);color:#241c0e;border:none;border-radius:9px;font-size:15px;font-weight:800;padding:8px 18px;cursor:pointer;min-width:54px}
+.nav button:disabled{opacity:.35;cursor:default}
+.nav .pg{font-size:13px;font-variant-numeric:tabular-nums;min-width:70px;text-align:center;font-weight:700}
+.nav .sp{flex:1}
+.pbtn{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:7px 11px;font-size:12px;font-weight:600;cursor:pointer}
+.pbtn.danger{border-color:#e26a6a;color:#e26a6a}
+.follownote{font-size:11px;color:var(--ink3);text-align:center;padding:4px}
+/* fullscreen viewer */
+.fv{position:fixed;inset:0;background:#000;z-index:120;display:none;touch-action:none}
+.fv.open{display:block}
+.fv-stage{position:absolute;inset:0;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.fv-stage img{max-width:100%;max-height:100%;will-change:transform;user-select:none;-webkit-user-drag:none}
+.fv-stage video{max-width:100%;max-height:100%;background:#000}
+.fv-x{position:fixed;top:14px;right:14px;z-index:2;background:rgba(255,255,255,.14);border:none;color:#fff;width:40px;height:40px;border-radius:50%;font-size:20px;cursor:pointer}
+.fv-nav{position:fixed;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.12);border:none;color:#fff;width:42px;height:60px;font-size:22px;cursor:pointer;z-index:2}
+.fv-prev{left:8px;border-radius:0 10px 10px 0} .fv-next{right:8px;border-radius:10px 0 0 10px}
+.fv-hint{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,.7);font-size:11px;z-index:2}
+/* qr */
+.qrwrap{position:fixed;inset:0;background:rgba(0,0,0,.82);display:none;align-items:center;justify-content:center;z-index:140}
+.qrwrap.open{display:flex}
+.qrcard{background:#fff;color:#241c0e;border-radius:14px;padding:20px;text-align:center;max-width:88vw}
+.qrcard h3{margin:0 0 10px;font-size:15px}
+#qrbox{display:flex;justify-content:center;margin:0 auto 10px}
+.qrurl{font-size:11px;word-break:break-all;color:#6b5b3a;margin-bottom:12px}
+.qrcard button{background:var(--gold-d);color:#fff;border:none;border-radius:9px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;margin:0 4px}
+#toasts{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:6px;align-items:center}
+.toast{background:#000;color:#fff;font-size:12px;padding:9px 14px;border-radius:18px;opacity:0;transition:.2s}
+.toast.show{opacity:.95}
+</style>
+</head>
+<body>
+<div id="screen"><div class="msg">読み込み中…</div></div>
+<div class="fv" id="fv">
+  <button class="fv-x" onclick="fvClose()">✕</button>
+  <button class="fv-nav fv-prev" onclick="fvNav(-1)">◀</button>
+  <button class="fv-nav fv-next" onclick="fvNav(1)">▶</button>
+  <div class="fv-stage" id="fv-stage"></div>
+  <div class="fv-hint">ピンチで拡大・ダブルタップで戻す／端末を横にすると大きく表示</div>
+</div>
+<div class="qrwrap" id="qrwrap"><div class="qrcard"><h3>参加者用QR / URL</h3><div id="qrbox"></div><div class="qrurl" id="qrurl"></div><button onclick="copyJoin()">URLをコピー</button><button onclick="closeQr()" style="background:#8a7a55">閉じる</button></div></div>
+<div id="toasts"></div>
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function toast(m){var d=document.createElement('div');d.className='toast';d.textContent=m;g('toasts').appendChild(d);requestAnimationFrame(function(){requestAnimationFrame(function(){d.classList.add('show');});});setTimeout(function(){d.classList.remove('show');setTimeout(function(){d.remove();},250);},2400);}
+function showMsg(html){ g('screen').innerHTML='<div class="msg">'+html+'</div>'; }
+
+var Q=new URLSearchParams(location.search);
+var EID=Q.get('e')||'', PRESENT=Q.get('present')==='1';
+if(!EID){ showMsg('イベントが指定されていません。'); }
+
+var _event=null, _items=[], _photosByItem={}, _flow=[], _presenter=false, _step=0, _unsub=null, _map=null;
+var _syncOn=true, _liveStep=0, _started=false, _live=false, _pstate='';
+
+// ── 座標・ルート ユーティリティ（event.html の挙動を踏襲） ──
+function _mkLL(la,ln){ return (isFinite(la)&&isFinite(ln)&&la>=-90&&la<=90&&ln>=-180&&ln<=180)?{lat:la,lng:ln}:null; }
+function _coordsFromGmapUrl(url){
+  if(!url) return null; var s=String(url).replace(/%2C/gi,','),m;
+  m=s.match(/!3d(-?\d{1,2}(?:\.\d+)?)!4d(-?\d{1,3}(?:\.\d+)?)/); if(m){ var a=_mkLL(+m[1],+m[2]); if(a) return a; }
+  m=s.match(/[?&](?:q|query|destination|daddr|ll|sll|center)=(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/i); if(m){ var b=_mkLL(+m[1],+m[2]); if(b) return b; }
+  m=s.match(/@(-?\d{1,2}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/); if(m){ var c=_mkLL(+m[1],+m[2]); if(c) return c; }
+  return null;
+}
+function _ptsFromObj(a){ if(!Array.isArray(a)) return null; var out=[]; a.forEach(function(p){ if(Array.isArray(p)&&p[0]!=null&&p[1]!=null) out.push([+p[0],+p[1]]); else if(p&&p.lat!=null&&p.lng!=null) out.push([+p.lat,+p.lng]); }); return out.length?out:null; }
+function _normItem(it){
+  if(it.mapUrl){ var a=_coordsFromGmapUrl(it.mapUrl); if(a){ it.lat=a.lat; it.lng=a.lng; } }
+  if(it.isMove && it.toMapUrl){ var b=_coordsFromGmapUrl(it.toMapUrl); if(b){ it.toLat=b.lat; it.toLng=b.lng; } }
+  if(Array.isArray(it.track)) it._trk=_ptsFromObj(it.track);
+  return it;
+}
+function phSort(a,b){ var oa=(a.order!=null?a.order:null), ob=(b.order!=null?b.order:null); if(oa!=null||ob!=null){ if(oa==null) return 1; if(ob==null) return -1; if(oa!==ob) return oa-ob; } return (a.takenAt||a.createdMs||0)-(b.takenAt||b.createdMs||0); }
+function _isVid(p){ return !!(p&&p.mediaType==='video'); }
+function _vidReady(p){ return _isVid(p)&&p.status==='ready'&&!!p.url; }
+function _thumb(p){ return _isVid(p)?(p.posterUrl||p.thumbUrl||''):(p.thumbUrl||p.url||''); }
+function _itemTime(it){
+  var s=it.actualStart||it.time||'', e=it.isMove?(it.actualEnd||it.toTime||''):(it.actualEnd||it.endTime||'');
+  s=String(s).slice(0,5); e=String(e).slice(0,5);
+  return s?(e&&e!==s?(s+'〜'+e):s):'';
+}
+function _itemPlace(it){ if(it.isMove) return ((it.placeName||'')+(it.toName?(' → '+it.toName):'')).trim(); return (it.placeName||'').trim(); }
+
+auth.onAuthStateChanged(function(user){ if(!EID) return; start(user); });
+
+async function resolvePresenter(user){
+  if(!user) return false;
+  try{ var r=await user.getIdTokenResult(); if(r.claims&&(r.claims.role==='owner'||r.claims.role==='staff')) return true; }catch(e){}
+  try{ var d=await db.collection('staffRoles').doc(user.uid).get(); if(d.exists&&(d.data().role==='owner'||d.data().role==='staff')) return true; }catch(e){}
+  try{ if(_event&&Array.isArray(_event.coAdminUids)&&_event.coAdminUids.indexOf(user.uid)>=0) return true; }catch(e){}
+  return false;
+}
+
+async function start(user){
+  if(!user){ showMsg('このセミナーは会員限定です。<br><br><a href="/member.html">▶ 道場オンラインにログイン</a>'); return; }
+  // イベントdocは配信者判定(coAdminUids)と表題に使用。参加者で非公開イベントだと読めないため失敗は非致命的に。
+  try{
+    var evSnap=await db.collection('events').doc(EID).get();
+    _event=evSnap.exists?Object.assign({id:EID},evSnap.data()):{id:EID,name:'セミナー'};
+  }catch(e){ _event={id:EID,name:'セミナー'}; }
+  _presenter = PRESENT ? (await resolvePresenter(user)) : false;
+  try{
+    var res=await Promise.all([
+      db.collection('events').doc(EID).collection('scheduleItems').get(),
+      db.collection('events').doc(EID).collection('photos').get().catch(function(){return {docs:[]};}),
+      db.collection('events').doc(EID).collection('seminar').doc('config').get().catch(function(){return {exists:false};})
+    ]);
+    _items=res[0].docs.map(function(d){ return _normItem(Object.assign({id:d.id},d.data())); });
+    _items.sort(function(a,b){ var ka=(a.date||'')+' '+(a.time||'99:99'), kb=(b.date||'')+' '+(b.time||'99:99'); return ka<kb?-1:(ka>kb?1:0); });
+    _photosByItem={};
+    res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).forEach(function(p){ (_photosByItem[p.scheduleItemId]=_photosByItem[p.scheduleItemId]||[]).push(p); });
+    Object.keys(_photosByItem).forEach(function(k){ _photosByItem[k].sort(phSort); });
+    var cfg=(res[2]&&res[2].exists)?res[2].data():null;
+    _flow=buildFlow(cfg);
+    if(!_flow.length){ showMsg('このイベントにはセミナーで表示できる内容がありません。'); return; }
+    buildUI();
+    if(_presenter){ _step=0; renderStep(); pushLive(true); subscribe(); }
+    else { subscribe(); }
+  }catch(e){ showMsg('読み込みに失敗しました。<br><span style="font-size:11px">'+esc(e&&e.message||e)+'</span>'); }
+}
+
+// config.steps（enabled のみ）を解決。無ければイベントの流れから既定フローを生成。
+function buildFlow(cfg){
+  var out=[];
+  if(cfg && Array.isArray(cfg.steps) && cfg.steps.length){
+    cfg.steps.forEach(function(s){
+      if(s.enabled===false) return;
+      if(s.type==='360'){ if(s.vimeoId) out.push({type:'360', vimeoId:String(s.vimeoId), title:s.title||'360°動画'}); return; }
+      var it=_items.find(function(x){return x.id===s.itemId;}); if(!it) return;
+      var media;
+      if(Array.isArray(s.media)){ var by={}; (_photosByItem[it.id]||[]).forEach(function(p){by[p.id]=p;}); media=s.media.map(function(id){return by[id];}).filter(Boolean); }
+      else media=(_photosByItem[it.id]||[]).slice();
+      out.push({type:'item', it:it, showMap:s.showMap!==false, media:media});
+    });
+    return out;
+  }
+  // 既定: 全スケジュール項目（地図あり or メディアあり）。未構築時は家族のみ閲覧可の写真は除外（安全側）。
+  _items.forEach(function(it){
+    var media=(_photosByItem[it.id]||[]).filter(function(p){ return !p.familyOnly; });
+    var hasMap=(it.lat!=null&&it.lng!=null);
+    if(!media.length && !hasMap && !(it.title||it.placeName)) return;
+    out.push({type:'item', it:it, showMap:hasMap, media:media});
+  });
+  return out;
+}
+
+function buildUI(){
+  var live='<span class="hd-live" id="hd-live" style="display:none"><span class="dot"></span>LIVE</span>';
+  var hd='<div class="hd"><span class="hd-ttl">🎬 '+esc(_event.name||'セミナー')+'</span>'+live+'</div>';
+  var stage='<div class="stage" id="stage"></div>';
+  var nav;
+  if(_presenter){
+    nav='<div class="nav" id="nav"><button onclick="prev()" id="n-prev">◀</button><span class="pg" id="n-pg">- / -</span><button onclick="next()" id="n-next">▶</button>'
+      +'<span class="sp"></span><button class="pbtn" onclick="openQr()">📱 QR</button><button class="pbtn danger" onclick="endSeminar()">⏹ 終了</button></div>';
+  } else {
+    nav='<div class="nav" id="nav"><button onclick="pMove(-1)" id="n-prev">◀</button><span class="pg" id="n-pg">- / -</span><button onclick="pMove(1)" id="n-next">▶</button>'
+      +'<span class="sp"></span><button class="pbtn" id="n-sync" onclick="toggleSync()">✋ 自由に移動</button></div>'
+      +'<div class="follownote" id="follownote"></div>';
+  }
+  g('screen').innerHTML=hd+stage+nav;
+  updateNav();
+}
+
+function _destroyMap(){ if(_map){ try{_map.remove();}catch(e){} _map=null; } }
+
+function renderStep(){
+  _destroyMap();
+  var st=_flow[_step]; if(!st){ return; }
+  var stage=g('stage'); stage.scrollTop=0;
+  if(st.type==='360'){
+    stage.innerHTML='<div class="step360"><div class="v360"><div class="v360-ttl">🌐 '+esc(st.title)+'</div>'
+      +'<iframe src="https://player.vimeo.com/video/'+encodeURIComponent(st.vimeoId)+'?title=0&byline=0&portrait=0&autoplay=1&muted=1" allow="autoplay; fullscreen" allowfullscreen></iframe></div></div>';
+    updateNav(); return;
+  }
+  var it=st.it;
+  var mapHtml=(st.showMap && it.lat!=null && it.lng!=null)?'<div class="smap" id="smap"></div>':'';
+  var tm=_itemTime(it), pl=_itemPlace(it);
+  var head='<div class="sitem"><div class="t">'+esc(it.title||'（無題）')+'</div>'+(tm?'<div class="tm">🕐 '+esc(tm)+'</div>':'')+(pl?'<div class="pl">📍 '+esc(pl)+'</div>':'')+'</div>';
+  var media='';
+  if(st.media && st.media.length){
+    media='<div class="mgrid">'+st.media.map(function(p,i){
+      var inner;
+      if(_isVid(p)){
+        if(p.status==='processing') inner='<div class="st">⏳ 変換中</div>';
+        else if(p.status==='error') inner='<div class="st">⚠ 失敗</div>';
+        else { var s=_thumb(p); inner=(s?'<img src="'+esc(s)+'" loading="lazy">':'<div class="st">🎬</div>')+'<div class="pv">▶</div>'; }
+      } else inner='<img src="'+esc(_thumb(p))+'" loading="lazy">';
+      var cap=p.caption?'<div class="cap">'+esc(p.caption)+'</div>':'';
+      return '<div class="mcell" onclick="fvOpen('+i+')">'+inner+cap+'</div>';
+    }).join('')+'</div>';
+  } else if(!mapHtml){ media='<div class="nomedia">この項目にはメディアがありません。</div>'; }
+  stage.innerHTML='<div class="step">'+mapHtml+head+media+'</div>';
+  if(mapHtml) drawMap(it);
+  updateNav();
+}
+
+function drawMap(it){
+  var el=g('smap'); if(!el||!window.L) return;
+  try{
+    _map=L.map(el,{attributionControl:false,zoomControl:true});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(_map);
+    var pts=[];
+    var o=_mkLL(+it.lat,+it.lng);
+    if(it.isMove){
+      var d=(it.toLat!=null&&it.toLng!=null)?_mkLL(+it.toLat,+it.toLng):null;
+      if(it._trk && it._trk.length>=2){ L.polyline(it._trk,{color:'#d8b56b',weight:4,opacity:.9}).addTo(_map); it._trk.forEach(function(p){pts.push(p);}); }
+      else if(o&&d){ L.polyline([[o.lat,o.lng],[d.lat,d.lng]],{color:'#d8b56b',weight:3,dashArray:'6,6',opacity:.9}).addTo(_map); }
+      if(o){ L.circleMarker([o.lat,o.lng],{radius:7,color:'#fff',weight:2,fillColor:'#4bb79a',fillOpacity:1}).addTo(_map); pts.push([o.lat,o.lng]); }
+      if(d){ L.circleMarker([d.lat,d.lng],{radius:7,color:'#fff',weight:2,fillColor:'#e26a6a',fillOpacity:1}).addTo(_map); pts.push([d.lat,d.lng]); }
+    } else if(o){ L.circleMarker([o.lat,o.lng],{radius:8,color:'#fff',weight:2,fillColor:'#d8b56b',fillOpacity:1}).addTo(_map); pts.push([o.lat,o.lng]); }
+    if(pts.length>1){ _map.fitBounds(pts,{padding:[30,30]}); }
+    else if(pts.length===1){ _map.setView(pts[0],14); }
+    setTimeout(function(){ if(_map) try{_map.invalidateSize();}catch(e){} },120);
+  }catch(e){}
+}
+
+function updateNav(){
+  var pg=g('n-pg'); if(pg) pg.textContent=(_step+1)+' / '+_flow.length;
+  var pb=g('n-prev'), nb=g('n-next');
+  if(_presenter){ if(pb)pb.disabled=(_step<=0); if(nb)nb.disabled=(_step>=_flow.length-1); }
+  else { var free=!_syncOn; if(pb)pb.disabled=(!free||_step<=0); if(nb)nb.disabled=(!free||_step>=_flow.length-1); }
+}
+
+// ── 進行（配信者） ──
+function go(s){ s=Math.min(Math.max(0,s),_flow.length-1); _step=s; renderStep(); pushLive(false); }
+function prev(){ go(_step-1); }
+function next(){ go(_step+1); }
+function pushLive(startFlag){
+  if(!_presenter) return;
+  db.collection('events').doc(EID).collection('seminar').doc('live')
+    .set({started:true, live:true, step:_step, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).catch(function(){});
+}
+function endSeminar(){
+  if(!_presenter) return;
+  if(!confirm('セミナーを終了しますか？\n参加者の画面に終了表示が出ます。')) return;
+  db.collection('events').doc(EID).collection('seminar').doc('live')
+    .set({live:false, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).catch(function(){});
+  if(_unsub){ _unsub(); _unsub=null; }
+  showMsg('セミナーを終了しました。<br><span style="font-size:12px;color:var(--ink3)">再開するには画面を再読み込みしてください。</span>');
+}
+
+// ── 同期（参加者） ──
+function subscribe(){
+  if(_unsub) return;
+  _unsub=db.collection('events').doc(EID).collection('seminar').doc('live').onSnapshot(function(d){
+    var data=(d.exists?d.data():{})||{};
+    _started=!!data.started; _live=(data.live!==false && _started);
+    _liveStep=Math.min(Math.max(0,data.step||0),_flow.length-1);
+    var lb=g('hd-live'); if(lb) lb.style.display=_live?'':'none';
+    if(_presenter) return; // 配信者は自分の操作優先
+    if(!_started){ _pstate='pre'; var fn0=g('follownote'); if(fn0) fn0.textContent='開始までお待ちください。'; stageWait('まもなく開始します。'); return; }
+    if(!_live){ _pstate='ended'; stageWait('セミナーは終了しました。'); var fn1=g('follownote'); if(fn1) fn1.textContent='セミナーは終了しました。'; return; }
+    // 配信中: 進行ページに追従（同期ON時）。待機状態からの復帰や初回は必ず描画。
+    var need=(_pstate!=='live');
+    if(_syncOn && _step!==_liveStep){ _step=_liveStep; need=true; }
+    _pstate='live';
+    if(need || !g('stage').querySelector('.step,.step360')) renderStep();
+    updateNav(); updateFollowNote();
+  }, function(){});
+}
+function stageWait(msg){ var s=g('stage'); if(s) s.innerHTML='<div class="msg" style="height:100%">'+esc(msg)+'</div>'; var lb=g('hd-live'); }
+function updateFollowNote(){ var fn=g('follownote'); if(!fn) return; fn.textContent=_syncOn?('進行に同期中 — '+(_step+1)+' / '+_flow.length):('自由に閲覧中 — '+(_step+1)+' / '+_flow.length); }
+function toggleSync(){
+  _syncOn=!_syncOn;
+  var b=g('n-sync'); if(b) b.textContent=_syncOn?'✋ 自由に移動':'🔗 進行に同期';
+  if(_syncOn){ _step=_liveStep; renderStep(); }
+  updateNav(); updateFollowNote();
+}
+function pMove(d){ if(_syncOn) return; var s=Math.min(Math.max(0,_step+d),_flow.length-1); _step=s; renderStep(); updateFollowNote(); }
+
+document.addEventListener('keydown',function(e){
+  if(g('fv').classList.contains('open')){ if(e.key==='Escape') fvClose(); else if(e.key==='ArrowLeft') fvNav(-1); else if(e.key==='ArrowRight') fvNav(1); return; }
+  var right=(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '), left=(e.key==='ArrowLeft'||e.key==='PageUp');
+  if(!right&&!left) return;
+  if(_presenter){ e.preventDefault(); right?next():prev(); }
+  else if(!_syncOn){ e.preventDefault(); pMove(right?1:-1); }
+});
+
+// ── フルスクリーン・ビューア（タップ最大化＋ピンチ拡大） ──
+var _fvMedia=[], _fvIdx=0, _fvScale=1, _fvTx=0, _fvTy=0;
+function fvOpen(i){ var st=_flow[_step]; if(!st||st.type!=='item') return; _fvMedia=st.media||[]; _fvIdx=i; g('fv').classList.add('open'); fvShow(); }
+function fvClose(){ g('fv').classList.remove('open'); g('fv-stage').innerHTML=''; }
+function fvNav(d){ if(!_fvMedia.length) return; _fvIdx=(_fvIdx+d+_fvMedia.length)%_fvMedia.length; fvShow(); }
+function fvShow(){
+  var p=_fvMedia[_fvIdx]; if(!p) return;
+  _fvScale=1; _fvTx=0; _fvTy=0;
+  var s=g('fv-stage');
+  if(_isVid(p) && _vidReady(p)){ s.innerHTML='<video src="'+esc(p.url)+'" controls autoplay playsinline '+(p.posterUrl?('poster="'+esc(p.posterUrl)+'"'):'')+'></video>'; }
+  else if(_isVid(p)){ s.innerHTML='<div class="msg">'+(p.status==='processing'?'動画を変換中です。':'動画を再生できません。')+'</div>'; }
+  else { s.innerHTML='<img id="fv-img" src="'+esc(p.url||p.thumbUrl||'')+'" alt="">'; _fvBindPinch(); }
+}
+function _fvApply(){ var im=g('fv-img'); if(im) im.style.transform='translate('+_fvTx+'px,'+_fvTy+'px) scale('+_fvScale+')'; }
+function _fvBindPinch(){
+  var im=g('fv-img'); if(!im) return;
+  var pts={}, startDist=0, startScale=1, lastMid=null, lastTap=0;
+  function dist(a,b){ var dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
+  function mid(a,b){ return {x:(a.x+b.x)/2,y:(a.y+b.y)/2}; }
+  im.addEventListener('pointerdown',function(e){ im.setPointerCapture(e.pointerId); pts[e.pointerId]={x:e.clientX,y:e.clientY}; var ks=Object.keys(pts); if(ks.length===2){ var a=pts[ks[0]],b=pts[ks[1]]; startDist=dist(a,b); startScale=_fvScale; lastMid=mid(a,b); } });
+  im.addEventListener('pointermove',function(e){ if(!pts[e.pointerId]) return; pts[e.pointerId]={x:e.clientX,y:e.clientY}; var ks=Object.keys(pts);
+    if(ks.length===2){ var a=pts[ks[0]],b=pts[ks[1]]; var d=dist(a,b); if(startDist>0){ _fvScale=Math.min(5,Math.max(1,startScale*d/startDist)); } var m=mid(a,b); if(lastMid){ _fvTx+=(m.x-lastMid.x); _fvTy+=(m.y-lastMid.y); } lastMid=m; _fvApply(); }
+    else if(ks.length===1 && _fvScale>1){ /* pan with one finger when zoomed */ }
+  });
+  function up(e){ try{im.releasePointerCapture(e.pointerId);}catch(_){} delete pts[e.pointerId]; if(Object.keys(pts).length<2){ startDist=0; lastMid=null; } }
+  im.addEventListener('pointerup',up); im.addEventListener('pointercancel',up);
+  im.addEventListener('click',function(){ var now=Date.now(); if(now-lastTap<300){ _fvScale=(_fvScale>1)?1:2; _fvTx=0; _fvTy=0; _fvApply(); } lastTap=now; });
+}
+g('fv').addEventListener('click',function(e){ if(e.target===g('fv')) fvClose(); });
+
+// ── QR / URL ──
+function joinUrl(){ return location.origin+'/seminar_flow.html?e='+encodeURIComponent(EID); }
+function loadQrJs(){ if(window.QRCode) return Promise.resolve(); return new Promise(function(res,rej){ var s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js'; s.onload=function(){res();}; s.onerror=function(){rej();}; document.head.appendChild(s); }); }
+function openQr(){ var w=g('qrwrap'); g('qrurl').textContent=joinUrl(); loadQrJs().then(function(){ var box=g('qrbox'); box.innerHTML=''; try{ new QRCode(box,{text:joinUrl(),width:200,height:200,correctLevel:QRCode.CorrectLevel.M}); }catch(e){ box.textContent='QR生成失敗'; } }).catch(function(){ g('qrbox').textContent='QR生成失敗'; }); w.classList.add('open'); }
+function closeQr(){ g('qrwrap').classList.remove('open'); }
+function copyJoin(){ var u=joinUrl(); if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(u).then(function(){ toast('URLをコピーしました'); }).catch(function(){ prompt('コピー',u); }); } else prompt('コピー',u); }
+window.addEventListener('resize',function(){ if(_map) try{_map.invalidateSize();}catch(e){} });
+</script>
+</body>
+</html>
