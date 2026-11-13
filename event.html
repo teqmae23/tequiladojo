@@ -680,6 +680,19 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
     <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closeVid()">キャンセル</button><button class="btn bp" id="vid-up" onclick="vidUpload()" disabled>アップロード</button></div>
   </div>
 </div>
+<!-- 投稿メニュー: 写真 / 動画 を選ぶ -->
+<div class="mbg" id="postpick-modal">
+  <div class="modal" style="max-width:360px">
+    <div class="mhd"><span>📤 投稿するメディア</span><button class="x" onclick="closePostPick()">閉じる</button></div>
+    <div class="mbd">
+      <div id="postpick-note" style="font-size:12px;color:var(--ink2);margin-bottom:12px"></div>
+      <div style="display:flex;gap:12px">
+        <button type="button" onclick="postPick('photo')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px 10px;font-size:15px;font-weight:700;border:1px solid var(--teal);border-radius:12px;color:var(--teal);background:var(--white);cursor:pointer;font-family:inherit"><span style="font-size:30px;line-height:1">📷</span>写真</button>
+        <button type="button" onclick="postPick('video')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px 10px;font-size:15px;font-weight:700;border:1px solid var(--gold-d);border-radius:12px;color:var(--gold-d);background:var(--white);cursor:pointer;font-family:inherit"><span style="font-size:30px;line-height:1">🎬</span>動画</button>
+      </div>
+    </div>
+  </div>
+</div>
 <!-- 割込イベント追加（管理者のみ） -->
 <div class="mbg" id="ins-modal">
   <div class="modal">
@@ -2507,7 +2520,7 @@ function renderSchedItem(it, leg){
   // 会員の写真投稿・閲覧ボタン: コンテナ右上に大きめ表示（📷閲覧／📤投稿・管理）
   var photoCorner='';
   if(photos.length && !_free){ var _vn=photos.filter(_isVid).length; var _lbl=_vn?('🎬 写真・動画('+photos.length+')'):('📷 写真('+photos.length+')'); photoCorner+='<button type="button" class="sc-photo-big" onclick="event.stopPropagation();openLb(\''+did+'\',0)" title="写真・動画を見る">'+_lbl+'</button>'; }
-  if(_canPost()) photoCorner+='<button type="button" class="sc-photo-big up" onclick="event.stopPropagation();openItemPhotoMgr(\''+did+'\')" title="写真を投稿・管理">📤 投稿</button>';
+  if(_canPost()) photoCorner+='<button type="button" class="sc-photo-big up" onclick="event.stopPropagation();openPostPick(\''+did+'\')" title="写真・動画を投稿">📤 投稿</button>';
   // 一般会員: 写真はマップに出さず、項目下にサムネイル一覧で表示
   var freePhotoStrip=(_free && photos.length)?('<div class="sc-free-photos">'+photos.map(function(p,i){ return '<button type="button" class="sc-fp-th'+(_isVid(p)?' vid':'')+'" onclick="event.stopPropagation();openLb(\''+did+'\','+i+')">'+_mediaThumbInner(p)+'</button>'; }).join('')+'</div>'):'';
   // プリセット写真: 投稿ボタンの下に、ボタン幅と同じサムネイル（クリックで閲覧）
@@ -2846,7 +2859,7 @@ function nowSectionHtml(visEnr){
   var h='<div class="sc-now live"><div class="sc-now-lbl">'+(cur?'▶ 現在のイベント':'⏭ まもなく')+'<span class="sc-live-badge" id="sc-live-badge" style="display:none">🔴 ライブ</span></div>'
     +'<div class="sc-now-item">'+tline+'<span class="sc-now-ic">'+ic+'</span><span class="sc-now-ttl">'+esc(it.title||'')+'</span></div>'
     +(function(){
-       var pb=_canPost()?('<button class="sc-photo-btn" style="margin-left:auto" onclick="openItemPhotoMgr(\''+esc(it.id)+'\')">📷'+((_photosByItem[it.id]||[]).length?(' '+(_photosByItem[it.id]||[]).length):'')+'</button>'):'';
+       var pb=_canPost()?('<button class="sc-photo-btn" style="margin-left:auto" onclick="openPostPick(\''+esc(it.id)+'\')">📤'+((_photosByItem[it.id]||[]).length?(' '+(_photosByItem[it.id]||[]).length):'')+'</button>'):'';
        if(!it.date && !pb) return '';
        return '<div class="sc-now-sub" style="display:flex;align-items:center;gap:8px">'+(it.date?(esc(fmtDate(it.date))+' '+wday(it.date)):'')+pb+'</div>';
      })()
@@ -3123,7 +3136,7 @@ function renderSchedule(items){
   // 日付ごとの項目（その日のルートマップ用）。並びはJST順。
   var dayItemsMap={};
   visEnr.forEach(function(e){ var d=e.it.date||''; (dayItemsMap[d]=dayItemsMap[d]||[]).push(e.it); });
-  var h='<div class="card"><div class="sec-row"><div class="sec">🗓 スケジュール</div>'+((_isStaff||_isCoAdmin)?'<a class="ph-btn" style="text-decoration:none" href="/admin_events.html?sched='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛠 管理ページで編集</a><a class="ph-btn" style="text-decoration:none" href="/event_live.html?ev='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛰 ライブ中継</a>':'')+(_canPost()?'<button class="ph-btn" onclick="openPh()">📷 投稿</button><button class="ph-btn" onclick="openVid()">🎬 動画</button>':'')+(_canSeePrivate()?'<button class="ph-btn" onclick="exportOfflineSchedule()" title="時刻・場所・住所・地図リンクを1枚にまとめて出力（写真なし）。保存・印刷してオフラインでご確認いただけます">📄 資料出力</button>':'')+'</div>';
+  var h='<div class="card"><div class="sec-row"><div class="sec">🗓 スケジュール</div>'+((_isStaff||_isCoAdmin)?'<a class="ph-btn" style="text-decoration:none" href="/admin_events.html?sched='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛠 管理ページで編集</a><a class="ph-btn" style="text-decoration:none" href="/event_live.html?ev='+encodeURIComponent(eventId||'')+'" target="_blank" rel="noopener">🛰 ライブ中継</a>':'')+(_canPost()?'<button class="ph-btn" onclick="openPostPick()">📤 投稿（写真・動画）</button>':'')+(_canSeePrivate()?'<button class="ph-btn" onclick="exportOfflineSchedule()" title="時刻・場所・住所・地図リンクを1枚にまとめて出力（写真なし）。保存・印刷してオフラインでご確認いただけます">📄 資料出力</button>':'')+'</div>';
   h+=debugTimeBar();
   var useG=SchedGroups.used(items); // 班（2班・3班）を使っている場合のみ右端バー表示
   var myG=useG?_viewerGroup(enr):1;
@@ -3225,7 +3238,7 @@ function renderSchedule(items){
     _schedDayDates[idx]=gp.day;              // idx→日付（開閉復元用）
     var _open=!!_openSchedDays[gp.day];      // 再描画前に開いていた日は開いたまま
     var mapHtml=hasMap?('<div class="sc-daymap" id="sc-daymap-'+idx+'"></div>'):'';
-    return '<div class="sc-day sc-day-toggle" onclick="toggleSchedDay('+idx+')"><span class="sc-day-caret" id="sc-day-caret-'+idx+'">'+(_open?'▾':'▸')+'</span> '+esc(fmtDate(gp.day))+' '+wday(gp.day)+' <span class="sc-day-count">（'+gp.n+'件）</span>'+(_canPost()?'<button type="button" onclick="event.stopPropagation();openPh()" title="写真を投稿" style="margin-left:8px;font-size:11px;border:1px solid var(--border2);border-radius:6px;padding:1px 8px;background:var(--cream2);color:var(--ink2);cursor:pointer;font-weight:600">📤 投稿</button>':'')+'<span class="sc-day-wx" id="sc-day-wx-'+idx+'"></span></div>'
+    return '<div class="sc-day sc-day-toggle" onclick="toggleSchedDay('+idx+')"><span class="sc-day-caret" id="sc-day-caret-'+idx+'">'+(_open?'▾':'▸')+'</span> '+esc(fmtDate(gp.day))+' '+wday(gp.day)+' <span class="sc-day-count">（'+gp.n+'件）</span>'+(_canPost()?'<button type="button" onclick="event.stopPropagation();openPostPick()" title="写真・動画を投稿" style="margin-left:8px;font-size:11px;border:1px solid var(--border2);border-radius:6px;padding:1px 8px;background:var(--cream2);color:var(--ink2);cursor:pointer;font-weight:600">📤 投稿</button>':'')+'<span class="sc-day-wx" id="sc-day-wx-'+idx+'"></span></div>'
       +'<div class="sc-day-body" id="sc-day-body-'+idx+'" style="display:'+(_open?'':'none')+'">'+_daySumHtml(gp.day)+mapHtml+gp.html+'</div>';
   }).join('');
   if(hiddenCount>0) h+='<div class="sc-hiddennote">🙈 未完了の非公開アイテムが '+hiddenCount+' 件あります（完了後に表示されます）。</div>';
@@ -3554,6 +3567,22 @@ var _phSelToken=0; // ファイル選択の世代トークン（連続選択の�
 var _phTarget=null; // 項目を指定して追加するモード（その項目IDを保持）
 var _phDirty=false; // モーダル内で削除/保存したら閉じる時にスケジュール再読込
 function _resetPh(){ g('ph-file').value=''; g('ph-review').innerHTML=''; g('ph-err').textContent=''; g('ph-prog').textContent=''; g('ph-up').disabled=true; _phReview=[]; _phDone=0; }
+// ── 投稿メニュー（写真/動画を選択）── itemId を渡すとその項目に紐づけて投稿
+var _postPickItem=null;
+function openPostPick(itemId){
+  if(!_isReal){ return; }
+  _postPickItem=itemId||null;
+  var it=itemId?_schedItems.find(function(x){return x.id===itemId;}):null;
+  g('postpick-note').textContent=it?('「'+((it.title||'項目'))+'」に写真または動画を投稿します。'):'写真または動画を投稿します。';
+  g('postpick-modal').classList.add('open');
+}
+function closePostPick(){ g('postpick-modal').classList.remove('open'); }
+function postPick(kind){
+  var itemId=_postPickItem; closePostPick();
+  if(kind==='video'){ openVid(itemId||undefined); }
+  else { if(itemId) openItemPhotoMgr(itemId); else openPh(); }
+}
+g('postpick-modal').addEventListener('click',function(e){ if(e.target===g('postpick-modal')) closePostPick(); });
 // グローバル追加（全項目から自動分類）
 function openPh(){
   if(!_isReal){ return; }
