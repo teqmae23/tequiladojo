@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/sortablejs@1.15.6/Sortable.min.js"></script>
 <script src="/tz-lookup.js"></script>
 <script src="/sched-groups.js?v=20260925"></script>
 <script src="/member-plan.js?v=20260903"></script>
@@ -413,6 +414,10 @@ a{color:var(--gold-d)}
 .gal-check{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.85);border:1px solid var(--teal);color:var(--teal);font-size:13px;line-height:18px;text-align:center;font-weight:700;display:none}
 .gal-cell.sel .gal-check{display:block;background:var(--teal);color:#fff}
 .gal-tbtn{font-size:12px;border:1px solid var(--border2);border-radius:8px;padding:4px 10px;background:var(--white);color:var(--ink2);cursor:pointer;font-family:inherit;font-weight:600}
+.gal-cell.reorder{cursor:grab;touch-action:none}
+.gal-cell.reorder:active{cursor:grabbing}
+.gal-cell.gal-ghost{opacity:.4}
+.gal-drag{position:absolute;bottom:2px;right:3px;color:#fff;font-size:15px;line-height:1;text-shadow:0 1px 3px rgba(0,0,0,.8);pointer-events:none}
 .phx img{width:100%;height:100%;object-fit:cover;display:block}
 .phx .phx-del{position:absolute;top:2px;right:2px;background:rgba(176,48,32,.92);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:12px;line-height:1;cursor:pointer;padding:0}
 .phx-head{font-size:11px;color:var(--ink3);margin-bottom:6px;width:100%}
@@ -1695,7 +1700,7 @@ function itemIcon(it){
 }
 function catBg(id){ var c=catById(id); return (c&&c.bg)?c.bg:'#f5f3ee'; }
 var _schedItems=[], _photosByItem={}, _tripTracks=[], _placeAddrMap={}, _placeCurMap={}, _placePhotoMap={}, _placePrivateMap={};
-function phSort(a,b){ var ka=(a.takenAt||a.createdMs||0), kb=(b.takenAt||b.createdMs||0); return ka-kb; }
+function phSort(a,b){ var oa=(a.order!=null?a.order:null), ob=(b.order!=null?b.order:null); if(oa!=null||ob!=null){ if(oa==null) return 1; if(ob==null) return -1; if(oa!==ob) return oa-ob; } var ka=(a.takenAt||a.createdMs||0), kb=(b.takenAt||b.createdMs||0); return ka-kb; }
 // 項目の住所解決：まず場所マスタの住所、無ければ地図URLから抽出。
 function _itemAddr(name, mapUrl){
   var nm=(name||'').trim();
@@ -4134,28 +4139,34 @@ function _mediaThumbInner(p){
   return '<img src="'+esc(_mediaThumbSrc(p))+'" alt="" loading="lazy">';
 }
 // ── サムネイル一覧（写真・動画）。タップで拡大（ライトボックス）。閲覧専用・全ロール可 ──
-var _galItemId=null, _galSelMode=false, _galSel={};
+var _galItemId=null, _galSelMode=false, _galSel={}, _galReorder=false, _galSortable=null;
 function openGallery(itemId){
   var list=_photosByItem[itemId]||[]; if(!list.length) return;
   // 1件のみかつ閲覧可能(写真 or 変換済み動画)なら一覧を挟まず直接拡大。
   // ただし投稿者/スタッフ（一括管理ができる人）は一覧を表示して管理できるように。
   // 変換中/失敗の動画はサムネイル一覧を表示（ライトボックスの⏳表示へ飛ばさない）。
   if(list.length===1 && !_canPost()){ var only=list[0]; if(!_isVid(only) || _vidReady(only)){ openLb(itemId,0); return; } }
-  _galItemId=itemId; _galSelMode=false; _galSel={};
+  _galItemId=itemId; _galSelMode=false; _galSel={}; _galReorder=false; _galDestroySortable();
   var it=_schedItems.find(function(x){return x.id===itemId;});
   g('gal-title').textContent='📷 '+((it&&it.title)||'写真・動画')+'（'+list.length+'）';
   renderGal();
   g('gal-modal').classList.add('open');
 }
+// 並び替え可否: スタッフ/副管理、または全てが自分の投稿なら可（権限エラー回避のため）
+function _galCanReorder(){ var list=_photosByItem[_galItemId]||[]; if(_isStaff||_isCoAdmin) return true; return list.length>0 && list.every(function(p){ return p.uploaderUid&&p.uploaderUid===_uid; }); }
+function _galDestroySortable(){ if(_galSortable){ try{ _galSortable.destroy(); }catch(e){} _galSortable=null; } }
 function renderGal(){
   if(!_galItemId) return;
+  _galDestroySortable();
   var list=_photosByItem[_galItemId]||[];
   if(!list.length){ closeGal(); return; }
-  // ツールバー（投稿者・スタッフのみ）: 家族のみ閲覧可の一括設定
+  // ツールバー（投稿者・スタッフのみ）: 家族のみ閲覧可の一括設定／並び替え
   var tb=g('gal-tools');
   if(_canPost()){
     tb.style.display='flex';
-    if(_galSelMode){
+    if(_galReorder){
+      tb.innerHTML='<span style="font-size:12px;color:var(--gold-d);font-weight:700">↕ ドラッグで並び替え中</span><button class="gal-tbtn" style="margin-left:auto" onclick="galReorderMode(false)">完了</button>';
+    } else if(_galSelMode){
       var n=Object.keys(_galSel).length;
       tb.innerHTML='<button class="gal-tbtn" onclick="galSelAll()">全選択</button>'
         +'<button class="gal-tbtn" onclick="galSelNone()">解除</button>'
@@ -4163,18 +4174,42 @@ function renderGal(){
         +'<button class="gal-tbtn" onclick="galSetFam(false)">🌐 全員に公開'+(n?'（'+n+'）':'')+'</button>'
         +'<button class="gal-tbtn" style="margin-left:auto" onclick="galSelMode(false)">完了</button>';
     } else {
-      tb.innerHTML='<button class="gal-tbtn" onclick="galSelMode(true)">☑ 選択して家族のみ設定</button>';
+      tb.innerHTML='<button class="gal-tbtn" onclick="galSelMode(true)">☑ 選択して家族のみ設定</button>'
+        +(_galCanReorder()?'<button class="gal-tbtn" onclick="galReorderMode(true)">↕ 並び替え</button>':'');
     }
   } else { tb.style.display='none'; }
   g('gal-grid').innerHTML=list.map(function(p,i){
     var sel=_galSelMode && _galSel[p.id];
     var fam=p.familyOnly?'<span class="gal-fam">👪家族</span>':'';
     var chk=_galSelMode?'<span class="gal-check">✓</span>':'';
-    var oc=_galSelMode?('galToggleSel(\''+esc(p.id)+'\')'):('galOpen('+i+')');
-    return '<div class="gal-cell'+(_isVid(p)?' vid':'')+(sel?' sel':'')+'" onclick="'+oc+'">'+_mediaThumbInner(p)+fam+chk+'</div>';
+    var oc=_galReorder?'':(_galSelMode?('galToggleSel(\''+esc(p.id)+'\')'):('galOpen('+i+')'));
+    var drag=_galReorder?'<span class="gal-drag">⠿</span>':'';
+    return '<div class="gal-cell'+(_isVid(p)?' vid':'')+(sel?' sel':'')+(_galReorder?' reorder':'')+'" data-pid="'+esc(p.id)+'"'+(oc?(' onclick="'+oc+'"'):'')+'>'+_mediaThumbInner(p)+fam+chk+drag+'</div>';
   }).join('');
+  // 並び替えモードはSortableで並べ替え（タッチ対応）
+  if(_galReorder && window.Sortable){
+    _galSortable=Sortable.create(g('gal-grid'), { animation:150, delay:120, delayOnTouchOnly:true, ghostClass:'gal-ghost', onEnd:galReorderEnd });
+  }
 }
-function galSelMode(on){ _galSelMode=!!on; if(!on) _galSel={}; renderGal(); }
+function galReorderMode(on){
+  if(on && !window.Sortable){ toast('並び替えを読み込めませんでした。再読み込みしてお試しください。'); return; }
+  _galReorder=!!on; _galSelMode=false; _galSel={}; renderGal();
+}
+// ドラッグ終了: 現在のDOM順で order を採番してFirestoreへ保存
+function galReorderEnd(){
+  var list=_photosByItem[_galItemId]||[]; var byId={}; list.forEach(function(p){ byId[p.id]=p; });
+  var cells=g('gal-grid').querySelectorAll('.gal-cell');
+  var ordered=[]; for(var i=0;i<cells.length;i++){ var pid=cells[i].getAttribute('data-pid'); if(byId[pid]) ordered.push(byId[pid]); }
+  if(ordered.length!==list.length) return;
+  var col=db.collection('events').doc(eventId).collection('photos'), batch=db.batch(), changed=false;
+  ordered.forEach(function(p,i){ if(p.order!==i){ p.order=i; batch.update(col.doc(p.id), {order:i}); changed=true; } });
+  // ローカルの並びも確定（phSortがorder優先なので再読込後も保持）
+  _photosByItem[_galItemId]=ordered;
+  if(!changed) return;
+  batch.commit().then(function(){ toast('並び順を保存しました'); renderSchedule(_schedItems); })
+    .catch(function(e){ toast('並び替えの保存に失敗: '+e.message); });
+}
+function galSelMode(on){ _galSelMode=!!on; if(!on) _galSel={}; _galReorder=false; renderGal(); }
 function galToggleSel(pid){ if(_galSel[pid]) delete _galSel[pid]; else _galSel[pid]=1; renderGal(); }
 function galSelAll(){ (_photosByItem[_galItemId]||[]).forEach(function(p){ _galSel[p.id]=1; }); renderGal(); }
 function galSelNone(){ _galSel={}; renderGal(); }
@@ -4194,7 +4229,7 @@ function galSetFam(flag){
   }).catch(function(e){ toast('変更失敗: '+e.message); });
 }
 function galOpen(i){ openLb(_galItemId, i); } // 一覧の上にライトボックス(z-index上位)。閉じると一覧へ戻る
-function closeGal(){ g('gal-modal').classList.remove('open'); _galItemId=null; _galSelMode=false; _galSel={}; }
+function closeGal(){ _galDestroySortable(); g('gal-modal').classList.remove('open'); _galItemId=null; _galSelMode=false; _galSel={}; _galReorder=false; }
 g('gal-modal').addEventListener('click',function(e){ if(e.target===g('gal-modal')) closeGal(); });
 var _lbList=[], _lbIdx=0, _lbNoDelete=false, _lbDirty=false;
 // ローカルの写真配列からも除去（ライトボックス・項目別一覧の両方）
