@@ -1820,8 +1820,8 @@ function routeLink(it){
   function endp(name, lat, lng, mapUrl, mode){
     name=(name&&name.trim())?name.trim():'';
     function _c(){ var g=_coordsFromGmapUrl(mapUrl); if(g) return encodeURIComponent(g.lat+','+g.lng); var la=_geoNum(lat),ln=_geoNum(lng); if(la!=null&&ln!=null) return encodeURIComponent(la+','+ln); return ''; }
-    if(mode==='coord') return _c() || (name?encodeURIComponent(name):'');
-    return name ? encodeURIComponent(name) : _c();
+    // 座標を最優先（曖昧な地点名がGoogleで別の場所＝別国に解決されるのを防ぐ）。座標が無ければ名称。
+    return _c() || (name?encodeURIComponent(name):'');
   }
   var o=endp(it.placeName, it.lat, it.lng, it.mapUrl, it.mapMode);
   var d=endp(it.toName, it.toLat, it.toLng, it.toMapUrl, it.toMapMode);
@@ -2029,19 +2029,16 @@ function _schedInstant(it){
 function _endMark(it){ var e=(it&&it.endTime&&it.endTime.trim())||(it&&it.isMove&&it.toTime&&it.toTime.trim()); return e?1:0; }
 function _caSec(it){ return (it&&it.createdAt&&it.createdAt.seconds)||0; } // 登録タイミング（createdAt秒）
 function _sortByJst(items){
-  // 日付（現地日付）でまとめ、同じ日の中は常に「予定時刻」順に並べる。
-  // スケジュールが遅れCI時刻が次の予定より後になっても並びは入れ替えない
-  //（CI済みの項目も予定どおりの位置＝CI前と同じ位置に表示する）。
+  // 日付（現地日付）でまとめ、同じ日の中は「実際に起きた順」（実時刻=CI優先、無ければ予定時刻）に並べる。
+  // 予定が前後したり、予定とは違う順で実施された項目も、実際の時系列どおりに表示する。
   return items.map(function(it,i){
     var d=_schedInstant(it); var sms=d?d.getTime():0;
     var ams=(it.actualStartMs!=null)?it.actualStartMs:null;
     var ms=(ams!=null)?ams:sms; // 絶対時刻（カウントダウン・現在/NEXT判定用。実時間を反映）。
-    // 同日内の並び用キー: 予定日(it.date)＋「予定HH:MM（無ければ実時間）」の壁時計を項目TZで実時刻化し、秒も加算。
-    // 並びは常に予定時刻基準なので、CI時刻が前後しても順序は固定。TZ跨ぎも予定の実時刻で比較。
-    var tz=(it.lat!=null&&it.lng!=null)?(_safeTz(it.lat,it.lng)||'Asia/Tokyo'):'Asia/Tokyo';
-    var effT=it.time||it.actualStart||'23:59';
-    var di=_wallInstant(it.date, effT, tz);
-    var sortMs=di?(di.getTime()+(((_hmSec(effT)||0)%60)*1000)):ms;
+    // 同日内の並び用キー: 「実時刻HH:MM:SS（無ければ予定）」の現地壁時計秒。深夜 24:00〜30:00 表記は 23:xx の後。
+    var effT=it.actualStart||it.time||'23:59';
+    var lsec=_hmSec(effT);
+    var sortMs=(lsec!=null)?lsec:86399;
     return {it:it, ms:ms, sortMs:sortMs, day:(it.date||'9999-99-99'), em:_endMark(it), ca:_caSec(it), seq:it.seq||0, i:i};
   }).sort(function(a,b){
     if(a.day!==b.day) return a.day<b.day?-1:1;                 // 日付順
