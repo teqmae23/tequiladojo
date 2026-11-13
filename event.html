@@ -405,6 +405,9 @@ a{color:var(--gold-d)}
 #ph-existing{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
 .phx-wrap{width:70px;display:flex;flex-direction:column}
 .phx{position:relative;width:70px;height:70px;border-radius:8px;overflow:hidden;border:1px solid var(--border)}
+.gal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}
+.gal-cell{position:relative;aspect-ratio:1/1;border-radius:8px;overflow:hidden;border:1px solid var(--border);cursor:pointer;background:var(--cream2)}
+.gal-cell img{width:100%;height:100%;object-fit:cover;display:block}
 .phx img{width:100%;height:100%;object-fit:cover;display:block}
 .phx .phx-del{position:absolute;top:2px;right:2px;background:rgba(176,48,32,.92);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:12px;line-height:1;cursor:pointer;padding:0}
 .phx-head{font-size:11px;color:var(--ink3);margin-bottom:6px;width:100%}
@@ -669,8 +672,23 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
   <div class="modal">
     <div class="mhd"><span>🎬 動画を追加</span><button class="x" onclick="closeVid()">閉じる</button></div>
     <div class="mbd">
-      <div class="fg"><label class="fl">動画（1本・90秒／400MBまで）</label><input class="fi" id="vid-file" type="file" accept="video/*"></div>
+      <div class="fg"><label class="fl">動画（1本・400MBまで／90秒目安）</label><input class="fi" id="vid-file" type="file" accept="video/*"></div>
       <div id="vid-info" style="font-size:12px;color:var(--ink2);margin:2px 0"></div>
+      <!-- 90秒超のときだけ表示: 切り出し or そのまま投稿 -->
+      <div id="vid-trim" style="display:none;margin:6px 0;padding:10px;border:1px solid var(--gold-d);border-radius:10px;background:var(--cream2)">
+        <div style="font-size:12px;color:var(--gold-d);font-weight:700;margin-bottom:6px">⚠ 90秒を超えています</div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:8px"><input type="checkbox" id="vid-full"> このまま全体（90秒超）を投稿する</label>
+        <div id="vid-trim-ctl">
+          <div style="font-size:11px;color:var(--ink2);margin-bottom:4px">90秒ぶんを切り出して投稿します。開始位置を選んでください。</div>
+          <video id="vid-prev" muted playsinline controls preload="metadata" style="width:100%;max-height:220px;background:#000;border-radius:8px"></video>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+            <span style="font-size:11px;color:var(--ink2);white-space:nowrap">開始位置</span>
+            <input type="range" id="vid-trim-start" min="0" max="0" step="1" value="0" style="flex:1">
+            <button type="button" id="vid-trim-here" style="font-size:11px;border:1px solid var(--border2);border-radius:6px;padding:2px 8px;background:var(--white);cursor:pointer;white-space:nowrap">▶位置に合わせる</button>
+          </div>
+          <div id="vid-trim-info" style="font-size:12px;color:var(--gold-d);font-weight:600;margin-top:4px"></div>
+        </div>
+      </div>
       <div class="mnote">アップロード後、サーバーで全端末向けに1080p（H.264）へ自動変換します。変換が終わると写真と同じ一覧・拡大表示で再生できます（数十秒〜数分）。きれいな映像を保ちつつ容量・通信を抑えます。</div>
       <div class="fg"><label class="fl">スケジュール項目</label><select class="fi" id="vid-item"></select></div>
       <div class="fg"><label class="fl">キャプション（場所・説明・任意）</label><input class="fi" id="vid-cap" placeholder="場所や説明"></div>
@@ -691,6 +709,13 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
         <button type="button" onclick="postPick('video')" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px 10px;font-size:15px;font-weight:700;border:1px solid var(--gold-d);border-radius:12px;color:var(--gold-d);background:var(--white);cursor:pointer;font-family:inherit"><span style="font-size:30px;line-height:1">🎬</span>動画</button>
       </div>
     </div>
+  </div>
+</div>
+<!-- 写真・動画サムネイル一覧（タップで拡大） -->
+<div class="mbg" id="gal-modal">
+  <div class="modal" style="max-width:560px">
+    <div class="mhd"><span id="gal-title">📷 写真・動画</span><button class="x" onclick="closeGal()">閉じる</button></div>
+    <div class="mbd"><div id="gal-grid" class="gal-grid"></div></div>
   </div>
 </div>
 <!-- 割込イベント追加（管理者のみ） -->
@@ -2519,7 +2544,7 @@ function renderSchedItem(it, leg){
   }
   // 会員の写真投稿・閲覧ボタン: コンテナ右上に大きめ表示（📷閲覧／📤投稿・管理）
   var photoCorner='';
-  if(photos.length && !_free){ var _vn=photos.filter(_isVid).length; var _lbl=_vn?('🎬 写真・動画('+photos.length+')'):('📷 写真('+photos.length+')'); photoCorner+='<button type="button" class="sc-photo-big" onclick="event.stopPropagation();openLb(\''+did+'\',0)" title="写真・動画を見る">'+_lbl+'</button>'; }
+  if(photos.length && !_free){ var _vn=photos.filter(_isVid).length; var _lbl=_vn?('🎬 写真・動画('+photos.length+')'):('📷 写真('+photos.length+')'); photoCorner+='<button type="button" class="sc-photo-big" onclick="event.stopPropagation();openGallery(\''+did+'\')" title="写真・動画を見る">'+_lbl+'</button>'; }
   if(_canPost()) photoCorner+='<button type="button" class="sc-photo-big up" onclick="event.stopPropagation();openPostPick(\''+did+'\')" title="写真・動画を投稿">📤 投稿</button>';
   // 一般会員: 写真はマップに出さず、項目下にサムネイル一覧で表示
   var freePhotoStrip=(_free && photos.length)?('<div class="sc-free-photos">'+photos.map(function(p,i){ return '<button type="button" class="sc-fp-th'+(_isVid(p)?' vid':'')+'" onclick="event.stopPropagation();openLb(\''+did+'\','+i+')">'+_mediaThumbInner(p)+'</button>'; }).join('')+'</div>'):'';
@@ -3633,29 +3658,54 @@ function closePh(){ g('ph-modal').classList.remove('open'); _phReview.forEach(fu
 g('ph-modal').addEventListener('click',function(e){ if(e.target===g('ph-modal')) closePh(); });
 
 /* ── 動画アップロード（サーバー変換で1080p H.264へ・写真とは別フロー） ── */
-var VID_MAX_SEC=90, VID_MAX_MB=400, _vidFile=null, _vidDur=0;
+var VID_MAX_SEC=90, VID_MAX_MB=400, _vidFile=null, _vidDur=0, _vidFullDur=0, _vidUrl=null;
+function _vfmt(s){ s=Math.max(0,Math.round(s||0)); var m=Math.floor(s/60), ss=s%60; return m+':'+('0'+ss).slice(-2); }
 function openVid(itemId){
   if(!_isReal) return;
-  _vidFile=null; _vidDur=0;
+  _vidFile=null; _vidDur=0; _vidFullDur=0;
+  if(_vidUrl){ try{URL.revokeObjectURL(_vidUrl);}catch(e){} _vidUrl=null; }
   g('vid-file').value=''; g('vid-cap').value=''; g('vid-err').textContent=''; g('vid-prog').textContent=''; g('vid-info').textContent='';
+  g('vid-trim').style.display='none'; g('vid-full').checked=false; try{ g('vid-prev').removeAttribute('src'); g('vid-prev').load(); }catch(e){}
   g('vid-up').disabled=true;
   g('vid-item').innerHTML='<option value="">— 項目を選択 —</option>'+_schedItems.map(function(it){ return '<option value="'+esc(it.id)+'"'+(it.id===itemId?' selected':'')+'>'+esc(_itemLabel(it))+'</option>'; }).join('');
   g('vid-modal').classList.add('open');
 }
-function closeVid(){ g('vid-modal').classList.remove('open'); _vidFile=null; }
+function closeVid(){ g('vid-modal').classList.remove('open'); _vidFile=null; if(_vidUrl){ try{URL.revokeObjectURL(_vidUrl);}catch(e){} _vidUrl=null; } try{ var pv=g('vid-prev'); pv.pause(); pv.removeAttribute('src'); pv.load(); }catch(e){} }
 g('vid-modal').addEventListener('click',function(e){ if(e.target===g('vid-modal')) closeVid(); });
+// 切り出し範囲の表示更新（開始→終了・長さ）。プレビューも開始位置へシーク。
+function _vidTrimUpdate(seek){
+  var start=+g('vid-trim-start').value||0;
+  var clip=Math.min(VID_MAX_SEC, _vidFullDur-start); if(clip<0) clip=0;
+  g('vid-trim-info').textContent='切り出し: '+_vfmt(start)+' 〜 '+_vfmt(start+clip)+'（'+Math.round(clip)+'秒）';
+  if(seek){ try{ var pv=g('vid-prev'); if(isFinite(start)) pv.currentTime=Math.min(start, Math.max(0,_vidFullDur-0.1)); }catch(e){} }
+}
+g('vid-trim-start').addEventListener('input',function(){ _vidTrimUpdate(true); });
+g('vid-trim-here').addEventListener('click',function(){ try{ var t=Math.floor(g('vid-prev').currentTime||0); g('vid-trim-start').value=Math.max(0,Math.min(t,+g('vid-trim-start').max)); _vidTrimUpdate(false); }catch(e){} });
+g('vid-full').addEventListener('change',function(){ g('vid-trim-ctl').style.display=this.checked?'none':''; });
 g('vid-file').addEventListener('change',function(){
   var f=this.files&&this.files[0]; _vidFile=null; g('vid-err').textContent=''; g('vid-info').textContent=''; g('vid-up').disabled=true;
+  g('vid-trim').style.display='none'; g('vid-full').checked=false; g('vid-trim-ctl').style.display='';
+  if(_vidUrl){ try{URL.revokeObjectURL(_vidUrl);}catch(e){} _vidUrl=null; }
   if(!f) return;
   if(f.size > VID_MAX_MB*1024*1024){ g('vid-err').textContent='ファイルが大きすぎます（'+Math.round(f.size/1048576)+'MB）。'+VID_MAX_MB+'MB以内にしてください。'; return; }
-  var url=URL.createObjectURL(f), v=document.createElement('video'); v.preload='metadata';
-  v.onloadedmetadata=function(){ try{URL.revokeObjectURL(url);}catch(e){} var dur=v.duration||0;
-    if(dur>VID_MAX_SEC+0.5){ g('vid-err').textContent='動画が長すぎます（'+Math.round(dur)+'秒）。'+VID_MAX_SEC+'秒以内にしてください。'; return; }
-    _vidFile=f; _vidDur=Math.round(dur);
-    g('vid-info').textContent='長さ '+_vidDur+'秒 ・ '+(Math.round(f.size/1048576*10)/10)+'MB（アップロード後、サーバーで1080pに変換します）';
+  var url=URL.createObjectURL(f); _vidUrl=url; var v=document.createElement('video'); v.preload='metadata';
+  v.onloadedmetadata=function(){ var dur=v.duration||0;
+    _vidFile=f; _vidDur=Math.round(dur); _vidFullDur=dur;
+    var mb=(Math.round(f.size/1048576*10)/10);
+    if(dur>VID_MAX_SEC+0.5){
+      // 90秒超: 切り出し or そのまま投稿 を選べるUIを表示
+      g('vid-info').textContent='長さ '+_vfmt(dur)+'（'+Math.round(dur)+'秒）・ '+mb+'MB';
+      g('vid-trim').style.display='';
+      var pv=g('vid-prev'); pv.src=url; try{pv.load();}catch(e){}
+      var sl=g('vid-trim-start'); sl.max=Math.max(0,Math.floor(dur-1)); sl.value=0;
+      _vidTrimUpdate(false);
+    } else {
+      try{URL.revokeObjectURL(url);}catch(e){} _vidUrl=null;
+      g('vid-info').textContent='長さ '+_vidDur+'秒 ・ '+mb+'MB（アップロード後、サーバーで1080pに変換します）';
+    }
     g('vid-up').disabled=false;
   };
-  v.onerror=function(){ try{URL.revokeObjectURL(url);}catch(e){} g('vid-err').textContent='この動画を読み込めませんでした。別の形式（MP4/MOV）をお試しください。'; };
+  v.onerror=function(){ try{URL.revokeObjectURL(url);}catch(e){} _vidUrl=null; g('vid-err').textContent='この動画を読み込めませんでした。別の形式（MP4/MOV）をお試しください。'; };
   v.src=url;
 });
 function vidUpload(){
@@ -3664,27 +3714,39 @@ function vidUpload(){
   var itemId=g('vid-item').value; if(!itemId){ g('vid-err').textContent='スケジュール項目を選択してください'; return; }
   var it=_schedItems.find(function(x){return x.id===itemId;})||{};
   var f=_vidFile, cap=(g('vid-cap').value||'').trim();
+  // 90秒超のときの扱い: 切り出し（trim）か、そのまま全体（full）か
+  var over=_vidFullDur>VID_MAX_SEC+0.5;
+  var trimStart=0, effDur=_vidFullDur, full=false;
+  if(over){
+    full=g('vid-full').checked;
+    if(full){ if(!confirm('90秒を超えた動画をそのまま投稿します。\n変換・再生に時間がかかる場合があります。よろしいですか？')) return; }
+    else { trimStart=Math.max(0,+g('vid-trim-start').value||0); effDur=Math.min(VID_MAX_SEC, _vidFullDur-trimStart); }
+  }
   var ext=((f.name.match(/\.([A-Za-z0-9]+)$/)||[])[1]||'mp4').toLowerCase(); if(['mp4','mov','m4v','webm'].indexOf(ext)<0) ext='mp4';
   var col=db.collection('events').doc(eventId).collection('photos'), pid=col.doc().id;
   var raw='event_videos_raw/'+eventId+'/'+pid+'.'+ext;
-  g('vid-up').disabled=true; g('vid-err').textContent=''; g('vid-prog').textContent='アップロード中… 0%';
-  var task=storage.ref(raw).put(f,{contentType:f.type||'video/mp4'});
-  task.on('state_changed',
-    function(s){ var pct=s.totalBytes?Math.round(s.bytesTransferred/s.totalBytes*100):0; g('vid-prog').textContent='アップロード中… '+pct+'%'; },
-    function(err){ g('vid-prog').textContent=''; g('vid-up').disabled=false; g('vid-err').textContent='アップロード失敗: '+err.message; },
-    function(){
-      col.doc(pid).set({
-        scheduleItemId:itemId, mediaType:'video', status:'processing',
-        uploaderUid:_uid, uploaderName:_memberName||'',
-        caption:(cap||null), storagePathRaw:raw, durationSec:_vidDur,
-        lat:(it.lat!=null?it.lat:null), lng:(it.lng!=null?it.lng:null),
-        takenAt:(_itemEndMs(it)||Date.now()), timeInherited:true,
-        createdMs:Date.now(), createdAt:firebase.firestore.FieldValue.serverTimestamp()
-      }).then(function(){
+  g('vid-up').disabled=true; g('vid-err').textContent=''; g('vid-prog').textContent='準備中…';
+  var doc={
+    scheduleItemId:itemId, mediaType:'video', status:'processing',
+    uploaderUid:_uid, uploaderName:_memberName||'',
+    caption:(cap||null), storagePathRaw:raw, durationSec:Math.round(effDur), rawDurationSec:Math.round(_vidFullDur),
+    lat:(it.lat!=null?it.lat:null), lng:(it.lng!=null?it.lng:null),
+    takenAt:(_itemEndMs(it)||Date.now()), timeInherited:true,
+    createdMs:Date.now(), createdAt:firebase.firestore.FieldValue.serverTimestamp()
+  };
+  // 切り出し指定はサーバー変換(ffmpeg)で適用する
+  if(over && !full && (trimStart>0 || effDur<_vidFullDur-0.5)){ doc.trimStartSec=Math.round(trimStart); doc.trimDurSec=Math.round(effDur); }
+  // 先にドキュメントを作成（変換トリガーが切り出し情報を読めるように）→ その後に生ファイルをアップロード
+  col.doc(pid).set(doc).then(function(){
+    var task=storage.ref(raw).put(f,{contentType:f.type||'video/mp4'});
+    task.on('state_changed',
+      function(s){ var pct=s.totalBytes?Math.round(s.bytesTransferred/s.totalBytes*100):0; g('vid-prog').textContent='アップロード中… '+pct+'%'; },
+      function(err){ g('vid-prog').textContent=''; g('vid-up').disabled=false; g('vid-err').textContent='アップロード失敗: '+err.message; col.doc(pid).delete().catch(function(){}); },
+      function(){
         g('vid-prog').textContent=''; toast('動画をアップロードしました。変換が終わると表示されます（数十秒〜数分）。');
         closeVid(); loadSchedule();
-      }).catch(function(e){ g('vid-up').disabled=false; g('vid-err').textContent='保存失敗: '+e.message; });
-    });
+      });
+  }).catch(function(e){ g('vid-up').disabled=false; g('vid-err').textContent='保存失敗: '+e.message; });
 }
 // 項目の基準時刻(ms): 実時間(CI)優先、無ければ予定時刻。終了も実時間(CO)優先。
 function _itemStartMs(it){ if(it.actualStartMs) return it.actualStartMs; if(it.date) return new Date(it.date+'T'+(it.time||'12:00')+':00').getTime(); return 0; }
@@ -4047,6 +4109,26 @@ function _mediaThumbInner(p){
   }
   return '<img src="'+esc(_mediaThumbSrc(p))+'" alt="" loading="lazy">';
 }
+// ── サムネイル一覧（写真・動画）。タップで拡大（ライトボックス）。閲覧専用・全ロール可 ──
+var _galItemId=null;
+function openGallery(itemId){
+  var list=_photosByItem[itemId]||[]; if(!list.length) return;
+  if(list.length===1){ openLb(itemId,0); return; } // 1件だけなら一覧を挟まず直接拡大
+  _galItemId=itemId;
+  var it=_schedItems.find(function(x){return x.id===itemId;});
+  g('gal-title').textContent='📷 '+((it&&it.title)||'写真・動画')+'（'+list.length+'）';
+  renderGal();
+  g('gal-modal').classList.add('open');
+}
+function renderGal(){
+  if(!_galItemId) return;
+  var list=_photosByItem[_galItemId]||[];
+  if(!list.length){ closeGal(); return; }
+  g('gal-grid').innerHTML=list.map(function(p,i){ return '<div class="gal-cell'+(_isVid(p)?' vid':'')+'" onclick="galOpen('+i+')">'+_mediaThumbInner(p)+'</div>'; }).join('');
+}
+function galOpen(i){ openLb(_galItemId, i); } // 一覧の上にライトボックス(z-index上位)。閉じると一覧へ戻る
+function closeGal(){ g('gal-modal').classList.remove('open'); _galItemId=null; }
+g('gal-modal').addEventListener('click',function(e){ if(e.target===g('gal-modal')) closeGal(); });
 var _lbList=[], _lbIdx=0, _lbNoDelete=false, _lbDirty=false;
 // ローカルの写真配列からも除去（ライトボックス・項目別一覧の両方）
 function _removePhotoLocal(pid, itemId){
@@ -4124,7 +4206,7 @@ function deletePhoto(){
     if(g('ph-modal').classList.contains('open')) renderExisting(); // 項目別一覧も更新
   }).catch(function(e){ toast('削除失敗: '+e.message); });
 }
-function closeLb(){ g('lightbox').classList.remove('open'); g('lb-img').src=''; var vid=g('lb-vid'); if(vid){ try{vid.pause();}catch(e){} vid.removeAttribute('src'); vid.style.display='none'; } if(_lbDirty){ _lbDirty=false; renderSchedule(_schedItems); } } // 日付の開閉を保ったまま枚数バッジを更新
+function closeLb(){ g('lightbox').classList.remove('open'); g('lb-img').src=''; var vid=g('lb-vid'); if(vid){ try{vid.pause();}catch(e){} vid.removeAttribute('src'); vid.style.display='none'; } if(g('gal-modal').classList.contains('open')) renderGal(); if(_lbDirty){ _lbDirty=false; renderSchedule(_schedItems); } } // 一覧を開いていれば更新・日付の開閉を保ったまま枚数バッジを更新
 // メディアのStorage実体を削除（画像のみクライアントで削除。動画は変換関数/クリーンアップ関数がAdmin権限で削除）
 function _deleteMediaStorage(p){
   if(!storage||!p||_isVid(p)) return; // 動画は onDelete トリガーが削除
