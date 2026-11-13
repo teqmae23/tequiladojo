@@ -408,6 +408,11 @@ a{color:var(--gold-d)}
 .gal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}
 .gal-cell{position:relative;aspect-ratio:1/1;border-radius:8px;overflow:hidden;border:1px solid var(--border);cursor:pointer;background:var(--cream2)}
 .gal-cell img{width:100%;height:100%;object-fit:cover;display:block}
+.gal-cell.sel{outline:3px solid var(--teal);outline-offset:-3px}
+.gal-fam{position:absolute;top:2px;left:2px;background:rgba(24,17,10,.72);color:#fff;font-size:11px;line-height:1;padding:3px 5px;border-radius:7px;pointer-events:none}
+.gal-check{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.85);border:1px solid var(--teal);color:var(--teal);font-size:13px;line-height:18px;text-align:center;font-weight:700;display:none}
+.gal-cell.sel .gal-check{display:block;background:var(--teal);color:#fff}
+.gal-tbtn{font-size:12px;border:1px solid var(--border2);border-radius:8px;padding:4px 10px;background:var(--white);color:var(--ink2);cursor:pointer;font-family:inherit;font-weight:600}
 .phx img{width:100%;height:100%;object-fit:cover;display:block}
 .phx .phx-del{position:absolute;top:2px;right:2px;background:rgba(176,48,32,.92);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:12px;line-height:1;cursor:pointer;padding:0}
 .phx-head{font-size:11px;color:var(--ink3);margin-bottom:6px;width:100%}
@@ -664,7 +669,7 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
       <div class="sv-err" id="ph-err"></div>
       <div id="ph-prog" style="font-size:12px;color:var(--ink3);margin-top:6px"></div>
     </div>
-    <div class="mft" id="ph-foot" style="display:none"><div style="flex:1"></div><button class="btn bs" onclick="closePh()">キャンセル</button><button class="btn bp" id="ph-up" onclick="saveReview()" disabled>保存</button></div>
+    <div class="mft" id="ph-foot" style="display:none;flex-wrap:wrap"><label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);margin-right:auto"><input type="checkbox" id="ph-fam"> 👪 家族のみ閲覧可</label><button class="btn bs" onclick="closePh()">キャンセル</button><button class="btn bp" id="ph-up" onclick="saveReview()" disabled>保存</button></div>
   </div>
 </div>
 <!-- 動画アップロード（サーバーで1080p H.264に変換） -->
@@ -692,6 +697,7 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
       <div class="mnote">アップロード後、サーバーで全端末向けに1080p（H.264）へ自動変換します。変換が終わると写真と同じ一覧・拡大表示で再生できます（数十秒〜数分）。きれいな映像を保ちつつ容量・通信を抑えます。</div>
       <div class="fg"><label class="fl">スケジュール項目</label><select class="fi" id="vid-item"></select></div>
       <div class="fg"><label class="fl">キャプション（場所・説明・任意）</label><input class="fi" id="vid-cap" placeholder="場所や説明"></div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:4px 0"><input type="checkbox" id="vid-fam"> 👪 家族のみ閲覧可</label>
       <div class="sv-err" id="vid-err"></div>
       <div id="vid-prog" style="font-size:12px;color:var(--ink3);margin-top:6px"></div>
     </div>
@@ -715,7 +721,7 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
 <div class="mbg" id="gal-modal">
   <div class="modal" style="max-width:560px">
     <div class="mhd"><span id="gal-title">📷 写真・動画</span><button class="x" onclick="closeGal()">閉じる</button></div>
-    <div class="mbd"><div id="gal-grid" class="gal-grid"></div></div>
+    <div class="mbd"><div id="gal-tools" style="display:none;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div><div id="gal-grid" class="gal-grid"></div></div>
   </div>
 </div>
 <!-- 割込イベント追加（管理者のみ） -->
@@ -1722,7 +1728,8 @@ function loadSchedule(){
     _normalizeMoveDest(_schedItems); // 移動の到着座標はGoogleマップURLを優先
     _schedItems.sort(function(a,b){ var ka=(a.date||'')+' '+(a.time||'99:99')+' '+_endMark(a)+' '+('000000000000'+_caSec(a)).slice(-12)+' '+('00'+(a.seq||0)).slice(-3), kb=(b.date||'')+' '+(b.time||'99:99')+' '+_endMark(b)+' '+('000000000000'+_caSec(b)).slice(-12)+' '+('00'+(b.seq||0)).slice(-3); return ka<kb?-1:(ka>kb?1:0); });
     _photosByItem={};
-    res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).forEach(function(p){ (_photosByItem[p.scheduleItemId]=_photosByItem[p.scheduleItemId]||[]).push(p); });
+    // 家族のみ閲覧可(familyOnly)の写真・動画は、参加メンバー・家族・スタッフ以外には表示しない
+    res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).forEach(function(p){ if(p.familyOnly && !_canSeePrivate()) return; (_photosByItem[p.scheduleItemId]=_photosByItem[p.scheduleItemId]||[]).push(p); });
     Object.keys(_photosByItem).forEach(function(k){ _photosByItem[k].sort(phSort); });
     _tripTracks=(res[3]&&res[3].docs?res[3].docs:[]).map(function(d){ var t=Object.assign({id:d.id},d.data()); if(Array.isArray(t.points)) t.points=_ptsFromObj(t.points); return t; }).filter(function(t){ return Array.isArray(t.points)&&t.points.length>=2; });
     renderSchedule(_schedItems);
@@ -3600,7 +3607,7 @@ var _phReview=[]; // [{f, ex, itemId, mismatch}]
 var _phSelToken=0; // ファイル選択の世代トークン（連続選択の競合で古い結果が残るのを防ぐ）
 var _phTarget=null; // 項目を指定して追加するモード（その項目IDを保持）
 var _phDirty=false; // モーダル内で削除/保存したら閉じる時にスケジュール再読込
-function _resetPh(){ g('ph-file').value=''; g('ph-review').innerHTML=''; g('ph-err').textContent=''; g('ph-prog').textContent=''; g('ph-up').disabled=true; _phReview=[]; _phDone=0; var ft=g('ph-foot'); if(ft) ft.style.display='none'; }
+function _resetPh(){ g('ph-file').value=''; g('ph-review').innerHTML=''; g('ph-err').textContent=''; g('ph-prog').textContent=''; g('ph-up').disabled=true; _phReview=[]; _phDone=0; var ft=g('ph-foot'); if(ft) ft.style.display='none'; var fc=g('ph-fam'); if(fc) fc.checked=false; }
 // ── 投稿メニュー（写真/動画を選択）── itemId を渡すとその項目に紐づけて投稿
 var _postPickItem=null;
 function openPostPick(itemId){
@@ -3649,6 +3656,7 @@ function renderExisting(){
   box.innerHTML='<div class="phx-head">この項目の写真・動画（'+list.length+'件）・タップで拡大／キャプション編集</div>'+list.map(function(p){
     var canDel=(_isStaff || (p.uploaderUid && p.uploaderUid===_uid));
     return '<div class="phx-wrap"><div class="phx'+(_isVid(p)?' vid':'')+'" onclick="openLb(\''+esc(_phTarget)+'\','+list.indexOf(p)+')">'+_mediaThumbInner(p)
+      +(p.familyOnly?'<span class="gal-fam">👪家族</span>':'')
       +(canDel?'<button class="phx-del" title="削除" onclick="event.stopPropagation();deleteExistingPhoto(\''+esc(p.id)+'\')">✕</button>':'')+'</div>'
       +(p.caption?'<div class="phx-cap" title="'+esc(p.caption)+'">'+esc(p.caption)+'</div>':'')+'</div>';
   }).join('');
@@ -3674,6 +3682,7 @@ function openVid(itemId){
   _vidFile=null; _vidDur=0; _vidFullDur=0;
   if(_vidUrl){ try{URL.revokeObjectURL(_vidUrl);}catch(e){} _vidUrl=null; }
   g('vid-file').value=''; g('vid-cap').value=''; g('vid-err').textContent=''; g('vid-prog').textContent=''; g('vid-info').textContent='';
+  g('vid-fam').checked=false;
   g('vid-trim').style.display='none'; g('vid-full').checked=false; try{ g('vid-prev').removeAttribute('src'); g('vid-prev').load(); }catch(e){}
   g('vid-up').disabled=true;
   g('vid-item').innerHTML='<option value="">— 項目を選択 —</option>'+_schedItems.map(function(it){ return '<option value="'+esc(it.id)+'"'+(it.id===itemId?' selected':'')+'>'+esc(_itemLabel(it))+'</option>'; }).join('');
@@ -3738,6 +3747,7 @@ function vidUpload(){
   var doc={
     scheduleItemId:itemId, mediaType:'video', status:'processing',
     uploaderUid:_uid, uploaderName:_memberName||'',
+    familyOnly:!!(g('vid-fam')&&g('vid-fam').checked), // 家族のみ閲覧可
     caption:(cap||null), storagePathRaw:raw, durationSec:Math.round(effDur), rawDurationSec:Math.round(_vidFullDur),
     lat:(it.lat!=null?it.lat:null), lng:(it.lng!=null?it.lng:null),
     takenAt:(_itemEndMs(it)||Date.now()), timeInherited:true,
@@ -4042,7 +4052,7 @@ function suggestItem(ex){
   return null;
 }
 
-function _phUploadOne(f, ex, itemId, caption){
+function _phUploadOne(f, ex, itemId, caption, familyOnly){
   var it=_schedItems.find(function(x){return x.id===itemId;})||{};
   var col=db.collection('events').doc(eventId).collection('photos');
   return Promise.all([compressImage(f,1600,0.72), compressImage(f,400,0.7)]).then(function(bl){
@@ -4055,6 +4065,7 @@ function _phUploadOne(f, ex, itemId, caption){
           scheduleItemId:itemId, uploaderUid:_uid, uploaderName:_memberName||'',
           url:urls[0], thumbUrl:urls[1], storagePath:base,
           caption:((caption||'').trim()||null),
+          familyOnly:!!familyOnly, // 家族のみ閲覧可
           // 位置情報のない写真は紐付けた項目の位置を付与
           lat:(ex.lat!=null?ex.lat:(it.lat!=null?it.lat:null)), lng:(ex.lng!=null?ex.lng:(it.lng!=null?it.lng:null)),
           geoInherited:(ex.lat==null||ex.lng==null)&&(it.lat!=null&&it.lng!=null)?true:false,
@@ -4073,7 +4084,7 @@ function _phRun(list, onProg){
     (function next(i){
       if(i>=list.length){ resolve(done); return; }
       onProg(i+1, list.length);
-      _phUploadOne(list[i].f, list[i].ex, list[i].itemId, list[i].caption).then(function(){ done++; next(i+1); }).catch(reject);
+      _phUploadOne(list[i].f, list[i].ex, list[i].itemId, list[i].caption, list[i].familyOnly).then(function(){ done++; next(i+1); }).catch(reject);
     })(0);
   });
 }
@@ -4088,7 +4099,8 @@ function saveReview(){
   var far=_phReview.filter(function(r){ return r.mismatch; });
   if(far.length && !confirm('位置・時刻がこの項目と大きく離れた写真が '+far.length+' 枚あります。\nこのまま追加してよろしいですか？')) return;
   g('ph-err').textContent=''; var btn=g('ph-up'); btn.disabled=true;
-  var list=_phReview.map(function(r){ return {f:r.f, ex:r.ex, itemId:r.itemId, caption:r.caption}; });
+  var fam=!!(g('ph-fam')&&g('ph-fam').checked);
+  var list=_phReview.map(function(r){ return {f:r.f, ex:r.ex, itemId:r.itemId, caption:r.caption, familyOnly:fam}; });
   var wasTarget=!!_phTarget;
   _phRun(list, function(a,b){ g('ph-prog').textContent='保存中… '+a+'/'+b; }).then(function(n){
     g('ph-prog').textContent=''; toast(n+'枚を保存しました');
@@ -4122,13 +4134,14 @@ function _mediaThumbInner(p){
   return '<img src="'+esc(_mediaThumbSrc(p))+'" alt="" loading="lazy">';
 }
 // ── サムネイル一覧（写真・動画）。タップで拡大（ライトボックス）。閲覧専用・全ロール可 ──
-var _galItemId=null;
+var _galItemId=null, _galSelMode=false, _galSel={};
 function openGallery(itemId){
   var list=_photosByItem[itemId]||[]; if(!list.length) return;
   // 1件のみかつ閲覧可能(写真 or 変換済み動画)なら一覧を挟まず直接拡大。
+  // ただし投稿者/スタッフ（一括管理ができる人）は一覧を表示して管理できるように。
   // 変換中/失敗の動画はサムネイル一覧を表示（ライトボックスの⏳表示へ飛ばさない）。
-  if(list.length===1){ var only=list[0]; if(!_isVid(only) || _vidReady(only)){ openLb(itemId,0); return; } }
-  _galItemId=itemId;
+  if(list.length===1 && !_canPost()){ var only=list[0]; if(!_isVid(only) || _vidReady(only)){ openLb(itemId,0); return; } }
+  _galItemId=itemId; _galSelMode=false; _galSel={};
   var it=_schedItems.find(function(x){return x.id===itemId;});
   g('gal-title').textContent='📷 '+((it&&it.title)||'写真・動画')+'（'+list.length+'）';
   renderGal();
@@ -4138,10 +4151,50 @@ function renderGal(){
   if(!_galItemId) return;
   var list=_photosByItem[_galItemId]||[];
   if(!list.length){ closeGal(); return; }
-  g('gal-grid').innerHTML=list.map(function(p,i){ return '<div class="gal-cell'+(_isVid(p)?' vid':'')+'" onclick="galOpen('+i+')">'+_mediaThumbInner(p)+'</div>'; }).join('');
+  // ツールバー（投稿者・スタッフのみ）: 家族のみ閲覧可の一括設定
+  var tb=g('gal-tools');
+  if(_canPost()){
+    tb.style.display='flex';
+    if(_galSelMode){
+      var n=Object.keys(_galSel).length;
+      tb.innerHTML='<button class="gal-tbtn" onclick="galSelAll()">全選択</button>'
+        +'<button class="gal-tbtn" onclick="galSelNone()">解除</button>'
+        +'<button class="gal-tbtn" style="border-color:var(--gold-d);color:var(--gold-d)" onclick="galSetFam(true)">👪 家族のみにする'+(n?'（'+n+'）':'')+'</button>'
+        +'<button class="gal-tbtn" onclick="galSetFam(false)">🌐 全員に公開'+(n?'（'+n+'）':'')+'</button>'
+        +'<button class="gal-tbtn" style="margin-left:auto" onclick="galSelMode(false)">完了</button>';
+    } else {
+      tb.innerHTML='<button class="gal-tbtn" onclick="galSelMode(true)">☑ 選択して家族のみ設定</button>';
+    }
+  } else { tb.style.display='none'; }
+  g('gal-grid').innerHTML=list.map(function(p,i){
+    var sel=_galSelMode && _galSel[p.id];
+    var fam=p.familyOnly?'<span class="gal-fam">👪家族</span>':'';
+    var chk=_galSelMode?'<span class="gal-check">✓</span>':'';
+    var oc=_galSelMode?('galToggleSel(\''+esc(p.id)+'\')'):('galOpen('+i+')');
+    return '<div class="gal-cell'+(_isVid(p)?' vid':'')+(sel?' sel':'')+'" onclick="'+oc+'">'+_mediaThumbInner(p)+fam+chk+'</div>';
+  }).join('');
+}
+function galSelMode(on){ _galSelMode=!!on; if(!on) _galSel={}; renderGal(); }
+function galToggleSel(pid){ if(_galSel[pid]) delete _galSel[pid]; else _galSel[pid]=1; renderGal(); }
+function galSelAll(){ (_photosByItem[_galItemId]||[]).forEach(function(p){ _galSel[p.id]=1; }); renderGal(); }
+function galSelNone(){ _galSel={}; renderGal(); }
+// 選択した写真・動画の「家族のみ閲覧可」を一括設定（権限: スタッフ or 自分の投稿のみ）
+function galSetFam(flag){
+  var list=_photosByItem[_galItemId]||[]; var ids=Object.keys(_galSel);
+  if(!ids.length){ toast('写真を選択してください'); return; }
+  var targets=list.filter(function(p){ return _galSel[p.id] && (_isStaff||_isCoAdmin||(p.uploaderUid&&p.uploaderUid===_uid)); });
+  var skipped=ids.length-targets.length;
+  if(!targets.length){ toast('変更できる写真がありません（自分の投稿のみ変更可）'); return; }
+  var col=db.collection('events').doc(eventId).collection('photos'), batch=db.batch();
+  targets.forEach(function(p){ batch.update(col.doc(p.id), {familyOnly:!!flag}); });
+  batch.commit().then(function(){
+    targets.forEach(function(p){ p.familyOnly=!!flag; });
+    toast((flag?'家族のみ閲覧可に設定':'全員に公開')+'しました'+(skipped?'（'+skipped+'件は権限なしでスキップ）':''));
+    _galSel={}; _galSelMode=false; renderGal(); renderSchedule(_schedItems);
+  }).catch(function(e){ toast('変更失敗: '+e.message); });
 }
 function galOpen(i){ openLb(_galItemId, i); } // 一覧の上にライトボックス(z-index上位)。閉じると一覧へ戻る
-function closeGal(){ g('gal-modal').classList.remove('open'); _galItemId=null; }
+function closeGal(){ g('gal-modal').classList.remove('open'); _galItemId=null; _galSelMode=false; _galSel={}; }
 g('gal-modal').addEventListener('click',function(e){ if(e.target===g('gal-modal')) closeGal(); });
 var _lbList=[], _lbIdx=0, _lbNoDelete=false, _lbDirty=false;
 // ローカルの写真配列からも除去（ライトボックス・項目別一覧の両方）
@@ -4178,7 +4231,7 @@ function showLb(){
   if(_pla==null||_pln==null){ var _pit=_schedItems.find(function(x){return x.id===p.scheduleItemId;}); if(_pit){ if(_pla==null)_pla=(_pit.lat!=null?_pit.lat:null); if(_pln==null)_pln=(_pit.lng!=null?_pit.lng:null); } }
   var tTxt=p.takenAt?('🕐 '+_fmtDbgTz(p.takenAt,_pla,_pln)+(p.timeInherited?'（推定）':'')):'';
   var stTxt=_isVid(p)?(p.status==='processing'?'⏳ 変換中… ':(p.status==='error'?'⚠ 変換に失敗しました ':'🎬 ')):'';
-  g('lb-cap').textContent=stTxt+(p.caption?('🏷 '+p.caption+'　'):'')+(p.uploaderName?('投稿: '+p.uploaderName+'　'):'')+(tTxt?(tTxt+'　'):'')+(_lbIdx+1)+'/'+_lbList.length;
+  g('lb-cap').textContent=stTxt+(p.familyOnly?'👪家族のみ　':'')+(p.caption?('🏷 '+p.caption+'　'):'')+(p.uploaderName?('投稿: '+p.uploaderName+'　'):'')+(tTxt?(tTxt+'　'):'')+(_lbIdx+1)+'/'+_lbList.length;
   g('lb-nav-prev').style.visibility=_lbList.length>1?'visible':'hidden';
   g('lb-nav-next').style.visibility=_lbList.length>1?'visible':'hidden';
   // 削除・キャプション/時刻編集は投稿者本人または管理者（項目添付写真は管理画面で管理するため不可）
