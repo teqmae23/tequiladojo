@@ -2826,6 +2826,15 @@ function nowMs(){ return (_nowOverride!=null?_nowOverride:Date.now()) - _viewDel
 function _pad2(n){ return ('0'+n).slice(-2); }
 function _fmtLocalInput(ms){ var d=new Date(ms); return d.getFullYear()+'-'+_pad2(d.getMonth()+1)+'-'+_pad2(d.getDate())+'T'+_pad2(d.getHours())+':'+_pad2(d.getMinutes()); }
 function _fmtDbg(ms){ var d=new Date(ms); return d.getFullYear()+'/'+_pad2(d.getMonth()+1)+'/'+_pad2(d.getDate())+' '+_pad2(d.getHours())+':'+_pad2(d.getMinutes()); }
+// 撮影地のTZ（lat/lng）で日時を表示。TZ不明なら端末ローカル表示にフォールバック。
+function _fmtDbgTz(ms, lat, lng){
+  var tz=_itemTz(lat, lng); if(!tz) return _fmtDbg(ms);
+  var inst=new Date(ms), p={};
+  try{ new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false,hourCycle:'h23'}).formatToParts(inst).forEach(function(x){p[x.type]=x.value;}); }
+  catch(e){ return _fmtDbg(ms); }
+  var hh=(p.hour==='24')?'00':p.hour;
+  return p.year+'/'+p.month+'/'+p.day+' '+hh+':'+p.minute+' '+_tzAbbr(inst,tz);
+}
 // 24時間未満は秒まで表示（あと HH:MM:SS）、それ以上は日＋時分（あとX日 HH:MM）
 function fmtCountdown(ms){ if(ms<0)ms=0;
   var ts=Math.floor(ms/1000), ss=ts%60, tm=Math.floor(ts/60), mm=tm%60, th=Math.floor(tm/60), days=Math.floor(th/24), hh=th%24;
@@ -4162,7 +4171,10 @@ function showLb(){
     if(vid){ try{vid.pause();}catch(e){} vid.removeAttribute('src'); vid.style.display='none'; }
     img.style.display=''; img.src=p.url||p.thumbUrl||'';
   }
-  var tTxt=p.takenAt?('🕐 '+_fmtDbg(p.takenAt)+(p.timeInherited?'（推定）':'')):'';
+  // 撮影時刻は撮影地の現地TZで表示（座標は写真→無ければ紐づく項目から）
+  var _pla=(p.lat!=null?p.lat:null), _pln=(p.lng!=null?p.lng:null);
+  if(_pla==null||_pln==null){ var _pit=_schedItems.find(function(x){return x.id===p.scheduleItemId;}); if(_pit){ if(_pla==null)_pla=(_pit.lat!=null?_pit.lat:null); if(_pln==null)_pln=(_pit.lng!=null?_pit.lng:null); } }
+  var tTxt=p.takenAt?('🕐 '+_fmtDbgTz(p.takenAt,_pla,_pln)+(p.timeInherited?'（推定）':'')):'';
   var stTxt=_isVid(p)?(p.status==='processing'?'⏳ 変換中… ':(p.status==='error'?'⚠ 変換に失敗しました ':'🎬 ')):'';
   g('lb-cap').textContent=stTxt+(p.caption?('🏷 '+p.caption+'　'):'')+(p.uploaderName?('投稿: '+p.uploaderName+'　'):'')+(tTxt?(tTxt+'　'):'')+(_lbIdx+1)+'/'+_lbList.length;
   g('lb-nav-prev').style.visibility=_lbList.length>1?'visible':'hidden';
