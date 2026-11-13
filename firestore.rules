@@ -182,6 +182,13 @@ service cloud.firestore {
         allow write: if isStaff() || isEventCoAdmin(id);
       }
 
+      // セミナー開催（タイトル・場所・日時）: 会員閲覧可・作成/編集はスタッフ/共同管理者。
+      // 参加登録は top-level collection seminarMyJoins に保存（マイページ/一覧をインデックス不要で取得）。
+      match /seminarSessions/{sid} {
+        allow read: if signedIn();
+        allow write: if isStaff() || isEventCoAdmin(id);
+      }
+
       // イベント写真: 会員は閲覧可。実会員(本人)がアップロード、削除は本人かスタッフ。
       match /photos/{pid} {
         allow read: if signedIn();
@@ -573,6 +580,20 @@ service cloud.firestore {
     // 購入記録もクライアントからは読めない（Function getMyPurchasedSeminars 経由）。
     match /seminars/{id}        { allow read: if signedIn(); allow write: if isOwner(); }
     match /seminarSources/{id}  { allow read: if isOwner(); allow write: if isOwner(); }
+    // セミナー参加登録（docID = {uid}_{sessionId}）。本人・スタッフ・当該イベントの共同管理者が
+    // 読み書き可。マイページは uid 等値、参加者一覧は sessionId 等値（いずれも単一フィールド＝索引不要）。
+    match /seminarMyJoins/{jid} {
+      allow read: if isStaff()
+        || (signedIn() && resource.data.get('uid','') == request.auth.uid)
+        || isEventCoAdmin(resource.data.get('eventId',''));
+      allow create: if realUser()
+        && request.resource.data.get('uid','') == request.auth.uid
+        && request.resource.data.get('eventId','') != ''
+        && request.resource.data.get('sessionId','') != '';
+      allow delete: if isStaff()
+        || (signedIn() && resource.data.get('uid','') == request.auth.uid)
+        || isEventCoAdmin(resource.data.get('eventId',''));
+    }
     match /seminarPurchases/{id}{ allow read: if isStaff();  allow write: if isOwner(); }
     match /products/{id}       { allow read: if signedIn(); allow write: if isOwner(); }
     match /masterMeta/{id}     { allow read: if signedIn(); allow write: if isOwner(); }

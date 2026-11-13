@@ -5833,23 +5833,106 @@ function delTask(){
 
 /* ════════ ドキュメント保管庫（⑤） ════════ */
 var _docEventId=null, _docs=[], _docTasks=[], _docRoster=[], _docTaskExp={}, _docMsgs={};
-// ── 振り返りセミナー（イベントの写真・動画・地図を使った同期型セミナー）: 構築/実施を選択 ──
+// ── 振り返りセミナー（構築/実施＋セミナー開催登録・参加QR・参加者一覧） ──
+var _smfEid=null, _smfSessions=[];
+function _smfSesCol(eid){ return db.collection('events').doc(eid).collection('seminarSessions'); }
+function _smfFmt(ms){ var d=new Date(ms); function p(n){return ('0'+n).slice(-2);} return d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes()); }
+function _smfLoadQr(){ if(window.QRCode) return Promise.resolve(); return new Promise(function(res,rej){ var s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js'; s.onload=function(){res();}; s.onerror=function(){rej();}; document.head.appendChild(s); }); }
 function openSeminarFlow(eid){
+  _smfEid=eid;
   var ov=document.createElement('div');
-  ov.setAttribute('data-semchoice','1');
-  ov.style.cssText='position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:300;display:flex;align-items:center;justify-content:center;padding:16px';
-  ov.innerHTML='<div style="background:#fff;border-radius:14px;max-width:360px;width:100%;padding:20px;text-align:center;font-family:inherit">'
-    +'<div style="font-weight:700;font-size:16px;margin-bottom:4px">🎬 振り返りセミナー</div>'
-    +'<div style="font-size:12px;color:#9a8470;margin-bottom:16px;line-height:1.6">イベントの写真・動画・地図・360°動画を使い、<br>大スクリーンと参加者スマホを同期して進行します。</div>'
-    +'<div style="display:flex;gap:10px">'
-    +'<a href="/seminar_build.html?e='+encodeURIComponent(eid)+'" target="_blank" rel="noopener" style="flex:1;text-decoration:none;padding:18px 10px;border:1px solid #7a5610;border-radius:12px;color:#7a5610;font-weight:700;background:#fff"><div style="font-size:28px;line-height:1.1">🛠</div>構築<div style="font-size:11px;font-weight:400;color:#9a8470;margin-top:3px">流れ・写真を設計</div></a>'
-    +'<a href="/seminar_flow.html?e='+encodeURIComponent(eid)+'&present=1" target="_blank" rel="noopener" style="flex:1;text-decoration:none;padding:18px 10px;border:1px solid #1a6e58;border-radius:12px;color:#1a6e58;font-weight:700;background:#fff"><div style="font-size:28px;line-height:1.1">▶</div>実施<div style="font-size:11px;font-weight:400;color:#9a8470;margin-top:3px">配信者として進行</div></a>'
+  ov.id='smf-ov';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:300;display:flex;align-items:flex-start;justify-content:center;padding:20px 12px;overflow-y:auto';
+  ov.innerHTML='<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;padding:18px;font-family:inherit" onclick="event.stopPropagation()">'
+    +'<div style="display:flex;align-items:center;margin-bottom:12px"><div style="font-weight:700;font-size:16px">🎬 振り返りセミナー</div><button style="margin-left:auto;background:none;border:1px solid #ddd;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer" onclick="document.getElementById(\'smf-ov\').remove()">閉じる</button></div>'
+    +'<div style="display:flex;gap:10px;margin-bottom:14px">'
+    +'<a href="/seminar_build.html?e='+encodeURIComponent(eid)+'" target="_blank" rel="noopener" style="flex:1;text-decoration:none;padding:14px 10px;border:1px solid #7a5610;border-radius:12px;color:#7a5610;font-weight:700;text-align:center">🛠 構築</a>'
+    +'<a href="/seminar_flow.html?e='+encodeURIComponent(eid)+'&present=1" target="_blank" rel="noopener" style="flex:1;text-decoration:none;padding:14px 10px;border:1px solid #1a6e58;border-radius:12px;color:#1a6e58;font-weight:700;text-align:center">▶ 実施</a>'
     +'</div>'
-    +'<button style="margin-top:16px;background:none;border:1px solid #ddd;border-radius:8px;padding:7px 16px;font-size:12px;cursor:pointer" onclick="this.closest(\'[data-semchoice]\').remove()">閉じる</button>'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-weight:700;font-size:13px">セミナー一覧</div><button style="margin-left:auto;background:#7a5610;color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer" onclick="smfToggleForm()">＋ セミナー登録</button></div>'
+    +'<div id="smf-form" style="display:none;background:#faf7f1;border:1px solid #e4ddd0;border-radius:10px;padding:10px;margin-bottom:10px">'
+      +'<input id="smf-title" placeholder="タイトル" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:13px;margin-bottom:6px">'
+      +'<input id="smf-place" placeholder="場所" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:13px;margin-bottom:6px">'
+      +'<div style="display:flex;gap:6px;margin-bottom:8px"><input id="smf-date" type="date" style="flex:1;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:13px"><input id="smf-time" type="time" style="flex:1;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:13px"></div>'
+      +'<div style="text-align:right"><button style="background:#1a6e58;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer" onclick="smfAdd()">登録</button></div>'
+    +'</div>'
+    +'<div id="smf-list" style="font-size:13px;color:#9a8470">読み込み中…</div>'
     +'</div>';
   ov.addEventListener('click',function(e){ if(e.target===ov) ov.remove(); });
   document.body.appendChild(ov);
+  smfLoad();
 }
+function smfToggleForm(){ var f=g('smf-form'); if(f) f.style.display=(f.style.display==='none')?'block':'none'; }
+function smfAdd(){
+  var t=(g('smf-title').value||'').trim(), p=(g('smf-place').value||'').trim(), d=g('smf-date').value, tm=g('smf-time').value;
+  if(!t){ toast('タイトルを入力してください'); return; }
+  if(!d){ toast('日付を入力してください'); return; }
+  _smfSesCol(_smfEid).add({ title:t, place:p, date:d, time:(tm||''), createdAt:firebase.firestore.FieldValue.serverTimestamp() })
+    .then(function(){ toast('セミナーを登録しました'); g('smf-title').value=''; g('smf-place').value=''; g('smf-date').value=''; g('smf-time').value=''; g('smf-form').style.display='none'; smfLoad(); })
+    .catch(function(e){ toast('登録失敗: '+(e&&e.message||e)); });
+}
+function smfLoad(){
+  _smfSesCol(_smfEid).get().then(function(snap){
+    _smfSessions=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    _smfSessions.sort(function(a,b){ return String((a.date||'')+' '+(a.time||'')).localeCompare(String((b.date||'')+' '+(b.time||''))); });
+    var box=g('smf-list'); if(!box) return;
+    if(!_smfSessions.length){ box.innerHTML='<div style="padding:10px 2px;color:#9a8470">まだセミナーはありません。「＋ セミナー登録」から追加してください。</div>'; return; }
+    var todayJST=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    box.innerHTML=_smfSessions.map(function(s){
+      var ended=s.date && s.date<todayJST;
+      var dt=esc((s.date||'')+(s.time?(' '+s.time):''));
+      return '<div style="display:flex;align-items:center;gap:6px;padding:10px;border:1px solid #e4ddd0;border-radius:10px;margin-bottom:8px;background:'+(ended?'#f1ece3':'#fff')+'">'
+        +'<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.title||'(無題)')+(ended?' <span style="font-size:10px;color:#b03020">終了</span>':'')+'</div>'
+        +'<div style="font-size:12px;color:#9a8470;margin-top:2px">📅 '+dt+(s.place?('　📍 '+esc(s.place)):'')+'</div></div>'
+        +'<button title="参加QR" style="background:none;border:1px solid #c8921e;color:#7a5610;border-radius:8px;padding:6px 9px;font-size:13px;cursor:pointer" onclick="smfQr(\''+esc(s.id)+'\')">📱</button>'
+        +'<button title="参加者一覧" style="background:none;border:1px solid #1a6e58;color:#1a6e58;border-radius:8px;padding:6px 9px;font-size:13px;cursor:pointer" onclick="smfParticipants(\''+esc(s.id)+'\')">👥</button>'
+        +'<button title="削除" style="background:none;border:1px solid #ddd;color:#b03020;border-radius:8px;padding:6px 9px;font-size:13px;cursor:pointer" onclick="smfDel(\''+esc(s.id)+'\')">×</button>'
+        +'</div>';
+    }).join('');
+  }).catch(function(e){ var box=g('smf-list'); if(box) box.innerHTML='<div style="color:#b03020">読み込み失敗: '+esc(e&&e.message||e)+'</div>'; });
+}
+function smfQr(sid){
+  var s=_smfSessions.find(function(x){return x.id===sid;})||{};
+  var url=location.origin+'/seminar_join.html?e='+encodeURIComponent(_smfEid)+'&sid='+encodeURIComponent(sid);
+  var ov=document.createElement('div'); ov.id='smf-qr'; ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:320;display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.innerHTML='<div style="background:#fff;border-radius:14px;padding:20px;text-align:center;max-width:90vw" onclick="event.stopPropagation()"><div style="font-weight:700;margin-bottom:10px">'+esc(s.title||'セミナー')+' 参加QR</div><div id="smf-qrbox" style="display:flex;justify-content:center;margin-bottom:10px"></div><div style="font-size:11px;word-break:break-all;color:#6b5b3a;margin-bottom:12px">'+esc(url)+'</div><button style="background:#7a5610;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer" onclick="smfCopy(\''+esc(url)+'\')">URLコピー</button> <button style="background:#8a7a55;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer" onclick="document.getElementById(\'smf-qr\').remove()">閉じる</button></div>';
+  ov.addEventListener('click',function(e){ if(e.target===ov) ov.remove(); });
+  document.body.appendChild(ov);
+  _smfLoadQr().then(function(){ var box=g('smf-qrbox'); box.innerHTML=''; try{ new QRCode(box,{text:url,width:210,height:210,correctLevel:QRCode.CorrectLevel.M}); }catch(e){ box.textContent='QR生成失敗'; } }).catch(function(){ var b=g('smf-qrbox'); if(b) b.textContent='QR生成失敗'; });
+}
+function smfCopy(u){ if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(u).then(function(){toast('コピーしました');}).catch(function(){prompt('コピー',u);}); } else prompt('コピー',u); }
+function smfParticipants(sid){
+  var s=_smfSessions.find(function(x){return x.id===sid;})||{};
+  var ov=document.createElement('div'); ov.id='smf-pt'; ov.style.cssText='position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:320;display:flex;align-items:flex-start;justify-content:center;padding:20px 12px;overflow-y:auto';
+  ov.innerHTML='<div style="background:#fff;border-radius:14px;max-width:480px;width:100%;padding:18px" onclick="event.stopPropagation()"><div style="display:flex;align-items:center;margin-bottom:10px"><div style="font-weight:700">👥 参加者一覧 — '+esc(s.title||'')+'</div><button style="margin-left:auto;background:none;border:1px solid #ddd;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer" onclick="document.getElementById(\'smf-pt\').remove()">閉じる</button></div><div id="smf-ptlist" style="font-size:13px;color:#9a8470">読み込み中…</div></div>';
+  ov.addEventListener('click',function(e){ if(e.target===ov) ov.remove(); });
+  document.body.appendChild(ov);
+  smfLoadParticipants(sid);
+}
+function smfLoadParticipants(sid){
+  db.collection('seminarMyJoins').where('sessionId','==',sid).get().then(function(snap){
+    var arr=snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    arr.sort(function(a,b){ return ((a.joinedAt&&a.joinedAt.seconds)||0)-((b.joinedAt&&b.joinedAt.seconds)||0); });
+    var box=g('smf-ptlist'); if(!box) return;
+    if(!arr.length){ box.innerHTML='<div style="padding:8px 2px">まだ参加者はいません。</div>'; return; }
+    box.innerHTML='<div style="font-size:12px;color:#9a8470;margin-bottom:6px">'+arr.length+'名</div>'+arr.map(function(p){
+      var dt=(p.joinedAt&&p.joinedAt.seconds)?_smfFmt(p.joinedAt.seconds*1000):'';
+      return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #eee;border-radius:8px;margin-bottom:6px">'
+        +'<div style="flex:1;min-width:0"><div style="font-weight:600">'+esc(p.nickname||p.memberId||p.uid)+'</div><div style="font-size:11px;color:#9a8470">ID: '+esc(p.memberId||'-')+'　登録: '+esc(dt)+'</div></div>'
+        +'<button title="削除" style="background:none;border:1px solid #ddd;color:#b03020;border-radius:7px;padding:5px 9px;font-size:13px;cursor:pointer" onclick="smfDelParticipant(\''+esc(sid)+'\',\''+esc(p.id)+'\')">×</button></div>';
+    }).join('');
+  }).catch(function(e){ var box=g('smf-ptlist'); if(box) box.innerHTML='<div style="color:#b03020">読み込み失敗: '+esc(e&&e.message||e)+'</div>'; });
+}
+function smfDelParticipant(sid,jid){ if(!confirm('この参加者を削除しますか？')) return; db.collection('seminarMyJoins').doc(jid).delete().then(function(){ toast('削除しました'); smfLoadParticipants(sid); }).catch(function(e){ toast('削除失敗: '+(e&&e.message||e)); }); }
+function smfDel(sid){
+  if(!confirm('このセミナーを削除しますか？参加者情報も削除されます。')) return;
+  db.collection('seminarMyJoins').where('sessionId','==',sid).get()
+    .then(function(snap){ var batch=db.batch(); snap.docs.forEach(function(d){ batch.delete(d.ref); }); return batch.commit().catch(function(){}); })
+    .then(function(){ return _smfSesCol(_smfEid).doc(sid).delete(); })
+    .then(function(){ toast('削除しました'); smfLoad(); }).catch(function(e){ toast('削除失敗: '+(e&&e.message||e)); });
+}
+// ── セミナー配信（QR＋ページ同期） ──
+var _semEventId=null, _seminars=[];
 // ── セミナー配信（QR＋ページ同期） ──
 var _semEventId=null, _seminars=[];
 function semCol(eid){ return db.collection('events').doc(eid).collection('seminars'); }
