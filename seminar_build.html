@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>セミナー構築 — テキーラ道場</title>
 <script src="https://unpkg.com/sortablejs@1.15.6/Sortable.min.js"></script>
-<script src="/tz-lookup.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -99,23 +98,19 @@ function _coordsFromGmapUrl(url){ if(!url) return null; var s=String(url).replac
   m=s.match(/[?&](?:q|query|destination|daddr|ll|sll|center)=(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/i); if(m){ var b=_mkLL(+m[1],+m[2]); if(b) return b; }
   m=s.match(/@(-?\d{1,2}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/); if(m){ var c=_mkLL(+m[1],+m[2]); if(c) return c; } return null; }
 function _normItem(it){ if(it.mapUrl){ var a=_coordsFromGmapUrl(it.mapUrl); if(a){ it.lat=a.lat; it.lng=a.lng; } } if(it.isMove&&it.toMapUrl){ var b=_coordsFromGmapUrl(it.toMapUrl); if(b){ it.toLat=b.lat; it.toLng=b.lng; } } return it; }
-// ── スケジュールと同じ並び（TZ考慮・日付変更線対応）。event.html の _sortByJst を踏襲 ──
-function _tzOffMin(inst,tz){ var m={}; new Intl.DateTimeFormat('en-US',{timeZone:tz,hour12:false,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).formatToParts(inst).forEach(function(p){m[p.type]=p.value;}); if(m.hour==='24')m.hour='00'; return Math.round((Date.UTC(+m.year,+m.month-1,+m.day,+m.hour,+m.minute,+m.second)-inst.getTime())/60000); }
-function _wallInstant(dateStr,timeStr,tz){ var dp=(dateStr||'').split('-'), tp=(timeStr||'00:00').split(':'); if(dp.length<3) return null; var guess=Date.UTC(+dp[0],+dp[1]-1,+dp[2],(+tp[0]||0),(+tp[1]||0)); return new Date(guess-_tzOffMin(new Date(guess),tz)*60000); }
-function _hmSec(s){ var m=String(s==null?'':s).match(/^(\d{1,2}):([0-5]\d)(?::([0-5]\d))?/); if(!m) return null; return (+m[1])*3600+(+m[2])*60+(m[3]!=null?+m[3]:0); }
-function _safeTz(la,ln){ try{ return window.tzlookup?tzlookup(la,ln):null; }catch(e){ return null; } }
+// ── スケジュールと同じ並び。日付でまとめ、同日内は現地の壁時計（予定時刻）順。
+// 深夜は 24:00〜30:00 表記（翌朝まで）に対応し、23:xx より後に並べる（event.html と同じ扱い）。
+function _hmMinSem(s){ var m=String(s==null?'':s).match(/^(\d{1,2}):([0-5]\d)/); if(!m) return null; return (+m[1])*60+(+m[2]); }
 function _endMark(it){ var e=(it&&it.endTime&&String(it.endTime).trim())||(it&&it.isMove&&it.toTime&&String(it.toTime).trim()); return e?1:0; }
 function _caSec(it){ return (it&&it.createdAt&&it.createdAt.seconds)||0; }
 function sortSchedule(items){
   return items.map(function(it,i){
-    var tz=(it.lat!=null&&it.lng!=null)?(_safeTz(it.lat,it.lng)||'Asia/Tokyo'):'Asia/Tokyo';
     var effT=it.time||it.actualStart||'23:59';
-    var di=_wallInstant(it.date, effT, tz);
-    var sortMs=di?(di.getTime()+(((_hmSec(effT)||0)%60)*1000)):0;
-    return {it:it, sortMs:sortMs, day:(it.date||'9999-99-99'), em:_endMark(it), ca:_caSec(it), seq:it.seq||0, i:i};
+    var mins=_hmMinSem(effT); if(mins==null) mins=1439;
+    return {it:it, day:(it.date||'9999-99-99'), mins:mins, em:_endMark(it), ca:_caSec(it), seq:it.seq||0, i:i};
   }).sort(function(a,b){
     if(a.day!==b.day) return a.day<b.day?-1:1;
-    if(a.sortMs!==b.sortMs) return a.sortMs-b.sortMs;
+    if(a.mins!==b.mins) return a.mins-b.mins;
     if(a.em!==b.em) return a.em-b.em;
     return (a.ca-b.ca)||(a.seq-b.seq)||(a.i-b.i);
   }).map(function(x){ return x.it; });
