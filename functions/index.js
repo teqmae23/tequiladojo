@@ -2871,17 +2871,28 @@ exports.transcodeEventVideo = functions.region('asia-northeast1')
     const outBase = 'event_videos/' + eventId + '/' + mediaId;
     const cleanup = () => [tmpIn, tmpOut, tmpPoster].forEach((p) => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {} });
     try {
+      // 切り出し指定（クライアントがアップロード前にドキュメントへ保存）を読む
+      let trimStart = 0, trimDur = 0;
+      try {
+        const snap = await docRef.get();
+        const dd = snap.exists ? (snap.data() || {}) : {};
+        trimStart = Math.max(0, Number(dd.trimStartSec) || 0);
+        trimDur = Math.max(0, Number(dd.trimDurSec) || 0);
+      } catch (e) { console.warn('trim読取失敗', mediaId, e && e.message); }
       await docRef.set({ status: 'processing' }, { merge: true });
       await bucket.file(name).download({ destination: tmpIn });
+      // 切り出しがあれば入力側シーク(-ss)＋出力長(-t)を付与（高速・十分な精度）
+      const preMain = trimStart > 0 ? ['-ss', String(trimStart)] : [];
+      const postMain = trimDur > 0 ? ['-t', String(trimDur)] : [];
       // 1080p相当（長辺1920に収める・寸法は偶数化）・H.264・+faststart(ストリーミング最適化)・AAC
-      await _runFfmpeg(ffmpegPath, ['-y', '-i', tmpIn,
+      await _runFfmpeg(ffmpegPath, ['-y', ...preMain, '-i', tmpIn, ...postMain,
         '-vf', "scale='min(1920,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
         '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
         '-c:a', 'aac', '-b:a', '128k', '-max_muxing_queue_size', '1024', tmpOut]);
-      // ポスター（1秒地点の1フレーム・長辺1280）。失敗しても本体は続行。
+      // ポスター（切り出し開始＋1秒地点の1フレーム・長辺1280）。失敗しても本体は続行。
       let hasPoster = false;
       try {
-        await _runFfmpeg(ffmpegPath, ['-y', '-ss', '1', '-i', tmpIn, '-frames:v', '1',
+        await _runFfmpeg(ffmpegPath, ['-y', '-ss', String(trimStart + 1), '-i', tmpIn, '-frames:v', '1',
           '-vf', "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease", '-q:v', '4', tmpPoster]);
         hasPoster = fs.existsSync(tmpPoster);
       } catch (e) { console.warn('poster failed', mediaId, e && e.message); }
