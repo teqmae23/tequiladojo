@@ -3770,8 +3770,12 @@ function vidUpload(){
   }).catch(function(e){ g('vid-up').disabled=false; g('vid-err').textContent='保存失敗: '+e.message; });
 }
 // 項目の基準時刻(ms): 実時間(CI)優先、無ければ予定時刻。終了も実時間(CO)優先。
-function _itemStartMs(it){ if(it.actualStartMs) return it.actualStartMs; if(it.date) return new Date(it.date+'T'+(it.time||'12:00')+':00').getTime(); return 0; }
-function _itemEndMs(it){ if(it.actualEndMs) return it.actualEndMs; var e=it.isMove?it.toTime:it.endTime; if(it.date&&e) return new Date(it.date+'T'+e+':00').getTime(); return 0; }
+// 写真のEXIF時刻(ex.time)は端末ローカルで解釈した「素の壁時計」。項目側も同じ基準（素の壁時計）で
+// 比較しないと、海外の実時間(actualStartMs=UTC)と突き合わせてTZ差ぶん大きくズレ、誤って不一致判定になる。
+// そのため項目の時刻は date+HH:MM を端末ローカルで解釈（実時刻の文字列actualStart/End優先・無ければ予定）。深夜24:00〜30:00も対応。
+function _naiveMs(date, hm){ var m=String(hm==null?'':hm).match(/^(\d{1,2}):(\d{2})/); if(!m||!date) return 0; var base=new Date(date+'T00:00:00'); var bt=base.getTime(); if(isNaN(bt)) return 0; return bt + ((+m[1])*60+(+m[2]))*60000; }
+function _itemStartMs(it){ if(!it||!it.date) return (it&&it.actualStartMs)||0; return _naiveMs(it.date, it.actualStart||it.time||'12:00'); }
+function _itemEndMs(it){ if(!it||!it.date) return (it&&it.actualEndMs)||0; var raw=it.isMove?it.toTime:it.endTime; var hm=it.actualEnd||raw; return hm?_naiveMs(it.date, hm):0; }
 // 項目の時刻表示（分類の参考用）。2点間移動・終了時刻ありは「開始→終了」の両方、それ以外は単一。実時間があれば優先。
 function _itemTimeRange(it){
   if(!it) return '';
@@ -3992,11 +3996,18 @@ function _kmPointToSeg(plat,plng, alat,alng, blat,blng){
 // 写真座標が項目の位置に合うか。2点間移動は経路直線から MOVE_ROUTE_KM 以内、滞在地点は50km以内。
 function _geoInItem(it, lat, lng){
   if(lat==null||lng==null||!it) return {hit:false};
-  if(it.isMove && it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null){
-    var dseg=_kmPointToSeg(lat,lng, it.lat,it.lng, it.toLat,it.toLng);
-    return { hit:(dseg<=MOVE_ROUTE_KM), move:true, dist:dseg };
+  if(it.isMove){
+    // 実ルート(track)があれば実ルートとの距離（カーブする経路で直線から外れても誤判定しない）。
+    if(Array.isArray(it.track) && it.track.length>=2){
+      var best=1e9; for(var i=0;i<it.track.length-1;i++){ var a=it.track[i], b=it.track[i+1]; if(a&&b&&a[0]!=null&&a[1]!=null&&b[0]!=null&&b[1]!=null){ var dd=_kmPointToSeg(lat,lng, +a[0],+a[1], +b[0],+b[1]); if(dd<best) best=dd; } }
+      if(best<1e9) return { hit:(best<=MOVE_ROUTE_KM), move:true, dist:best };
+    }
+    if(it.lat!=null && it.lng!=null && it.toLat!=null && it.toLng!=null){
+      var dseg=_kmPointToSeg(lat,lng, it.lat,it.lng, it.toLat,it.toLng);
+      return { hit:(dseg<=MOVE_ROUTE_KM), move:true, dist:dseg };
+    }
   }
-  if(it.lat!=null && it.lng!=null){ var dd=haversine(lat,lng,it.lat,it.lng); return { hit:(dd<50), dist:dd }; }
+  if(it.lat!=null && it.lng!=null){ var dd2=haversine(lat,lng,it.lat,it.lng); return { hit:(dd2<50), dist:dd2 }; }
   return {hit:false};
 }
 function suggestItem(ex){
