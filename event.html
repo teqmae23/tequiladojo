@@ -3854,9 +3854,12 @@ function _revGeoFill(){
     });
   })(0);
 }
+var PH_MAX_SELECT=300; // 一度に選択できる上限（アップロードは30件ごとに中断/続行の確認）
 g('ph-file').addEventListener('change',function(){
   var token=++_phSelToken; // 連続選択時、古い解析結果で上書きしないためのトークン
-  var files=Array.prototype.slice.call(this.files).slice(0,30);
+  var all=Array.prototype.slice.call(this.files);
+  var files=all.slice(0, PH_MAX_SELECT);
+  if(all.length>PH_MAX_SELECT) toast('一度に選べるのは'+PH_MAX_SELECT+'枚までです。先頭'+PH_MAX_SELECT+'枚を読み込みました。');
   g('ph-err').textContent='';
   // 今回の選択で置き換えるので、前回分のプレビューURLを解放してクリア（古い写真が残らないように）
   _phReview.forEach(function(r){ if(r._url) URL.revokeObjectURL(r._url); }); _phReview=[]; g('ph-review').innerHTML='';
@@ -4083,14 +4086,41 @@ function _phUploadOne(f, ex, itemId, caption, familyOnly){
       });
   });
 }
+var PH_CHUNK=30; // この件数ごとに中断/続行の確認
+// 30件ごとの中断/続行プロンプト（5秒無応答で自動続行）。resolve(true=続行 / false=中断)
+function _phPausePrompt(done, total){
+  return new Promise(function(resolve){
+    var sec=5, ov=document.createElement('div');
+    ov.style.cssText='position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:600;display:flex;align-items:center;justify-content:center;padding:16px';
+    var box=document.createElement('div');
+    box.style.cssText='background:var(--white,#fff);border-radius:14px;max-width:320px;width:100%;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.35);text-align:center;font-family:inherit;color:var(--ink,#241c0e)';
+    function fin(v){ clearInterval(t); try{ov.remove();}catch(e){} resolve(v); }
+    function draw(){
+      box.innerHTML='<div style="font-weight:700;margin-bottom:6px">'+done+' / '+total+' 件 保存しました</div>'
+        +'<div style="font-size:13px;color:var(--ink3,#777);margin-bottom:14px">続けて残りを保存します。<br>（<b>'+sec+'</b> 秒後に自動で続行）</div>'
+        +'<div style="display:flex;gap:10px"><button type="button" id="_ppStop" style="flex:1;padding:9px;border:1px solid #c0392b;border-radius:8px;background:#fff;color:#c0392b;font-weight:700;cursor:pointer;font-family:inherit">中断する</button>'
+        +'<button type="button" id="_ppGo" style="flex:1;padding:9px;border:none;border-radius:8px;background:#185FA5;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">続ける</button></div>';
+      box.querySelector('#_ppStop').onclick=function(){ fin(false); };
+      box.querySelector('#_ppGo').onclick=function(){ fin(true); };
+    }
+    var t=setInterval(function(){ sec--; if(sec<=0) fin(true); else draw(); },1000);
+    draw(); ov.appendChild(box); document.body.appendChild(ov);
+  });
+}
 function _phRun(list, onProg){
   return new Promise(function(resolve,reject){
     var done=0;
-    (function next(i){
-      if(i>=list.length){ resolve(done); return; }
+    function upload(i){
       onProg(i+1, list.length);
       _phUploadOne(list[i].f, list[i].ex, list[i].itemId, list[i].caption, list[i].familyOnly).then(function(){ done++; next(i+1); }).catch(reject);
-    })(0);
+    }
+    function next(i){
+      if(i>=list.length){ resolve(done); return; }
+      // 30件ごとに中断/続行を確認（5秒で自動続行）。中断なら、ここまでで確定して返す。
+      if(i>0 && i%PH_CHUNK===0){ _phPausePrompt(done, list.length).then(function(go){ if(go) upload(i); else resolve(done); }); }
+      else upload(i);
+    }
+    next(0);
   });
 }
 // 確認済みの分類で保存（各写真を選択中の項目に紐づけ。複数写真→複数項目も可）
@@ -4108,7 +4138,18 @@ function saveReview(){
   var list=_phReview.map(function(r){ return {f:r.f, ex:r.ex, itemId:r.itemId, caption:r.caption, familyOnly:fam}; });
   var wasTarget=!!_phTarget;
   _phRun(list, function(a,b){ g('ph-prog').textContent='保存中… '+a+'/'+b; }).then(function(n){
-    g('ph-prog').textContent=''; toast(n+'枚を保存しました');
+    g('ph-prog').textContent='';
+    // 中断された場合: 保存済み(先頭n件)を取り除き、残りは選択状態のまま残して再開できるように
+    if(n<list.length){
+      for(var k=0;k<n;k++){ var r0=_phReview.shift(); if(r0&&r0._url) URL.revokeObjectURL(r0._url); }
+      toast(n+'枚を保存しました（中断）。残り'+_phReview.length+'枚は選択されたままです');
+      g('ph-file').value=''; btn.disabled=false; _phDirty=true;
+      renderReview();
+      if(wasTarget){ var pp=loadSchedule(); if(pp&&pp.then) pp.then(renderExisting); else renderExisting(); }
+      else loadSchedule();
+      return;
+    }
+    toast(n+'枚を保存しました');
     if(wasTarget){
       // 項目指定モードは開いたまま、既存一覧を更新して続けて追加できるようにする
       _phReview.forEach(function(r){ if(r._url) URL.revokeObjectURL(r._url); }); _phReview=[];
