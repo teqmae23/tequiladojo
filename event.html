@@ -664,7 +664,7 @@ textarea.fi{min-height:64px;resize:vertical;line-height:1.6}
       <div class="sv-err" id="ph-err"></div>
       <div id="ph-prog" style="font-size:12px;color:var(--ink3);margin-top:6px"></div>
     </div>
-    <div class="mft"><div style="flex:1"></div><button class="btn bs" onclick="closePh()">キャンセル</button><button class="btn bp" id="ph-up" onclick="saveReview()" disabled>保存</button></div>
+    <div class="mft" id="ph-foot" style="display:none"><div style="flex:1"></div><button class="btn bs" onclick="closePh()">キャンセル</button><button class="btn bp" id="ph-up" onclick="saveReview()" disabled>保存</button></div>
   </div>
 </div>
 <!-- 動画アップロード（サーバーで1080p H.264に変換） -->
@@ -3591,7 +3591,7 @@ var _phReview=[]; // [{f, ex, itemId, mismatch}]
 var _phSelToken=0; // ファイル選択の世代トークン（連続選択の競合で古い結果が残るのを防ぐ）
 var _phTarget=null; // 項目を指定して追加するモード（その項目IDを保持）
 var _phDirty=false; // モーダル内で削除/保存したら閉じる時にスケジュール再読込
-function _resetPh(){ g('ph-file').value=''; g('ph-review').innerHTML=''; g('ph-err').textContent=''; g('ph-prog').textContent=''; g('ph-up').disabled=true; _phReview=[]; _phDone=0; }
+function _resetPh(){ g('ph-file').value=''; g('ph-review').innerHTML=''; g('ph-err').textContent=''; g('ph-prog').textContent=''; g('ph-up').disabled=true; _phReview=[]; _phDone=0; var ft=g('ph-foot'); if(ft) ft.style.display='none'; }
 // ── 投稿メニュー（写真/動画を選択）── itemId を渡すとその項目に紐づけて投稿
 var _postPickItem=null;
 function openPostPick(itemId){
@@ -3836,7 +3836,7 @@ g('ph-file').addEventListener('change',function(){
   g('ph-err').textContent='';
   // 今回の選択で置き換えるので、前回分のプレビューURLを解放してクリア（古い写真が残らないように）
   _phReview.forEach(function(r){ if(r._url) URL.revokeObjectURL(r._url); }); _phReview=[]; g('ph-review').innerHTML='';
-  if(!files.length){ g('ph-up').disabled=true; return; }
+  if(!files.length){ g('ph-up').disabled=true; _phUpdateFoot(); return; }
   g('ph-prog').textContent='解析中…';
   Promise.all(files.map(function(f){ return readExif(f); })).then(function(exs){
     if(token!==_phSelToken) return; // より新しい選択が来ていたら、この古い結果は破棄
@@ -3853,7 +3853,10 @@ g('ph-file').addEventListener('change',function(){
     _revGeoFill();
   }).catch(function(e){ g('ph-prog').textContent=''; g('ph-err').textContent='画像の解析に失敗しました: '+e.message; });
 });
+// 保存対象（選択中の写真）があるときだけ保存/キャンセルのフッターを表示
+function _phUpdateFoot(){ var ft=g('ph-foot'); if(ft) ft.style.display=_phReview.length?'flex':'none'; }
 function renderReview(){
+  _phUpdateFoot();
   if(!_phReview.length){ g('ph-review').innerHTML=''; g('ph-up').disabled=true; return; }
   g('ph-review').innerHTML='<div class="phr-count">選択中 <b>'+_phReview.length+'</b> 枚　<span style="font-weight:400;color:var(--ink3)">— 不要な写真は右の × で除外できます</span></div>'+_phReview.map(function(r,i){
     var cands=_itemsWithin(r.ex.time, 6);
@@ -4083,12 +4086,12 @@ function saveReview(){
     if(wasTarget){
       // 項目指定モードは開いたまま、既存一覧を更新して続けて追加できるようにする
       _phReview.forEach(function(r){ if(r._url) URL.revokeObjectURL(r._url); }); _phReview=[];
-      g('ph-file').value=''; g('ph-review').innerHTML=''; btn.disabled=true;
+      g('ph-file').value=''; g('ph-review').innerHTML=''; btn.disabled=true; _phUpdateFoot();
       var p=loadSchedule(); if(p&&p.then) p.then(renderExisting); else renderExisting();
     } else {
       // グローバル投稿も開いたままにして続けて投稿できるように（日付の開閉状態は保持）
       _phReview.forEach(function(r){ if(r._url) URL.revokeObjectURL(r._url); }); _phReview=[];
-      g('ph-file').value=''; g('ph-review').innerHTML=''; btn.disabled=true; _phDirty=true;
+      g('ph-file').value=''; g('ph-review').innerHTML=''; btn.disabled=true; _phDirty=true; _phUpdateFoot();
       loadSchedule(); // 枚数バッジ更新（スケジュールは閉じない）
     }
   }).catch(function(e){ btn.disabled=false; g('ph-prog').textContent=''; g('ph-err').textContent='保存に失敗しました: '+e.message; });
