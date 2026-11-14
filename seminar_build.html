@@ -39,6 +39,7 @@ button{cursor:pointer;font-family:var(--sans)}
 .bar .lk.pv{background:#2a62a0;color:#fff;border:none}
 .bar .lk:disabled{opacity:.55}
 .bk-stat{font-size:12px;color:var(--ink3);font-weight:600}
+.savestat{font-size:12px;color:var(--teal);font-weight:700}
 .tip{font-size:12px;color:var(--ink3);line-height:1.7;margin-bottom:12px;background:var(--white);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
 .card{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);padding:12px;margin-bottom:10px;box-shadow:0 1px 8px rgba(24,17,10,.05)}
 .card.disabled{opacity:.5}
@@ -139,10 +140,13 @@ button{cursor:pointer;font-family:var(--sans)}
     <button class="lk" id="btn-backfill" onclick="backfillMed()">🗜 参加者用の軽量画像を生成</button>
     <button class="lk" id="btn-measure" onclick="measureSavings()">📊 データ量を集計</button>
     <span class="thsize" id="thsize">サムネ:
-      <button data-px="64" onclick="setThumbSize(64)">小</button>
-      <button data-px="88" onclick="setThumbSize(88)">中</button>
-      <button data-px="128" onclick="setThumbSize(128)">大</button>
+      <button data-px="80" onclick="setThumbSize(80)">小</button>
+      <button data-px="120" onclick="setThumbSize(120)">中</button>
+      <button data-px="170" onclick="setThumbSize(170)">大</button>
+      <button data-px="230" onclick="setThumbSize(230)">特大</button>
+      <button data-px="320" onclick="setThumbSize(320)">極大</button>
     </span>
+    <span class="savestat" id="save-stat"></span>
     <span class="bk-stat" id="bk-stat"></span>
   </div>
   <div class="tip">イベントの流れからセミナーを構築します。ドラッグで項目の順番を入れ替え、各項目の写真・動画は横にドラッグで並び替え、タップで表示/非表示を切り替えできます（🔍で拡大）。地図の表示ON/OFF、項目自体の表示ON/OFFも設定できます。<b>各項目の「人物を差し込む」</b>で、その項目の写真の間に参加者・現地ホストの紹介カードを挟めます（挿入後ドラッグで画像と画像の間へ）。<b>カード下の「＋ 360°動画」</b>で任意位置に360°動画を差し込めます。</div>
@@ -240,6 +244,7 @@ function load(){
     var cfg=(res[3]&&res[3].exists)?res[3].data():null;
     g('msg').style.display='none'; g('wrap').style.display='block';
     renderAll(buildModel(cfg));
+    _loaded=true; _dirty=false; _setSaveStat(cfg?'✓ 保存済み':''); // 初期描画は未保存扱いにしない（自動保存で巻き戻り防止）
   }).catch(function(e){ g('msg').textContent='読み込み失敗: '+(e&&e.message||e); });
 }
 
@@ -257,7 +262,7 @@ function buildModel(cfg){
   _items.forEach(function(it){ if(used[it.id]) return; steps.push({type:'item', itemId:it.id, enabled:true, showMap:(it.lat!=null&&it.lng!=null), media:null, excluded:[]}); });
   return steps;
 }
-function resetDefault(){ if(!confirm('イベントの流れから既定の構成に戻します。保存前の変更は失われます。よろしいですか？')) return; renderAll(buildModel(null)); toast('既定に戻しました（保存で確定）'); }
+function resetDefault(){ if(!confirm('イベントの流れから既定の構成に戻します。保存前の変更は失われます。よろしいですか？')) return; renderAll(buildModel(null)); _markDirty(); toast('既定に戻しました（自動保存されます）'); }
 
 function vimeoId(v){ v=String(v||'').trim(); var m=v.match(/vimeo\.com\/(?:video\/)?(\d+)/); if(m) return m[1]; m=v.match(/^(\d+)$/); return m?m[1]:v; }
 
@@ -265,14 +270,14 @@ function renderAll(model){
   var c=g('steps'); c.innerHTML=model.map(stepHtml).join('');
   _addFooters(c); // 各カード下に「ここに差し込む」行を付与
   if(window.Sortable){
-    Sortable.create(c,{animation:150,handle:'.drag',delay:120,delayOnTouchOnly:true});
+    Sortable.create(c,{animation:150,handle:'.drag',delay:120,delayOnTouchOnly:true,onEnd:function(){ _markDirty(); }});
     Array.prototype.forEach.call(c.querySelectorAll('.mstrip'),_initStripSortable);
   }
-  var tp=88; try{ tp=+localStorage.getItem('semb_thumb')||88; }catch(e){} setThumbSize(tp); // 保存済みサムネサイズ適用
+  var tp=120; try{ tp=+localStorage.getItem('semb_thumb')||120; }catch(e){} setThumbSize(tp); // 保存済みサムネサイズ適用
 }
 function stepHtml(s){
   if(s.type==='360'){
-    return '<div class="card s360" data-type="360"><div class="chead"><span class="drag">⠿</span><span class="chip" style="background:#2a62a0;color:#fff">🌐 360°動画</span><span class="sp"></span><button class="rm" onclick="this.closest(\'.card\').remove()">削除</button></div>'
+    return '<div class="card s360" data-type="360"><div class="chead"><span class="drag">⠿</span><span class="chip" style="background:#2a62a0;color:#fff">🌐 360°動画</span><span class="sp"></span><button class="rm" onclick="this.closest(\'.card\').remove();_markDirty();">削除</button></div>'
       +'<div class="f"><input class="v360id" placeholder="Vimeo URL または ID" value="'+esc(s.vimeoId||'')+'"><input class="v360t" placeholder="タイトル（任意）" value="'+esc(s.title||'')+'"></div></div>';
   }
   if(s.type==='person'){
@@ -319,7 +324,7 @@ function _photoCell(p, off){
   var inner=_isVid(p)?((p.status==='ready'&&_thumb(p))?'<img src="'+esc(_thumb(p))+'">':'<div class="st">🎬'+(p.status==='processing'?'<br>変換中':'')+'</div>')+'<span class="pv">🎬</span>':'<img src="'+esc(_thumb(p))+'">';
   var fam=p.familyOnly?'<span class="pv" style="left:auto;right:24px;top:3px;font-size:10px">👪</span>':'';
   var full=esc(p.url||_thumb(p)||'');
-  return '<div class="mc'+(off?' off':'')+'" data-pid="'+esc(p.id)+'" onclick="if(!window._drag){var o=this.classList.toggle(\'off\');this.querySelector(\'.ck\').textContent=o?\'\':\'✓\';}"><span>'+inner+'</span>'+fam+'<button class="zoom" onclick="event.stopPropagation();enlargePhoto(\''+full+'\')">🔍</button><span class="ck">'+(off?'':'✓')+'</span></div>';
+  return '<div class="mc'+(off?' off':'')+'" data-pid="'+esc(p.id)+'" onclick="if(!window._drag){var o=this.classList.toggle(\'off\');this.querySelector(\'.ck\').textContent=o?\'\':\'✓\';_markDirty();}"><span>'+inner+'</span>'+fam+'<button class="zoom" onclick="event.stopPropagation();enlargePhoto(\''+full+'\')">🔍</button><span class="ck">'+(off?'':'✓')+'</span></div>';
 }
 // 人物セル（画像の間に差し込む紹介カード）
 function _personCell(pr){
@@ -327,7 +332,7 @@ function _personCell(pr){
   var av=pr.iconUrl?'<img src="'+esc(pr.iconUrl)+'">':'<span class="ini">'+esc((pr.name||'？').slice(0,1))+'</span>';
   return '<div class="mcp" data-kind="'+(isHost?'host':'participant')+'" data-uid="'+esc(pr.uid||'')+'" data-memberid="'+esc(pr.memberId||'')+'" data-id="'+esc(pr.id||'')+'" data-name="'+esc(pr.name||'')+'" data-iconurl="'+esc(pr.iconUrl||'')+'" data-bio="'+esc(pr.bio||'')+'" data-sns="'+esc(pr.sns||'')+'">'
     +'<span class="kb">'+(isHost?'🧭':'👤')+'</span>'+av+'<span class="nm">'+esc(pr.name||'')+'</span>'
-    +'<button class="x" onclick="if(!window._drag){this.closest(\'.mcp\').remove();}">✕</button></div>';
+    +'<button class="x" onclick="if(!window._drag){this.closest(\'.mcp\').remove();_markDirty();}">✕</button></div>';
 }
 function _pbyId(itemId,id){ return (_photosByItem[itemId]||[]).find(function(p){return p.id===id;}); }
 function _wasKnown(){ return false; } // 新規写真はデフォルト表示（簡潔化）
@@ -356,9 +361,10 @@ function insAfter(btn, kind){
 }
 function add360(after){
   _placeCard(_mkCard(stepHtml({type:'360',vimeoId:'',title:''})), after);
+  _markDirty();
   toast(after?'360°動画をこの位置に差し込みました':'360°動画を末尾に追加しました');
 }
-function _initStripSortable(st){ if(window.Sortable) Sortable.create(st,{animation:150,delay:140,delayOnTouchOnly:true,onStart:function(){window._drag=true;},onEnd:function(){setTimeout(function(){window._drag=false;},60);}}); }
+function _initStripSortable(st){ if(window.Sortable) Sortable.create(st,{animation:150,delay:140,delayOnTouchOnly:true,onStart:function(){window._drag=true;},onEnd:function(){setTimeout(function(){window._drag=false;},60); _markDirty();}}); }
 
 // ── 人物紹介（参加者・現地ホスト）を項目の写真の間に差し込む：登録済みリストから選択 ──
 // kind: 'participant' | 'host'。選択後 onPick(obj) を呼ぶ。
@@ -384,12 +390,13 @@ function stripPerson(btn, kind){
     obj=obj||{};
     strip.insertAdjacentHTML('beforeend', _personCell({kind:kind, uid:obj.uid||'', memberId:obj.memberId||'', id:obj.id||'', name:obj.name||'', iconUrl:obj.iconUrl||'', bio:obj.bio||'', sns:obj.sns||''}));
     var node=strip.lastElementChild; try{ node.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'}); }catch(e){}
+    _markDirty();
     toast('「'+(obj.name||'')+'」を差し込みました（ドラッグで画像の間へ）');
   });
 }
 // サムネサイズ切替
 function setThumbSize(px){
-  px=Math.max(48,Math.min(220,+px||88));
+  px=Math.max(48,Math.min(360,+px||120));
   g('steps').style.setProperty('--thumb', px+'px');
   try{ localStorage.setItem('semb_thumb', String(px)); }catch(e){}
   Array.prototype.forEach.call(document.querySelectorAll('#thsize button'),function(b){ b.classList.toggle('on', +b.getAttribute('data-px')===px); });
@@ -401,7 +408,7 @@ function closeLb(){ g('lb').classList.remove('open'); g('lb-img').src=''; }
 document.addEventListener('pointerdown',function(e){ if(e.target.closest&&(e.target.closest('.mc')||e.target.closest('.mcp'))) { window._drag=false; } });
 document.addEventListener('dragstart',function(){ window._drag=true; });
 
-function save(){
+function _collectSteps(){
   var cards=g('steps').children, steps=[];
   for(var i=0;i<cards.length;i++){
     var c=cards[i];
@@ -424,11 +431,26 @@ function save(){
       steps.push({type:'item', itemId:itemId, enabled:en, showMap:mp, media:media, excluded:excluded});
     }
   }
-  db.collection('events').doc(EID).collection('seminar').doc('config')
-    .set({steps:steps, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
-    .then(function(){ toast('保存しました'); })
-    .catch(function(e){ toast('保存失敗: '+(e&&e.message||e)); });
+  return steps;
 }
+// ── 保存（手動＋自動）＆未保存ガード ──
+var _dirty=false, _saveT=null, _saving=false, _loaded=false;
+function _setSaveStat(s){ var el=g('save-stat'); if(el) el.textContent=s; }
+function _markDirty(){ if(!_loaded) return; _dirty=true; _setSaveStat('● 未保存'); if(_saveT) clearTimeout(_saveT); _saveT=setTimeout(function(){ doSave(true); }, 1000); }
+function doSave(auto){
+  if(_saving){ if(_saveT) clearTimeout(_saveT); _saveT=setTimeout(function(){ doSave(auto); }, 500); return; }
+  var steps=_collectSteps(); _saving=true; _setSaveStat('保存中…');
+  return db.collection('events').doc(EID).collection('seminar').doc('config')
+    .set({steps:steps, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .then(function(){ _saving=false; _dirty=false; _setSaveStat('✓ 保存済み '+_hhmm()); if(!auto) toast('保存しました'); })
+    .catch(function(e){ _saving=false; _setSaveStat('⚠ 保存失敗'); toast('保存失敗: '+(e&&e.message||e)); });
+}
+function _hhmm(){ var d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
+function save(){ if(_saveT) clearTimeout(_saveT); doSave(false); }
+// 離脱時、未保存があれば警告（自動保存前の数秒の取りこぼし防止）
+window.addEventListener('beforeunload', function(e){ if(_dirty||_saving){ e.preventDefault(); e.returnValue=''; } });
+// #steps 内の変更（チェックボックス・360入力など）で自動保存
+(function(){ var st=g('steps'); if(st){ st.addEventListener('change', _markDirty); st.addEventListener('input', _markDirty); } })();
 
 // ── 参加者用の軽量画像(中サイズ1080px)を既存写真に一括生成 ──
 // Cloud Functionを remaining が 0 になるまで繰り返し呼ぶ。配信者画面は高画質のまま。
