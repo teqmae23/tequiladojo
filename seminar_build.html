@@ -98,7 +98,9 @@ button{cursor:pointer;font-family:var(--sans)}
 .ptlist{overflow:auto;padding:6px}
 .ptrow{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border:none;background:none;border-radius:10px;text-align:left}
 .ptrow:active{background:var(--cream2)}
+.pttx{min-width:0;display:flex;flex-direction:column}
 .ptnm{font-size:14px;color:var(--ink);font-weight:600}
+.ptsub{font-size:11px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:62vw}
 #msg{padding:40px 16px;text-align:center;color:var(--ink3)}
 #toasts{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:6px;align-items:center}
 .toast{background:#18110a;color:#fff;font-size:12px;padding:9px 14px;border-radius:18px;opacity:0;transition:.2s}.toast.show{opacity:.96}
@@ -116,11 +118,11 @@ button{cursor:pointer;font-family:var(--sans)}
     <button class="lk" id="btn-measure" onclick="measureSavings()">📊 データ量を集計</button>
     <span class="bk-stat" id="bk-stat"></span>
   </div>
-  <div class="tip">イベントの流れからセミナーを構築します。ドラッグで項目の順番を入れ替え、各項目の写真・動画は横にドラッグで並び替え、タップで表示/非表示を切り替えできます。地図の表示ON/OFF、項目自体の表示ON/OFFも設定できます。<b>各カードの下にある「＋ ここに差し込む」</b>から、その位置に「参加者／現地ホスト（画像＋名前＋ひとこと）／360°動画」を1つずつ差し込めます（下の緑のボタンは末尾に追加）。</div>
+  <div class="tip">イベントの流れからセミナーを構築します。ドラッグで項目の順番を入れ替え、各項目の写真・動画は横にドラッグで並び替え、タップで表示/非表示を切り替えできます。地図の表示ON/OFF、項目自体の表示ON/OFFも設定できます。<b>各カードの下にある「＋ ここに差し込む」</b>から、その位置に「参加者／現地ホスト（登録済みの名簿から選択）／360°動画」を1人（1件）ずつ差し込めます（下のボタンは末尾に追加）。</div>
   <div id="steps"></div>
   <div class="addrow">
     <button class="addbtn" onclick="openPtPicker()">＋ 参加者（末尾に追加）</button>
-    <button class="addbtn host" onclick="addHostPerson()">＋ 現地ホスト（末尾に追加）</button>
+    <button class="addbtn host" onclick="openHostPicker()">＋ 現地ホスト（末尾に追加）</button>
     <button class="addbtn v360" onclick="add360()">＋ 360°動画（末尾に追加）</button>
   </div>
 </div>
@@ -133,7 +135,7 @@ function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'
 function toast(m){var d=document.createElement('div');d.className='toast';d.textContent=m;g('toasts').appendChild(d);requestAnimationFrame(function(){requestAnimationFrame(function(){d.classList.add('show');});});setTimeout(function(){d.classList.remove('show');setTimeout(function(){d.remove();},250);},2400);}
 var EID=new URLSearchParams(location.search).get('e')||'';
 var _event=null, _items=[], _photosByItem={}, _itemById={};
-var _participants=[], _ptByUid={}; // 振り返る対象イベントの参加者名簿
+var _participants=[], _hosts=[]; // 振り返る対象イベントの参加者名簿・現地ホスト（イベントドキュメントから）
 
 function phSort(a,b){ var oa=(a.order!=null?a.order:null), ob=(b.order!=null?b.order:null); if(oa!=null||ob!=null){ if(oa==null) return 1; if(ob==null) return -1; if(oa!==ob) return oa-ob; } return (a.takenAt||a.createdMs||0)-(b.takenAt||b.createdMs||0); }
 function _isVid(p){ return !!(p&&p.mediaType==='video'); }
@@ -197,10 +199,18 @@ function load(){
     g('hdr-title').textContent='🎬 セミナー構築 — '+(_event.name||'');
     g('lk-present').href='/seminar_flow.html?e='+encodeURIComponent(EID)+'&present=1';
     g('lk-preview').href='/seminar_flow.html?e='+encodeURIComponent(EID);
-    _participants=(res[4]?res[4].docs:[]).map(function(d){ return Object.assign({uid:d.id},d.data()); })
-      .filter(function(p){ return p.status!=='rejected' && p.status!=='cancelled' && p.status!=='canceled'; }); // 却下・取消以外は全員
-    _participants.sort(function(a,b){ return ((a.registeredAt&&a.registeredAt.seconds)||0)-((b.registeredAt&&b.registeredAt.seconds)||0); });
-    _ptByUid={}; _participants.forEach(function(p){ _ptByUid[p.uid]=p; });
+    // 参加者 = 自己登録(participantsサブコレクション, 承認済み) ＋ 管理者招待(event.participantsPublic)。重複排除。
+    var seen={}; _participants=[];
+    (res[4]?res[4].docs:[]).map(function(d){ return Object.assign({uid:d.id},d.data()); })
+      .filter(function(p){ return p.status!=='pending' && p.status!=='rejected' && p.status!=='cancelled' && p.status!=='canceled'; })
+      .forEach(function(p){ var k=p.uid||('mid:'+(p.memberId||p.nickname||'')); if(seen[k])return; seen[k]=1;
+        _participants.push({uid:p.uid||p.id||'', memberId:p.memberId||'', name:(p.nickname||p.name||'参加者'), iconUrl:p.iconUrl||'', bio:p.bio||'', sns:p.sns||''}); });
+    (Array.isArray(_event.participantsPublic)?_event.participantsPublic:[]).forEach(function(p){
+      var k=p.uid||('mid:'+(p.memberId||p.nickname||'')); if(seen[k])return; seen[k]=1;
+      _participants.push({uid:p.uid||'', memberId:p.memberId||'', name:(p.nickname||p.name||'参加者'), iconUrl:p.iconUrl||'', bio:p.bio||'', sns:p.sns||''}); });
+    // 現地ホスト = event.localHosts [{id,name,iconUrl,bio}]
+    _hosts=(Array.isArray(_event.localHosts)?_event.localHosts:[]).map(function(h){
+      return { id:h.id||('h'+Math.random().toString(36).slice(2,8)), name:(h.name||'現地ホスト'), iconUrl:h.iconUrl||'', bio:h.bio||'' }; });
     var cfg=(res[3]&&res[3].exists)?res[3].data():null;
     g('msg').style.display='none'; g('wrap').style.display='block';
     renderAll(buildModel(cfg));
@@ -214,8 +224,9 @@ function buildModel(cfg){
     cfg.steps.forEach(function(s){
       if(s.type==='360'){ steps.push({type:'360', vimeoId:s.vimeoId||'', title:s.title||'', enabled:s.enabled!==false}); return; }
       if(s.type==='person'){
-        if(s.kind==='host'){ steps.push({type:'person', kind:'host', id:s.id||('h'+Math.random().toString(36).slice(2,8)), name:s.name||'', bio:s.bio||'', iconUrl:s.iconUrl||'', enabled:s.enabled!==false}); }
-        else { steps.push({type:'person', kind:'participant', uid:s.uid||'', enabled:s.enabled!==false}); }
+        steps.push({type:'person', kind:(s.kind==='host'?'host':'participant'),
+          uid:s.uid||'', memberId:s.memberId||'', id:s.id||'',
+          name:s.name||'', iconUrl:s.iconUrl||'', bio:s.bio||'', sns:s.sns||'', enabled:s.enabled!==false});
         return;
       }
       if(!_itemById[s.itemId]) return; used[s.itemId]=1;
@@ -246,24 +257,16 @@ function stepHtml(s){
     var dis=s.enabled===false?' disabled':'';
     var en='<label class="tog"><input type="checkbox" class="en" '+(s.enabled===false?'':'checked')+' onchange="this.closest(\'.card\').classList.toggle(\'disabled\',!this.checked)"> 表示</label>';
     var rm='<button class="rm" onclick="this.closest(\'.card\').remove()">削除</button>';
-    if(s.kind==='host'){
-      var hasImg=!!s.iconUrl;
-      return '<div class="card person'+dis+'" data-type="person" data-kind="host" data-id="'+esc(s.id||'')+'" data-iconurl="'+esc(s.iconUrl||'')+'">'
-        +'<div class="chead"><span class="drag">⠿</span><span class="chip" style="background:#1a6e58;color:#fff">🧭 現地ホスト</span><span class="sp"></span>'+en+rm+'</div>'
-        +'<div class="hbody">'
-        +'<label class="hav"><img class="havimg" src="'+esc(s.iconUrl||'')+'" style="display:'+(hasImg?'block':'none')+'"><span class="havph" style="display:'+(hasImg?'none':'flex')+'">＋写真</span>'
-        +'<input type="file" accept="image/*" class="hfile" style="display:none" onchange="hostPhoto(this)"></label>'
-        +'<div class="hfields"><input class="hname" placeholder="ホスト名" value="'+esc(s.name||'')+'"><textarea class="hbio" placeholder="紹介・ひとこと（任意）">'+esc(s.bio||'')+'</textarea></div>'
-        +'</div></div>';
-    }
-    var p=_ptByUid[s.uid];
-    var nm=p?_ptName(p):'(名簿にない参加者)';
-    var ic=p?_ptIcon(p):'';
-    var bio=p&&p.bio?('<div class="pbio">'+esc(p.bio)+'</div>'):'';
-    return '<div class="card person'+dis+'" data-type="person" data-kind="participant" data-uid="'+esc(s.uid||'')+'">'
-      +'<div class="chead"><span class="drag">⠿</span><span class="chip" style="background:#7a5610;color:#fff">👤 参加者</span><span class="sp"></span>'+en+rm+'</div>'
-      +'<div class="pbody"><div class="pav">'+(ic?'<img src="'+esc(ic)+'">':'<span>'+esc((nm||'？').slice(0,1))+'</span>')+'</div>'
-      +'<div class="pmeta"><div class="pnm">'+esc(nm)+'</div>'+bio+'</div></div></div>';
+    var isHost=(s.kind==='host');
+    var badge=isHost?'<span class="chip" style="background:#1a6e58;color:#fff">🧭 現地ホスト</span>':'<span class="chip" style="background:#7a5610;color:#fff">👤 参加者</span>';
+    var ic=s.iconUrl?('<img src="'+esc(s.iconUrl)+'">'):('<span>'+esc((s.name||'？').slice(0,1))+'</span>');
+    var bio=s.bio?('<div class="pbio">'+esc(s.bio)+'</div>'):'';
+    return '<div class="card person'+dis+'" data-type="person" data-kind="'+(isHost?'host':'participant')+'"'
+      +' data-uid="'+esc(s.uid||'')+'" data-memberid="'+esc(s.memberId||'')+'" data-id="'+esc(s.id||'')+'"'
+      +' data-name="'+esc(s.name||'')+'" data-iconurl="'+esc(s.iconUrl||'')+'" data-bio="'+esc(s.bio||'')+'" data-sns="'+esc(s.sns||'')+'">'
+      +'<div class="chead"><span class="drag">⠿</span>'+badge+'<span class="sp"></span>'+en+rm+'</div>'
+      +'<div class="pbody"><div class="pav">'+ic+'</div>'
+      +'<div class="pmeta"><div class="pnm">'+esc(s.name||'')+'</div>'+bio+'</div></div></div>';
   }
   var it=_itemById[s.itemId]; if(!it) return '';
   var all=(_photosByItem[s.itemId]||[]);
@@ -310,8 +313,8 @@ function _placeCard(node, after){
 // カード下の行から呼ばれ、その位置の直後に差し込む
 function insAfter(btn, kind){
   var card=btn.closest('.card');
-  if(kind==='participant') openPtPicker(card);
-  else if(kind==='host') addHostPerson(card);
+  if(kind==='participant') openPersonPicker('participant', card);
+  else if(kind==='host') openPersonPicker('host', card);
   else if(kind==='360') add360(card);
 }
 function add360(after){
@@ -319,60 +322,30 @@ function add360(after){
   toast(after?'360°動画をこの位置に差し込みました':'360°動画を末尾に追加しました');
 }
 
-// ── 人物紹介（参加者・現地ホスト）の差し込み ──
-function _ptName(p){ return (p&&(p.nickname||p.name))||'参加者'; }
-function _ptIcon(p){ return (p&&p.iconUrl)||''; }
-// 画像を長辺maxSideへ縮小してBlob化（ホスト写真用）
-function compressImage(file,maxSide,quality){
-  return new Promise(function(resolve,reject){
-    var img=new Image();
-    img.onload=function(){
-      var w=img.naturalWidth||img.width, h=img.naturalHeight||img.height, sc=Math.min(1,maxSide/Math.max(w,h));
-      var cw=Math.max(1,Math.round(w*sc)), ch=Math.max(1,Math.round(h*sc));
-      var cv=document.createElement('canvas'); cv.width=cw; cv.height=ch;
-      cv.getContext('2d').drawImage(img,0,0,cw,ch);
-      cv.toBlob(function(b){ URL.revokeObjectURL(img.src); b?resolve(b):reject(new Error('画像の圧縮に失敗しました')); },'image/jpeg',quality);
-    };
-    img.onerror=function(){ URL.revokeObjectURL(img.src); reject(new Error('画像を読み込めません')); };
-    img.src=URL.createObjectURL(file);
-  });
-}
-// 参加者ピッカー（1人選んで差し込み）。after を渡すとその位置の直後に挿入。
-function openPtPicker(after){
-  if(!_participants.length){ toast('このイベントの参加者名簿が空です（参加者0人）'); return; }
+// ── 人物紹介（参加者・現地ホスト）の差し込み：登録済みリストから選択 ──
+function openPtPicker(after){ openPersonPicker('participant', after); }
+function openHostPicker(after){ openPersonPicker('host', after); }
+// kind: 'participant' | 'host'。after を渡すとその位置の直後に挿入。
+function openPersonPicker(kind, after){
+  var list=(kind==='host')?_hosts:_participants;
+  var label=(kind==='host')?'現地ホスト':'参加者';
+  if(!list.length){ toast('登録された'+label+'が見つかりません（'+label+'0人）'); return; }
   var ov=document.createElement('div'); ov.className='ptpick';
-  ov.innerHTML='<div class="ptbox"><div class="pthd"><b>参加者を選択（'+_participants.length+'人）</b><span class="sp"></span><button class="ptx">✕</button></div><div class="ptlist">'
-    + _participants.map(function(p){ var ic=_ptIcon(p); return '<button class="ptrow" data-uid="'+esc(p.uid)+'"><span class="pav sm">'+(ic?'<img src="'+esc(ic)+'">':'<span>'+esc(_ptName(p).slice(0,1))+'</span>')+'</span><span class="ptnm">'+esc(_ptName(p))+'</span></button>'; }).join('')
+  ov.innerHTML='<div class="ptbox"><div class="pthd"><b>'+label+'を選択（'+list.length+'）</b><span class="sp"></span><button class="ptx">✕</button></div><div class="ptlist">'
+    + list.map(function(p,idx){ var ic=p.iconUrl; var sub=p.bio?('<span class="ptsub">'+esc(p.bio)+'</span>'):'';
+        return '<button class="ptrow" data-idx="'+idx+'"><span class="pav sm">'+(ic?'<img src="'+esc(ic)+'">':'<span>'+esc((p.name||'？').slice(0,1))+'</span>')+'</span><span class="pttx"><span class="ptnm">'+esc(p.name||'')+'</span>'+sub+'</span></button>'; }).join('')
     +'</div></div>';
   ov.addEventListener('click',function(e){ if(e.target===ov||e.target.className==='ptx') ov.remove(); });
-  Array.prototype.forEach.call(ov.querySelectorAll('.ptrow'),function(b){ b.onclick=function(){ insertParticipant(b.getAttribute('data-uid'), after); ov.remove(); }; });
+  Array.prototype.forEach.call(ov.querySelectorAll('.ptrow'),function(b){ b.onclick=function(){ insertPerson(list[+b.getAttribute('data-idx')], kind, after); ov.remove(); }; });
   document.body.appendChild(ov);
 }
-function insertParticipant(uid, after){
-  _placeCard(_mkCard(stepHtml({type:'person',kind:'participant',uid:uid,enabled:true})), after);
-  toast(after?'参加者をこの位置に差し込みました':'参加者を末尾に追加しました');
-}
-function addHostPerson(after){
-  _placeCard(_mkCard(stepHtml({type:'person',kind:'host',id:'h'+Math.random().toString(36).slice(2,8),name:'',bio:'',iconUrl:'',enabled:true})), after);
-  toast(after?'現地ホストをこの位置に差し込みました（写真・名前を入力）':'現地ホストを末尾に追加しました（写真・名前を入力）');
-}
-// ホスト写真アップロード
-function hostPhoto(input){
-  var f=input.files&&input.files[0]; if(!f){ return; }
-  var card=input.closest('.card'); if(!card) return;
-  var id=card.getAttribute('data-id')||('h'+Math.random().toString(36).slice(2,8)); card.setAttribute('data-id',id);
-  var img=card.querySelector('.havimg'), ph=card.querySelector('.havph');
-  if(ph){ ph.textContent='…'; ph.style.display='flex'; }
-  compressImage(f,1080,0.72).then(function(blob){
-    var ref=storage.ref('event_seminar/'+EID+'/host_'+id+'.jpg');
-    return ref.put(blob,{contentType:'image/jpeg'}).then(function(){ return ref.getDownloadURL(); });
-  }).then(function(url){
-    card.setAttribute('data-iconurl',url);
-    if(img){ img.src=url; img.style.display='block'; }
-    if(ph){ ph.style.display='none'; ph.textContent='＋写真'; }
-    toast('写真をアップロードしました');
-  }).catch(function(e){ if(ph){ ph.textContent='＋写真'; } toast('写真アップロード失敗: '+((e&&e.message)||e)); });
-  input.value='';
+function insertPerson(obj, kind, after){
+  obj=obj||{};
+  var model={type:'person', kind:kind, enabled:true,
+    uid:obj.uid||'', memberId:obj.memberId||'', id:obj.id||'',
+    name:obj.name||'', iconUrl:obj.iconUrl||'', bio:obj.bio||'', sns:obj.sns||''};
+  _placeCard(_mkCard(stepHtml(model)), after);
+  toast((kind==='host'?'現地ホスト':'参加者')+'「'+(model.name||'')+'」を差し込みました');
 }
 // クリックとドラッグの誤爆防止
 document.addEventListener('pointerdown',function(e){ if(e.target.closest&&e.target.closest('.mc')) { window._drag=false; } });
@@ -388,16 +361,14 @@ function save(){
       steps.push({type:'360', vimeoId:vid, title:tt||'360°動画', enabled:true});
     } else if(c.getAttribute('data-type')==='person'){
       var pen=c.querySelector('.en').checked;
-      if(c.getAttribute('data-kind')==='host'){
-        var hn=(c.querySelector('.hname').value||'').trim();
-        var hb=(c.querySelector('.hbio').value||'').trim();
-        var hic=c.getAttribute('data-iconurl')||'';
-        if(!hn && !hic) continue; // 名前も写真も無い空カードはスキップ
-        steps.push({type:'person', kind:'host', id:c.getAttribute('data-id')||('h'+Math.random().toString(36).slice(2,8)), name:hn, bio:hb, iconUrl:hic, enabled:pen});
-      } else {
-        var puid=c.getAttribute('data-uid'); if(!puid) continue;
-        steps.push({type:'person', kind:'participant', uid:puid, enabled:pen});
-      }
+      var kind=(c.getAttribute('data-kind')==='host')?'host':'participant';
+      var nm=c.getAttribute('data-name')||'', pic=c.getAttribute('data-iconurl')||'';
+      if(!nm && !pic) continue; // 空カードはスキップ
+      var ps={type:'person', kind:kind, enabled:pen, name:nm, iconUrl:pic,
+        bio:c.getAttribute('data-bio')||'', sns:c.getAttribute('data-sns')||''};
+      if(kind==='host'){ ps.id=c.getAttribute('data-id')||''; }
+      else { ps.uid=c.getAttribute('data-uid')||''; ps.memberId=c.getAttribute('data-memberid')||''; }
+      steps.push(ps);
     } else {
       var itemId=c.getAttribute('data-item-id');
       var en=c.querySelector('.en').checked, mp=c.querySelector('.map').checked;
