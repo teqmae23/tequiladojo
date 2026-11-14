@@ -2564,20 +2564,23 @@ function _caSec(it){ return (it&&it.createdAt&&it.createdAt.seconds)||0; } // �
 function _hmSec(s){ var m=String(s==null?'':s).match(/^(\d{1,2}):([0-5]\d)(?::([0-5]\d))?/); if(!m) return null; return (+m[1])*3600+(+m[2])*60+(m[3]!=null?+m[3]:0); }
 function _sortByJst(items){
   // 日付（現地日付）でまとめ、同じ日の中は「実際に起きた順」（実時刻=CI優先、無ければ予定時刻）に並べる。
-  // 予定が前後したり、予定とは違う順で実施された項目も、実際の時系列どおりに表示する。
+  // 日付変更線をまたぐ日（例: 日本→米国）は壁時計だけでは逆転するので、各項目の座標からタイムゾーンを
+  // 求めて絶対時刻（インスタント）で並べる。座標が無い項目は、その日の多数派タイムゾーンを継承する。
+  var _cnt={}; items.forEach(function(it){ var tz=(it.lat!=null&&it.lng!=null)?_safeTz(it.lat,it.lng):null; if(tz){ var d=it.date||''; (_cnt[d]=_cnt[d]||{})[tz]=((_cnt[d][tz])||0)+1; } });
+  var _dayTz={}; Object.keys(_cnt).forEach(function(d){ var b='',bn=0; Object.keys(_cnt[d]).forEach(function(tz){ if(_cnt[d][tz]>bn){bn=_cnt[d][tz];b=tz;} }); _dayTz[d]=b; });
   return items.map(function(it,i){
     var d=_schedInstant(it); var sms=d?d.getTime():0;
     var ams=(it.actualStartMs!=null)?it.actualStartMs:null;
     var ms=(ams!=null)?ams:sms; // 絶対時刻用（現在/NEXT判定等。実時間を反映）。
-    // 同日内の並び用キー: 「実時刻HH:MM:SS（無ければ予定）」の現地壁時計秒。深夜 24:00〜30:00 表記は 23:xx の後。
-    // 座標やTZには依存しない（座標無し→東京フォールバックで並びが崩れるのを防ぐ）。
+    // 同日内の並び用キー: 「実時刻（無ければ予定）」を現地TZで絶対時刻化。深夜 24:00〜30:00 表記も翌日扱いで連続。
+    var tz=(it.lat!=null&&it.lng!=null)?_safeTz(it.lat,it.lng):null; if(!tz) tz=_dayTz[it.date||'']||'Asia/Tokyo';
     var effT=it.actualStart||it.time||'23:59';
-    var lsec=_hmSec(effT);
-    var sortMs=(lsec!=null)?lsec:86399;
+    var di=_wallInstant(it.date, effT, tz);
+    var sortMs=di?(di.getTime()+(((_hmSec(effT)||0)%60)*1000)):ms;
     return {it:it, ms:ms, sortMs:sortMs, day:(it.date||'9999-99-99'), em:_endMark(it), ca:_caSec(it), seq:it.seq||0, i:i};
   }).sort(function(a,b){
     if(a.day!==b.day) return a.day<b.day?-1:1;                 // 日付順
-    if(a.sortMs!==b.sortMs) return a.sortMs-b.sortMs;          // 同日内は実時刻（秒精度・実時間優先・TZ考慮）
+    if(a.sortMs!==b.sortMs) return a.sortMs-b.sortMs;          // 同日内は実時刻（絶対時刻・実時間優先・TZ考慮）
     if(a.em!==b.em) return a.em-b.em;                          // 同じ時刻は「単一時間→from-to(移動/終了あり)」の順
     return (a.ca-b.ca)||(a.seq-b.seq)||(a.i-b.i);              // さらに登録順
   });
