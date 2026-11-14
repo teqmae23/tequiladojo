@@ -2949,3 +2949,70 @@ exports.cleanupEventVideo = functions.region('asia-northeast1')
     await Promise.all(targets.map((p) => bucket.file(p).delete().catch(() => {})));
     return null;
   });
+
+// ── 既存イベント写真の中サイズ(1080px)バックフィル ──────────────────────
+// セミナー配信で参加者端末が使う中サイズ(urlMed)を、既存写真にも後付けで生成する。
+// 原本は保存していないため、フル(長辺1600)から1080pxへ縮小する（劣化はごくわずか）。
+// スタッフがイベント単位で呼び出し、1回で limit 件ずつ処理して remaining を返す。
+// 管理画面側は remaining が 0 になるまで繰り返し呼ぶ。
+exports.backfillEventMediumImages = functions.region('asia-northeast1')
+  .runWith({ memory: '1GB', timeoutSeconds: 300 })
+  .https.onCall(async (data, context) => {
+    await assertStaff(context);
+    const eventId = ((data && data.eventId) || '').toString().trim();
+    if (!eventId) throw new functions.https.HttpsError('invalid-argument', 'eventIdが必要です');
+    const limit = Math.min(Math.max(parseInt((data && data.limit) || 20, 10) || 20, 1), 40);
+
+    const path = require('path');
+    const os = require('os');
+    const fs = require('fs');
+    const crypto = require('crypto');
+    const ffmpegPath = require('ffmpeg-static');
+    const bucket = admin.storage().bucket();
+    const bktName = bucket.name;
+
+    const col = db.collection('events').doc(eventId).collection('photos');
+    const snap = await col.get();
+    // 対象: 画像(動画でない) かつ urlMed 未設定 かつ 直近でエラーになっていないもの
+    const targets = [];
+    snap.forEach((doc) => {
+      const d = doc.data() || {};
+      if (d.mediaType === 'video') return;
+      if (d.urlMed) return;
+      if (d.urlMedError) return; // 失敗済みは再処理しない（無限ループ防止）
+      targets.push({ id: doc.id, d });
+    });
+
+    const batch = targets.slice(0, limit);
+    let updated = 0, failed = 0;
+    for (const t of batch) {
+      const base = t.d.storagePath || ('event_photos/' + eventId + '/' + t.id);
+      const srcPath = base + '.jpg';
+      const medPath = base + '_med.jpg';
+      const tmpIn = path.join(os.tmpdir(), t.id + '_full.jpg');
+      const tmpOut = path.join(os.tmpdir(), t.id + '_med.jpg');
+      const cleanup = () => [tmpIn, tmpOut].forEach((p) => { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {} });
+      try {
+        await bucket.file(srcPath).download({ destination: tmpIn });
+        // フル(長辺1600)→ 長辺1080 に縮小。拡大はしない（元が小さければそのまま）。
+        await _runFfmpeg(ffmpegPath, ['-y', '-i', tmpIn,
+          '-vf', "scale='min(1080,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease",
+          '-q:v', '4', tmpOut]);
+        const tok = crypto.randomUUID();
+        await bucket.upload(tmpOut, { destination: medPath, resumable: false, metadata: {
+          contentType: 'image/jpeg', cacheControl: 'public,max-age=31536000',
+          metadata: { firebaseStorageDownloadTokens: tok } } });
+        const urlMed = _storageDownloadUrl(bktName, medPath, tok);
+        await col.doc(t.id).set({ urlMed: urlMed, urlMedError: admin.firestore.FieldValue.delete() }, { merge: true });
+        updated++;
+      } catch (e) {
+        failed++;
+        console.error('backfillEventMediumImages error', eventId, t.id, (e && e.message) || e);
+        await col.doc(t.id).set({ urlMedError: String((e && e.message) || e).slice(0, 200) }, { merge: true }).catch(() => {});
+      } finally {
+        cleanup();
+      }
+    }
+    const remaining = Math.max(0, targets.length - batch.length);
+    return { ok: true, eventId, total: targets.length, processed: batch.length, updated, failed, remaining, done: remaining === 0 };
+  });
