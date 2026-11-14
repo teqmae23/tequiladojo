@@ -53,6 +53,13 @@ body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSys
 .mcell .st{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--ink3);text-align:center}
 .mcell .cap{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(transparent,rgba(0,0,0,.72));color:#fff;font-size:11px;padding:10px 6px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nomedia{color:var(--ink3);font-size:12px;padding:16px 2px}
+/* 単一画像ステップ（上にマップ→1枚ずつ） */
+.sphoto{border-radius:12px;overflow:hidden;background:#23201c;border:1px solid var(--line);margin-top:12px;display:flex;align-items:center;justify-content:center;max-height:62vh}
+.sphoto img{width:100%;max-height:62vh;object-fit:contain;display:block;cursor:zoom-in}
+.sphoto video{width:100%;max-height:62vh;display:block;background:#000}
+.sphoto-msg{color:var(--ink3);font-size:13px;padding:44px 10px;text-align:center}
+.sphoto-cap{font-size:14px;color:var(--ink);margin:10px 2px 0;line-height:1.45}
+.sphoto-cnt{font-size:12px;color:var(--ink3);font-weight:700;margin:7px 2px 0;text-align:right}
 /* 360 step */
 .step360{height:100%;display:flex;flex-direction:column}
 .v360{flex:1 1 auto;position:relative;background:#000}
@@ -210,26 +217,40 @@ async function start(user){
 }
 
 // config.steps（enabled のみ）を解決。無ければイベントの流れから既定フローを生成。
+// 返すのは「展開済み」ステップ列: 各項目を〈トップ(見出し＋画像一覧)〉→〈画像1枚ずつ(上にマップ)〉に分解。
 function buildFlow(cfg){
-  var out=[];
+  var groups=[];
   if(cfg && Array.isArray(cfg.steps) && cfg.steps.length){
     cfg.steps.forEach(function(s){
       if(s.enabled===false) return;
-      if(s.type==='360'){ if(s.vimeoId) out.push({type:'360', vimeoId:String(s.vimeoId), title:s.title||'360°動画'}); return; }
+      if(s.type==='360'){ if(s.vimeoId) groups.push({type:'360', vimeoId:String(s.vimeoId), title:s.title||'360°動画'}); return; }
       var it=_items.find(function(x){return x.id===s.itemId;}); if(!it) return;
       var media;
       if(Array.isArray(s.media)){ var by={}; (_photosByItem[it.id]||[]).forEach(function(p){by[p.id]=p;}); media=s.media.map(function(id){return by[id];}).filter(Boolean); }
       else media=(_photosByItem[it.id]||[]).slice();
-      out.push({type:'item', it:it, showMap:s.showMap!==false, media:media});
+      groups.push({type:'item', it:it, showMap:s.showMap!==false, media:media});
     });
-    return out;
+  } else {
+    // 既定: 全スケジュール項目（地図あり or メディアあり）。未構築時は家族のみ閲覧可の写真は除外（安全側）。
+    _items.forEach(function(it){
+      var media=(_photosByItem[it.id]||[]).filter(function(p){ return !p.familyOnly; });
+      var hasMap=(it.lat!=null&&it.lng!=null);
+      if(!media.length && !hasMap && !(it.title||it.placeName)) return;
+      groups.push({type:'item', it:it, showMap:hasMap, media:media});
+    });
   }
-  // 既定: 全スケジュール項目（地図あり or メディアあり）。未構築時は家族のみ閲覧可の写真は除外（安全側）。
-  _items.forEach(function(it){
-    var media=(_photosByItem[it.id]||[]).filter(function(p){ return !p.familyOnly; });
-    var hasMap=(it.lat!=null&&it.lng!=null);
-    if(!media.length && !hasMap && !(it.title||it.placeName)) return;
-    out.push({type:'item', it:it, showMap:hasMap, media:media});
+  return _expandFlow(groups);
+}
+// 各項目を「トップ(見出し＋画像一覧)」+「画像1枚ずつ(上にマップ)」のステップに展開する。
+// 画面遷移: 項目トップ＆画像一覧 → 各画像（上にマップ）→ 最後の画像 → 次の項目トップ＆画像一覧。
+function _expandFlow(groups){
+  var out=[];
+  groups.forEach(function(gr){
+    if(gr.type==='360'){ out.push(gr); return; }
+    out.push({type:'top', it:gr.it, showMap:gr.showMap, media:gr.media});
+    (gr.media||[]).forEach(function(p,idx){
+      out.push({type:'photo', it:gr.it, showMap:gr.showMap, media:gr.media, photo:p, pIndex:idx});
+    });
   });
   return out;
 }
@@ -263,11 +284,27 @@ function renderStep(){
     updateNav(); return;
   }
   var it=st.it;
-  var tm=_itemTime(it), pl=_itemPlace(it);
   var hasMap=(st.showMap && it.lat!=null && it.lng!=null);
-  // 地図ありのときは項目名・時間を地図内右上にオーバーレイ表示。地図下は場所のみ。
+  var tm=_itemTime(it);
+  // 地図ありのときは項目名・時間を地図内右上にオーバーレイ表示。
   var ov=hasMap?('<div class="smap-ov"><div class="t">'+esc(it.title||'（無題）')+'</div>'+(tm?'<div class="tm">🕐 '+esc(tm)+'</div>':'')+'</div>'):'';
   var mapHtml=hasMap?('<div class="smapwrap"><div class="smap" id="smap"></div>'+ov+'</div>'):'';
+  if(st.type==='photo'){
+    // 各画像ステップ: 上にマップ＋1枚を大きく表示。
+    var p=st.photo, total=(st.media||[]).length;
+    var big;
+    if(_isVid(p)){
+      if(_vidReady(p)) big='<video src="'+esc(p.url)+'" controls playsinline '+(p.posterUrl?('poster="'+esc(p.posterUrl)+'"'):'')+'></video>';
+      else big='<div class="sphoto-msg">'+(p.status==='processing'?'⏳ 動画を変換中です':'⚠ 動画を再生できません')+'</div>';
+    } else { big='<img src="'+esc(p.url||p.thumbUrl||'')+'" loading="lazy" onclick="fvOpen('+st.pIndex+')">'; }
+    var pcap=p.caption?'<div class="sphoto-cap">'+esc(p.caption)+'</div>':'';
+    var pcnt='<div class="sphoto-cnt">'+(st.pIndex+1)+' / '+total+'</div>';
+    stage.innerHTML='<div class="step">'+mapHtml+'<div class="sphoto">'+big+'</div>'+pcap+pcnt+'</div>';
+    if(mapHtml) drawMap(it);
+    updateNav(); return;
+  }
+  // 項目トップ: 見出し＋画像一覧（サムネイル）。地図下は場所のみ。
+  var pl=_itemPlace(it);
   var head=hasMap
     ? (pl?'<div class="sitem"><div class="pl">📍 '+esc(pl)+'</div></div>':'')
     : '<div class="sitem"><div class="t">'+esc(it.title||'（無題）')+'</div>'+(tm?'<div class="tm">🕐 '+esc(tm)+'</div>':'')+(pl?'<div class="pl">📍 '+esc(pl)+'</div>':'')+'</div>';
@@ -385,7 +422,7 @@ document.addEventListener('keydown',function(e){
 
 // ── フルスクリーン・ビューア（タップ最大化＋ピンチ拡大） ──
 var _fvMedia=[], _fvIdx=0, _fvScale=1, _fvTx=0, _fvTy=0;
-function fvOpen(i){ var st=_flow[_step]; if(!st||st.type!=='item') return; _fvMedia=st.media||[]; _fvIdx=i; g('fv').classList.add('open'); fvShow(); }
+function fvOpen(i){ var st=_flow[_step]; if(!st||(st.type!=='top'&&st.type!=='photo')) return; _fvMedia=st.media||[]; _fvIdx=i; g('fv').classList.add('open'); fvShow(); }
 function fvClose(){ g('fv').classList.remove('open'); g('fv-stage').innerHTML=''; }
 function fvNav(d){ if(!_fvMedia.length) return; _fvIdx=(_fvIdx+d+_fvMedia.length)%_fvMedia.length; fvShow(); }
 function fvShow(){
