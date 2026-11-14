@@ -32,6 +32,7 @@ body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSys
 .hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
 .hd-ttl{font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .hd-live{font-size:10px;font-weight:700;color:#e26a6a;white-space:nowrap;margin-left:auto}
+.pcnote{font-size:10px;color:var(--ink3);white-space:nowrap;margin-left:auto;opacity:.8}
 .hd-live .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#e26a6a;margin-right:3px;vertical-align:middle;animation:blink 1.4s infinite}
 @keyframes blink{50%{opacity:.3}}
 .stage{flex:1 1 auto;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
@@ -144,6 +145,8 @@ function phSort(a,b){ var oa=(a.order!=null?a.order:null), ob=(b.order!=null?b.o
 function _isVid(p){ return !!(p&&p.mediaType==='video'); }
 function _vidReady(p){ return _isVid(p)&&p.status==='ready'&&!!p.url; }
 function _thumb(p){ return _isVid(p)?(p.posterUrl||p.thumbUrl||''):(p.thumbUrl||p.url||''); }
+// 大きく表示する画像のURL。配信者（プロジェクター）はフル高画質、参加者端末は中サイズ(軽量)を優先。
+function _dispUrl(p){ if(_presenter) return p.url||p.urlMed||p.thumbUrl||''; return p.urlMed||p.url||p.thumbUrl||''; }
 function _itemTime(it){
   var s=it.actualStart||it.time||'', e=it.isMove?(it.actualEnd||it.toTime||''):(it.actualEnd||it.endTime||'');
   s=String(s).slice(0,5); e=String(e).slice(0,5);
@@ -255,9 +258,40 @@ function _expandFlow(groups){
   return out;
 }
 
+// ── 日別の先読みキャッシュ ──
+// 20人規模で各端末が同時に画像を読み込むと会場WiFiが詰まるため、全部を一度に先読みせず、
+// 「今見ている日」を表示している間に「翌日分」を裏でダウンロードしてHTTPキャッシュを温めておく。
+// 参加者端末は中サイズ(軽量)、配信者はフルを先読み（表示に使うサイズと一致させる）。
+var _pcQueue=[], _pcActive=0, _pcSeen={}, _pcDayDone={}, _pcTotal=0, _pcLoaded=0;
+var _PC_CONC=3;
+function _dayOrder(){ var seen={}, out=[]; _flow.forEach(function(st){ if(!st||!st.it) return; var d=st.it.date||''; if(!seen[d]){seen[d]=1; out.push(d);} }); return out; }
+function _curDay(){ var st=_flow[_step]; return (st&&st.it)?(st.it.date||''):''; }
+function _dayUrls(day){
+  var urls=[];
+  _flow.forEach(function(st){
+    if(!st||!st.it||(st.it.date||'')!==day) return;
+    if(st.type==='top'){ (st.media||[]).forEach(function(p){ var t=_thumb(p); if(t) urls.push(t); }); }
+    else if(st.type==='photo'){ var p=st.photo; if(_isVid(p)){ if(p.posterUrl) urls.push(p.posterUrl); } else { var u=_dispUrl(p); if(u) urls.push(u); } }
+  });
+  return urls;
+}
+function _precacheDay(day){
+  if(day==null || _pcDayDone[day]) return; _pcDayDone[day]=true;
+  _dayUrls(day).forEach(function(u){ if(u && !_pcSeen[u]){ _pcSeen[u]=true; _pcQueue.push(u); _pcTotal++; } });
+  _pcPump(); _pcNote();
+}
+// 現在の日と翌日を先読み（それ以降は進んだときに順次）。
+function _precacheAround(){
+  var days=_dayOrder(); var ci=days.indexOf(_curDay()); if(ci<0) ci=0;
+  _precacheDay(days[ci]); _precacheDay(days[ci+1]);
+}
+function _pcPump(){ while(_pcActive<_PC_CONC && _pcQueue.length){ var u=_pcQueue.shift(); _pcActive++; _pcFetch(u); } }
+function _pcFetch(u){ var im=new Image(); function done(){ _pcActive--; _pcLoaded++; _pcNote(); _pcPump(); } im.onload=done; im.onerror=done; try{ im.decoding='async'; }catch(e){} im.src=u; }
+function _pcNote(){ var el=g('pcnote'); if(!el) return; var pend=_pcQueue.length+_pcActive; if(pend>0){ el.style.display=''; el.textContent='⬇ 次の日の画像を準備中 '+_pcLoaded+' / '+_pcTotal; } else { el.style.display='none'; } }
+
 function buildUI(){
   var live='<span class="hd-live" id="hd-live" style="display:none"><span class="dot"></span>LIVE</span>';
-  var hd='<div class="hd"><span class="hd-ttl">🎬 '+esc(_event.name||'セミナー')+'</span>'+live+'</div>';
+  var hd='<div class="hd"><span class="hd-ttl">🎬 '+esc(_event.name||'セミナー')+'</span>'+live+'<span class="pcnote" id="pcnote" style="display:none"></span></div>';
   var stage='<div class="stage" id="stage"></div>';
   var nav;
   if(_presenter){
@@ -277,6 +311,7 @@ function _destroyMap(){ if(_map){ try{_map.remove();}catch(e){} _map=null; } }
 function renderStep(){
   _destroyMap();
   var st=_flow[_step]; if(!st){ return; }
+  _precacheAround(); // 今の日を見ている間に翌日分を先読み
   var stage=g('stage'); stage.scrollTop=0;
   if(st.type==='360'){
     stage.innerHTML='<div class="step360"><div class="v360"><div class="v360-ttl">🌐 '+esc(st.title)+'</div>'
@@ -296,7 +331,7 @@ function renderStep(){
     if(_isVid(p)){
       if(_vidReady(p)) big='<video src="'+esc(p.url)+'" controls playsinline '+(p.posterUrl?('poster="'+esc(p.posterUrl)+'"'):'')+'></video>';
       else big='<div class="sphoto-msg">'+(p.status==='processing'?'⏳ 動画を変換中です':'⚠ 動画を再生できません')+'</div>';
-    } else { big='<img src="'+esc(p.url||p.thumbUrl||'')+'" loading="lazy" onclick="fvOpen('+st.pIndex+')">'; }
+    } else { big='<img src="'+esc(_dispUrl(p))+'" loading="lazy" onclick="fvOpen('+st.pIndex+')">'; }
     var pcap=p.caption?'<div class="sphoto-cap">'+esc(p.caption)+'</div>':'';
     var pcnt='<div class="sphoto-cnt">'+(st.pIndex+1)+' / '+total+'</div>';
     stage.innerHTML='<div class="step">'+mapHtml+'<div class="sphoto">'+big+'</div>'+pcap+pcnt+'</div>';
