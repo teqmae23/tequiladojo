@@ -2505,10 +2505,13 @@ exports.createTreatCheckout = functions
       const sfx = String(b.suffix || '').trim();
       if (sfx) baseName = baseName.replace(new RegExp(' ?\\(' + sfx.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\)$'), '') + ' (' + sfx + ')';
     }
-    // NOMは4桁数字のみ採用。ボトルのnom優先、無ければID先頭4桁が4桁数字のときだけ。"T000"等の仮IDは保存しない。
-    const _rawNom = String((b.nom != null ? b.nom : '')).trim();
-    const _idNom = (baseBottleId.length >= 4) ? baseBottleId.slice(0, 4) : '';
-    const nom = /^\d{4}$/.test(_rawNom) ? _rawNom : (/^\d{4}$/.test(_idNom) ? _idNom : '');
+    // NOM=蒸留所ID=brandId/bottleIdの先頭4桁。nom優先、無ければ紐づくID先頭4桁。"T000"等の仮IDは保存しない。
+    let nom = String((b.nom != null ? b.nom : '')).trim();
+    if (!/^\d{4}$/.test(nom)) {
+      const cand = [b.brandId, b.bottleId, b.baseBottleId, b.productCode, baseBottleId, b.id];
+      nom = '';
+      for (const c of cand) { const p = String(c == null ? '' : c).trim().slice(0, 4); if (/^\d{4}$/.test(p)) { nom = p; break; } }
+    }
 
     const tequilaAmount = Math.round(price10 * ml / 10);
     const sodaFee = style === 'soda' ? 100 : 0;
