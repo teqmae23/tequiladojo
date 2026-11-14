@@ -4075,15 +4075,18 @@ function suggestItem(ex){
 function _phUploadOne(f, ex, itemId, caption, familyOnly){
   var it=_schedItems.find(function(x){return x.id===itemId;})||{};
   var col=db.collection('events').doc(eventId).collection('photos');
-  return Promise.all([compressImage(f,1600,0.72), compressImage(f,400,0.7)]).then(function(bl){
+  // フル(長辺1600・プロジェクター用) / 中(長辺1080・参加者端末の配信用) / サムネ(400) の3サイズを保存。
+  return Promise.all([compressImage(f,1600,0.72), compressImage(f,1080,0.72), compressImage(f,400,0.7)]).then(function(bl){
     var pid=col.doc().id, base='event_photos/'+eventId+'/'+pid;
-    var mref=storage.ref(base+'.jpg'), tref=storage.ref(base+'_thumb.jpg');
-    return mref.put(bl[0],{contentType:'image/jpeg'}).then(function(){ return tref.put(bl[1],{contentType:'image/jpeg'}); })
-      .then(function(){ return Promise.all([mref.getDownloadURL(), tref.getDownloadURL()]); })
+    var mref=storage.ref(base+'.jpg'), dref=storage.ref(base+'_med.jpg'), tref=storage.ref(base+'_thumb.jpg');
+    return mref.put(bl[0],{contentType:'image/jpeg'})
+      .then(function(){ return dref.put(bl[1],{contentType:'image/jpeg'}); })
+      .then(function(){ return tref.put(bl[2],{contentType:'image/jpeg'}); })
+      .then(function(){ return Promise.all([mref.getDownloadURL(), dref.getDownloadURL(), tref.getDownloadURL()]); })
       .then(function(urls){
         return col.doc(pid).set({
           scheduleItemId:itemId, uploaderUid:_uid, uploaderName:_memberName||'',
-          url:urls[0], thumbUrl:urls[1], storagePath:base,
+          url:urls[0], urlMed:urls[1], thumbUrl:urls[2], storagePath:base,
           caption:((caption||'').trim()||null),
           familyOnly:!!familyOnly, // 家族のみ閲覧可
           // 位置情報のない写真は紐付けた項目の位置を付与
