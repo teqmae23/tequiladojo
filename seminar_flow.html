@@ -249,10 +249,17 @@ function buildFlow(cfg){
         return;
       }
       var it=_items.find(function(x){return x.id===s.itemId;}); if(!it) return;
-      var media;
-      if(Array.isArray(s.media)){ var by={}; (_photosByItem[it.id]||[]).forEach(function(p){by[p.id]=p;}); media=s.media.map(function(id){return by[id];}).filter(Boolean); }
-      else media=(_photosByItem[it.id]||[]).slice();
-      groups.push({type:'item', it:it, showMap:s.showMap!==false, media:media});
+      var media=[], seq=[]; // media=写真のみ(トップの一覧用), seq=写真＋人物の並び(1枚ずつ送り用)
+      if(Array.isArray(s.media)){
+        var by={}; (_photosByItem[it.id]||[]).forEach(function(p){by[p.id]=p;});
+        s.media.forEach(function(e){
+          if(e && typeof e==='object' && e.person){
+            var pr=e.person; var nm=pr.name||'', ic=pr.iconUrl||'';
+            if(nm||ic) seq.push({person:{kind:(pr.kind==='host'?'host':'participant'), name:nm, iconUrl:ic, bio:pr.bio||'', sns:pr.sns||''}});
+          } else { var ph=by[String(e)]; if(ph){ media.push(ph); seq.push({photo:ph}); } }
+        });
+      } else { (_photosByItem[it.id]||[]).forEach(function(ph){ media.push(ph); seq.push({photo:ph}); }); }
+      groups.push({type:'item', it:it, showMap:s.showMap!==false, media:media, seq:seq});
     });
   } else {
     // 既定: 全スケジュール項目（地図あり or メディアあり）。未構築時は家族のみ閲覧可の写真は除外（安全側）。
@@ -273,8 +280,12 @@ function _expandFlow(groups){
     if(gr.type==='360'){ out.push(gr); return; }
     if(gr.type==='person'){ out.push({type:'person', person:gr.person}); return; }
     out.push({type:'top', it:gr.it, showMap:gr.showMap, media:gr.media});
-    (gr.media||[]).forEach(function(p,idx){
-      out.push({type:'photo', it:gr.it, showMap:gr.showMap, media:gr.media, photo:p, pIndex:idx});
+    // seq に沿って「写真1枚ずつ」と「人物紹介」を並べる（人物は画像と画像の間に差し込まれる）。
+    var seq=gr.seq||(gr.media||[]).map(function(p){ return {photo:p}; });
+    var pi=0;
+    seq.forEach(function(e){
+      if(e.person){ out.push({type:'person', person:e.person}); }
+      else { out.push({type:'photo', it:gr.it, showMap:gr.showMap, media:gr.media, photo:e.photo, pIndex:pi}); pi++; }
     });
   });
   return out;
