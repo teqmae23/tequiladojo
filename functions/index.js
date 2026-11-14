@@ -3016,3 +3016,45 @@ exports.backfillEventMediumImages = functions.region('asia-northeast1')
     const remaining = Math.max(0, targets.length - batch.length);
     return { ok: true, eventId, total: targets.length, processed: batch.length, updated, failed, remaining, done: remaining === 0 };
   });
+
+// ── 画像データ量の集計（フル vs 中サイズ）──────────────────────────────
+// 各写真の フル(.jpg) と 中(_med.jpg) の「ファイルサイズ」だけをメタデータで読み、
+// 合計を返す（画像本体はダウンロードしないので軽量）。削減率の実数表示に使う。
+exports.measureEventMediumSavings = functions.region('asia-northeast1')
+  .runWith({ memory: '256MB', timeoutSeconds: 180 })
+  .https.onCall(async (data, context) => {
+    await assertStaff(context);
+    const eventId = ((data && data.eventId) || '').toString().trim();
+    if (!eventId) throw new functions.https.HttpsError('invalid-argument', 'eventIdが必要です');
+    const bucket = admin.storage().bucket();
+    const col = db.collection('events').doc(eventId).collection('photos');
+    const snap = await col.get();
+    const rows = [];
+    snap.forEach((doc) => {
+      const d = doc.data() || {};
+      if (d.mediaType === 'video') return;
+      rows.push(d.storagePath || ('event_photos/' + eventId + '/' + doc.id));
+    });
+    let imgTotal = rows.length, withMed = 0, noMed = 0;
+    let fullBytesAll = 0, fullBytesWithMed = 0, medBytes = 0, thumbBytes = 0;
+    async function sizeOf(path) {
+      try { const [m] = await bucket.file(path).getMetadata(); return parseInt(m.size) || 0; }
+      catch (e) { return -1; } // 無ければ -1
+    }
+    // 同時実行を絞ってメタデータ取得
+    const CONC = 16;
+    for (let i = 0; i < rows.length; i += CONC) {
+      const chunk = rows.slice(i, i + CONC);
+      await Promise.all(chunk.map(async (base) => {
+        const [fb, mb, tb] = await Promise.all([sizeOf(base + '.jpg'), sizeOf(base + '_med.jpg'), sizeOf(base + '_thumb.jpg')]);
+        if (fb > 0) fullBytesAll += fb;
+        if (tb > 0) thumbBytes += tb;
+        if (mb > 0) { withMed++; medBytes += mb; if (fb > 0) fullBytesWithMed += fb; }
+        else { noMed++; }
+      }));
+    }
+    return {
+      ok: true, eventId, imgTotal, withMed, noMed,
+      fullBytesAll, fullBytesWithMed, medBytes, thumbBytes,
+    };
+  });
