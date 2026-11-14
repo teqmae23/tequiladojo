@@ -68,6 +68,12 @@ button{cursor:pointer;font-family:var(--sans)}
 .addbtn{flex:1;min-width:150px;padding:11px;border:1px dashed var(--gold-d);border-radius:10px;background:#fbf4e6;color:var(--gold-d);font-weight:700;font-size:13px}
 .addbtn.host{border-color:#1a6e58;background:#e9f4f0;color:#1a6e58}
 .addbtn.v360{border-color:#2a62a0;background:#eef3fa;color:#2a62a0}
+/* 各カード下の差し込み行 */
+.ins{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:10px;padding-top:9px;border-top:1px dashed var(--border)}
+.ins .inslbl{font-size:11px;color:var(--ink3);font-weight:600}
+.insb{font-size:11px;font-weight:700;border:1px solid var(--gold-d);color:var(--gold-d);background:#fbf4e6;border-radius:14px;padding:3px 11px}
+.insb.host{border-color:#1a6e58;color:#1a6e58;background:#e9f4f0}
+.insb.v360{border-color:#2a62a0;color:#2a62a0;background:#eef3fa}
 /* 人物紹介カード */
 .card.person .chip{font-size:11px;font-weight:700;border-radius:20px;padding:3px 9px}
 .pbody{display:flex;gap:12px;align-items:center;margin-top:8px}
@@ -107,14 +113,15 @@ button{cursor:pointer;font-family:var(--sans)}
     <a class="lk go" id="lk-present" target="_blank">▶ 実施（配信者）</a>
     <a class="lk pv" id="lk-preview" target="_blank">👁 参加者プレビュー</a>
     <button class="lk" id="btn-backfill" onclick="backfillMed()">🗜 参加者用の軽量画像を生成</button>
+    <button class="lk" id="btn-measure" onclick="measureSavings()">📊 データ量を集計</button>
     <span class="bk-stat" id="bk-stat"></span>
   </div>
-  <div class="tip">イベントの流れからセミナーを構築します。ドラッグで項目の順番を入れ替え、各項目の写真・動画は横にドラッグで並び替え、タップで表示/非表示を切り替えできます。地図の表示ON/OFF、項目自体の表示ON/OFFも設定できます。「＋360°動画」でVimeoの360°動画を、「＋参加者」「＋現地ホスト」で人物紹介（画像＋名前＋ひとこと）を、任意の位置に1人ずつ差し込めます。</div>
+  <div class="tip">イベントの流れからセミナーを構築します。ドラッグで項目の順番を入れ替え、各項目の写真・動画は横にドラッグで並び替え、タップで表示/非表示を切り替えできます。地図の表示ON/OFF、項目自体の表示ON/OFFも設定できます。<b>各カードの下にある「＋ ここに差し込む」</b>から、その位置に「参加者／現地ホスト（画像＋名前＋ひとこと）／360°動画」を1つずつ差し込めます（下の緑のボタンは末尾に追加）。</div>
   <div id="steps"></div>
   <div class="addrow">
-    <button class="addbtn" onclick="openPtPicker()">＋ 参加者を差し込む</button>
-    <button class="addbtn host" onclick="addHostPerson()">＋ 現地ホストを差し込む</button>
-    <button class="addbtn v360" onclick="add360()">＋ 360°動画を差し込む</button>
+    <button class="addbtn" onclick="openPtPicker()">＋ 参加者（末尾に追加）</button>
+    <button class="addbtn host" onclick="addHostPerson()">＋ 現地ホスト（末尾に追加）</button>
+    <button class="addbtn v360" onclick="add360()">＋ 360°動画（末尾に追加）</button>
   </div>
 </div>
 <div id="toasts"></div>
@@ -224,6 +231,7 @@ function vimeoId(v){ v=String(v||'').trim(); var m=v.match(/vimeo\.com\/(?:video
 
 function renderAll(model){
   var c=g('steps'); c.innerHTML=model.map(stepHtml).join('');
+  _addFooters(c); // 各カード下に「ここに差し込む」行を付与
   if(window.Sortable){
     Sortable.create(c,{animation:150,handle:'.drag',delay:120,delayOnTouchOnly:true});
     Array.prototype.forEach.call(c.querySelectorAll('.mstrip'),function(st){ Sortable.create(st,{animation:150,delay:140,delayOnTouchOnly:true,onStart:function(){window._drag=true;},onEnd:function(){setTimeout(function(){window._drag=false;},60);}}); });
@@ -281,12 +289,34 @@ function stepHtml(s){
 function _pbyId(itemId,id){ return (_photosByItem[itemId]||[]).find(function(p){return p.id===id;}); }
 function _wasKnown(){ return false; } // 新規写真はデフォルト表示（簡潔化）
 
-function add360(){
+// ── カード生成・配置の共通ヘルパ ──
+// 各カードの下に「ここに差し込む」行を付け、その直後に新カードを挿入できるようにする。
+function _footerOnto(card){
+  if(!card||!card.querySelector||card.querySelector(':scope > .ins')) return;
+  var f=document.createElement('div'); f.className='ins';
+  f.innerHTML='<span class="inslbl">＋ ここに差し込む</span>'
+    +'<button type="button" class="insb" onclick="insAfter(this,\'participant\')">参加者</button>'
+    +'<button type="button" class="insb host" onclick="insAfter(this,\'host\')">現地ホスト</button>'
+    +'<button type="button" class="insb v360" onclick="insAfter(this,\'360\')">360°</button>';
+  card.appendChild(f);
+}
+function _addFooters(root){ Array.prototype.forEach.call((root||g('steps')).querySelectorAll('.card'),_footerOnto); }
+function _mkCard(html){ var div=document.createElement('div'); div.innerHTML=html; var node=div.firstChild; _footerOnto(node); return node; }
+function _placeCard(node, after){
   var c=g('steps');
-  var div=document.createElement('div');
-  div.innerHTML=stepHtml({type:'360',vimeoId:'',title:''});
-  c.appendChild(div.firstChild);
-  toast('360°動画ステップを末尾に追加しました（ドラッグで位置を調整）');
+  if(after && after.parentNode===c) c.insertBefore(node, after.nextSibling); else c.appendChild(node);
+  try{ node.scrollIntoView({behavior:'smooth', block:'center'}); }catch(e){}
+}
+// カード下の行から呼ばれ、その位置の直後に差し込む
+function insAfter(btn, kind){
+  var card=btn.closest('.card');
+  if(kind==='participant') openPtPicker(card);
+  else if(kind==='host') addHostPerson(card);
+  else if(kind==='360') add360(card);
+}
+function add360(after){
+  _placeCard(_mkCard(stepHtml({type:'360',vimeoId:'',title:''})), after);
+  toast(after?'360°動画をこの位置に差し込みました':'360°動画を末尾に追加しました');
 }
 
 // ── 人物紹介（参加者・現地ホスト）の差し込み ──
@@ -307,28 +337,24 @@ function compressImage(file,maxSide,quality){
     img.src=URL.createObjectURL(file);
   });
 }
-// 参加者ピッカー（1人選んで差し込み）
-function openPtPicker(){
+// 参加者ピッカー（1人選んで差し込み）。after を渡すとその位置の直後に挿入。
+function openPtPicker(after){
   if(!_participants.length){ toast('このイベントの参加者が見つかりません'); return; }
   var ov=document.createElement('div'); ov.className='ptpick';
   ov.innerHTML='<div class="ptbox"><div class="pthd"><b>参加者を選択</b><span class="sp"></span><button class="ptx">✕</button></div><div class="ptlist">'
     + _participants.map(function(p){ var ic=_ptIcon(p); return '<button class="ptrow" data-uid="'+esc(p.uid)+'"><span class="pav sm">'+(ic?'<img src="'+esc(ic)+'">':'<span>'+esc(_ptName(p).slice(0,1))+'</span>')+'</span><span class="ptnm">'+esc(_ptName(p))+'</span></button>'; }).join('')
     +'</div></div>';
   ov.addEventListener('click',function(e){ if(e.target===ov||e.target.className==='ptx') ov.remove(); });
-  Array.prototype.forEach.call(ov.querySelectorAll('.ptrow'),function(b){ b.onclick=function(){ insertParticipant(b.getAttribute('data-uid')); ov.remove(); }; });
+  Array.prototype.forEach.call(ov.querySelectorAll('.ptrow'),function(b){ b.onclick=function(){ insertParticipant(b.getAttribute('data-uid'), after); ov.remove(); }; });
   document.body.appendChild(ov);
 }
-function insertParticipant(uid){
-  var c=g('steps'); var div=document.createElement('div');
-  div.innerHTML=stepHtml({type:'person',kind:'participant',uid:uid,enabled:true});
-  c.appendChild(div.firstChild);
-  toast('参加者を末尾に追加しました（ドラッグで位置を調整）');
+function insertParticipant(uid, after){
+  _placeCard(_mkCard(stepHtml({type:'person',kind:'participant',uid:uid,enabled:true})), after);
+  toast(after?'参加者をこの位置に差し込みました':'参加者を末尾に追加しました');
 }
-function addHostPerson(){
-  var c=g('steps'); var div=document.createElement('div');
-  div.innerHTML=stepHtml({type:'person',kind:'host',id:'h'+Math.random().toString(36).slice(2,8),name:'',bio:'',iconUrl:'',enabled:true});
-  c.appendChild(div.firstChild);
-  toast('現地ホストを末尾に追加しました（写真・名前を入力し、ドラッグで位置を調整）');
+function addHostPerson(after){
+  _placeCard(_mkCard(stepHtml({type:'person',kind:'host',id:'h'+Math.random().toString(36).slice(2,8),name:'',bio:'',iconUrl:'',enabled:true})), after);
+  toast(after?'現地ホストをこの位置に差し込みました（写真・名前を入力）':'現地ホストを末尾に追加しました（写真・名前を入力）');
 }
 // ホスト写真アップロード
 function hostPhoto(input){
@@ -417,6 +443,35 @@ function backfillMed(){
     });
   }
   step();
+}
+
+// ── 画像データ量の集計（フル vs 中サイズの実数）──
+function _mb(b){ return (b/1048576); }
+function _fmtMB(b){ var m=_mb(b); return (m>=100?Math.round(m):m.toFixed(1))+'MB'; }
+function measureSavings(){
+  if(!EID){ toast('イベントが特定できません'); return; }
+  var btn=g('btn-measure'); if(btn) btn.disabled=true;
+  var stat=g('bk-stat'); if(stat) stat.textContent='集計中…';
+  firebase.app().functions('asia-northeast1').httpsCallable('measureEventMediumSavings')({eventId:EID}).then(function(r){
+    var d=(r&&r.data)||{};
+    if(btn) btn.disabled=false;
+    if(!d.imgTotal){ if(stat) stat.textContent='画像がありません'; return; }
+    var msg;
+    if(d.withMed>0){
+      var pct=d.fullBytesWithMed>0?Math.round((1-d.medBytes/d.fullBytesWithMed)*100):0;
+      // 参加者が各画像を1枚表示したときの合計（1端末あたり）
+      msg='参加者表示: フル '+_fmtMB(d.fullBytesWithMed)+' → 中 '+_fmtMB(d.medBytes)+'（約'+pct+'%減, '+d.withMed+'枚）';
+      if(d.noMed>0) msg+=' / 未生成'+d.noMed+'枚';
+    } else {
+      msg='中サイズ未生成（'+d.imgTotal+'枚）。先に「軽量画像を生成」を実行してください';
+    }
+    if(stat) stat.textContent=msg;
+    toast('集計しました');
+  }).catch(function(e){
+    if(btn) btn.disabled=false;
+    if(stat) stat.textContent='集計エラー: '+((e&&e.message)||e);
+    toast('集計に失敗しました: '+((e&&e.message)||e));
+  });
 }
 </script>
 </body>
