@@ -61,6 +61,15 @@ body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSys
 .sphoto-msg{color:var(--ink3);font-size:13px;padding:44px 10px;text-align:center}
 .sphoto-cap{font-size:14px;color:var(--ink);margin:10px 2px 0;line-height:1.45}
 .sphoto-cnt{font-size:12px;color:var(--ink3);font-weight:700;margin:7px 2px 0;text-align:right}
+/* 人物紹介スライド（参加者・現地ホスト・1人ずつ） */
+.person-card{display:flex;flex-direction:column;align-items:center;text-align:center;padding:18px 14px 8px;gap:10px}
+.pr-badge{font-size:12px;font-weight:700;color:var(--gold);background:rgba(216,181,107,.14);border:1px solid rgba(216,181,107,.4);border-radius:20px;padding:4px 14px}
+.pr-badge.host{color:#5fc2a8;background:rgba(75,183,154,.14);border-color:rgba(75,183,154,.4)}
+.pr-av{width:168px;height:168px;border-radius:50%;overflow:hidden;background:var(--panel);border:3px solid var(--gold);display:flex;align-items:center;justify-content:center;color:var(--gold);font-size:62px;font-weight:800;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+.pr-av img{width:100%;height:100%;object-fit:cover}
+.pr-nm{font-size:24px;font-weight:800;line-height:1.3;margin-top:2px}
+.pr-sns{font-size:13px;color:var(--gold);font-weight:700}
+.pr-bio{font-size:15px;color:var(--ink);line-height:1.6;max-width:600px;white-space:pre-wrap;margin-top:4px}
 /* 360 step */
 .step360{height:100%;display:flex;flex-direction:column}
 .v360{flex:1 1 auto;position:relative;background:#000}
@@ -121,7 +130,7 @@ var Q=new URLSearchParams(location.search);
 var EID=Q.get('e')||'', PRESENT=Q.get('present')==='1';
 if(!EID){ showMsg('イベントが指定されていません。'); }
 
-var _event=null, _items=[], _photosByItem={}, _flow=[], _presenter=false, _step=0, _unsub=null, _map=null;
+var _event=null, _items=[], _photosByItem={}, _pByUid={}, _flow=[], _presenter=false, _step=0, _unsub=null, _map=null;
 var _syncOn=true, _liveStep=0, _started=false, _live=false, _pstate='';
 
 // ── 座標・ルート ユーティリティ（event.html の挙動を踏襲） ──
@@ -203,13 +212,15 @@ async function start(user){
     var res=await Promise.all([
       db.collection('events').doc(EID).collection('scheduleItems').get(),
       db.collection('events').doc(EID).collection('photos').get().catch(function(){return {docs:[]};}),
-      db.collection('events').doc(EID).collection('seminar').doc('config').get().catch(function(){return {exists:false};})
+      db.collection('events').doc(EID).collection('seminar').doc('config').get().catch(function(){return {exists:false};}),
+      db.collection('events').doc(EID).collection('participants').get().catch(function(){return {docs:[]};})
     ]);
     _items=res[0].docs.map(function(d){ return _normItem(Object.assign({id:d.id},d.data())); });
     _items=sortSchedule(_items); // スケジュールと同じ並び（TZ/日付変更線対応）
     _photosByItem={};
     res[1].docs.map(function(d){ return Object.assign({id:d.id},d.data()); }).forEach(function(p){ (_photosByItem[p.scheduleItemId]=_photosByItem[p.scheduleItemId]||[]).push(p); });
     Object.keys(_photosByItem).forEach(function(k){ _photosByItem[k].sort(phSort); });
+    _pByUid={}; (res[3]?res[3].docs:[]).forEach(function(d){ _pByUid[d.id]=Object.assign({uid:d.id},d.data()); });
     var cfg=(res[2]&&res[2].exists)?res[2].data():null;
     _flow=buildFlow(cfg);
     if(!_flow.length){ showMsg('このイベントにはセミナーで表示できる内容がありません。'); return; }
@@ -227,6 +238,13 @@ function buildFlow(cfg){
     cfg.steps.forEach(function(s){
       if(s.enabled===false) return;
       if(s.type==='360'){ if(s.vimeoId) groups.push({type:'360', vimeoId:String(s.vimeoId), title:s.title||'360°動画'}); return; }
+      if(s.type==='person'){
+        var per=null;
+        if(s.kind==='host'){ if(s.name||s.iconUrl) per={kind:'host', name:s.name||'', bio:s.bio||'', iconUrl:s.iconUrl||'', sns:''}; }
+        else { var pt=_pByUid[s.uid]; if(pt) per={kind:'participant', name:(pt.nickname||pt.name||'参加者'), bio:pt.bio||'', iconUrl:pt.iconUrl||'', sns:pt.sns||''}; }
+        if(per) groups.push({type:'person', person:per});
+        return;
+      }
       var it=_items.find(function(x){return x.id===s.itemId;}); if(!it) return;
       var media;
       if(Array.isArray(s.media)){ var by={}; (_photosByItem[it.id]||[]).forEach(function(p){by[p.id]=p;}); media=s.media.map(function(id){return by[id];}).filter(Boolean); }
@@ -250,6 +268,7 @@ function _expandFlow(groups){
   var out=[];
   groups.forEach(function(gr){
     if(gr.type==='360'){ out.push(gr); return; }
+    if(gr.type==='person'){ out.push({type:'person', person:gr.person}); return; }
     out.push({type:'top', it:gr.it, showMap:gr.showMap, media:gr.media});
     (gr.media||[]).forEach(function(p,idx){
       out.push({type:'photo', it:gr.it, showMap:gr.showMap, media:gr.media, photo:p, pIndex:idx});
@@ -316,6 +335,17 @@ function renderStep(){
   if(st.type==='360'){
     stage.innerHTML='<div class="step360"><div class="v360"><div class="v360-ttl">🌐 '+esc(st.title)+'</div>'
       +'<iframe src="https://player.vimeo.com/video/'+encodeURIComponent(st.vimeoId)+'?title=0&byline=0&portrait=0&autoplay=1&muted=1" allow="autoplay; fullscreen" allowfullscreen></iframe></div></div>';
+    updateNav(); return;
+  }
+  if(st.type==='person'){
+    var pr=st.person||{};
+    var badge=pr.kind==='host'?'<div class="pr-badge host">🧭 現地ホスト</div>':'<div class="pr-badge">👤 参加メンバー</div>';
+    var av=pr.iconUrl?('<img src="'+esc(pr.iconUrl)+'" alt="">'):('<span>'+esc((pr.name||'？').slice(0,1))+'</span>');
+    var sns=(pr.kind==='participant'&&pr.sns)?('<div class="pr-sns">'+esc(pr.sns)+'</div>'):'';
+    var bio=pr.bio?('<div class="pr-bio">'+esc(pr.bio)+'</div>'):'';
+    stage.innerHTML='<div class="step"><div class="person-card">'+badge
+      +'<div class="pr-av">'+av+'</div>'
+      +'<div class="pr-nm">'+esc(pr.name||'')+'</div>'+sns+bio+'</div></div>';
     updateNav(); return;
   }
   var it=st.it;
