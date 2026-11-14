@@ -9,6 +9,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <script>
 var FIREBASE_CONFIG={
   apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
@@ -35,6 +36,8 @@ button{cursor:pointer;font-family:var(--sans)}
 .bar .lk{font-size:12px;text-decoration:none;padding:7px 12px;border-radius:8px;border:1px solid var(--border2);color:var(--ink2);background:var(--white);font-weight:600}
 .bar .lk.go{background:var(--teal);color:#fff;border:none}
 .bar .lk.pv{background:#2a62a0;color:#fff;border:none}
+.bar .lk:disabled{opacity:.55}
+.bk-stat{font-size:12px;color:var(--ink3);font-weight:600}
 .tip{font-size:12px;color:var(--ink3);line-height:1.7;margin-bottom:12px;background:var(--white);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
 .card{background:var(--white);border:1px solid var(--border);border-radius:var(--rl);padding:12px;margin-bottom:10px;box-shadow:0 1px 8px rgba(24,17,10,.05)}
 .card.disabled{opacity:.5}
@@ -73,6 +76,8 @@ button{cursor:pointer;font-family:var(--sans)}
   <div class="bar">
     <a class="lk go" id="lk-present" target="_blank">▶ 実施（配信者）</a>
     <a class="lk pv" id="lk-preview" target="_blank">👁 参加者プレビュー</a>
+    <button class="lk" id="btn-backfill" onclick="backfillMed()">🗜 参加者用の軽量画像を生成</button>
+    <span class="bk-stat" id="bk-stat"></span>
   </div>
   <div class="tip">イベントの流れからセミナーを構築します。ドラッグで項目の順番を入れ替え、各項目の写真・動画は横にドラッグで並び替え、タップで表示/非表示を切り替えできます。地図の表示ON/OFF、項目自体の表示ON/OFFも設定できます。「＋360°動画」で任意の位置にVimeoの360°動画を差し込めます。</div>
   <div id="steps"></div>
@@ -239,6 +244,39 @@ function save(){
     .set({steps:steps, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
     .then(function(){ toast('保存しました'); })
     .catch(function(e){ toast('保存失敗: '+(e&&e.message||e)); });
+}
+
+// ── 参加者用の軽量画像(中サイズ1080px)を既存写真に一括生成 ──
+// Cloud Functionを remaining が 0 になるまで繰り返し呼ぶ。配信者画面は高画質のまま。
+var _bkRunning=false;
+function backfillMed(){
+  if(_bkRunning) return;
+  if(!EID){ toast('イベントが特定できません'); return; }
+  if(!confirm('このイベントの既存写真に、参加者端末用の軽量画像(中サイズ)を生成します。\n写真が多いと数分かかる場合があります。実行しますか？')) return;
+  _bkRunning=true;
+  var btn=g('btn-backfill'); if(btn) btn.disabled=true;
+  var stat=g('bk-stat');
+  var fnsA=firebase.app().functions('asia-northeast1');
+  var call=fnsA.httpsCallable('backfillEventMediumImages');
+  var totalUpdated=0, totalFailed=0;
+  function setStat(s){ if(stat) stat.textContent=s; }
+  setStat('準備中…');
+  function step(){
+    call({eventId:EID, limit:20}).then(function(r){
+      var d=(r&&r.data)||{};
+      totalUpdated+=(d.updated||0); totalFailed+=(d.failed||0);
+      setStat('生成 '+totalUpdated+'件'+(totalFailed?('・失敗'+totalFailed+'件'):'')+'（残り約'+(d.remaining||0)+'件）');
+      if(!d.done && (d.processed||0)>0){ step(); return; } // まだ対象が残っていれば続行
+      _bkRunning=false; if(btn) btn.disabled=false;
+      if(totalUpdated===0 && totalFailed===0){ setStat('対象の写真はありませんでした'); toast('すべて生成済みです'); }
+      else { setStat('完了: '+totalUpdated+'件生成'+(totalFailed?('・'+totalFailed+'件失敗'):'')); toast('軽量画像の生成が完了しました'); }
+    }).catch(function(e){
+      _bkRunning=false; if(btn) btn.disabled=false;
+      setStat('エラー: '+((e&&e.message)||e));
+      toast('生成に失敗しました: '+((e&&e.message)||e));
+    });
+  }
+  step();
 }
 </script>
 </body>
