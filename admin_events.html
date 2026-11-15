@@ -5976,7 +5976,9 @@ function smfCopy(u){ if(navigator.clipboard&&navigator.clipboard.writeText){ nav
 function smfParticipants(sid){
   var s=_smfSessions.find(function(x){return x.id===sid;})||{};
   var ov=document.createElement('div'); ov.id='smf-pt'; ov.style.cssText='position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:320;display:flex;align-items:flex-start;justify-content:center;padding:20px 12px;overflow-y:auto';
-  ov.innerHTML='<div style="background:#fff;border-radius:14px;max-width:480px;width:100%;padding:18px" onclick="event.stopPropagation()"><div style="display:flex;align-items:center;margin-bottom:10px"><div style="font-weight:700">👥 参加者一覧 — '+esc(s.title||'')+'</div><button style="margin-left:auto;background:none;border:1px solid #ddd;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer" onclick="document.getElementById(\'smf-pt\').remove()">閉じる</button></div><div id="smf-ptlist" style="font-size:13px;color:#9a8470">読み込み中…</div></div>';
+  ov.innerHTML='<div style="background:#fff;border-radius:14px;max-width:480px;width:100%;padding:18px" onclick="event.stopPropagation()"><div style="display:flex;align-items:center;margin-bottom:10px"><div style="font-weight:700">👥 参加者一覧 — '+esc(s.title||'')+'</div><button style="margin-left:auto;background:none;border:1px solid #ddd;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer" onclick="document.getElementById(\'smf-pt\').remove()">閉じる</button></div>'
+    +'<div style="display:flex;gap:6px;margin-bottom:12px"><input id="smf-pt-add" placeholder="会員IDで追加（例: 260003）" inputmode="numeric" onkeydown="if(event.key===\'Enter\')smfAddParticipant(\''+esc(sid)+'\')" style="flex:1;min-width:0;padding:8px 10px;border:1px solid #ddd;border-radius:8px;font-size:13px"><button onclick="smfAddParticipant(\''+esc(sid)+'\')" style="flex:0 0 auto;white-space:nowrap;background:#1a6e58;color:#fff;border:none;border-radius:8px;padding:8px 13px;font-size:13px;font-weight:700;cursor:pointer">＋追加</button></div>'
+    +'<div id="smf-ptlist" style="font-size:13px;color:#9a8470">読み込み中…</div></div>';
   ov.addEventListener('click',function(e){ if(e.target===ov) ov.remove(); });
   document.body.appendChild(ov);
   smfLoadParticipants(sid);
@@ -5996,6 +5998,21 @@ function smfLoadParticipants(sid){
   }).catch(function(e){ var box=g('smf-ptlist'); if(box) box.innerHTML='<div style="color:#b03020">読み込み失敗: '+esc(e&&e.message||e)+'</div>'; });
 }
 function smfDelParticipant(sid,jid){ if(!confirm('この参加者を削除しますか？')) return; db.collection('seminarMyJoins').doc(jid).delete().then(function(){ toast('削除しました'); smfLoadParticipants(sid); }).catch(function(e){ toast('削除失敗: '+(e&&e.message||e)); }); }
+// 会員ID指定で参加者を代理登録（スタッフ/共同管理者）
+function smfAddParticipant(sid){
+  var inp=g('smf-pt-add'); var raw=(inp&&inp.value||'').trim(); if(!raw){ toast('会員IDを入力してください'); return; }
+  var m=members.find(function(x){ return x.id===raw || String(x.memberId)===String(raw) || String(x.displayId)===String(raw); });
+  if(!m){ toast('会員が見つかりません: '+raw,'err'); return; }
+  var s=_smfSessions.find(function(x){return x.id===sid;})||{};
+  var uid=m.authUid||'', mid=String(m.displayId||m.memberId||m.id||'');
+  var docId=(uid||('m'+mid))+'_'+sid;
+  db.collection('seminarMyJoins').doc(docId).set({
+    uid:uid, memberId:mid, nickname:(m.nickname||m.name||mid),
+    eventId:_smfEid, sessionId:sid, title:(s.title||''), place:(s.place||''), date:(s.date||''), time:(s.time||''),
+    addedByStaff:true, joinedAt:firebase.firestore.FieldValue.serverTimestamp()
+  },{merge:true}).then(function(){ toast('追加しました: '+(m.nickname||m.name||mid)); if(inp){ inp.value=''; inp.focus(); } smfLoadParticipants(sid); })
+   .catch(function(e){ toast('追加失敗: '+(e&&e.message||e),'err'); });
+}
 function smfDel(sid){
   if(!confirm('このセミナーを削除しますか？参加者情報も削除されます。')) return;
   db.collection('seminarMyJoins').where('sessionId','==',sid).get()
