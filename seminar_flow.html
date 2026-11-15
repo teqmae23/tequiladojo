@@ -87,6 +87,7 @@ body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSys
 .nav{flex:0 0 auto;display:flex;align-items:center;gap:10px;justify-content:center;padding:8px 12px;background:var(--panel);border-top:1px solid var(--line)}
 .nav button{background:var(--gold);color:#241c0e;border:none;border-radius:9px;font-size:15px;font-weight:800;padding:8px 18px;cursor:pointer;min-width:54px}
 .nav button:disabled{opacity:.35;cursor:default}
+.nav #n-pitem,.nav #n-nitem{background:var(--gold-d);color:#fff;min-width:46px;padding:8px 12px;font-size:14px}
 .nav .pg{font-size:13px;font-variant-numeric:tabular-nums;min-width:70px;text-align:center;font-weight:700}
 .nav .sp{flex:1}
 .pbtn{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:7px 11px;font-size:12px;font-weight:600;cursor:pointer}
@@ -344,10 +345,10 @@ function buildUI(){
   var stage='<div class="stage" id="stage"></div>';
   var nav;
   if(_presenter){
-    nav='<div class="nav" id="nav"><button onclick="prev()" id="n-prev">◀</button><span class="pg" id="n-pg">- / -</span><button onclick="next()" id="n-next">▶</button>'
+    nav='<div class="nav" id="nav"><button onclick="prevItem()" id="n-pitem" title="前のイベントへ">⏮</button><button onclick="prev()" id="n-prev">◀</button><span class="pg" id="n-pg">- / -</span><button onclick="next()" id="n-next">▶</button><button onclick="nextItem()" id="n-nitem" title="次のイベントへ">⏭</button>'
       +'<span class="sp"></span><button class="pbtn" onclick="openQr()">📱 QR</button><button class="pbtn danger" onclick="endSeminar()">⏹ 終了</button></div>';
   } else {
-    nav='<div class="nav" id="nav"><button onclick="pMove(-1)" id="n-prev">◀</button><span class="pg" id="n-pg">- / -</span><button onclick="pMove(1)" id="n-next">▶</button>'
+    nav='<div class="nav" id="nav"><button onclick="prevItem()" id="n-pitem" title="前のイベントへ">⏮</button><button onclick="pMove(-1)" id="n-prev">◀</button><span class="pg" id="n-pg">- / -</span><button onclick="pMove(1)" id="n-next">▶</button><button onclick="nextItem()" id="n-nitem" title="次のイベントへ">⏭</button>'
       +'<span class="sp"></span><button class="pbtn" id="n-sync" onclick="toggleSync()">✋ 自由に移動</button></div>'
       +'<div class="follownote" id="follownote"></div>';
   }
@@ -456,15 +457,29 @@ function drawMap(it){
 
 function updateNav(){
   var pg=g('n-pg'); if(pg) pg.textContent=(_step+1)+' / '+_flow.length;
-  var pb=g('n-prev'), nb=g('n-next');
-  if(_presenter){ if(pb)pb.disabled=(_step<=0); if(nb)nb.disabled=(_step>=_flow.length-1); }
-  else { var free=!_syncOn; if(pb)pb.disabled=(!free||_step<=0); if(nb)nb.disabled=(!free||_step>=_flow.length-1); }
+  var pb=g('n-prev'), nb=g('n-next'), pi=g('n-pitem'), ni=g('n-nitem');
+  var a=_topIdxs(), hasPrevItem=(_step>_curTop())||a.some(function(x){return x<_curTop();}), hasNextItem=a.some(function(x){return x>_step;});
+  var free=_presenter||!_syncOn;
+  if(pb)pb.disabled=(!free||_step<=0); if(nb)nb.disabled=(!free||_step>=_flow.length-1);
+  if(pi)pi.disabled=(!free||!hasPrevItem); if(ni)ni.disabled=(!free||!hasNextItem);
 }
 
 // ── 進行（配信者） ──
 function go(s){ s=Math.min(Math.max(0,s),_flow.length-1); _step=s; renderStep(); pushLive(false); }
 function prev(){ go(_step-1); }
 function next(){ go(_step+1); }
+// ── イベント(項目)単位の移動: 各項目の先頭(type:'top')・360・人物の区切りへジャンプ ──
+function _topIdxs(){ var a=[]; for(var i=0;i<_flow.length;i++){ var t=_flow[i]&&_flow[i].type; if(t==='top'||t==='360'){ a.push(i); } } return a; }
+function _curTop(){ var a=_topIdxs(), cur=a.length?a[0]:0; for(var i=0;i<a.length;i++){ if(a[i]<=_step) cur=a[i]; else break; } return cur; }
+function jumpTo(idx){ idx=Math.min(Math.max(0,idx),_flow.length-1);
+  if(_presenter){ go(idx); } else { if(_syncOn) return; _step=idx; renderStep(); updateFollowNote(); }
+}
+function prevItem(){ var a=_topIdxs(), cur=_curTop();
+  // 項目トップより先に進んでいれば、まず今の項目トップへ。既に先頭なら前の項目トップへ。
+  if(_step>cur){ jumpTo(cur); return; }
+  var pi=-1; for(var i=0;i<a.length;i++){ if(a[i]<cur) pi=a[i]; else break; } jumpTo(pi>=0?pi:0);
+}
+function nextItem(){ var a=_topIdxs(); for(var i=0;i<a.length;i++){ if(a[i]>_step){ jumpTo(a[i]); return; } } jumpTo(_flow.length-1); }
 function pushLive(startFlag){
   if(!_presenter) return;
   db.collection('events').doc(EID).collection('seminar').doc('live')
