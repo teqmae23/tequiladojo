@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>有料試飲メニュー — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
+};
+</script>
+<style>
+:root{--bg:#141210;--panel:#1e1b18;--ink:#f4efe7;--ink3:#b8ae9c;--gold:#d8b56b;--gold-d:#b8934a;--line:rgba(255,255,255,.14)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;min-height:100vh}
+.hd{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
+.hd a{color:var(--gold);font-size:13px;font-weight:700;text-decoration:none;white-space:nowrap}
+.hd .ev{font-size:12px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;margin-left:auto}
+.wrap{max-width:640px;margin:0 auto;padding:18px 14px 40px}
+h1{font-size:21px;margin:4px 0 6px;color:var(--gold);line-height:1.35}
+.note{font-size:13px;color:var(--ink);line-height:1.7;white-space:pre-wrap;margin:0 0 14px;background:rgba(216,181,107,.08);border:1px solid rgba(216,181,107,.3);border-radius:10px;padding:10px 12px}
+.list{display:flex;flex-direction:column;gap:8px}
+.it{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.it .no{font-size:14px;font-weight:800;color:var(--gold);min-width:22px;text-align:center}
+.it .nm{flex:1;min-width:0}
+.it .nm b{display:block;font-size:16px;line-height:1.35}
+.it .nm .ja{display:block;font-size:12px;color:var(--ink3);margin-top:1px}
+.it .nm .sub{display:block;font-size:11px;color:var(--ink3);margin-top:3px}
+.it .pr{text-align:right;flex-shrink:0}
+.it .pr b{display:block;font-size:18px;color:var(--gold)}
+.it .pr span{font-size:11px;color:var(--ink3)}
+.msg{text-align:center;color:var(--ink3);font-size:14px;padding:60px 20px;line-height:1.9}
+.msg a{color:var(--gold);font-weight:700}
+.foot{font-size:11px;color:var(--ink3);text-align:center;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="hd"><a id="back" href="#">◀ セミナーに戻る</a><span class="ev" id="ev"></span></div>
+<div class="wrap" id="wrap"><div class="msg">読み込み中…</div></div>
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function yen(n){ return '¥'+(Math.round(+n||0)).toLocaleString('ja-JP'); }
+var EID=new URLSearchParams(location.search).get('e')||'';
+g('back').href=EID?('/seminar_flow.html?e='+encodeURIComponent(EID)):'/mypage.html';
+function msg(html){ g('wrap').innerHTML='<div class="msg">'+html+'</div>'; }
+if(!EID) msg('イベントが指定されていません。');
+var _unsub=null;
+auth.onAuthStateChanged(function(user){
+  if(!EID) return;
+  if(_unsub){ _unsub(); _unsub=null; }
+  if(!user){ msg('このメニューは会員限定です。<br><br><a href="/member.html">▶ 道場オンラインにログイン</a>'); return; }
+  // イベント名（非公開イベントは参加者が読めないので失敗は無視）
+  db.collection('events').doc(EID).get().then(function(d){ if(d.exists&&d.data().name){ g('ev').textContent=d.data().name; } }).catch(function(){});
+  // 価格・並びの変更がその場で反映されるよう購読
+  _unsub=db.collection('events').doc(EID).collection('seminar').doc('tastingMenu').onSnapshot(function(d){
+    var x=d.exists?(d.data()||{}):null;
+    var items=(x&&Array.isArray(x.items))?x.items:[];
+    if(!x||x.enabled===false||!items.length){ msg('現在ご案内できる試飲メニューはありません。'); return; }
+    var title=x.title||'振り返りセミナー 有料試飲メニュー';
+    document.title=title+' — テキーラ道場';
+    var html='<h1>🥃 '+esc(title)+'</h1>'+(x.note?'<div class="note">'+esc(x.note)+'</div>':'')+'<div class="list">'
+      +items.map(function(it,i){
+        var sub=[]; if(it.nom) sub.push('NOM '+it.nom); if(it.cls) sub.push(it.cls); if(it.abv) sub.push(it.abv+'%');
+        var ja=(it.nameJa&&it.nameJa!==it.name)?'<span class="ja">'+esc(it.nameJa)+'</span>':'';
+        return '<div class="it"><span class="no">'+(i+1)+'</span><div class="nm"><b>'+esc(it.name||'')+'</b>'+ja
+          +(sub.length?'<span class="sub">'+esc(sub.join(' · '))+'</span>':'')+'</div>'
+          +'<div class="pr"><b>'+esc(yen(it.price))+'</b>'+(+it.ml?'<span>'+esc(+it.ml)+'ml</span>':'')+'</div></div>';
+      }).join('')+'</div>';
+    g('wrap').innerHTML=html;
+  }, function(e){ msg('読み込みに失敗しました。<br><span style="font-size:11px">'+esc(e&&e.message||e)+'</span>'); });
+});
+</script>
+</body>
+</html>

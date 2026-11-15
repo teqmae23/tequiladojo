@@ -29,6 +29,10 @@ body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSys
 #screen{height:100%;display:flex;flex-direction:column}
 .msg{margin:auto;text-align:center;color:var(--ink3);font-size:14px;padding:24px;line-height:1.9;max-width:92%}
 .msg a{color:var(--gold);font-weight:700}
+.menu-slot:empty{display:none}
+.menu-slot{margin-top:22px}
+.menu-lnk{display:inline-block;background:var(--gold);color:#241c0e!important;text-decoration:none;border-radius:12px;padding:13px 22px;font-size:16px;font-weight:800;box-shadow:0 4px 16px rgba(0,0,0,.35)}
+.menu-slot .mnote{font-size:12px;color:var(--ink3);margin-top:8px}
 .hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
 .hd-ttl{font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .hd-live{font-size:10px;font-weight:700;color:#e26a6a;white-space:nowrap;margin-left:auto}
@@ -491,7 +495,29 @@ function endSeminar(){
   db.collection('events').doc(EID).collection('seminar').doc('live')
     .set({live:false, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true}).catch(function(){});
   if(_unsub){ _unsub(); _unsub=null; }
-  showMsg('セミナーを終了しました。<br><span style="font-size:12px;color:var(--ink3)">再開するには画面を再読み込みしてください。</span>');
+  showMsg('セミナーを終了しました。<br><span style="font-size:12px;color:var(--ink3)">再開するには画面を再読み込みしてください。</span><div class="menu-slot"></div>');
+  _watchMenu();
+}
+
+// ── 終了画面 → 有料試飲メニューへのリンク（events/{eid}/seminar/tastingMenu を購読。公開ON かつ1件以上で表示）──
+var _menu=null, _menuUnsub=null;
+function menuUrl(){ return '/seminar_menu.html?e='+encodeURIComponent(EID); }
+function _watchMenu(){
+  if(_menuUnsub){ _paintMenuSlots(); return; }
+  _menuUnsub=db.collection('events').doc(EID).collection('seminar').doc('tastingMenu').onSnapshot(function(d){
+    var x=d.exists?(d.data()||{}):null;
+    _menu=(x&&x.enabled!==false&&Array.isArray(x.items)&&x.items.length)?x:null;
+    _paintMenuSlots();
+  }, function(){ _menu=null; _paintMenuSlots(); });
+}
+function _paintMenuSlots(){
+  var html='';
+  if(_menu){
+    // 配信者（プロジェクター）は別タブで開く: この画面を再読み込みすると配信が再開されてしまうため。
+    html='<a class="menu-lnk" href="'+menuUrl()+'"'+(_presenter?' target="_blank" rel="noopener"':'')+'>🥃 '+esc(_menu.title||'有料試飲メニュー')+'</a>'
+      +'<div class="mnote">'+esc(_menu.items.length+'種類')+' — タップでメニューを表示</div>';
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.menu-slot'),function(el){ el.innerHTML=html; });
 }
 
 // ── 同期（参加者） ──
@@ -504,7 +530,7 @@ function subscribe(){
     var lb=g('hd-live'); if(lb) lb.style.display=_live?'':'none';
     if(_presenter) return; // 配信者は自分の操作優先
     if(!_started){ _pstate='pre'; var fn0=g('follownote'); if(fn0) fn0.textContent='開始までお待ちください。'; stageWait('まもなく開始します。'); return; }
-    if(!_live){ _pstate='ended'; stageWait('セミナーは終了しました。'); var fn1=g('follownote'); if(fn1) fn1.textContent='セミナーは終了しました。'; return; }
+    if(!_live){ _pstate='ended'; stageEnded(); var fn1=g('follownote'); if(fn1) fn1.textContent='セミナーは終了しました。'; return; }
     // 配信中: 進行ページに追従（同期ON時）。待機状態からの復帰や初回は必ず描画。
     var need=(_pstate!=='live');
     if(_syncOn && _step!==_liveStep){ _step=_liveStep; need=true; }
@@ -513,6 +539,7 @@ function subscribe(){
     updateNav(); updateFollowNote();
   }, function(){});
 }
+function stageEnded(){ var s=g('stage'); if(s) s.innerHTML='<div class="msg" style="height:100%">セミナーは終了しました。<div class="menu-slot"></div></div>'; _watchMenu(); }
 function stageWait(msg){ var s=g('stage'); if(s) s.innerHTML='<div class="msg" style="height:100%">'+esc(msg)+'</div>'; var lb=g('hd-live'); }
 function updateFollowNote(){ var fn=g('follownote'); if(!fn) return; fn.textContent=_syncOn?('進行に同期中 — '+(_step+1)+' / '+_flow.length):('自由に閲覧中 — '+(_step+1)+' / '+_flow.length); }
 function toggleSync(){
