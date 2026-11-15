@@ -5998,20 +5998,34 @@ function smfLoadParticipants(sid){
   }).catch(function(e){ var box=g('smf-ptlist'); if(box) box.innerHTML='<div style="color:#b03020">読み込み失敗: '+esc(e&&e.message||e)+'</div>'; });
 }
 function smfDelParticipant(sid,jid){ if(!confirm('この参加者を削除しますか？')) return; db.collection('seminarMyJoins').doc(jid).delete().then(function(){ toast('削除しました'); smfLoadParticipants(sid); }).catch(function(e){ toast('削除失敗: '+(e&&e.message||e)); }); }
+// 会員IDから会員docを解決（キャッシュ→Firestore直検索。新規会員やdisplayId数値型にも対応）
+function _smfFindMember(raw){
+  var m=members.find(function(x){ return x.id===raw || String(x.memberId)===String(raw) || String(x.displayId)===String(raw); });
+  if(m) return Promise.resolve(m);
+  var col=db.collection('members'), n=parseInt(raw,10), hasN=!isNaN(n);
+  function q(field,val){ return col.where(field,'==',val).limit(1).get().then(function(s){ return s.empty?null:Object.assign({id:s.docs[0].id},s.docs[0].data()); }); }
+  return col.doc(raw).get().then(function(d){ return d.exists?Object.assign({id:d.id},d.data()):null; }).catch(function(){ return null; })
+    .then(function(r){ return r||q('displayId',raw); })
+    .then(function(r){ return r||(hasN?q('displayId',n):null); })
+    .then(function(r){ return r||q('memberId',raw); })
+    .then(function(r){ return r||(hasN?q('memberId',n):null); })
+    .catch(function(){ return null; });
+}
 // 会員ID指定で参加者を代理登録（スタッフ/共同管理者）
 function smfAddParticipant(sid){
   var inp=g('smf-pt-add'); var raw=(inp&&inp.value||'').trim(); if(!raw){ toast('会員IDを入力してください'); return; }
-  var m=members.find(function(x){ return x.id===raw || String(x.memberId)===String(raw) || String(x.displayId)===String(raw); });
-  if(!m){ toast('会員が見つかりません: '+raw,'err'); return; }
-  var s=_smfSessions.find(function(x){return x.id===sid;})||{};
-  var uid=m.authUid||'', mid=String(m.displayId||m.memberId||m.id||'');
-  var docId=(uid||('m'+mid))+'_'+sid;
-  db.collection('seminarMyJoins').doc(docId).set({
-    uid:uid, memberId:mid, nickname:(m.nickname||m.name||mid),
-    eventId:_smfEid, sessionId:sid, title:(s.title||''), place:(s.place||''), date:(s.date||''), time:(s.time||''),
-    addedByStaff:true, joinedAt:firebase.firestore.FieldValue.serverTimestamp()
-  },{merge:true}).then(function(){ toast('追加しました: '+(m.nickname||m.name||mid)); if(inp){ inp.value=''; inp.focus(); } smfLoadParticipants(sid); })
-   .catch(function(e){ toast('追加失敗: '+(e&&e.message||e),'err'); });
+  var btn=inp&&inp.nextElementSibling; if(btn) btn.disabled=true;
+  _smfFindMember(raw).then(function(m){
+    if(!m){ if(btn) btn.disabled=false; toast('会員が見つかりません: '+raw,'err'); return; }
+    var s=_smfSessions.find(function(x){return x.id===sid;})||{};
+    var uid=m.authUid||'', mid=String(m.displayId||m.memberId||m.id||raw);
+    var docId=(uid||('m'+mid))+'_'+sid;
+    return db.collection('seminarMyJoins').doc(docId).set({
+      uid:uid, memberId:mid, nickname:(m.nickname||m.name||mid),
+      eventId:_smfEid, sessionId:sid, title:(s.title||''), place:(s.place||''), date:(s.date||''), time:(s.time||''),
+      addedByStaff:true, joinedAt:firebase.firestore.FieldValue.serverTimestamp()
+    },{merge:true}).then(function(){ if(btn) btn.disabled=false; toast('追加しました: '+(m.nickname||m.name||mid)); if(inp){ inp.value=''; inp.focus(); } smfLoadParticipants(sid); });
+  }).catch(function(e){ if(btn) btn.disabled=false; toast('追加失敗: '+(e&&e.message||e),'err'); });
 }
 function smfDel(sid){
   if(!confirm('このセミナーを削除しますか？参加者情報も削除されます。')) return;
