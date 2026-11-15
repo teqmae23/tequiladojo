@@ -55,21 +55,30 @@ var EID=new URLSearchParams(location.search).get('e')||'';
 g('back').href=EID?('/seminar_flow.html?e='+encodeURIComponent(EID)):'/mypage.html';
 function msg(html){ g('wrap').innerHTML='<div class="msg">'+html+'</div>'; }
 if(!EID) msg('イベントが指定されていません。');
-var _unsub=null;
-auth.onAuthStateChanged(function(user){
+var _unsub=null, PREVIEW=new URLSearchParams(location.search).get('preview')==='1';
+// 非公開メニューのプレビューはスタッフ／当該イベントの共同管理者のみ
+async function canManage(user){
+  try{ var r=await user.getIdTokenResult(); if(r.claims&&(r.claims.role==='owner'||r.claims.role==='staff')) return true; }catch(e){}
+  try{ var d=await db.collection('staffRoles').doc(user.uid).get(); if(d.exists&&(d.data().role==='owner'||d.data().role==='staff')) return true; }catch(e){}
+  try{ var ev=await db.collection('events').doc(EID).get(); if(ev.exists&&Array.isArray(ev.data().coAdminUids)&&ev.data().coAdminUids.indexOf(user.uid)>=0) return true; }catch(e){}
+  return false;
+}
+auth.onAuthStateChanged(async function(user){
   if(!EID) return;
   if(_unsub){ _unsub(); _unsub=null; }
   if(!user){ msg('このメニューは会員限定です。<br><br><a href="/member.html">▶ 道場オンラインにログイン</a>'); return; }
   // イベント名（非公開イベントは参加者が読めないので失敗は無視）
   db.collection('events').doc(EID).get().then(function(d){ if(d.exists&&d.data().name){ g('ev').textContent=d.data().name; } }).catch(function(){});
+  var mgr=PREVIEW?(await canManage(user)):false;
   // 価格・並びの変更がその場で反映されるよう購読
   _unsub=db.collection('events').doc(EID).collection('seminar').doc('tastingMenu').onSnapshot(function(d){
     var x=d.exists?(d.data()||{}):null;
     var items=(x&&Array.isArray(x.items))?x.items:[];
-    if(!x||x.enabled===false||!items.length){ msg('現在ご案内できる試飲メニューはありません。'); return; }
+    var pub=!!(x&&x.enabled===true);
+    if(!x||!items.length||(!pub&&!mgr)){ msg('現在ご案内できる試飲メニューはありません。'); return; }
     var title=x.title||'振り返りセミナー 有料試飲メニュー';
     document.title=title+' — テキーラ道場';
-    var html='<h1>🥃 '+esc(title)+'</h1>'+(x.note?'<div class="note">'+esc(x.note)+'</div>':'')+'<div class="list">'
+    var html=(pub?'':'<div class="note" style="border-color:#e26a6a;color:#e26a6a;background:rgba(226,106,106,.08)">非公開（スタッフ用プレビュー）— 参加者には表示されていません</div>')+'<h1>🥃 '+esc(title)+'</h1>'+(x.note?'<div class="note">'+esc(x.note)+'</div>':'')+'<div class="list">'
       +items.map(function(it,i){
         var sub=[]; if(it.nom) sub.push('NOM '+it.nom); if(it.cls) sub.push(it.cls); if(it.abv) sub.push(it.abv+'%');
         var ja=(it.nameJa&&it.nameJa!==it.name)?'<span class="ja">'+esc(it.nameJa)+'</span>':'';

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>有料試飲メニュー作成 — テキーラ道場</title>
+<script src="https://unpkg.com/sortablejs@1.15.6/Sortable.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878"
+};
+</script>
+<script src="/auth-role.js?v=20260829"></script>
+<style>
+:root{--ink:#18110a;--ink2:#4a3820;--ink3:#9a8470;--gold:#c8921e;--gold-d:#7a5610;--cream:#faf7f1;--cream2:#f0ebe0;--white:#fff;--red:#b03020;--teal:#1a6e58;--border:rgba(160,130,100,.2);--border2:rgba(160,130,100,.34);--r:8px;--rl:13px;--sans:'Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--cream);color:var(--ink);min-height:100vh}
+button{cursor:pointer;font-family:var(--sans)}
+.hdr{background:var(--ink);padding:0 14px;height:52px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:40}
+.hdr .t{font-size:15px;color:var(--gold);font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.wrap{max-width:720px;margin:0 auto;padding:14px 12px 90px}
+.chip{font-size:11px;font-weight:700;padding:2px 8px;border-radius:9px;background:var(--cream2);color:var(--ink2)}
+.drag{cursor:grab;color:var(--ink3);font-size:18px;flex-shrink:0;touch-action:none;user-select:none}
+.rm{background:none;border:1px solid var(--border2);color:var(--red);border-radius:7px;padding:5px 9px;font-size:12px}
+.savestat{font-size:12px;color:var(--teal);font-weight:700}
+.addbtn{flex:1;min-width:150px;padding:11px;border:1px dashed var(--gold-d);border-radius:10px;background:#fbf4e6;color:var(--gold-d);font-weight:700;font-size:13px}
+.ptx{background:none;border:none;font-size:16px;color:var(--ink3)}
+.pub{font-size:12px;font-weight:700;color:var(--ink3)}
+.pub.on{color:var(--teal)}
+/* 有料試飲メニュー（セミナー終了画面からリンク） */
+.tmenu{background:var(--white);border:2px solid #7a3a10;border-radius:var(--rl);padding:12px;box-shadow:0 1px 8px rgba(24,17,10,.05)}
+.tm-hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tm-hd .tm-sub{font-size:11px;color:var(--ink3)}
+.tm-hd .sp{flex:1}
+.tm-f{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.tm-f input,.tm-f textarea{width:100%;padding:8px 10px;border:1px solid var(--border2);border-radius:7px;font-size:13px;font-family:inherit}
+.tm-f textarea{min-height:48px;resize:vertical}
+#tm-list{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.tm-empty{font-size:12px;color:var(--ink3);padding:10px 2px}
+.tm-row{display:flex;align-items:center;gap:8px;border:1px solid var(--border2);border-radius:9px;padding:7px 8px;background:var(--cream)}
+.tm-row .no{font-size:12px;font-weight:700;color:var(--gold-d);min-width:20px;text-align:right}
+.tm-row .nm{flex:1;min-width:0}
+.tm-row .nm b{display:block;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tm-row .nm span{display:block;font-size:10px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tm-row .pr{display:flex;align-items:center;gap:3px;font-size:12px;color:var(--ink2);flex-shrink:0}
+.tm-row .pr input{padding:5px 6px;border:1px solid var(--border2);border-radius:6px;font-size:13px;text-align:right;background:var(--white)}
+.tm-row .pr .ip{width:72px}
+.tm-row .pr .im{width:44px}
+.tm-row .x{background:none;border:none;color:var(--red);font-size:15px;padding:2px 4px;flex-shrink:0}
+.addbtn.tm{width:100%;margin-top:10px;border-color:#7a3a10;background:#f8ece2;color:#7a3a10}
+/* テキーラ選択モーダル（注文画面と同じ絞り込み） */
+.tqpick{position:fixed;inset:0;background:rgba(24,17,10,.55);z-index:9998;display:flex;align-items:flex-end;justify-content:center}
+.tqbox{background:var(--white);width:100%;max-width:560px;height:88vh;border-radius:16px 16px 0 0;display:flex;flex-direction:column;overflow:hidden}
+.tqhd{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--border)}
+.tqhd b{font-size:15px;color:var(--gold-d)}
+.tqhd .sp{flex:1}
+.tqflt{padding:8px 12px 4px;display:flex;flex-direction:column;gap:5px;border-bottom:1px solid var(--border)}
+.tqflt .r{display:flex;gap:3px;align-items:center;flex-wrap:wrap}
+.tqflt .lb2{font-size:10px;color:var(--ink3);font-weight:600;margin-right:2px}
+.tqflt select,.tqflt .ini{font-size:11px;padding:2px 4px;border:1px solid var(--border2);border-radius:4px;background:var(--cream);color:var(--ink)}
+.tqflt .ini{width:44px;text-transform:uppercase}
+.tqflt .q{flex:1;min-width:120px;padding:8px 10px;border:1px solid var(--border2);border-radius:var(--r);font-size:13px;background:var(--cream)}
+.cls-btn{padding:2px 7px;font-size:12px;font-weight:700;border-radius:3px;border:1.5px solid var(--gold-d);background:transparent;color:var(--gold-d)}
+.cls-btn.active{background:var(--gold-d);color:#fff}
+.nom-btn{background:var(--cream2);border:1px solid var(--border2);color:var(--ink3);padding:3px 8px;border-radius:4px;font-size:11px}
+.nom-btn.active{background:var(--gold-d);color:var(--cream);border-color:var(--gold-d)}
+.tqlist{flex:1;overflow-y:auto}
+.tqrow{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer}
+.tqrow:active{background:var(--cream2)}
+.tqrow.on{background:#e9f4f0}
+.tqrow .ck{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--border2);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff}
+.tqrow.on .ck{background:var(--teal);border-color:var(--teal)}
+.tqrow .nm{flex:1;min-width:0}
+.tqrow .nm b{display:block;font-size:13px;font-weight:600}
+.tqrow .nm span{display:block;font-size:10px;color:var(--ink3)}
+.tqrow .pc{font-size:11px;color:var(--gold-d);font-weight:600;white-space:nowrap}
+.tqft{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid var(--border)}
+.tqft .cnt{font-size:12px;color:var(--ink3);flex:1}
+.tqft button{background:var(--gold-d);color:#fff;border:none;border-radius:9px;padding:9px 20px;font-size:14px;font-weight:700}
+#msg{padding:40px 16px;text-align:center;color:var(--ink3)}
+#toasts{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:6px;align-items:center}
+.toast{background:#18110a;color:#fff;font-size:12px;padding:9px 14px;border-radius:18px;opacity:0;transition:.2s}.toast.show{opacity:.96}
+</style>
+</head>
+<body>
+<div id="login-screen" style="display:none;align-items:center;justify-content:center;height:100vh;text-align:center;padding:24px"><div style="font-size:14px;color:var(--ink2);line-height:1.9">このページの利用にはスタッフ／共同管理者としてのログインが必要です。<br><a href="/admin.html" style="color:var(--gold-d);font-weight:700">▶ 管理ログイン</a></div></div>
+<div class="hdr"><span class="t" id="hdr-title">🥃 有料試飲メニュー作成</span></div>
+<div id="msg">読み込み中…</div>
+<div class="wrap" id="wrap" style="display:none">
+  <div class="tmenu" id="tmenu">
+    <div class="tm-hd"><span class="chip" style="background:#7a3a10;color:#fff">🥃 有料試飲メニュー</span><span class="pub" id="tm-pub"></span><span class="tm-sub">公開/非公開は振り返りセミナーTOPで切替</span><span class="sp"></span>
+      <a class="rm" id="tm-view" target="_blank" style="color:var(--ink2);text-decoration:none">👁 表示確認</a>
+      <span class="savestat" id="tm-stat"></span></div>
+    <div class="tm-f">
+      <input id="tm-title" placeholder="メニュー名（例: 振り返りセミナー 有料試飲メニュー）">
+      <textarea id="tm-note" placeholder="案内文（任意・例: ご注文はスタッフにお声がけください）"></textarea>
+    </div>
+    <div id="tm-list"></div>
+    <button class="addbtn tm" onclick="tmOpenPicker()">＋ テキーラを追加</button>
+  </div>
+</div>
+<div id="toasts"></div>
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function toast(m){var d=document.createElement('div');d.className='toast';d.textContent=m;g('toasts').appendChild(d);requestAnimationFrame(function(){requestAnimationFrame(function(){d.classList.add('show');});});setTimeout(function(){d.classList.remove('show');setTimeout(function(){d.remove();},250);},2400);}
+function _hhmm(){ var d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
+var EID=new URLSearchParams(location.search).get('e')||'';
+if(!EID){ g('msg').textContent='イベントが指定されていません。'; }
+else AuthRole.requireStaffOrCoAdmin(auth, EID,
+  function(){ start(); }, function(){ start(); },
+  function(){ g('msg').innerHTML='このページはスタッフ／共同管理者のみ利用できます。<br><a href="/admin.html" style="color:var(--gold-d);font-weight:700">▶ 管理ログイン</a>'; });
+function start(){
+  db.collection('events').doc(EID).get().then(function(d){ if(d.exists&&d.data().name) g('hdr-title').textContent='🥃 有料試飲メニュー — '+d.data().name; }).catch(function(){});
+  tmLoad();
+}
+window.addEventListener('beforeunload', function(e){ if(_tmDirty||_tmSaving){ e.preventDefault(); e.returnValue=''; } });
+
+// ── 有料試飲メニュー（セミナー終了画面からリンク）──
+// 保存先: events/{eid}/seminar/tastingMenu {enabled,title,note,items:[{bid,name,nameJa,nom,cls,abv,price,ml}]}
+// 公開/非公開(enabled)は振り返りセミナーTOP（admin_events）で切り替える。ここでは書き換えない（新規作成時のみ非公開で作成）。
+// items は保存時のスナップショット（価格・並びはここで自由に変更。マスタの価格変更は既存項目に波及しない）。
+var _tm={title:'',note:'',items:[]}, _tmExists=false, _tmLoaded=false, _tmDirty=false, _tmSaving=false, _tmT=null;
+var TM_DEFAULT_TITLE='振り返りセミナー 有料試飲メニュー';
+var TQ_CLS_MAP={B:'1',J:'2',R:'3',A:'4',X:'5'};
+function _tmDoc(){ return db.collection('events').doc(EID).collection('seminar').doc('tastingMenu'); }
+function _tqClsDigit(i){ if(i&&i.classId!=null&&i.classId!==''){ var c=String(i.classId); return c.length>=2?c.charAt(1):c; } var s=String((i&&(i.bottleId||i.id))||''); return s.length>=9?s.charAt(8):''; }
+function _tqClsKey(i){ var d=_tqClsDigit(i); return Object.keys(TQ_CLS_MAP).find(function(k){ return TQ_CLS_MAP[k]===d; })||''; }
+function _tqNom(b){ if(!b) return ''; var n=String(b.nom==null?'':b.nom).trim(); if(/^\d{4}$/.test(n)) return n; var cand=[b.brandId,b.bottleId,b.baseBottleId,b.productCode,b.id]; for(var i=0;i<cand.length;i++){ var p=String(cand[i]==null?'':cand[i]).trim().slice(0,4); if(/^\d{4}$/.test(p)) return p; } return ''; }
+function _tqPrice(i){ return parseFloat(i.price!=null?i.price:(i.unitPrice!=null?i.unitPrice:i.price10))||0; }
+function _yen(n){ return '¥'+(Math.round(+n||0)).toLocaleString('ja-JP'); }
+function _tmSub(it){ var a=[]; if(it.nom) a.push('NOM '+it.nom); if(it.cls) a.push(it.cls); if(it.abv) a.push(it.abv+'%'); return a.join(' · '); }
+
+function tmLoad(){
+  var v=g('tm-view'); if(v) v.href='/seminar_menu.html?e='+encodeURIComponent(EID)+'&preview=1';
+  _tmDoc().get().then(function(d){
+    var x=d.exists?(d.data()||{}):{};
+    _tmExists=d.exists;
+    _tm={ title:x.title||'', note:x.note||'',
+      items:(Array.isArray(x.items)?x.items:[]).filter(function(it){ return it&&it.bid; }).map(function(it){
+        return {bid:String(it.bid), name:it.name||'', nameJa:it.nameJa||'', nom:it.nom||'', cls:it.cls||'', abv:it.abv||'', price:(+it.price||0), ml:(+it.ml||10)}; }) };
+    _tmInitUI(); _tmSetStat(d.exists?'✓ 保存済み':'');
+    _tmWatchPub();
+  }).catch(function(e){ g('msg').textContent='試飲メニューの読み込みに失敗しました: '+(e&&e.message||e); });
+}
+// 公開状態はTOPで切り替わるので購読して表示だけ更新
+function _tmWatchPub(){
+  _tmDoc().onSnapshot(function(d){
+    var on=d.exists&&(d.data()||{}).enabled===true, el=g('tm-pub');
+    if(el){ el.textContent=on?'● 公開中':'○ 非公開'; el.className='pub'+(on?' on':''); }
+  }, function(){});
+}
+function _tmInitUI(){
+  g('msg').style.display='none'; g('wrap').style.display='block';
+  g('tm-title').value=_tm.title; g('tm-note').value=_tm.note;
+  if(!_tm.title) g('tm-title').placeholder=TM_DEFAULT_TITLE;
+  g('tm-title').oninput=function(){ _tm.title=this.value; tmMark(); };
+  g('tm-note').oninput=function(){ _tm.note=this.value; tmMark(); };
+  var list=g('tm-list');
+  list.addEventListener('input',function(e){
+    var row=e.target.closest('.tm-row'); if(!row) return;
+    var it=_tm.items.find(function(x){ return x.bid===row.getAttribute('data-bid'); }); if(!it) return;
+    if(e.target.classList.contains('ip')) it.price=Math.max(0,+e.target.value||0);
+    else if(e.target.classList.contains('im')) it.ml=Math.max(0,+e.target.value||0);
+    tmMark();
+  });
+  list.addEventListener('click',function(e){
+    var x=e.target.closest('.x'); if(!x) return;
+    var row=x.closest('.tm-row'); var bid=row&&row.getAttribute('data-bid');
+    _tm.items=_tm.items.filter(function(it){ return it.bid!==bid; });
+    tmRender(); tmSaveNow();
+  });
+  if(window.Sortable) Sortable.create(list,{animation:150,handle:'.drag',delay:120,delayOnTouchOnly:true,onEnd:function(){
+    var by={}; _tm.items.forEach(function(it){ by[it.bid]=it; });
+    _tm.items=Array.prototype.map.call(list.querySelectorAll('.tm-row'),function(r){ return by[r.getAttribute('data-bid')]; }).filter(Boolean);
+    tmRender(); tmSaveNow();
+  }});
+  tmRender(); _tmLoaded=true;
+}
+function tmRender(){
+  var list=g('tm-list'); if(!list) return;
+  if(!_tm.items.length){ list.innerHTML='<div class="tm-empty">メニューにテキーラがありません。「＋ テキーラを追加」から選んでください。</div>'; return; }
+  list.innerHTML=_tm.items.map(function(it,i){
+    return '<div class="tm-row" data-bid="'+esc(it.bid)+'"><span class="drag">⠿</span><span class="no">'+(i+1)+'</span>'
+      +'<div class="nm"><b>'+esc(it.name||it.bid)+'</b><span>'+esc(_tmSub(it))+'</span></div>'
+      +'<div class="pr">¥<input class="ip" type="number" inputmode="numeric" min="0" step="10" value="'+esc(it.price)+'" title="価格">/<input class="im" type="number" inputmode="numeric" min="0" step="5" value="'+esc(it.ml)+'" title="量(ml)">ml</div>'
+      +'<button type="button" class="x" title="メニューから外す">✕</button></div>';
+  }).join('');
+}
+function _tmSetStat(s){ var el=g('tm-stat'); if(el) el.textContent=s; }
+function tmMark(){ if(!_tmLoaded) return; _tmDirty=true; _tmSetStat('● 未保存'); if(_tmT) clearTimeout(_tmT); _tmT=setTimeout(tmSave,900); }
+function tmSaveNow(){ if(!_tmLoaded) return; _tmDirty=true; _tmSetStat('● 未保存'); if(_tmT){ clearTimeout(_tmT); _tmT=null; } tmSave(); }
+function tmSave(){
+  if(_tmSaving){ if(_tmT) clearTimeout(_tmT); _tmT=setTimeout(tmSave,500); return; }
+  _tmSaving=true; _tmSetStat('保存中…');
+  var items=_tm.items.map(function(it){ return {bid:it.bid, name:it.name||'', nameJa:it.nameJa||'', nom:it.nom||'', cls:it.cls||'', abv:it.abv||'', price:(+it.price||0), ml:(+it.ml||0)}; });
+  var data={title:(_tm.title||'').trim(), note:(_tm.note||'').trim(), items:items, updatedAt:firebase.firestore.FieldValue.serverTimestamp()};
+  if(!_tmExists) data.enabled=false; // 新規は非公開で作成（公開はTOPから）
+  _tmDoc().set(data,{merge:true})
+    .then(function(){ _tmSaving=false; _tmExists=true; _tmDirty=false; _tmSetStat('✓ 保存済み '+_hhmm()); })
+    .catch(function(e){ _tmSaving=false; _tmSetStat('⚠ 保存失敗'); toast('試飲メニューの保存失敗: '+(e&&e.message||e)); });
+}
+
+// ── テキーラ選択モーダル（注文画面のテキーラタブと同じ絞り込み: NOM・クラス・頭文字・ロット・度数・添加・検索・並び替え）──
+var _tqMaster=null, _tqLoading=null;
+var _tqF={cls:new Set(['B','J','R','A','X']), lot:'0', abv:'', add:'', ini:'', nom:'', q:'', sort:'', dir:'asc'};
+var TQ_NOMS=['1123','1146','1108','1109','1493','1579','1414','1545','1139','1474','1120'];
+function _tqLoad(){
+  if(_tqMaster) return Promise.resolve(_tqMaster);
+  if(_tqLoading) return _tqLoading;
+  _tqLoading=db.collection('bottleData').get().then(function(snap){
+    var arr=[]; snap.forEach(function(d){ var v=d.data()||{}; if(v.visibility==='0'||v.visibility===0||v.visibility===false||v.visibility===undefined||v.visibility===null) arr.push(Object.assign({id:d.id},v)); });
+    _tqMaster=arr; _tqLoading=null; return arr;
+  }).catch(function(e){ _tqLoading=null; throw e; });
+  return _tqLoading;
+}
+function tmOpenPicker(){
+  var ov=document.createElement('div'); ov.className='tqpick'; ov.id='tqpick';
+  var clsBtns=['B','J','R','A','X'].map(function(c){ return '<button type="button" class="cls-btn'+(_tqF.cls.has(c)?' active':'')+'" data-cls="'+c+'">'+c+'</button>'; }).join('');
+  ov.innerHTML='<div class="tqbox">'
+    +'<div class="tqhd"><b>🥃 テキーラを選択</b><span class="sp"></span><button type="button" class="ptx" data-close="1">✕</button></div>'
+    +'<div class="tqflt">'
+      +'<div class="r" id="tq-noms"></div>'
+      +'<div class="r"><span class="lb2">クラス</span>'+clsBtns
+        +'<span style="width:1px;height:14px;background:var(--border2);margin:0 3px"></span><input class="ini" id="tq-ini" maxlength="1" placeholder="頭文字" value="'+esc(_tqF.ini)+'"></div>'
+      +'<div class="r"><span class="lb2">ロット</span><select id="tq-lot"><option value="0">全</option><option value="1">現</option><option value="2">旧</option></select>'
+        +'<span class="lb2" style="margin-left:6px">度数</span><select id="tq-abv"><option value="">全件</option><option value="normal">通常</option><option value="hp">HP</option></select>'
+        +'<span class="lb2" style="margin-left:6px">添</span><select id="tq-add"><option value="">全</option><option value="0">無</option><option value="1">有</option></select></div>'
+      +'<div class="r"><input class="q" id="tq-q" placeholder="商品名・NOMで検索..." value="'+esc(_tqF.q)+'">'
+        +'<button type="button" class="nom-btn" data-sort="name">名前</button><button type="button" class="nom-btn" data-sort="price">価格</button><button type="button" class="nom-btn" data-sort="nom">NOM</button></div>'
+    +'</div>'
+    +'<div class="tqlist" id="tq-list"><div class="tm-empty" style="padding:20px">読み込み中…</div></div>'
+    +'<div class="tqft"><span class="cnt" id="tq-cnt"></span><button type="button" data-close="1">完了</button></div>'
+    +'</div>';
+  document.body.appendChild(ov);
+  g('tq-lot').value=_tqF.lot; g('tq-abv').value=_tqF.abv; g('tq-add').value=_tqF.add;
+  ov.addEventListener('click',function(e){
+    if(e.target===ov||e.target.getAttribute('data-close')){ ov.remove(); return; }
+    var cb=e.target.closest('.cls-btn');
+    if(cb){ var c=cb.getAttribute('data-cls'); if(_tqF.cls.has(c)) _tqF.cls.delete(c); else _tqF.cls.add(c); cb.classList.toggle('active',_tqF.cls.has(c)); _tqRender(); return; }
+    var nb=e.target.closest('[data-nom]');
+    if(nb){ var n=nb.getAttribute('data-nom'); _tqF.nom=(_tqF.nom===n)?'':n; _tqRenderNoms(); _tqRender(); return; }
+    var sb=e.target.closest('[data-sort]');
+    if(sb){ var s=sb.getAttribute('data-sort'); if(_tqF.sort===s) _tqF.dir=(_tqF.dir==='asc')?'desc':'asc'; else { _tqF.sort=s; _tqF.dir='asc'; } _tqSortBtns(); _tqRender(); return; }
+    var row=e.target.closest('.tqrow');
+    if(row){ _tqToggle(row.getAttribute('data-bid'), row); return; }
+  });
+  g('tq-ini').oninput=function(){ _tqF.ini=this.value.trim().toUpperCase(); _tqRender(); };
+  g('tq-q').oninput=function(){ _tqF.q=this.value; _tqRender(); };
+  g('tq-lot').onchange=function(){ _tqF.lot=this.value; _tqRender(); };
+  g('tq-abv').onchange=function(){ _tqF.abv=this.value; _tqRender(); };
+  g('tq-add').onchange=function(){ _tqF.add=this.value; _tqRender(); };
+  _tqRenderNoms(); _tqSortBtns(); _tqCount();
+  _tqLoad().then(function(){ _tqRender(); }).catch(function(e){ var l=g('tq-list'); if(l) l.innerHTML='<div class="tm-empty" style="padding:20px">読み込みに失敗しました: '+esc(e&&e.message||e)+'</div>'; });
+}
+function _tqRenderNoms(){ var el=g('tq-noms'); if(!el) return; el.innerHTML='<span class="lb2">NOM</span>'+TQ_NOMS.map(function(n){ return '<button type="button" class="nom-btn'+(_tqF.nom===n?' active':'')+'" data-nom="'+n+'">'+n+'</button>'; }).join(''); }
+function _tqSortBtns(){ Array.prototype.forEach.call(document.querySelectorAll('#tqpick [data-sort]'),function(b){ var k=b.getAttribute('data-sort'), on=(_tqF.sort===k); b.classList.toggle('active',on); b.textContent={name:'名前',price:'価格',nom:'NOM'}[k]+(on?(_tqF.dir==='asc'?' ▲':' ▼'):''); }); }
+function _tqCount(){ var el=g('tq-cnt'); if(el) el.textContent='メニュー: '+_tm.items.length+'件'; }
+function _tqFiltered(){
+  var items=(_tqMaster||[]).slice(), q=(_tqF.q||'').trim().toLowerCase();
+  if(_tqF.nom) items=items.filter(function(i){ return String(i.nom==null?'':i.nom).indexOf(_tqF.nom)===0||String(i.brandId==null?'':i.brandId).indexOf(_tqF.nom)===0; });
+  if(_tqF.lot!=='0'){ var lt=parseInt(_tqF.lot,10)||1; items=items.filter(function(i){ return (i.lotType===lt)||((i.lotType===undefined||i.lotType===null)&&lt===1); }); }
+  if(_tqF.cls.size<5) items=items.filter(function(i){ var k=_tqClsKey(i); return k?_tqF.cls.has(k):false; });
+  if(_tqF.ini) items=items.filter(function(i){ return (i.bottleEsBase||i.bottleEs||i.name||'').trim().toUpperCase().charAt(0)===_tqF.ini; });
+  if(_tqF.abv==='normal') items=items.filter(function(i){ return (parseFloat(i.abv)||0)<=40; });
+  else if(_tqF.abv==='hp') items=items.filter(function(i){ return (parseFloat(i.abv)||0)>=41; });
+  if(_tqF.add!=='') items=items.filter(function(i){ return String(i.additive||'0')===_tqF.add; });
+  items.sort(function(a,b){ var ca=_tqClsDigit(a)||'9', cb=_tqClsDigit(b)||'9'; if(ca!==cb) return ca.localeCompare(cb); return (parseFloat(a.price)||0)-(parseFloat(b.price)||0); });
+  if(q){
+    if(/^\d/.test(q)) items=items.filter(function(i){ return String(i.nom==null?'':i.nom).indexOf(q)===0||String(i.bottleId||i.brandId||'').indexOf(q)===0; });
+    else items=items.filter(function(i){
+      var cand=[AuthRole.bdName(i,'es'),AuthRole.bdName(i,'ja'),i.bottleEs,i.bottleEn,i.bottleJa,i.bottleName,i.name,i.brandEs,i.brandEn,i.brandJa];
+      for(var k=0;k<cand.length;k++){ if(String(cand[k]||'').toLowerCase().indexOf(q)>=0) return true; }
+      return String(i.id||'').toLowerCase().indexOf(q)===0;
+    });
+  }
+  if(_tqF.sort==='name') items.sort(function(a,b){ var na=(a.bottleEs||a.bottleJa||a.name||''), nb=(b.bottleEs||b.bottleJa||b.name||''); if(na!==nb) return na.localeCompare(nb); return (a.nom||'zzz').localeCompare(b.nom||'zzz',undefined,{numeric:true}); });
+  else if(_tqF.sort==='nom') items.sort(function(a,b){ var na=a.nom||'', nb=b.nom||''; if(na!==nb) return na.localeCompare(nb,undefined,{numeric:true}); return (a.bottleEs||a.bottleJa||a.name||'').localeCompare(b.bottleEs||b.bottleJa||b.name||''); });
+  else if(_tqF.sort==='price') items.sort(function(a,b){ return _tqPrice(a)-_tqPrice(b); });
+  if(_tqF.sort&&_tqF.dir==='desc') items.reverse();
+  return items;
+}
+function _tqRender(){
+  var el=g('tq-list'); if(!el||!_tqMaster) return;
+  var items=_tqFiltered(), LIMIT=500;
+  if(!items.length){ el.innerHTML='<div class="tm-empty" style="padding:20px">該当なし</div>'; return; }
+  var inMenu={}; _tm.items.forEach(function(it){ inMenu[it.bid]=1; });
+  el.innerHTML=items.slice(0,LIMIT).map(function(i){
+    var nom=_tqNom(i), k=_tqClsKey(i), p=_tqPrice(i), sub=[];
+    if(nom) sub.push('NOM '+nom); if(k) sub.push(k); if(i.abv) sub.push(i.abv+'%');
+    var on=!!inMenu[i.id];
+    return '<div class="tqrow'+(on?' on':'')+'" data-bid="'+esc(i.id)+'"><span class="ck">'+(on?'✓':'')+'</span>'
+      +'<div class="nm"><b>'+esc(AuthRole.bdName(i,'es'))+'</b>'+(sub.length?'<span>'+esc(sub.join(' · '))+'</span>':'')+'</div>'
+      +'<span class="pc">'+(p?esc(_yen(p))+'/10ml':'-')+'</span></div>';
+  }).join('')+(items.length>LIMIT?'<div class="tm-empty" style="padding:8px">全'+items.length+'件中 上位'+LIMIT+'件を表示中。検索・NOM・クラスで絞り込んでください。</div>':'');
+}
+// タップで追加／もう一度タップで外す（モーダルは開いたまま複数選択できる）
+function _tqToggle(bid, row){
+  if(!bid) return;
+  var idx=-1; for(var k=0;k<_tm.items.length;k++){ if(_tm.items[k].bid===bid){ idx=k; break; } }
+  var on;
+  if(idx>=0){ _tm.items.splice(idx,1); on=false; }
+  else {
+    var i=(_tqMaster||[]).find(function(x){ return x.id===bid; }); if(!i) return;
+    _tm.items.push({bid:i.id, name:AuthRole.bdName(i,'es'), nameJa:AuthRole.bdName(i,'ja'), nom:_tqNom(i), cls:_tqClsKey(i), abv:(i.abv!=null?String(i.abv):''), price:_tqPrice(i), ml:10});
+    on=true;
+  }
+  if(row){ row.classList.toggle('on',on); var ck=row.querySelector('.ck'); if(ck) ck.textContent=on?'✓':''; }
+  _tqCount(); tmRender(); tmSaveNow();
+}
+
+</script>
+</body>
+</html>

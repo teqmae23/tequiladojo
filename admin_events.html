@@ -5882,6 +5882,19 @@ function openSeminarFlow(eid){
     +'<a href="/seminar_build.html?e='+encodeURIComponent(eid)+'" target="_blank" rel="noopener" style="flex:1;text-decoration:none;padding:14px 10px;border:1px solid #7a5610;border-radius:12px;color:#7a5610;font-weight:700;text-align:center">🛠 構築</a>'
     +'<a href="/seminar_flow.html?e='+encodeURIComponent(eid)+'&present=1" target="_blank" rel="noopener" style="flex:1;text-decoration:none;padding:14px 10px;border:1px solid #1a6e58;border-radius:12px;color:#1a6e58;font-weight:700;text-align:center">▶ 実施</a>'
     +'</div>'
+    // 有料試飲メニュー（セミナー終了画面からリンク）: 作成画面への入口＋公開/非公開
+    +'<div style="border:1px solid #7a3a10;border-radius:12px;padding:10px 12px;margin-bottom:14px;background:#fdf7f1">'
+      +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+        +'<div style="font-weight:700;font-size:13px;color:#7a3a10">🥃 有料試飲メニュー</div>'
+        +'<span id="smf-menu-info" style="font-size:11px;color:#9a8470">読み込み中…</span>'
+        +'<label style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;cursor:pointer"><input type="checkbox" id="smf-menu-pub" disabled onchange="smfMenuToggle(this)" style="width:16px;height:16px;accent-color:#1a6e58"><span id="smf-menu-pubtxt">非公開</span></label>'
+      +'</div>'
+      +'<div style="display:flex;gap:8px;margin-top:8px">'
+        +'<a href="/seminar_menu_edit.html?e='+encodeURIComponent(eid)+'" target="_blank" rel="noopener" style="flex:1;text-decoration:none;padding:10px;border:1px solid #7a3a10;border-radius:10px;color:#7a3a10;font-weight:700;text-align:center;font-size:13px;background:#fff">📝 メニュー作成・編集</a>'
+        +'<a href="/seminar_menu.html?e='+encodeURIComponent(eid)+'&preview=1" target="_blank" rel="noopener" style="text-decoration:none;padding:10px 14px;border:1px solid #ddd;border-radius:10px;color:#4a3820;font-weight:700;text-align:center;font-size:13px;background:#fff">👁 表示確認</a>'
+      +'</div>'
+      +'<div style="font-size:11px;color:#9a8470;margin-top:6px">公開中はセミナー終了画面にメニューへのリンクが表示されます。</div>'
+    +'</div>'
     +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div style="font-weight:700;font-size:13px">セミナー一覧</div><button style="margin-left:auto;background:#7a5610;color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer" onclick="smfToggleForm()">＋ セミナー登録</button></div>'
     +'<div id="smf-form" style="display:none;background:#faf7f1;border:1px solid #e4ddd0;border-radius:10px;padding:10px;margin-bottom:10px">'
       +'<input id="smf-title" placeholder="タイトル" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:13px;margin-bottom:6px">'
@@ -5894,6 +5907,32 @@ function openSeminarFlow(eid){
   ov.addEventListener('click',function(e){ if(e.target===ov) ov.remove(); });
   document.body.appendChild(ov);
   smfLoad();
+  smfMenuWatch();
+}
+// ── 有料試飲メニューの公開/非公開（events/{eid}/seminar/tastingMenu.enabled）──
+var _smfMenuUnsub=null, _smfMenu=null;
+function _smfMenuDoc(eid){ return db.collection('events').doc(eid).collection('seminar').doc('tastingMenu'); }
+function smfMenuWatch(){
+  if(_smfMenuUnsub){ _smfMenuUnsub(); _smfMenuUnsub=null; }
+  var eid=_smfEid;
+  _smfMenuUnsub=_smfMenuDoc(eid).onSnapshot(function(d){
+    if(eid!==_smfEid || !g('smf-ov')){ if(_smfMenuUnsub){ _smfMenuUnsub(); _smfMenuUnsub=null; } return; } // ダイアログを閉じたら購読停止
+    _smfMenu=d.exists?(d.data()||{}):null;
+    var n=(_smfMenu&&Array.isArray(_smfMenu.items))?_smfMenu.items.length:0, on=!!(_smfMenu&&_smfMenu.enabled===true);
+    var cb=g('smf-menu-pub'), tx=g('smf-menu-pubtxt'), info=g('smf-menu-info');
+    if(info) info.textContent=_smfMenu?(n+'種類'+(_smfMenu.title?(' ・ '+_smfMenu.title):'')):'未作成';
+    if(cb){ cb.checked=on; cb.disabled=false; }
+    if(tx){ tx.textContent=on?'公開中':'非公開'; tx.style.color=on?'#1a6e58':'#9a8470'; }
+  }, function(e){ var info=g('smf-menu-info'); if(info) info.textContent='読み込み失敗: '+(e&&e.message||e); });
+}
+function smfMenuToggle(cb){
+  var want=!!cb.checked;
+  var n=(_smfMenu&&Array.isArray(_smfMenu.items))?_smfMenu.items.length:0;
+  if(want && !n){ cb.checked=false; toast('先に「メニュー作成・編集」からテキーラを追加してください'); return; }
+  cb.disabled=true;
+  _smfMenuDoc(_smfEid).set({enabled:want, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .then(function(){ cb.disabled=false; toast(want?'試飲メニューを公開しました':'試飲メニューを非公開にしました'); })
+    .catch(function(e){ cb.disabled=false; cb.checked=!want; toast('切替失敗: '+(e&&e.message||e)); });
 }
 function smfToggleForm(){ var f=g('smf-form'); if(f) f.style.display=(f.style.display==='none')?'block':'none'; }
 function smfAdd(){
