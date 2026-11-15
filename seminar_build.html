@@ -33,7 +33,7 @@ button{cursor:pointer;font-family:var(--sans)}
 .hnav{padding:7px 12px;border:1px solid rgba(255,255,255,.18);border-radius:7px;color:var(--gold);font-size:12px;text-decoration:none;background:none}
 .hnav.save{background:var(--gold-d);color:#fff;border:none;font-weight:700}
 .wrap{max-width:860px;margin:0 auto;padding:14px 12px 90px}
-.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;position:sticky;top:52px;z-index:39;background:var(--cream);margin:0 -12px 12px;padding:8px 12px;border-bottom:1px solid var(--border)}
 .bar .lk{font-size:12px;text-decoration:none;padding:7px 12px;border-radius:8px;border:1px solid var(--border2);color:var(--ink2);background:var(--white);font-weight:600}
 .bar .lk.go{background:var(--teal);color:#fff;border:none}
 .bar .lk.pv{background:#2a62a0;color:#fff;border:none}
@@ -262,7 +262,7 @@ function buildModel(cfg){
   _items.forEach(function(it){ if(used[it.id]) return; steps.push({type:'item', itemId:it.id, enabled:true, showMap:(it.lat!=null&&it.lng!=null), media:null, excluded:[]}); });
   return steps;
 }
-function resetDefault(){ if(!confirm('イベントの流れから既定の構成に戻します。保存前の変更は失われます。よろしいですか？')) return; renderAll(buildModel(null)); _markDirty(); toast('既定に戻しました（自動保存されます）'); }
+function resetDefault(){ if(!confirm('イベントの流れから既定の構成に戻します。保存前の変更は失われます。よろしいですか？')) return; renderAll(buildModel(null)); _saveNow(); toast('既定に戻しました（自動保存されます）'); }
 
 function vimeoId(v){ v=String(v||'').trim(); var m=v.match(/vimeo\.com\/(?:video\/)?(\d+)/); if(m) return m[1]; m=v.match(/^(\d+)$/); return m?m[1]:v; }
 
@@ -270,14 +270,14 @@ function renderAll(model){
   var c=g('steps'); c.innerHTML=model.map(stepHtml).join('');
   _addFooters(c); // 各カード下に「ここに差し込む」行を付与
   if(window.Sortable){
-    Sortable.create(c,{animation:150,handle:'.drag',delay:120,delayOnTouchOnly:true,onEnd:function(){ _markDirty(); }});
+    Sortable.create(c,{animation:150,handle:'.drag',delay:120,delayOnTouchOnly:true,onEnd:function(){ _saveNow(); }});
     Array.prototype.forEach.call(c.querySelectorAll('.mstrip'),_initStripSortable);
   }
   var tp=120; try{ tp=+localStorage.getItem('semb_thumb')||120; }catch(e){} setThumbSize(tp); // 保存済みサムネサイズ適用
 }
 function stepHtml(s){
   if(s.type==='360'){
-    return '<div class="card s360" data-type="360"><div class="chead"><span class="drag">⠿</span><span class="chip" style="background:#2a62a0;color:#fff">🌐 360°動画</span><span class="sp"></span><button class="rm" onclick="this.closest(\'.card\').remove();_markDirty();">削除</button></div>'
+    return '<div class="card s360" data-type="360"><div class="chead"><span class="drag">⠿</span><span class="chip" style="background:#2a62a0;color:#fff">🌐 360°動画</span><span class="sp"></span><button class="rm" onclick="this.closest(\'.card\').remove();_saveNow();">削除</button></div>'
       +'<div class="f"><input class="v360id" placeholder="Vimeo URL または ID" value="'+esc(s.vimeoId||'')+'"><input class="v360t" placeholder="タイトル（任意）" value="'+esc(s.title||'')+'"></div></div>';
   }
   if(s.type==='person'){
@@ -324,7 +324,7 @@ function _photoCell(p, off){
   var inner=_isVid(p)?((p.status==='ready'&&_thumb(p))?'<img src="'+esc(_thumb(p))+'">':'<div class="st">🎬'+(p.status==='processing'?'<br>変換中':'')+'</div>')+'<span class="pv">🎬</span>':'<img src="'+esc(_thumb(p))+'">';
   var fam=p.familyOnly?'<span class="pv" style="left:auto;right:24px;top:3px;font-size:10px">👪</span>':'';
   var full=esc(p.url||_thumb(p)||'');
-  return '<div class="mc'+(off?' off':'')+'" data-pid="'+esc(p.id)+'" onclick="if(!window._drag){var o=this.classList.toggle(\'off\');this.querySelector(\'.ck\').textContent=o?\'\':\'✓\';_markDirty();}"><span>'+inner+'</span>'+fam+'<button class="zoom" onclick="event.stopPropagation();enlargePhoto(\''+full+'\')">🔍</button><span class="ck">'+(off?'':'✓')+'</span></div>';
+  return '<div class="mc'+(off?' off':'')+'" data-pid="'+esc(p.id)+'" onclick="if(!window._drag){var o=this.classList.toggle(\'off\');this.querySelector(\'.ck\').textContent=o?\'\':\'✓\';_saveNow();}"><span>'+inner+'</span>'+fam+'<button class="zoom" onclick="event.stopPropagation();enlargePhoto(\''+full+'\')">🔍</button><span class="ck">'+(off?'':'✓')+'</span></div>';
 }
 // 人物セル（画像の間に差し込む紹介カード）
 function _personCell(pr){
@@ -332,7 +332,7 @@ function _personCell(pr){
   var av=pr.iconUrl?'<img src="'+esc(pr.iconUrl)+'">':'<span class="ini">'+esc((pr.name||'？').slice(0,1))+'</span>';
   return '<div class="mcp" data-kind="'+(isHost?'host':'participant')+'" data-uid="'+esc(pr.uid||'')+'" data-memberid="'+esc(pr.memberId||'')+'" data-id="'+esc(pr.id||'')+'" data-name="'+esc(pr.name||'')+'" data-iconurl="'+esc(pr.iconUrl||'')+'" data-bio="'+esc(pr.bio||'')+'" data-sns="'+esc(pr.sns||'')+'">'
     +'<span class="kb">'+(isHost?'🧭':'👤')+'</span>'+av+'<span class="nm">'+esc(pr.name||'')+'</span>'
-    +'<button class="x" onclick="if(!window._drag){this.closest(\'.mcp\').remove();_markDirty();}">✕</button></div>';
+    +'<button class="x" onclick="if(!window._drag){this.closest(\'.mcp\').remove();_saveNow();}">✕</button></div>';
 }
 function _pbyId(itemId,id){ return (_photosByItem[itemId]||[]).find(function(p){return p.id===id;}); }
 function _wasKnown(){ return false; } // 新規写真はデフォルト表示（簡潔化）
@@ -361,10 +361,10 @@ function insAfter(btn, kind){
 }
 function add360(after){
   _placeCard(_mkCard(stepHtml({type:'360',vimeoId:'',title:''})), after);
-  _markDirty();
+  _saveNow();
   toast(after?'360°動画をこの位置に差し込みました':'360°動画を末尾に追加しました');
 }
-function _initStripSortable(st){ if(window.Sortable) Sortable.create(st,{animation:150,delay:140,delayOnTouchOnly:true,onStart:function(){window._drag=true;},onEnd:function(){setTimeout(function(){window._drag=false;},60); _markDirty();}}); }
+function _initStripSortable(st){ if(window.Sortable) Sortable.create(st,{animation:150,delay:140,delayOnTouchOnly:true,onStart:function(){window._drag=true;},onEnd:function(){setTimeout(function(){window._drag=false;},60); _saveNow();}}); }
 
 // ── 人物紹介（参加者・現地ホスト）を項目の写真の間に差し込む：登録済みリストから選択 ──
 // kind: 'participant' | 'host'。選択後 onPick(obj) を呼ぶ。
@@ -390,7 +390,7 @@ function stripPerson(btn, kind){
     obj=obj||{};
     strip.insertAdjacentHTML('beforeend', _personCell({kind:kind, uid:obj.uid||'', memberId:obj.memberId||'', id:obj.id||'', name:obj.name||'', iconUrl:obj.iconUrl||'', bio:obj.bio||'', sns:obj.sns||''}));
     var node=strip.lastElementChild; try{ node.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'}); }catch(e){}
-    _markDirty();
+    _saveNow();
     toast('「'+(obj.name||'')+'」を差し込みました（ドラッグで画像の間へ）');
   });
 }
@@ -437,6 +437,8 @@ function _collectSteps(){
 var _dirty=false, _saveT=null, _saving=false, _loaded=false;
 function _setSaveStat(s){ var el=g('save-stat'); if(el) el.textContent=s; }
 function _markDirty(){ if(!_loaded) return; _dirty=true; _setSaveStat('● 未保存'); if(_saveT) clearTimeout(_saveT); _saveT=setTimeout(function(){ doSave(true); }, 1000); }
+// 構造変更（人物の追加・削除、並び替え、カード追加/削除、ON/OFF）は即時保存（取りこぼし防止）
+function _saveNow(){ if(!_loaded) return; _dirty=true; _setSaveStat('● 未保存'); if(_saveT){ clearTimeout(_saveT); _saveT=null; } doSave(true); }
 function doSave(auto){
   if(_saving){ if(_saveT) clearTimeout(_saveT); _saveT=setTimeout(function(){ doSave(auto); }, 500); return; }
   var steps=_collectSteps(); _saving=true; _setSaveStat('保存中…');
