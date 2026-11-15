@@ -57,7 +57,8 @@ button{cursor:pointer;font-family:var(--sans)}
 .mc.off{border-color:var(--border2);opacity:.45}
 .mc img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
 .mc .pv{position:absolute;top:3px;left:3px;font-size:12px}
-.mc .ck{position:absolute;right:3px;bottom:3px;width:20px;height:20px;border-radius:50%;background:var(--teal);color:#fff;font-size:12px;line-height:20px;text-align:center;font-weight:700}
+.mc .ck{position:absolute;right:3px;bottom:3px;width:24px;height:24px;border-radius:50%;background:var(--teal);color:#fff;font-size:13px;line-height:24px;text-align:center;font-weight:700;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.mc .ck:active{transform:scale(.9)}
 .mc.off .ck{background:rgba(0,0,0,.4)}
 .mc .st{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink3);text-align:center}
 .mc .zoom{position:absolute;top:2px;right:2px;width:20px;height:20px;border:none;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;font-size:11px;line-height:20px;padding:0;text-align:center;cursor:zoom-in}
@@ -81,7 +82,7 @@ button{cursor:pointer;font-family:var(--sans)}
 /* 拡大ライトボックス */
 .lb{position:fixed;inset:0;background:rgba(0,0,0,.86);z-index:10000;display:none;align-items:center;justify-content:center;padding:16px}
 .lb.open{display:flex}
-.lb img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}
+.lb img,.lb video{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}
 .mnone{font-size:12px;color:var(--ink3);padding:8px 2px}
 .s360 .f{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .s360 input{flex:1;min-width:160px;padding:8px 10px;border:1px solid var(--border2);border-radius:7px;font-size:13px}
@@ -155,7 +156,7 @@ button{cursor:pointer;font-family:var(--sans)}
     <button class="addbtn v360" onclick="add360()">＋ 360°動画（末尾に追加）</button>
   </div>
 </div>
-<div class="lb" id="lb" onclick="closeLb()"><img id="lb-img" src="" alt=""></div>
+<div class="lb" id="lb" onclick="closeLb()"></div>
 <div id="toasts"></div>
 <script>
 firebase.initializeApp(FIREBASE_CONFIG);
@@ -322,12 +323,14 @@ function stepHtml(s){
       +'<button type="button" class="insb v360" onclick="insAfter(this,\'360\')">360°動画</button></div>'
     +'</div>';
 }
-// 写真セル（タップでON/OFF, 🔍で拡大）
+// 写真セル（タップで拡大、右下✓で表示ON/OFF）
 function _photoCell(p, off){
-  var inner=_isVid(p)?((p.status==='ready'&&_thumb(p))?'<img src="'+esc(_thumb(p))+'">':'<div class="st">🎬'+(p.status==='processing'?'<br>変換中':'')+'</div>')+'<span class="pv">🎬</span>':'<img src="'+esc(_thumb(p))+'">';
-  var fam=p.familyOnly?'<span class="pv" style="left:auto;right:24px;top:3px;font-size:10px">👪</span>':'';
-  var full=esc(p.url||_thumb(p)||'');
-  return '<div class="mc'+(off?' off':'')+'" data-pid="'+esc(p.id)+'" onclick="if(!window._drag){var o=this.classList.toggle(\'off\');this.querySelector(\'.ck\').textContent=o?\'\':\'✓\';_saveNow();}"><span>'+inner+'</span>'+fam+'<button class="zoom" onclick="event.stopPropagation();enlargePhoto(\''+full+'\')">🔍</button><span class="ck">'+(off?'':'✓')+'</span></div>';
+  var isV=_isVid(p);
+  var inner=isV?((p.status==='ready'&&_thumb(p))?'<img src="'+esc(_thumb(p))+'">':'<div class="st">🎬'+(p.status==='processing'?'<br>変換中':'')+'</div>')+'<span class="pv">🎬</span>':'<img src="'+esc(_thumb(p))+'">';
+  var fam=p.familyOnly?'<span class="pv" style="left:auto;right:28px;top:3px;font-size:10px">👪</span>':'';
+  var full=esc(isV?(p.url||''):(p.url||_thumb(p)||''));
+  return '<div class="mc'+(off?' off':'')+'" data-pid="'+esc(p.id)+'" data-full="'+full+'" data-vid="'+(isV?1:0)+'" onclick="if(!window._drag)enlargeCell(this);"><span>'+inner+'</span>'+fam
+    +'<span class="ck" title="表示ON/OFF" onclick="event.stopPropagation();if(!window._drag){var mc=this.closest(\'.mc\');var o=mc.classList.toggle(\'off\');this.textContent=o?\'\':\'✓\';_saveNow();}">'+(off?'':'✓')+'</span></div>';
 }
 // 人物セル（画像の間に差し込む紹介カード）
 function _personCell(pr){
@@ -405,8 +408,13 @@ function setThumbSize(px){
   Array.prototype.forEach.call(document.querySelectorAll('#thsize button'),function(b){ b.classList.toggle('on', +b.getAttribute('data-px')===px); });
 }
 // 拡大ライトボックス
-function enlargePhoto(url){ if(!url) return; g('lb-img').src=url; g('lb').classList.add('open'); }
-function closeLb(){ g('lb').classList.remove('open'); g('lb-img').src=''; }
+function enlargeCell(el){ if(!el) return; enlargeMedia(el.getAttribute('data-full'), el.getAttribute('data-vid')==='1'); }
+function enlargeMedia(url, isV){ if(!url) return; var lb=g('lb'); lb.innerHTML=''; var m;
+  if(isV){ m=document.createElement('video'); m.src=url; m.controls=true; m.autoplay=true; m.playsInline=true; m.onclick=function(e){ e.stopPropagation(); }; }
+  else { m=document.createElement('img'); m.src=url; m.alt=''; }
+  lb.appendChild(m); lb.classList.add('open'); }
+function enlargePhoto(url){ enlargeMedia(url,false); } // 後方互換
+function closeLb(){ var lb=g('lb'); lb.classList.remove('open'); lb.innerHTML=''; }
 // クリックとドラッグの誤爆防止
 document.addEventListener('pointerdown',function(e){ if(e.target.closest&&(e.target.closest('.mc')||e.target.closest('.mcp'))) { window._drag=false; } });
 document.addEventListener('dragstart',function(){ window._drag=true; });
