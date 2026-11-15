@@ -216,9 +216,12 @@ function load(){
     db.collection('events').doc(EID).collection('scheduleItems').get(),
     db.collection('events').doc(EID).collection('photos').get().catch(function(){return {docs:[]};}),
     db.collection('events').doc(EID).collection('seminar').doc('config').get().catch(function(){return {exists:false};}),
-    db.collection('events').doc(EID).collection('participants').get().catch(function(){return {docs:[]};})
+    db.collection('events').doc(EID).collection('participants').get().catch(function(){return {docs:[]};}),
+    db.collection('events').doc(EID).collection('profiles').get().catch(function(){return {docs:[]};})
   ]).then(function(res){
     if(!res[0].exists){ g('msg').textContent='イベントが見つかりません。'; return; }
+    var _prof={}; (res[5]?res[5].docs:[]).forEach(function(d){ var pr=d.data()||{}; _prof[d.id]=pr; if(pr.memberId) _prof['mid:'+pr.memberId]=pr; });
+    function _bioOf(uid,memberId){ var pr=_prof[uid]||(memberId?_prof['mid:'+memberId]:null); return (pr&&pr.bio)||''; }
     _event=Object.assign({id:EID},res[0].data());
     _items=res[1].docs.map(function(d){ return _normItem(Object.assign({id:d.id},d.data())); });
     _items=sortSchedule(_items); // スケジュールと同じ並び（TZ/日付変更線対応）
@@ -233,11 +236,11 @@ function load(){
     var seen={}; _participants=[];
     (res[4]?res[4].docs:[]).map(function(d){ return Object.assign({uid:d.id},d.data()); })
       .filter(function(p){ return p.status!=='pending' && p.status!=='rejected' && p.status!=='cancelled' && p.status!=='canceled'; })
-      .forEach(function(p){ var k=p.uid||('mid:'+(p.memberId||p.nickname||'')); if(seen[k])return; seen[k]=1;
-        _participants.push({uid:p.uid||p.id||'', memberId:p.memberId||'', name:(p.nickname||p.name||'参加者'), iconUrl:p.iconUrl||'', bio:p.bio||'', sns:p.sns||''}); });
+      .forEach(function(p){ var k=p.uid||('mid:'+(p.memberId||p.nickname||'')); if(seen[k])return; seen[k]=1; var u=p.uid||p.id||'';
+        _participants.push({uid:u, memberId:p.memberId||'', name:(p.nickname||p.name||'参加者'), iconUrl:p.iconUrl||'', bio:(_bioOf(u,p.memberId)||p.bio||''), sns:p.sns||''}); });
     (Array.isArray(_event.participantsPublic)?_event.participantsPublic:[]).forEach(function(p){
       var k=p.uid||('mid:'+(p.memberId||p.nickname||'')); if(seen[k])return; seen[k]=1;
-      _participants.push({uid:p.uid||'', memberId:p.memberId||'', name:(p.nickname||p.name||'参加者'), iconUrl:p.iconUrl||'', bio:p.bio||'', sns:p.sns||''}); });
+      _participants.push({uid:p.uid||'', memberId:p.memberId||'', name:(p.nickname||p.name||'参加者'), iconUrl:p.iconUrl||'', bio:(_bioOf(p.uid,p.memberId)||p.bio||''), sns:p.sns||''}); });
     // 現地ホスト = event.localHosts [{id,name,iconUrl,bio}]
     _hosts=(Array.isArray(_event.localHosts)?_event.localHosts:[]).map(function(h){
       return { id:h.id||('h'+Math.random().toString(36).slice(2,8)), name:(h.name||'現地ホスト'), iconUrl:h.iconUrl||'', bio:h.bio||'' }; });

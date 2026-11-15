@@ -138,7 +138,7 @@ var Q=new URLSearchParams(location.search);
 var EID=Q.get('e')||'', PRESENT=Q.get('present')==='1';
 if(!EID){ showMsg('イベントが指定されていません。'); }
 
-var _event=null, _items=[], _photosByItem={}, _pByUid={}, _flow=[], _presenter=false, _step=0, _unsub=null, _map=null;
+var _event=null, _items=[], _photosByItem={}, _pByUid={}, _profByKey={}, _flow=[], _presenter=false, _step=0, _unsub=null, _map=null;
 var _syncOn=true, _liveStep=0, _started=false, _live=false, _pstate='';
 
 // ── 座標・ルート ユーティリティ（event.html の挙動を踏襲） ──
@@ -221,8 +221,10 @@ async function start(user){
       db.collection('events').doc(EID).collection('scheduleItems').get(),
       db.collection('events').doc(EID).collection('photos').get().catch(function(){return {docs:[]};}),
       db.collection('events').doc(EID).collection('seminar').doc('config').get().catch(function(){return {exists:false};}),
-      db.collection('events').doc(EID).collection('participants').get().catch(function(){return {docs:[]};})
+      db.collection('events').doc(EID).collection('participants').get().catch(function(){return {docs:[]};}),
+      db.collection('events').doc(EID).collection('profiles').get().catch(function(){return {docs:[]};})
     ]);
+    _profByKey={}; (res[4]?res[4].docs:[]).forEach(function(d){ var pr=Object.assign({},d.data()); _profByKey[d.id]=pr; if(pr.memberId) _profByKey['mid:'+pr.memberId]=pr; });
     _items=res[0].docs.map(function(d){ return _normItem(Object.assign({id:d.id},d.data())); });
     _items=sortSchedule(_items); // スケジュールと同じ並び（TZ/日付変更線対応）
     _photosByItem={};
@@ -262,8 +264,13 @@ function buildFlow(cfg){
         var by={}; (_photosByItem[it.id]||[]).forEach(function(p){by[p.id]=p;});
         s.media.forEach(function(e){
           if(e && typeof e==='object' && e.person){
-            var pr=e.person; var nm=pr.name||'', ic=pr.iconUrl||'';
-            if(nm||ic) seq.push({person:{kind:(pr.kind==='host'?'host':'participant'), name:nm, iconUrl:ic, bio:pr.bio||'', sns:pr.sns||''}});
+            var pr=e.person;
+            // 参加者の自己紹介(bio)は events/{eid}/profiles から uid / memberId でライブ解決（無ければ保存値）
+            var prof=(pr.kind!=='host')?(_profByKey[pr.uid]||(pr.memberId?_profByKey['mid:'+pr.memberId]:null)):null;
+            var nm=(prof&&(prof.nickname))||pr.name||'';
+            var ic=(prof&&prof.iconUrl)||pr.iconUrl||'';
+            var bio=(prof&&prof.bio)||pr.bio||'';
+            if(nm||ic) seq.push({person:{kind:(pr.kind==='host'?'host':'participant'), name:nm, iconUrl:ic, bio:bio, sns:pr.sns||''}});
           } else { var ph=by[String(e)]; if(ph){ media.push(ph); seq.push({photo:ph}); } }
         });
       } else { (_photosByItem[it.id]||[]).forEach(function(ph){ media.push(ph); seq.push({photo:ph}); }); }
@@ -409,15 +416,8 @@ function renderStep(){
       return '<div class="mcell" onclick="fvOpen('+i+')">'+inner+cap+'</div>';
     }).join('')+'</div>';
   } else if(!mapHtml){ media='<div class="nomedia">この項目にはメディアがありません。</div>'; }
-  // この項目に差し込んだ人物（参加者・現地ホスト）を一覧にも表示
-  var intro='';
-  if(st.persons && st.persons.length){
-    intro='<div class="sintro-hd">👥 登場: </div><div class="sintro">'+st.persons.map(function(pr){
-      var av=pr.iconUrl?('<img src="'+esc(pr.iconUrl)+'">'):('<span>'+esc((pr.name||'？').slice(0,1))+'</span>');
-      return '<div class="sintro-p"><div class="sintro-av'+(pr.kind==='host'?' host':'')+'">'+av+'</div><div class="sintro-nm">'+esc(pr.name||'')+'</div></div>';
-    }).join('')+'</div>';
-  }
-  stage.innerHTML='<div class="step">'+mapHtml+head+intro+media+'</div>';
+  // 人物（参加者・現地ホスト）はトップ一覧には出さず、画像の間の個別スライドとして表示する。
+  stage.innerHTML='<div class="step">'+mapHtml+head+media+'</div>';
   if(mapHtml) drawMap(it);
   updateNav();
 }
