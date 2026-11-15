@@ -52,7 +52,12 @@ button{cursor:pointer;font-family:var(--sans)}
 .tog{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--ink2);white-space:nowrap}
 .chip{font-size:11px;font-weight:700;padding:2px 8px;border-radius:9px;background:var(--cream2);color:var(--ink2)}
 .chip.on{background:var(--teal);color:#fff}
-.mstrip{display:flex;gap:6px;overflow-x:auto;padding:8px 2px 2px;margin-top:8px}
+.mstrip{display:flex;gap:6px;overflow-x:auto;padding:8px 2px 2px;margin-top:8px;scrollbar-width:none;-ms-overflow-style:none}
+.mstrip::-webkit-scrollbar{display:none}
+/* 自作の横スクロールバー（iOSでも常時表示） */
+.sbar{height:8px;background:var(--cream2);border:1px solid var(--border);border-radius:5px;margin:4px 2px 0;position:relative;display:none;touch-action:none}
+.sbar-th{position:absolute;top:0;bottom:0;left:0;min-width:30px;background:var(--gold-d);border-radius:5px;cursor:grab}
+.sbar-th:active{cursor:grabbing}
 .mc{position:relative;width:var(--thumb,88px);height:calc(var(--thumb,88px)*.75);flex-shrink:0;border-radius:8px;overflow:hidden;border:2px solid var(--teal);cursor:grab;touch-action:none;background:var(--cream2)}
 .mc.off{border-color:var(--border2);opacity:.45}
 .mc img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
@@ -248,7 +253,7 @@ function load(){
     var cfg=(res[3]&&res[3].exists)?res[3].data():null;
     g('msg').style.display='none'; g('wrap').style.display='block';
     renderAll(buildModel(cfg));
-    _loaded=true; _dirty=false; _setSaveStat(cfg?'✓ 保存済み':''); // 初期描画は未保存扱いにしない（自動保存で巻き戻り防止）
+    _loaded=true; _rev=0; _savedRev=0; _setSaveStat(cfg?'✓ 保存済み':''); // 初期描画は未保存扱いにしない
   }).catch(function(e){ g('msg').textContent='読み込み失敗: '+(e&&e.message||e); });
 }
 
@@ -278,6 +283,7 @@ function renderAll(model){
     Array.prototype.forEach.call(c.querySelectorAll('.mstrip'),_initStripSortable);
   }
   var tp=120; try{ tp=+localStorage.getItem('semb_thumb')||120; }catch(e){} setThumbSize(tp); // 保存済みサムネサイズ適用
+  _refreshSbars(); setTimeout(_refreshSbars, 80); // 横スクロールバー
 }
 function stepHtml(s){
   if(s.type==='360'){
@@ -317,6 +323,7 @@ function stepHtml(s){
     +'<label class="tog"><input type="checkbox" class="en" '+(s.enabled?'checked':'')+' onchange="this.closest(\'.card\').classList.toggle(\'disabled\',!this.checked)"> 表示</label>'
     +'<label class="tog"><input type="checkbox" class="map" '+(s.showMap?'checked':'')+'> 地図</label></div>'
     +'<div class="mstrip">'+cells+'</div>'
+    +'<div class="sbar"><div class="sbar-th"></div></div>'
     +'<div class="mins"><span class="inslbl">＋ 差し込む</span>'
       +'<button type="button" class="insb" onclick="stripPerson(this,\'participant\')">参加者</button>'
       +'<button type="button" class="insb host" onclick="stripPerson(this,\'host\')">現地ホスト</button>'
@@ -370,7 +377,31 @@ function add360(after){
   _saveNow();
   toast(after?'360°動画をこの位置に差し込みました':'360°動画を末尾に追加しました');
 }
-function _initStripSortable(st){ if(window.Sortable) Sortable.create(st,{animation:150,delay:140,delayOnTouchOnly:true,onStart:function(){window._drag=true;},onEnd:function(){setTimeout(function(){window._drag=false;},60); _saveNow();}}); }
+function _initStripSortable(st){ if(window.Sortable) Sortable.create(st,{animation:150,delay:140,delayOnTouchOnly:true,onStart:function(){window._drag=true;},onEnd:function(){setTimeout(function(){window._drag=false;},60); _saveNow(); _updSbar(st);}}); }
+// ── 横スクロールバー（自作・常時表示。ドラッグでもスクロール可） ──
+function _updSbar(st){
+  var sb=st&&st.nextElementSibling; if(!sb||!sb.classList.contains('sbar')) return;
+  var th=sb.firstElementChild; if(!th) return;
+  var cw=st.clientWidth, sw=st.scrollWidth;
+  if(sw<=cw+2){ sb.style.display='none'; return; }
+  sb.style.display='block';
+  var wp=Math.max(10, cw/sw*100), lp=(st.scrollLeft/(sw-cw))*(100-wp);
+  th.style.width=wp+'%'; th.style.left=Math.max(0,Math.min(100-wp,lp))+'%';
+}
+function _bindSbar(st){
+  if(st._sbBound){ _updSbar(st); return; } st._sbBound=true;
+  st.addEventListener('scroll', function(){ _updSbar(st); });
+  var sb=st.nextElementSibling, th=sb&&sb.classList.contains('sbar')?sb.firstElementChild:null;
+  if(th){
+    var drag=false, sx=0, sl=0;
+    th.addEventListener('pointerdown', function(e){ drag=true; sx=e.clientX; sl=st.scrollLeft; try{th.setPointerCapture(e.pointerId);}catch(_){ } e.preventDefault(); e.stopPropagation(); });
+    th.addEventListener('pointermove', function(e){ if(!drag) return; var cw=st.clientWidth, sw=st.scrollWidth; st.scrollLeft=sl+(e.clientX-sx)*(sw/Math.max(1,cw)); });
+    function up(e){ drag=false; try{th.releasePointerCapture(e.pointerId);}catch(_){ } } th.addEventListener('pointerup',up); th.addEventListener('pointercancel',up);
+  }
+  _updSbar(st);
+}
+function _refreshSbars(){ Array.prototype.forEach.call(g('steps').querySelectorAll('.mstrip'), function(st){ _bindSbar(st); }); }
+window.addEventListener('resize', function(){ _refreshSbars(); });
 
 // ── 人物紹介（参加者・現地ホスト）を項目の写真の間に差し込む：登録済みリストから選択 ──
 // kind: 'participant' | 'host'。選択後 onPick(obj) を呼ぶ。
@@ -391,12 +422,14 @@ function openPersonPicker(kind, onPick){
 function stripPerson(btn, kind){
   var card=btn.closest('.card'); if(!card) return;
   var strip=card.querySelector('.mstrip');
-  if(!strip){ strip=document.createElement('div'); strip.className='mstrip'; card.insertBefore(strip, card.querySelector('.mins')); _initStripSortable(strip); }
+  if(!strip){ strip=document.createElement('div'); strip.className='mstrip'; var mins=card.querySelector('.mins'); card.insertBefore(strip, mins);
+    var sb=document.createElement('div'); sb.className='sbar'; sb.innerHTML='<div class="sbar-th"></div>'; card.insertBefore(sb, mins); _initStripSortable(strip); _bindSbar(strip); }
   openPersonPicker(kind, function(obj){
     obj=obj||{};
-    strip.insertAdjacentHTML('beforeend', _personCell({kind:kind, uid:obj.uid||'', memberId:obj.memberId||'', id:obj.id||'', name:obj.name||'', iconUrl:obj.iconUrl||'', bio:obj.bio||'', sns:obj.sns||''}));
-    var node=strip.lastElementChild; try{ node.scrollIntoView({behavior:'smooth',inline:'center',block:'nearest'}); }catch(e){}
-    _saveNow();
+    // 最初の写真の前（ストリップ先頭）に差し込む。必要ならドラッグで移動。
+    strip.insertAdjacentHTML('afterbegin', _personCell({kind:kind, uid:obj.uid||'', memberId:obj.memberId||'', id:obj.id||'', name:obj.name||'', iconUrl:obj.iconUrl||'', bio:obj.bio||'', sns:obj.sns||''}));
+    var node=strip.firstElementChild; try{ node.scrollIntoView({behavior:'smooth',inline:'start',block:'nearest'}); }catch(e){}
+    _saveNow(); _updSbar(strip);
     toast('「'+(obj.name||'')+'」を差し込みました（ドラッグで画像の間へ）');
   });
 }
@@ -406,6 +439,7 @@ function setThumbSize(px){
   g('steps').style.setProperty('--thumb', px+'px');
   try{ localStorage.setItem('semb_thumb', String(px)); }catch(e){}
   Array.prototype.forEach.call(document.querySelectorAll('#thsize button'),function(b){ b.classList.toggle('on', +b.getAttribute('data-px')===px); });
+  if(typeof _refreshSbars==='function'){ _refreshSbars(); setTimeout(_refreshSbars, 60); } // サイズ変更でスクロール幅が変わる
 }
 // 拡大ライトボックス
 function enlargeCell(el){ if(!el) return; enlargeMedia(el.getAttribute('data-full'), el.getAttribute('data-vid')==='1'); }
@@ -444,25 +478,28 @@ function _collectSteps(){
   }
   return steps;
 }
-// ── 保存（手動＋自動）＆未保存ガード ──
-var _dirty=false, _saveT=null, _saving=false, _loaded=false;
+// ── 保存（手動＋10秒ごとの自動保存）＆未保存ガード ──
+// 変更は rev を進めるだけ。10秒ごとに未保存(rev≠savedRev)があれば保存。保存中の変更も取りこぼさない。
+var _rev=0, _savedRev=0, _saving=false, _loaded=false;
 function _setSaveStat(s){ var el=g('save-stat'); if(el) el.textContent=s; }
-function _markDirty(){ if(!_loaded) return; _dirty=true; _setSaveStat('● 未保存'); if(_saveT) clearTimeout(_saveT); _saveT=setTimeout(function(){ doSave(true); }, 1000); }
-// 構造変更（人物の追加・削除、並び替え、カード追加/削除、ON/OFF）は即時保存（取りこぼし防止）
-function _saveNow(){ if(!_loaded) return; _dirty=true; _setSaveStat('● 未保存'); if(_saveT){ clearTimeout(_saveT); _saveT=null; } doSave(true); }
+function _dirtyNow(){ return _rev!==_savedRev; }
+function _markDirty(){ if(!_loaded) return; _rev++; _setSaveStat('● 未保存'); }
+function _saveNow(){ _markDirty(); } // 自動保存は10秒間隔に統一（即時保存はしない）
 function doSave(auto){
-  if(_saving){ if(_saveT) clearTimeout(_saveT); _saveT=setTimeout(function(){ doSave(auto); }, 500); return; }
-  var steps=_collectSteps(); _saving=true; _setSaveStat('保存中…');
+  if(_saving) return;
+  var rev=_rev, steps=_collectSteps(); _saving=true; _setSaveStat('保存中…');
   return db.collection('events').doc(EID).collection('seminar').doc('config')
     .set({steps:steps, updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
-    .then(function(){ _saving=false; _dirty=false; _setSaveStat('✓ 保存済み '+_hhmm()); if(!auto) toast('保存しました'); })
+    .then(function(){ _saving=false; _savedRev=rev; _setSaveStat(_dirtyNow()?'● 未保存':('✓ 保存済み '+_hhmm())); if(!auto) toast('保存しました'); })
     .catch(function(e){ _saving=false; _setSaveStat('⚠ 保存失敗'); toast('保存失敗: '+(e&&e.message||e)); });
 }
 function _hhmm(){ var d=new Date(); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
-function save(){ if(_saveT) clearTimeout(_saveT); doSave(false); }
-// 離脱時、未保存があれば警告（自動保存前の数秒の取りこぼし防止）
-window.addEventListener('beforeunload', function(e){ if(_dirty||_saving){ e.preventDefault(); e.returnValue=''; } });
-// #steps 内の変更（チェックボックス・360入力など）で自動保存
+function save(){ doSave(false); } // 手動保存は即時
+// 離脱時、未保存があれば警告（10秒間隔の取りこぼし防止）
+window.addEventListener('beforeunload', function(e){ if(_dirtyNow()||_saving){ e.preventDefault(); e.returnValue=''; } });
+// 10秒ごとに未保存があれば自動保存
+setInterval(function(){ if(_dirtyNow() && !_saving) doSave(true); }, 10000);
+// #steps 内の変更（チェックボックス・360入力など）を検知
 (function(){ var st=g('steps'); if(st){ st.addEventListener('change', _markDirty); st.addEventListener('input', _markDirty); } })();
 
 // ── 参加者用の軽量画像(中サイズ1080px)を既存写真に一括生成 ──
