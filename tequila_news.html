@@ -56,6 +56,8 @@ a{color:inherit}
 /* toolbar */
 .toolbar{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
 .tcount{font-size:12px;color:var(--ink2);font-weight:600}
+.markall{font-size:11px;color:var(--gold-d);background:var(--white);border:1px solid var(--cream3);border-radius:16px;padding:6px 12px;cursor:pointer}
+.markall:hover{background:var(--cream2);border-color:var(--gold)}
 .sortsel{margin-left:auto;font-size:12px;color:var(--ink2);background:var(--white);border:1px solid var(--cream3);border-radius:16px;padding:6px 12px}
 .tag-filter{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
 .tag-chip{padding:5px 11px;border:1px solid var(--cream3);border-radius:16px;background:var(--white);color:var(--ink3);font-size:11px;white-space:nowrap}
@@ -68,6 +70,11 @@ a{color:inherit}
 .nrow-title{flex:1;min-width:0;font-size:14px;font-weight:600;line-height:1.5;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nrow-lang{flex-shrink:0;font-size:9px;color:var(--gold-d);border:1px solid var(--cream3);border-radius:8px;padding:0 5px;line-height:1.5}
 .nrow-date{flex-shrink:0;font-size:12px;color:var(--ink3);font-family:var(--mono)}
+.unread-dot{flex-shrink:0;width:7px;height:7px;border-radius:50%;background:var(--gold);align-self:center}
+.new-badge{flex-shrink:0;font-size:9px;font-weight:800;letter-spacing:.04em;color:#fff;background:#c0453a;border-radius:4px;padding:1px 5px;line-height:1.5}
+/* 既読はタイトルを少しグレーに（未読を目立たせる） */
+.nrow.read .nrow-title{color:var(--ink3);font-weight:500}
+.nrow.read .nrow-date{opacity:.7}
 .ndate{font-size:11px;color:var(--ink3);font-family:var(--mono)}
 .ndate b{color:var(--ink2);font-weight:600}
 .nlang{font-size:10px;color:var(--ink3);border:1px solid var(--cream3);border-radius:10px;padding:1px 7px}
@@ -146,6 +153,7 @@ a{color:inherit}
   <div class="wrap">
     <div class="toolbar">
       <span class="tcount" id="count"></span>
+      <button class="markall" id="markall">✓ 全部既読</button>
       <select class="sortsel" id="sortsel">
         <option value="src">投稿日（元記事）が新しい順</option>
         <option value="srcold">投稿日（元記事）が古い順</option>
@@ -184,12 +192,19 @@ function bodyHtml(raw){
 var LANG_LABEL={ja:'日本語',en:'英語',es:'スペイン語',fr:'フランス語',pt:'ポルトガル語',other:'他言語'};
 
 var articles=[], curTag='__all', sortMode='src';
+var currentUid=null, readRef=null, readSet={};
+var NEW_WINDOW_MS=3*24*60*60*1000; // 3日以内公開=NEW
 
 AuthRole.requireMember(auth, function(user){
+  currentUid=user.uid;
+  try{ readRef=db.collection('tequilaNewsReads').doc(user.uid); }catch(e){}
   gateByConfig(user);
 }, function(){
   g('login-screen').style.display='flex';
 });
+
+function isNew(a){ var t=Date.parse(a.publishedAt||a.createdAt||''); return t && (Date.now()-t)<=NEW_WINDOW_MS; }
+function isRead(a){ return !!readSet[a.id]; }
 
 function gateByConfig(user){
   db.collection('tequilaNewsConfig').doc('settings').get().then(function(cfg){
@@ -219,7 +234,12 @@ function dispTitle(a){ return a.titleJa||a.title||'(無題)'; }
 function dispBody(a){ return bodyHtml(a.bodyJa||a.body||''); }
 
 function loadArticles(){
-  db.collection('tequilaNews').where('published','==',true).get().then(function(snap){
+  var pReads=readRef?readRef.get().then(function(d){ readSet=(d.exists&&d.data().read)||{}; }).catch(function(){ readSet={}; }):Promise.resolve();
+  Promise.all([
+    db.collection('tequilaNews').where('published','==',true).get(),
+    pReads
+  ]).then(function(res){
+    var snap=res[0];
     articles=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
     renderTags(); applySort(); render();
     var q=new URLSearchParams(location.search), wid=q.get('id');
@@ -230,6 +250,30 @@ function loadArticles(){
   });
 }
 
+// 既読化（本人のUID単位でFirestoreに保存）
+function markRead(id){
+  if(!id || readSet[id]) return;
+  readSet[id]=true;
+  if(readRef){ var o={}; o[id]=true; readRef.set({read:o,updatedAt:new Date().toISOString()},{merge:true}).catch(function(){}); }
+  // 表示を即時反映
+  var el=g('list').querySelector('.nrow[data-id="'+(''+id).replace(/"/g,'')+'"]');
+  if(el){ el.classList.add('read'); var dot=el.querySelector('.unread-dot'); if(dot) dot.style.visibility='hidden'; }
+  updateUnreadCount();
+}
+function markAllRead(){
+  var ids=articles.map(function(a){return a.id;});
+  if(!ids.length) return;
+  var o={}; ids.forEach(function(id){ readSet[id]=true; o[id]=true; });
+  if(readRef){ readRef.set({read:o,updatedAt:new Date().toISOString()},{merge:true}).catch(function(){}); }
+  render();
+}
+function updateUnreadCount(){
+  var items=articles.filter(function(a){return curTag==='__all'||(a.tags||[]).indexOf(curTag)>=0;});
+  var unread=items.filter(function(a){return !isRead(a);}).length;
+  var b=g('markall'); if(b) b.style.display=unread?'':'none';
+  var c=g('count'); if(c) c.textContent=items.length?(items.length+'件'+(unread?'（未読'+unread+'）':'')):'';
+}
+
 function applySort(){
   if(sortMode==='pub') articles.sort(function(a,b){return tsPub(b)-tsPub(a);});
   else if(sortMode==='pubold') articles.sort(function(a,b){return tsPub(a)-tsPub(b);});
@@ -237,6 +281,7 @@ function applySort(){
   else if(sortMode==='srcold') articles.sort(function(a,b){return tsSrc(a)-tsSrc(b);});
 }
 g('sortsel').addEventListener('change',function(){ sortMode=g('sortsel').value; applySort(); render(); });
+g('markall').addEventListener('click',markAllRead);
 
 function renderTags(){
   var tags=[]; articles.forEach(function(a){ (a.tags||[]).forEach(function(t){ if(t&&tags.indexOf(t)<0) tags.push(t); }); });
@@ -252,25 +297,30 @@ function renderTags(){
 
 function render(){
   var items=articles.filter(function(a){return curTag==='__all'||(a.tags||[]).indexOf(curTag)>=0;});
-  g('count').textContent=items.length?items.length+'件':'';
   var list=g('list');
-  if(!items.length){ list.innerHTML=''; g('empty').style.display='block'; return; }
+  if(!items.length){ list.innerHTML=''; g('empty').style.display='block'; updateUnreadCount(); return; }
   g('empty').style.display='none';
   list.innerHTML=items.map(function(a,i){
+    var read=isRead(a);
     var lang=(a.originalLang&&a.originalLang!=='ja')?'<span class="nrow-lang">'+esc(LANG_LABEL[a.originalLang]||a.originalLang)+'</span>':'';
     var d=fmtDate(a.sourceDate||a.publishedAt);
-    return '<div class="nrow" data-i="'+i+'">'
+    var dot='<span class="unread-dot"'+(read?' style="visibility:hidden"':'')+'></span>';
+    var nb=isNew(a)?'<span class="new-badge">NEW</span>':'';
+    return '<div class="nrow'+(read?' read':'')+'" data-i="'+i+'" data-id="'+esc(a.id)+'">'
+      +dot
       +'<span class="nrow-title">'+esc(dispTitle(a))+'</span>'
-      +lang
+      +nb+lang
       +'<span class="nrow-date">'+esc(d)+'</span>'
       +'</div>';
   }).join('');
   Array.prototype.forEach.call(list.querySelectorAll('.nrow'),function(el){
     el.addEventListener('click',function(){ openDetail(items[Number(el.dataset.i)]); });
   });
+  updateUnreadCount();
 }
 
 function openDetail(a){
+  markRead(a.id);
   g('dm-htitle').textContent=dispTitle(a);
   var lang=(a.originalLang&&a.originalLang!=='ja')?'<span class="nlang">'+esc(LANG_LABEL[a.originalLang]||a.originalLang)+' 原文の和訳</span>':'';
   var html='<div class="dm-meta">'
