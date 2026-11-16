@@ -166,7 +166,7 @@ tr:hover td{background:rgba(217,165,58,.04)}
     <!-- 手動収集（Phase2でAI接続） -->
     <div class="pane" id="pane-collect">
       <div class="soon-banner">
-        🤖 <b>AIによるニュース検索</b>は、おすすめの生成AI（Grok / Live Search 等）のAPIキー設定後に有効になります。毎朝の自動収集に加えて、ここでキーワードと期間を指定した随時検索ができます。現状は条件入力のみ可能です。
+        🤖 <b>AIによるニュース検索</b>（Grok / Live Search）。キーワードと期間を指定して随時収集できます。収集結果は<b>非公開（下書き）</b>として記事一覧に追加されるので、内容を確認・訂正してから公開してください。※APIキー（XAI_API_KEY）がGCPシークレットに未設定の場合はエラーになります。
       </div>
       <div class="card">
         <h3>キーワードと期間で検索</h3>
@@ -183,7 +183,12 @@ tr:hover td{background:rgba(217,165,58,.04)}
           <label class="fl">追加の自由キーワード（任意・カンマ区切り）</label>
           <input id="collect-free" placeholder="例: Casa Dragones, 増税">
         </div>
-        <button class="btn pri" id="btn-collect" disabled>AIで検索して下書き追加（準備中）</button>
+        <div class="fg">
+          <label class="fl">最大取得件数</label>
+          <input type="number" id="collect-max" value="8" min="1" max="20" style="max-width:120px">
+        </div>
+        <button class="btn pri" id="btn-collect">AIで検索して下書き追加</button>
+        <div id="collect-msg" class="muted" style="margin-top:12px;line-height:1.7"></div>
       </div>
     </div>
 
@@ -205,6 +210,25 @@ tr:hover td{background:rgba(217,165,58,.04)}
           <button data-v="member">ログイン会員 全員</button>
           <button data-v="paid">有料会員のみ</button>
         </div>
+      </div>
+      <div class="card">
+        <h3>自動収集（AI）</h3>
+        <div class="cdesc">毎朝7時（JST）にGrokが上記キーワードでニュースを収集し、<b>非公開（下書き）</b>として自動追加します。内容を確認・訂正してから公開してください。</div>
+        <div class="grid2">
+          <div class="fg">
+            <label class="fl">毎朝の自動収集</label>
+            <div class="seg" id="seg-auto" style="width:100%">
+              <button data-v="on" style="flex:1">ON</button>
+              <button data-v="off" style="flex:1">OFF</button>
+            </div>
+          </div>
+          <div class="fg">
+            <label class="fl">使用モデル（xAI / Grok）</label>
+            <input id="f-model" placeholder="grok-4">
+            <div class="hint">例: grok-4 / grok-4-fast-reasoning / grok-3-latest。料金・精度に応じて変更可。</div>
+          </div>
+        </div>
+        <div id="lastrun" class="muted" style="font-size:12px;line-height:1.7"></div>
       </div>
       <div style="text-align:right">
         <button class="btn pri" id="btn-save-settings">設定を保存</button>
@@ -318,8 +342,9 @@ function fmtDate(iso){ if(!iso) return '—'; var t=Date.parse(iso); if(isNaN(t)
 
 var DEFAULT_KEYWORDS=['新商品情報','テキーラ関連ニュース','アガベプラント関連情報','アガベスピリッツ情報','訴訟関係（アガベスピリッツ関連訴訟）'];
 
-var articles=[], config={keywords:DEFAULT_KEYWORDS.slice(),accessLevel:'member'}, editId=null, editDoc=null, editTags=[], editPub='draft';
+var articles=[], config={keywords:DEFAULT_KEYWORDS.slice(),accessLevel:'member',autoEnabled:true,aiModel:'grok-4',lastRun:null}, editId=null, editDoc=null, editTags=[], editPub='draft';
 var sortKey='publishedAt', sortDir='desc';
+var fns=null; try{ fns=firebase.app().functions('asia-northeast1'); }catch(e){}
 
 AuthRole.requireStaff(auth, function(){
   g('app').style.display='block';
@@ -337,6 +362,9 @@ function loadAll(){
       var c=res[0].data();
       config.keywords=Array.isArray(c.keywords)&&c.keywords.length?c.keywords.slice():DEFAULT_KEYWORDS.slice();
       config.accessLevel=c.accessLevel||'member';
+      config.autoEnabled=(c.autoEnabled!==false);
+      config.aiModel=c.aiModel||'grok-4';
+      config.lastRun=c.lastRun||null;
     }
     articles=res[1].docs.map(function(d){return Object.assign({id:d.id},d.data());});
     renderSettings(); renderCollectKw(); renderTagFilter(); renderList();
@@ -558,7 +586,33 @@ function renderCollectKw(){
   Array.prototype.forEach.call(g('collect-kw').querySelectorAll('button'),function(b){
     b.addEventListener('click',function(){ var k=b.dataset.k; var i=collectSel.indexOf(k); if(i>=0) collectSel.splice(i,1); else collectSel.push(k); renderCollectKw(); });
   });
+  // 期間の既定値（未設定時：過去7日〜今日）
+  if(!g('collect-to').value){ g('collect-to').value=new Date().toISOString().slice(0,10); }
+  if(!g('collect-from').value){ g('collect-from').value=new Date(Date.now()-7*864e5).toISOString().slice(0,10); }
 }
+g('btn-collect').addEventListener('click',function(){
+  if(!fns){ toast('Functions初期化エラー','err'); return; }
+  var btn=g('btn-collect'), msg=g('collect-msg');
+  var payload={
+    keywords:collectSel.slice(),
+    freeKeywords:(g('collect-free').value||''),
+    fromDate:g('collect-from').value||'',
+    toDate:g('collect-to').value||'',
+    maxItems:Number(g('collect-max').value)||8
+  };
+  if(!payload.keywords.length && !payload.freeKeywords.trim()){
+    if(!confirm('キーワード未選択です。設定の全キーワードで検索しますか？')) return;
+  }
+  btn.disabled=true; btn.textContent='検索中...（最大5分）'; msg.style.color=''; msg.textContent='Grokがニュースを検索・整形しています。しばらくお待ちください…';
+  fns.httpsCallable('collectTequilaNews')(payload).then(function(res){
+    var d=res.data||{};
+    msg.innerHTML='<span style="color:#7bc99a">完了</span> — '+(d.found||0)+'件ヒット、'+(d.added||0)+'件を下書き追加（重複スキップ '+(d.skipped||0)+'件）。期間 '+esc(d.fromDate||'')+'〜'+esc(d.toDate||'');
+    toast((d.added||0)+'件を下書き追加しました');
+    loadAll();
+  }).catch(function(e){
+    msg.style.color='#ecb0a0'; msg.textContent='エラー: '+(e&&e.message?e.message:e);
+  }).finally(function(){ btn.disabled=false; btn.textContent='AIで検索して下書き追加'; });
+});
 
 // ── 設定 ──
 function renderSettings(){
@@ -572,7 +626,24 @@ function renderSettings(){
   Array.prototype.forEach.call(g('seg-access').querySelectorAll('button'),function(b){
     b.classList.toggle('on', b.dataset.v===config.accessLevel);
   });
+  Array.prototype.forEach.call(g('seg-auto').querySelectorAll('button'),function(b){
+    b.classList.toggle('on', b.dataset.v===(config.autoEnabled?'on':'off'));
+  });
+  g('f-model').value=config.aiModel||'grok-4';
+  renderLastRun();
 }
+function renderLastRun(){
+  var el=g('lastrun'); if(!el) return;
+  var r=config.lastRun;
+  if(!r){ el.textContent='最終実行: まだ実行されていません。'; return; }
+  var when=r.at?fmtDate(r.at)+' '+(r.at.slice(11,16)||''):'';
+  var src=r.source==='manual'?'手動':'自動';
+  if(r.ok){ el.innerHTML='最終実行: '+esc(when)+'（'+src+'）<span style="color:#7bc99a">成功</span> — 追加 '+(r.added||0)+'件 / 重複スキップ '+(r.skipped||0)+'件'; }
+  else{ el.innerHTML='最終実行: '+esc(when)+'（'+src+'）<span style="color:#ecb0a0">失敗</span> — '+esc(r.error||''); }
+}
+Array.prototype.forEach.call(g('seg-auto').querySelectorAll('button'),function(b){
+  b.addEventListener('click',function(){ config.autoEnabled=(b.dataset.v==='on'); renderSettings(); });
+});
 g('kw-add-btn').addEventListener('click',function(){
   var v=(g('kw-input').value||'').trim(); if(!v) return;
   if(config.keywords.indexOf(v)>=0){ toast('既に存在します','err'); return; }
@@ -584,8 +655,10 @@ Array.prototype.forEach.call(g('seg-access').querySelectorAll('button'),function
 });
 g('btn-save-settings').addEventListener('click',function(){
   var btn=g('btn-save-settings'); btn.disabled=true; btn.textContent='保存中...';
+  config.aiModel=(g('f-model').value||'grok-4').trim()||'grok-4';
   db.collection('tequilaNewsConfig').doc('settings').set({
-    keywords:config.keywords, accessLevel:config.accessLevel, updatedAt:nowISO()
+    keywords:config.keywords, accessLevel:config.accessLevel,
+    autoEnabled:config.autoEnabled, aiModel:config.aiModel, updatedAt:nowISO()
   },{merge:true}).then(function(){ toast('設定を保存しました'); renderCollectKw(); renderTagSuggestions(); })
   .catch(function(e){ toast('保存失敗: '+e.message,'err'); })
   .finally(function(){ btn.disabled=false; btn.textContent='設定を保存'; });
