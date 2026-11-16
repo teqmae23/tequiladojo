@@ -3185,6 +3185,113 @@ async function grokCollectNews({ apiKey, model, keywords, fromDate, toDate, maxI
   return { articles: Array.isArray(articles) ? articles : [], citations: [] };
 }
 
+// HTMLから本文テキストを粗く抽出（URL記事化のための補助コンテキスト）
+function htmlToText(html) {
+  if (!html) return '';
+  let s = String(html);
+  s = s.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ');
+  s = s.replace(/<!--[\s\S]*?-->/g, ' ');
+  s = s.replace(/<\/(p|div|br|li|h[1-6]|tr|section|article)>/gi, '\n');
+  s = s.replace(/<[^>]+>/g, ' ');
+  s = s.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  s = s.replace(/[ \t]+/g, ' ').replace(/\n\s*\n\s*\n+/g, '\n\n');
+  return s.trim();
+}
+async function fetchUrlText(url) {
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 20000);
+    const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; tequiladojo-newsbot)' }, redirect: 'follow', signal: ctrl.signal });
+    clearTimeout(to);
+    if (!resp.ok) return '';
+    const html = await resp.text();
+    return htmlToText(html).slice(0, 16000);
+  } catch (e) { return ''; }
+}
+
+// 指定URLの記事を読み、翻訳・分類して1件の記事データに整形する。
+async function grokArticleFromUrl({ apiKey, model, url, keywords }) {
+  apiKey = String(apiKey || '').trim();
+  if (!apiKey) throw new Error('XAI_API_KEY 未設定');
+  if (!/^https?:\/\//i.test(url)) throw new Error('URLが不正です');
+  const kwList = (keywords || []).filter(Boolean);
+  const pageText = await fetchUrlText(url);
+  const sys = [
+    'あなたは日本のテキーラ愛好家コミュニティ「テキーラ道場」の編集アシスタントです。',
+    '指定された記事ページを読み、会員向けの日本語記事データとして整形します。事実に忠実にまとめ、推測や未確認情報は加えないこと。',
+    '原文（body, 元記事の言語そのまま）と和訳（bodyJa, 日本語）の両方を必ず埋めること。英語など外国語の記事で body を空にしないこと。',
+    'titleJa は必ず日本語の見出しにすること（原題をそのまま入れない）。'
+  ].join('');
+  const schema = [
+    '次のJSON形式のオブジェクトのみを返してください（配列ではなく単一オブジェクト。前後に説明文やコードフェンスを付けない）:',
+    '{',
+    '"title": "原語のタイトル（元記事の言語そのまま）",',
+    '"titleJa": "日本語に翻訳したタイトル（必須・空にしない）",',
+    '"summaryJa": "日本語の要約（2〜3文）",',
+    '"body": "元記事の言語そのままの本文（3〜6段落。空にしない。原文が日本語なら日本語本文）",',
+    '"bodyJa": "body の日本語訳（原文が日本語ならbodyと同じ）。空にしない",',
+    '"originalLang": "ja|en|es|fr|pt|other（元記事の言語を正確に判定）",',
+    '"sourceName": "媒体名",',
+    '"sourceUrl": "' + url + '",',
+    '"sourceDate": "YYYY-MM-DD（元記事の公開日。不明なら空文字）",',
+    '"tags": ["分類タグ", ...]',
+    '}'
+  ].join('\n');
+  const user = [
+    '次のURLの記事を、会員向けの日本語記事データに整形してください。',
+    'URL: ' + url,
+    'web_search ツールでこのURLの内容を取得・確認すること。',
+    (pageText ? ('参考（このページから抽出した本文テキスト。不足・文字化けがあれば web_search で補うこと）:\n' + pageText.slice(0, 12000)) : '（ページ本文を取得できなかったため web_search で内容を取得すること）'),
+    '',
+    'tags（分類）は次の候補から該当するものを優先的に選び、必要なら適切なタグを日本語で追加すること:',
+    kwList.length ? kwList.map((k) => '・' + k).join('\n') : '（候補なし）',
+    'sourceUrl には上記URLをそのまま設定すること。',
+    '',
+    schema
+  ].join('\n');
+
+  const body = {
+    model: model,
+    input: [
+      { role: 'system', content: sys },
+      { role: 'user', content: user }
+    ],
+    tools: [{ type: 'web_search' }],
+    temperature: 0.2,
+    max_output_tokens: 8000
+  };
+  const resp = await fetch(XAI_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+    body: JSON.stringify(body)
+  });
+  const txt = await resp.text();
+  if (!resp.ok) throw new Error('xAI API ' + resp.status + ': ' + txt.slice(0, 500));
+  let data; try { data = JSON.parse(txt); } catch (e) { throw new Error('xAI応答のJSON解析に失敗: ' + txt.slice(0, 300)); }
+  let content = '';
+  if (typeof data.output_text === 'string') {
+    content = data.output_text;
+  } else if (Array.isArray(data.output)) {
+    data.output.forEach((item) => {
+      if (item && (item.type === 'message' || item.role === 'assistant') && Array.isArray(item.content)) {
+        item.content.forEach((c) => { if (c && typeof c.text === 'string' && (c.type === 'output_text' || c.type === 'text' || !c.type)) content += c.text; });
+      } else if (item && typeof item.text === 'string') { content += item.text; }
+    });
+  }
+  if (!content && data.choices && data.choices[0] && data.choices[0].message) content = data.choices[0].message.content || '';
+  if (!content) throw new Error('xAI応答からテキストを抽出できません: ' + txt.slice(0, 400));
+  let parsed;
+  try { parsed = JSON.parse(content); }
+  catch (e) {
+    let s = String(content).replace(/```json/gi, '').replace(/```/g, '');
+    const m = s.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('記事JSONを抽出できません: ' + String(content).slice(0, 300));
+    parsed = JSON.parse(m[0]);
+  }
+  const article = Array.isArray(parsed) ? parsed[0] : (parsed.article || (parsed.articles && parsed.articles[0]) || parsed);
+  return article || null;
+}
+
 // 記事配列を tequilaNews に「下書き（非公開）」として保存。sourceUrlで重複除外。
 async function tqnSaveDrafts(articles, meta) {
   if (!articles.length) return { added: 0, skipped: 0 };
@@ -3276,4 +3383,42 @@ exports.collectTequilaNews = functions.region('asia-northeast1')
     const run = await tqnRun({ apiKey, keywords, fromDate, toDate, maxItems, model: cfg.aiModel, source: 'manual' });
     if (!run.ok) throw new functions.https.HttpsError('internal', run.error || '収集に失敗しました');
     return { ok: true, added: run.added, skipped: run.skipped, found: run.found || 0, fromDate, toDate };
+  });
+
+// URLから記事化（管理画面から：URLを指定して投稿を取得し、翻訳・分類して下書き作成）
+exports.articleFromUrl = functions.region('asia-northeast1')
+  .runWith({ secrets: ['XAI_API_KEY'], timeoutSeconds: 300, memory: '512MB' })
+  .https.onCall(async (data, context) => {
+    await assertStaff(context);
+    const apiKey = xaiApiKey.value();
+    if (!apiKey) throw new functions.https.HttpsError('failed-precondition', 'XAI_API_KEY が未設定です。GCPシークレットに設定してください。');
+    const url = (data && data.url ? String(data.url) : '').trim();
+    if (!/^https?:\/\//i.test(url)) throw new functions.https.HttpsError('invalid-argument', '有効なURL（http/https）を指定してください');
+    const cfg = await tqnLoadConfig();
+    let article;
+    try {
+      article = await grokArticleFromUrl({ apiKey, model: cfg.aiModel, url, keywords: cfg.keywords });
+    } catch (e) {
+      throw new functions.https.HttpsError('internal', String(e && e.message ? e.message : e).slice(0, 800));
+    }
+    if (!article || !((article.title || '').trim() || (article.titleJa || '').trim())) {
+      throw new functions.https.HttpsError('internal', '記事を生成できませんでした（ページを取得できなかった可能性があります）');
+    }
+    const nowISO = new Date().toISOString();
+    const doc = {
+      title: (article.title || '').trim(),
+      titleJa: (article.titleJa || '').trim(),
+      summaryJa: (article.summaryJa || '').trim(),
+      bodyJa: (article.bodyJa || '').trim(),
+      body: (article.body || '').trim(),
+      originalLang: (article.originalLang || 'ja'),
+      sourceName: (article.sourceName || '').trim(),
+      sourceUrl: (article.sourceUrl || url).trim(),
+      sourceDate: (article.sourceDate || '').slice(0, 10),
+      tags: Array.isArray(article.tags) ? article.tags.filter(Boolean).slice(0, 12) : [],
+      published: false, newsLinked: false, aiGenerated: true, aiSource: 'url',
+      createdAt: nowISO, updatedAt: nowISO
+    };
+    const ref = await db.collection('tequilaNews').add(doc);
+    return { ok: true, id: ref.id };
   });
