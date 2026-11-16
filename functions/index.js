@@ -3092,6 +3092,7 @@ async function tqnLoadConfig() {
 // Grok に対しキーワード＋期間でニュースを検索・整形させ、記事配列を返す。
 // xAI Agent Tools API（/v1/responses ＋ web_search ツール）を使用。仕様変更時はこの関数を調整する。
 async function grokCollectNews({ apiKey, model, keywords, fromDate, toDate, maxItems }) {
+  apiKey = String(apiKey || '').trim(); // 秘密鍵に混入しうる前後の空白・改行を除去
   if (!apiKey) throw new Error('XAI_API_KEY 未設定');
   const kwList = (keywords || []).filter(Boolean);
   const sys = [
