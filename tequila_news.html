@@ -155,6 +155,7 @@ a{color:inherit}
       <span class="tcount" id="count"></span>
       <button class="markall" id="markall">✓ 全部既読</button>
       <select class="sortsel" id="sortsel">
+        <option value="default">標準（NEW → 公開日が新しい順）</option>
         <option value="src">投稿日（元記事）が新しい順</option>
         <option value="srcold">投稿日（元記事）が古い順</option>
         <option value="pub">公開日が新しい順</option>
@@ -191,7 +192,7 @@ function bodyHtml(raw){
 }
 var LANG_LABEL={ja:'日本語',en:'英語',es:'スペイン語',fr:'フランス語',pt:'ポルトガル語',other:'他言語'};
 
-var articles=[], curTag='__all', sortMode='src';
+var articles=[], curTag='__all', sortMode='default';
 var currentUid=null, readRef=null, readSet={};
 var NEW_WINDOW_MS=3*24*60*60*1000; // 3日以内公開=NEW
 
@@ -205,6 +206,7 @@ AuthRole.requireMember(auth, function(user){
 
 function isNew(a){ var t=Date.parse(a.publishedAt||a.createdAt||''); return t && (Date.now()-t)<=NEW_WINDOW_MS; }
 function isRead(a){ return !!readSet[a.id]; }
+function showNew(a){ return isNew(a) && !isRead(a); } // 既読ならNEWを外す
 
 function gateByConfig(user){
   db.collection('tequilaNewsConfig').doc('settings').get().then(function(cfg){
@@ -257,7 +259,7 @@ function markRead(id){
   if(readRef){ var o={}; o[id]=true; readRef.set({read:o,updatedAt:new Date().toISOString()},{merge:true}).catch(function(){}); }
   // 表示を即時反映
   var el=g('list').querySelector('.nrow[data-id="'+(''+id).replace(/"/g,'')+'"]');
-  if(el){ el.classList.add('read'); var dot=el.querySelector('.unread-dot'); if(dot) dot.style.visibility='hidden'; }
+  if(el){ el.classList.add('read'); var dot=el.querySelector('.unread-dot'); if(dot) dot.style.visibility='hidden'; var nb=el.querySelector('.new-badge'); if(nb) nb.remove(); }
   updateUnreadCount();
 }
 function markAllRead(){
@@ -275,7 +277,8 @@ function updateUnreadCount(){
 }
 
 function applySort(){
-  if(sortMode==='pub') articles.sort(function(a,b){return tsPub(b)-tsPub(a);});
+  if(sortMode==='default') articles.sort(function(a,b){ var na=showNew(a)?1:0, nb=showNew(b)?1:0; return (nb-na)||(tsPub(b)-tsPub(a)); });
+  else if(sortMode==='pub') articles.sort(function(a,b){return tsPub(b)-tsPub(a);});
   else if(sortMode==='pubold') articles.sort(function(a,b){return tsPub(a)-tsPub(b);});
   else if(sortMode==='src') articles.sort(function(a,b){return tsSrc(b)-tsSrc(a);});
   else if(sortMode==='srcold') articles.sort(function(a,b){return tsSrc(a)-tsSrc(b);});
@@ -305,7 +308,7 @@ function render(){
     var lang=(a.originalLang&&a.originalLang!=='ja')?'<span class="nrow-lang">'+esc(LANG_LABEL[a.originalLang]||a.originalLang)+'</span>':'';
     var d=fmtDate(a.sourceDate||a.publishedAt);
     var dot='<span class="unread-dot"'+(read?' style="visibility:hidden"':'')+'></span>';
-    var nb=isNew(a)?'<span class="new-badge">NEW</span>':'';
+    var nb=showNew(a)?'<span class="new-badge">NEW</span>':'';
     return '<div class="nrow'+(read?' read':'')+'" data-i="'+i+'" data-id="'+esc(a.id)+'">'
       +dot
       +'<span class="nrow-title">'+esc(dispTitle(a))+'</span>'
