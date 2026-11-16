@@ -172,7 +172,17 @@ button.st:hover,button.lnktgl:hover{filter:brightness(1.15)}
     <!-- 手動収集（Phase2でAI接続） -->
     <div class="pane" id="pane-collect">
       <div class="soon-banner">
-        🤖 <b>AIによるニュース検索</b>（Grok / Live Search）。キーワードと期間を指定して随時収集できます。収集結果は<b>非公開（下書き）</b>として記事一覧に追加されるので、内容を確認・訂正してから公開してください。※APIキー（XAI_API_KEY）がGCPシークレットに未設定の場合はエラーになります。
+        🤖 <b>AIによるニュース収集</b>（Grok）。「URLから記事化」または「キーワード＋期間」で収集できます。結果は<b>非公開（下書き）</b>として記事一覧に追加されるので、内容を確認・訂正してから公開してください。※APIキー（XAI_API_KEY）未設定時はエラーになります。
+      </div>
+      <div class="card">
+        <h3>URLから記事化（直接入力）</h3>
+        <div class="cdesc">記事のURLを貼り付けると、そのページを取得し、<b>翻訳・分類（タグ付け）</b>まで行って記事化します。生成後、確認用に編集画面が開きます。</div>
+        <div class="fg">
+          <label class="fl">記事のURL</label>
+          <input id="url-input" placeholder="https://..." type="url">
+        </div>
+        <button class="btn pri" id="btn-fromurl">URLから記事化</button>
+        <div id="url-msg" class="muted" style="margin-top:12px;line-height:1.7"></div>
       </div>
       <div class="card">
         <h3>キーワードと期間で検索</h3>
@@ -367,7 +377,7 @@ AuthRole.requireStaff(auth, function(){
 });
 
 function loadAll(){
-  Promise.all([
+  return Promise.all([
     db.collection('tequilaNewsConfig').doc('settings').get(),
     db.collection('tequilaNews').get()
   ]).then(function(res){
@@ -640,6 +650,27 @@ function renderCollectKw(){
   if(!g('collect-to').value){ g('collect-to').value=new Date().toISOString().slice(0,10); }
   if(!g('collect-from').value){ g('collect-from').value=new Date(Date.now()-7*864e5).toISOString().slice(0,10); }
 }
+// URLから記事化
+function gotoListTab(){
+  var t=document.querySelector('.tab[data-pane="list"]'); if(t) t.click();
+}
+g('btn-fromurl').addEventListener('click',function(){
+  if(!fns){ toast('Functions初期化エラー','err'); return; }
+  var url=(g('url-input').value||'').trim();
+  if(!/^https?:\/\//i.test(url)){ toast('有効なURL（http/https）を入力してください','err'); return; }
+  var btn=g('btn-fromurl'), msg=g('url-msg');
+  btn.disabled=true; btn.textContent='記事化中...（最大5分）'; msg.style.color=''; msg.textContent='ページを取得して翻訳・分類しています。しばらくお待ちください…';
+  fns.httpsCallable('articleFromUrl')({url:url}).then(function(res){
+    var id=res.data&&res.data.id;
+    msg.innerHTML='<span style="color:#7bc99a">完了</span> — 下書きを作成しました。確認用に編集画面を開きます。';
+    g('url-input').value='';
+    return loadAll().then(function(){ gotoListTab(); if(id) openEdit(id); });
+  }).catch(function(e){
+    msg.style.color='#ecb0a0'; msg.textContent='エラー: '+(e&&e.message?e.message:e);
+  }).finally(function(){ btn.disabled=false; btn.textContent='URLから記事化'; });
+});
+g('url-input').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); g('btn-fromurl').click(); } });
+
 g('btn-collect').addEventListener('click',function(){
   if(!fns){ toast('Functions初期化エラー','err'); return; }
   var btn=g('btn-collect'), msg=g('collect-msg');
