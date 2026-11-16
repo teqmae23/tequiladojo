@@ -184,10 +184,11 @@ button.st:hover,button.lnktgl:hover{filter:brightness(1.15)}
       </div>
       <div class="card">
         <h3>URLから記事化（直接入力）</h3>
-        <div class="cdesc">記事のURLを貼り付けると、そのページを取得し、<b>翻訳・分類（タグ付け）</b>まで行って記事化します。生成後、確認用に編集画面が開きます。</div>
+        <div class="cdesc">記事のURLを貼り付けると、そのページを取得し、<b>翻訳・分類（タグ付け）</b>まで行って記事化します。<b>複数URLを改行区切りで貼り付けると、まとめて複数記事を作成</b>できます（最大20件）。1件のときは生成後に確認用の編集画面が開きます。</div>
         <div class="fg">
-          <label class="fl">記事のURL</label>
-          <input id="url-input" placeholder="https://..." type="url">
+          <label class="fl">記事のURL（1行に1つ／複数可）</label>
+          <textarea id="url-input" rows="4" placeholder="https://...&#10;https://..."></textarea>
+          <div class="muted" id="url-count" style="font-size:11px;margin-top:4px"></div>
         </div>
         <button class="btn pri" id="btn-fromurl">URLから記事化</button>
         <div id="url-msg" class="muted" style="margin-top:12px;line-height:1.7"></div>
@@ -683,24 +684,88 @@ function renderCollectKw(){
   if(!g('collect-to').value){ g('collect-to').value=new Date().toISOString().slice(0,10); }
   if(!g('collect-from').value){ g('collect-from').value=new Date(Date.now()-7*864e5).toISOString().slice(0,10); }
 }
-// URLから記事化
+// URLから記事化（複数URL対応：改行・空白区切りで貼り付け → 1件ずつ記事化）
+var URL_MAX=20, URL_CONCURRENCY=2;
+function parseUrlList(text){
+  var m=(text||'').match(/https?:\/\/[^\s<>"'、，,]+/gi)||[];
+  var seen={}, out=[];
+  m.forEach(function(u){ var k=normUrl(u)||u; if(!seen[k]){ seen[k]=1; out.push(u); } });
+  return out;
+}
+function updateUrlCount(){
+  var n=parseUrlList(g('url-input').value).length;
+  g('url-count').textContent=n>1?(n+'件のURLを検出（'+(n>URL_MAX?'上限'+URL_MAX+'件を超えています':'まとめて記事化します')+'）'):'';
+  g('btn-fromurl').textContent=n>1?(n+'件のURLから記事化'):'URLから記事化';
+}
+g('url-input').addEventListener('input',updateUrlCount);
 g('btn-fromurl').addEventListener('click',function(){
   if(!fns){ toast('Functions初期化エラー','err'); return; }
-  var url=(g('url-input').value||'').trim();
-  if(!/^https?:\/\//i.test(url)){ toast('有効なURL（http/https）を入力してください','err'); return; }
-  var btn=g('btn-fromurl'), msg=g('url-msg');
-  btn.disabled=true; btn.textContent='記事化中...（最大5分）'; msg.style.color=''; msg.textContent='ページを取得して翻訳・分類しています。しばらくお待ちください…';
-  fns.httpsCallable('articleFromUrl')({url:url}).then(function(res){
-    var id=res.data&&res.data.id;
-    msg.innerHTML='<span style="color:#7bc99a">完了</span> — 下書きを作成しました。確認用に編集画面を開きます。';
-    g('url-input').value='';
-    // 手動収集タブのまま編集モーダルを開く（保存後も手動収集タブに戻る）
-    return loadAll().then(function(){ if(id) openEdit(id); });
-  }).catch(function(e){
-    msg.style.color='#ecb0a0'; msg.textContent='エラー: '+(e&&e.message?e.message:e);
-  }).finally(function(){ btn.disabled=false; btn.textContent='URLから記事化'; });
+  var urls=parseUrlList(g('url-input').value);
+  if(!urls.length){ toast('有効なURL（http/https）を入力してください','err'); return; }
+  if(urls.length>URL_MAX){ toast('一度に記事化できるのは'+URL_MAX+'件までです','err'); return; }
+  // 登録済みURLの確認（URL正規化で比較）
+  var exist={}; articles.forEach(function(x){ var u=normUrl(x.sourceUrl); if(u) exist[u]=1; });
+  var dups=urls.filter(function(u){ return exist[normUrl(u)]; });
+  if(dups.length){
+    var skip=confirm('登録済みのURLが'+dups.length+'件あります。\n\n'+dups.join('\n')+'\n\n［OK］登録済みをスキップ　［キャンセル］登録済みも含めて記事化');
+    if(skip) urls=urls.filter(function(u){ return !exist[normUrl(u)]; });
+    if(!urls.length){ toast('新規のURLがありません'); return; }
+  }
+  var btn=g('btn-fromurl'), msg=g('url-msg'), ta=g('url-input');
+  btn.disabled=true; ta.disabled=true; msg.style.color='';
+  // 1件：従来どおり完了後に編集画面を開く
+  if(urls.length===1){
+    btn.textContent='記事化中...（最大5分）'; msg.textContent='ページを取得して翻訳・分類しています。しばらくお待ちください…';
+    fns.httpsCallable('articleFromUrl')({url:urls[0]}).then(function(res){
+      var id=res.data&&res.data.id;
+      msg.innerHTML='<span style="color:#7bc99a">完了</span> — 下書きを作成しました。確認用に編集画面を開きます。';
+      ta.value=''; updateUrlCount();
+      // 手動収集タブのまま編集モーダルを開く（保存後も手動収集タブに戻る）
+      return loadAll().then(function(){ if(id) openEdit(id); });
+    }).catch(function(e){
+      msg.style.color='#ecb0a0'; msg.textContent='エラー: '+(e&&e.message?e.message:e);
+    }).finally(function(){ btn.disabled=false; ta.disabled=false; updateUrlCount(); });
+    return;
+  }
+  // 複数：同時実行数を絞って順に処理し、URLごとの進捗を表示
+  var st=urls.map(function(u){ return {url:u, state:'wait', id:null, err:''}; });
+  function paint(){
+    var done=st.filter(function(x){return x.state==='ok'||x.state==='ng';}).length;
+    btn.textContent='記事化中... '+done+'/'+st.length;
+    msg.innerHTML=st.map(function(x){
+      var icon={wait:'⏳ 待機',run:'🔄 処理中',ok:'<span style="color:#7bc99a">✓ 完了</span>',ng:'<span style="color:#ecb0a0">✗ 失敗</span>'}[x.state];
+      var tail=x.state==='ok'&&x.id?' <a href="#" class="url-open" data-id="'+esc(x.id)+'">編集</a>':(x.state==='ng'?' <span style="color:#ecb0a0">'+esc(x.err)+'</span>':'');
+      return '<div style="word-break:break-all">'+icon+' — '+esc(x.url)+tail+'</div>';
+    }).join('');
+  }
+  var next=0;
+  function worker(){
+    if(next>=st.length) return Promise.resolve();
+    var it=st[next++]; it.state='run'; paint();
+    return fns.httpsCallable('articleFromUrl')({url:it.url}).then(function(res){
+      it.state='ok'; it.id=res.data&&res.data.id;
+    }).catch(function(e){
+      it.state='ng'; it.err=String(e&&e.message?e.message:e).slice(0,200);
+    }).then(function(){ paint(); return worker(); });
+  }
+  paint();
+  var ws=[]; for(var i=0;i<Math.min(URL_CONCURRENCY,st.length);i++) ws.push(worker());
+  Promise.all(ws).then(function(){
+    var ok=st.filter(function(x){return x.state==='ok';}).length, ng=st.length-ok;
+    // 失敗したURLだけ入力欄に残す（再実行しやすいように）
+    ta.value=st.filter(function(x){return x.state==='ng';}).map(function(x){return x.url;}).join('\n');
+    msg.innerHTML='<div style="margin-bottom:6px"><b>'+ok+'件の下書きを作成しました</b>'+(ng?'（失敗'+ng+'件：入力欄に残しています）':'')+'。記事一覧で確認・公開してください。</div>'+msg.innerHTML;
+    toast(ok+'件作成'+(ng?'／失敗'+ng+'件':''), ng&&!ok?'err':'');
+    return loadAll();
+  }).finally(function(){ btn.disabled=false; ta.disabled=false; updateUrlCount(); });
 });
-g('url-input').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); g('btn-fromurl').click(); } });
+// 結果一覧の「編集」リンク
+g('url-msg').addEventListener('click',function(e){
+  var a=e.target.closest&&e.target.closest('.url-open'); if(!a) return;
+  e.preventDefault(); openEdit(a.dataset.id);
+});
+// Ctrl/⌘+Enter で実行（Enterは改行）
+g('url-input').addEventListener('keydown',function(e){ if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); g('btn-fromurl').click(); } });
 
 g('btn-collect').addEventListener('click',function(){
   if(!fns){ toast('Functions初期化エラー','err'); return; }
