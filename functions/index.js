@@ -11,6 +11,8 @@ const auth = admin.auth();
 // stripeWebhook / createStripeCustomer 用のシークレット。値はGCP側で設定済み。
 const stripeSecretKey = defineSecret('STRIPE_SECRET_KEY');
 const stripeWebhookSecret = defineSecret('STRIPE_WEBHOOK_SECRET');
+// テキーラニュース自動収集用（Grok / xAI）。値はGCP Secret Manager に XAI_API_KEY として設定する。
+const xaiApiKey = defineSecret('XAI_API_KEY');
 // StripeのPrice ID → 会員グレード対応
 const PRICE_GRADE_MAP = {
   'price_1TUegc1PL3PJaVpo3Hc1vuH6': 1,
@@ -3057,4 +3059,202 @@ exports.measureEventMediumSavings = functions.region('asia-northeast1')
       ok: true, eventId, imgTotal, withMed, noMed,
       fullBytesAll, fullBytesWithMed, medBytes, thumbBytes,
     };
+  });
+
+// ════════════════════════════════════════════════════════════════
+// テキーラ関連ニュース 自動収集（Grok / xAI Live Search）
+// ════════════════════════════════════════════════════════════════
+const TQNEWS_DEFAULT_KEYWORDS = [
+  '新商品情報', 'テキーラ関連ニュース', 'アガベプラント関連情報',
+  'アガベスピリッツ情報', '訴訟関係（アガベスピリッツ関連訴訟）'
+];
+const XAI_ENDPOINT = 'https://api.x.ai/v1/chat/completions';
+
+function tqnDateStr(d) { return d.toISOString().slice(0, 10); }
+
+// 設定の読み込み（キーワード・モデル・自動収集ON/OFF）
+async function tqnLoadConfig() {
+  let cfg = {};
+  try {
+    const snap = await db.collection('tequilaNewsConfig').doc('settings').get();
+    if (snap.exists) cfg = snap.data() || {};
+  } catch (e) { /* ignore */ }
+  const keywords = (Array.isArray(cfg.keywords) && cfg.keywords.length) ? cfg.keywords : TQNEWS_DEFAULT_KEYWORDS;
+  return {
+    keywords,
+    aiModel: cfg.aiModel || 'grok-4',
+    autoEnabled: cfg.autoEnabled !== false,
+    maxPerRun: Number(cfg.maxPerRun) || 8,
+  };
+}
+
+// Grok に対しキーワード＋期間でニュースを検索・整形させ、記事配列を返す。
+// Live Search（search_parameters）を使用。仕様変更時はこの関数を調整する。
+async function grokCollectNews({ apiKey, model, keywords, fromDate, toDate, maxItems }) {
+  if (!apiKey) throw new Error('XAI_API_KEY 未設定');
+  const kwList = (keywords || []).filter(Boolean);
+  const sys = [
+    'あなたは日本のテキーラ愛好家コミュニティ「テキーラ道場」の編集アシスタントです。',
+    'テキーラおよびアガベスピリッツ（メスカル等）、アガベ農業、関連業界・訴訟・新商品に関する最新ニュースを調査し、',
+    '会員向けの記事データとして日本語で整形します。信頼できる一次情報・報道のみを対象とし、推測や未確認情報は含めないこと。',
+    '各記事には必ず実在するソースURLを付けること。該当するニュースが見つからない場合は空配列を返すこと。'
+  ].join('');
+  const schema = [
+    '次のJSON形式のみを返してください（前後に説明文やコードフェンスを付けない）:',
+    '{"articles":[{',
+    '"title": "原語のタイトル",',
+    '"titleJa": "日本語タイトル（原文が日本語ならそのまま）",',
+    '"summaryJa": "日本語の要約（2〜3文）",',
+    '"bodyJa": "日本語の本文（3〜6段落。事実ベースで記述）",',
+    '"body": "原文が外国語の場合の原文抜粋（日本語なら空文字）",',
+    '"originalLang": "ja|en|es|fr|pt|other",',
+    '"sourceName": "媒体名",',
+    '"sourceUrl": "https://...",',
+    '"sourceDate": "YYYY-MM-DD（元記事の公開日）",',
+    '"tags": ["関連キーワード", ...]',
+    '}]}'
+  ].join('\n');
+  const user = [
+    '次のトピック/キーワードに関連する、テキーラ・アガベスピリッツ業界のニュースを探してください:',
+    kwList.map((k) => '・' + k).join('\n'),
+    '',
+    '対象期間: ' + fromDate + ' 〜 ' + toDate + '（この期間に公開・報道されたもの）。',
+    '最大 ' + maxItems + ' 件まで。重要度の高い順に。',
+    'tags には上記キーワードのうち該当するものを日本語で入れてください。',
+    '',
+    schema
+  ].join('\n');
+
+  const body = {
+    model: model,
+    messages: [
+      { role: 'system', content: sys },
+      { role: 'user', content: user }
+    ],
+    search_parameters: {
+      mode: 'on',
+      sources: [{ type: 'web' }, { type: 'news' }, { type: 'x' }],
+      from_date: fromDate,
+      to_date: toDate,
+      return_citations: true,
+      max_search_results: 30
+    },
+    temperature: 0.2,
+    max_tokens: 8000
+  };
+
+  const resp = await fetch(XAI_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+    body: JSON.stringify(body)
+  });
+  const txt = await resp.text();
+  if (!resp.ok) throw new Error('xAI API ' + resp.status + ': ' + txt.slice(0, 500));
+  let data; try { data = JSON.parse(txt); } catch (e) { throw new Error('xAI応答のJSON解析に失敗: ' + txt.slice(0, 300)); }
+  const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+  if (!content) throw new Error('xAI応答にcontentがありません');
+  const citations = (data.citations || (data.choices[0].message && data.choices[0].message.citations) || []);
+  // contentからJSONを抽出（コードフェンスや前後テキストに耐性を持たせる）
+  let parsed;
+  try { parsed = JSON.parse(content); }
+  catch (e) {
+    const m = content.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('記事JSONを抽出できません: ' + String(content).slice(0, 300));
+    parsed = JSON.parse(m[0]);
+  }
+  const articles = Array.isArray(parsed) ? parsed : (parsed.articles || []);
+  return { articles: Array.isArray(articles) ? articles : [], citations };
+}
+
+// 記事配列を tequilaNews に「下書き（非公開）」として保存。sourceUrlで重複除外。
+async function tqnSaveDrafts(articles, meta) {
+  if (!articles.length) return { added: 0, skipped: 0 };
+  // 既存のsourceUrlを収集（重複防止）
+  const existing = new Set();
+  try {
+    const snap = await db.collection('tequilaNews').get();
+    snap.forEach((d) => { const u = (d.data() || {}).sourceUrl; if (u) existing.add(String(u).trim()); });
+  } catch (e) { /* ignore */ }
+
+  let added = 0, skipped = 0;
+  const nowISO = new Date().toISOString();
+  for (const a of articles) {
+    const url = (a.sourceUrl || '').trim();
+    if (url && existing.has(url)) { skipped++; continue; }
+    const title = (a.title || a.titleJa || '').trim();
+    if (!title && !(a.titleJa || '').trim()) { skipped++; continue; }
+    const doc = {
+      title: (a.title || '').trim(),
+      titleJa: (a.titleJa || '').trim(),
+      summaryJa: (a.summaryJa || '').trim(),
+      bodyJa: (a.bodyJa || '').trim(),
+      body: (a.body || '').trim(),
+      originalLang: (a.originalLang || 'ja'),
+      sourceName: (a.sourceName || '').trim(),
+      sourceUrl: url,
+      sourceDate: (a.sourceDate || '').slice(0, 10),
+      tags: Array.isArray(a.tags) ? a.tags.filter(Boolean).slice(0, 12) : [],
+      published: false,
+      aiGenerated: true,
+      aiSource: meta && meta.source ? meta.source : 'auto',
+      createdAt: nowISO,
+      updatedAt: nowISO
+    };
+    try { await db.collection('tequilaNews').add(doc); added++; if (url) existing.add(url); }
+    catch (e) { skipped++; }
+  }
+  return { added, skipped };
+}
+
+async function tqnRun({ apiKey, keywords, fromDate, toDate, maxItems, model, source }) {
+  const run = { at: new Date().toISOString(), source: source || 'auto', ok: false, added: 0, skipped: 0, error: '' };
+  try {
+    const { articles } = await grokCollectNews({ apiKey, model, keywords, fromDate, toDate, maxItems });
+    const res = await tqnSaveDrafts(articles, { source });
+    run.ok = true; run.added = res.added; run.skipped = res.skipped; run.found = articles.length;
+  } catch (e) {
+    run.error = String(e && e.message ? e.message : e).slice(0, 800);
+  }
+  try { await db.collection('tequilaNewsConfig').doc('settings').set({ lastRun: run }, { merge: true }); } catch (e) { /* ignore */ }
+  return run;
+}
+
+// 毎朝7時(JST)に自動収集（前日〜当日のニュースを下書き生成）
+exports.tequilaNewsDaily = functions.region('asia-northeast1')
+  .runWith({ secrets: ['XAI_API_KEY'], timeoutSeconds: 300, memory: '512MB' })
+  .pubsub.schedule('0 7 * * *').timeZone('Asia/Tokyo')
+  .onRun(async () => {
+    const cfg = await tqnLoadConfig();
+    if (!cfg.autoEnabled) { console.log('tequilaNewsDaily: 自動収集OFF'); return null; }
+    const apiKey = xaiApiKey.value();
+    if (!apiKey) { console.warn('tequilaNewsDaily: XAI_API_KEY 未設定'); return null; }
+    const now = new Date();
+    const from = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000); // 直近2日
+    const run = await tqnRun({
+      apiKey, keywords: cfg.keywords, fromDate: tqnDateStr(from), toDate: tqnDateStr(now),
+      maxItems: cfg.maxPerRun, model: cfg.aiModel, source: 'auto'
+    });
+    console.log('tequilaNewsDaily:', JSON.stringify(run));
+    return null;
+  });
+
+// 手動収集（管理画面から：キーワード＋期間を指定して随時実行）
+exports.collectTequilaNews = functions.region('asia-northeast1')
+  .runWith({ secrets: ['XAI_API_KEY'], timeoutSeconds: 300, memory: '512MB' })
+  .https.onCall(async (data, context) => {
+    await assertStaff(context);
+    const apiKey = xaiApiKey.value();
+    if (!apiKey) throw new functions.https.HttpsError('failed-precondition', 'XAI_API_KEY が未設定です。GCPシークレットに設定してください。');
+    const cfg = await tqnLoadConfig();
+    let keywords = Array.isArray(data && data.keywords) ? data.keywords.filter(Boolean) : [];
+    if (data && typeof data.freeKeywords === 'string') {
+      data.freeKeywords.split(',').map((s) => s.trim()).filter(Boolean).forEach((k) => keywords.push(k));
+    }
+    if (!keywords.length) keywords = cfg.keywords;
+    const toDate = (data && data.toDate) ? String(data.toDate).slice(0, 10) : tqnDateStr(new Date());
+    const fromDate = (data && data.fromDate) ? String(data.fromDate).slice(0, 10) : tqnDateStr(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+    const maxItems = Math.min(Number(data && data.maxItems) || cfg.maxPerRun || 8, 20);
+    const run = await tqnRun({ apiKey, keywords, fromDate, toDate, maxItems, model: cfg.aiModel, source: 'manual' });
+    if (!run.ok) throw new functions.https.HttpsError('internal', run.error || '収集に失敗しました');
+    return { ok: true, added: run.added, skipped: run.skipped, found: run.found || 0, fromDate, toDate };
   });
