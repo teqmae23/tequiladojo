@@ -414,6 +414,23 @@ Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(t){
 // 連携状態の判定（newsLinked未設定の旧データは newsDocId の有無で判定）
 function isLinked(a){ return (a && a.newsLinked!==undefined) ? !!a.newsLinked : !!(a && a.newsDocId); }
 
+// URL正規化（重複判定用）: プロトコル/www/末尾スラッシュ/フラグメント/追跡パラメータの差異を吸収
+function normUrl(raw){
+  var u=(raw==null?'':String(raw)).trim(); if(!u) return '';
+  try{
+    var url=new URL(u);
+    var host=url.hostname.toLowerCase().replace(/^www\./,'');
+    var path=url.pathname.replace(/\/+$/,'');
+    var drop=/^(utm_|fbclid$|gclid$|mc_|ref$|ref_|igshid$|si$|cmpid$|yclid$|_ga$)/i;
+    var params=[];
+    url.searchParams.forEach(function(v,k){ if(!drop.test(k)) params.push(k.toLowerCase()+'='+v); });
+    params.sort();
+    return host+path+(params.length?('?'+params.join('&')):'');
+  }catch(e){
+    return u.toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/[#].*$/,'').replace(/\/+$/,'');
+  }
+}
+
 // ── 一覧 ──
 function allTags(){ var s=[]; articles.forEach(function(a){ (a.tags||[]).forEach(function(t){ if(t&&s.indexOf(t)<0) s.push(t); }); }); return s; }
 function renderTagFilter(){
@@ -440,9 +457,9 @@ function renderList(){
   // 並べ替えドロップダウンを現在の状態に同期（該当する選択肢があるときだけ）
   (function(){ var sel=g('sortsel'); if(!sel) return; var sv=sortKey+':'+sortDir; if(Array.prototype.some.call(sel.options,function(o){return o.value===sv;})) sel.value=sv; })();
   if(!items.length){ g('tbl').innerHTML='<div class="empty">記事がありません。「＋ 記事を作成」から追加してください。</div>'; return; }
-  // 同一sourceURLの重複を検出（全記事対象）
+  // 同一sourceURLの重複を検出（全記事対象・URL正規化で表記ゆれを吸収）
   var urlCounts={};
-  articles.forEach(function(x){ var u=(x.sourceUrl||'').trim(); if(u) urlCounts[u]=(urlCounts[u]||0)+1; });
+  articles.forEach(function(x){ var u=normUrl(x.sourceUrl); if(u) urlCounts[u]=(urlCounts[u]||0)+1; });
   var arrow=function(k){ return sortKey===k?(sortDir==='asc'?' ▲':' ▼'):''; };
   var rows=items.map(function(a){
     var isPub=!!a.published;
@@ -450,7 +467,7 @@ function renderList(){
     var _lk=isLinked(a);
     var lnk='<button class="lnktgl '+(_lk?'on':'off')+'" data-toggle="newsLinked" data-id="'+a.id+'" title="クリックで道場ニュース連携を切替">'+(_lk?'🔗 連携':'未連携')+'</button>';
     var ai=a.aiGenerated?'<span class="aibadge">AI</span>':'';
-    var _u=(a.sourceUrl||'').trim();
+    var _u=normUrl(a.sourceUrl);
     var dup=(_u&&urlCounts[_u]>1)?'<span class="dup-badge" title="同じソースURLの記事が複数あります">重複</span>':'';
     var tip=((a.sourceName?'出典: '+a.sourceName+'　':'')+(a.tags||[]).map(function(t){return '#'+t;}).join(' ')).trim();
     return '<tr>'
