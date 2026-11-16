@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>テキーラニュース管理 — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:"G-KMS18946JQ"
+};
+</script>
+<script src="/auth-role.js?v=20261014"></script>
+<style>
+:root{
+  --bg:#141210;--panel:#1e1b17;--panel2:#262118;--line:#36301f;--line2:#4a4230;
+  --ink:#f3ece0;--ink2:#c9bfad;--ink3:#8f8572;
+  --gold:#d9a53a;--gold-d:#b8860b;--gold-l:#ecc46a;
+  --green:#4a9d6a;--red:#c15b44;--blue:#5b86c1;
+  --r:8px;--rl:12px;
+  --sans:'Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif;
+  --mono:'SFMono-Regular',Consolas,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--bg);color:var(--ink);min-height:100vh;font-size:14px}
+button{cursor:pointer;font-family:var(--sans)}
+a{color:var(--gold-l)}
+#gate{display:none;min-height:100vh;align-items:center;justify-content:center;padding:24px;text-align:center}
+#gate .box{max-width:340px}
+.hdr{background:#0f0d0b;border-bottom:1px solid var(--line);padding:0 16px;height:54px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:40}
+.hdr .ht{font-size:16px;font-weight:700;color:var(--gold-l)}
+.hdr .hr{margin-left:auto;display:flex;gap:8px}
+.hnav{padding:6px 11px;border:1px solid var(--line2);border-radius:6px;color:var(--ink2);font-size:12px;text-decoration:none;background:var(--panel)}
+#app{display:none}
+.wrap{max-width:1060px;margin:0 auto;padding:18px 14px 80px}
+.tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.tab{padding:9px 15px;background:none;border:none;border-bottom:2px solid transparent;color:var(--ink3);font-size:13px;font-weight:600}
+.tab.on{color:var(--gold-l);border-bottom-color:var(--gold)}
+.pane{display:none}.pane.on{display:block}
+.btn{padding:8px 14px;border:1px solid var(--line2);border-radius:var(--r);background:var(--panel2);color:var(--ink);font-size:13px}
+.btn:hover{border-color:var(--gold-d)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.pri{background:var(--gold-d);border-color:var(--gold-d);color:#1a1409;font-weight:700}
+.btn.green{background:var(--green);border-color:var(--green);color:#fff}
+.btn.red{background:none;border-color:var(--red);color:var(--red)}
+.btn.sm{padding:5px 10px;font-size:12px}
+.toolbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.toolbar .sp{margin-left:auto}
+input,select,textarea{font-family:var(--sans);font-size:13px;background:var(--panel2);border:1px solid var(--line2);border-radius:var(--r);color:var(--ink);padding:9px 11px;width:100%}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--gold-d)}
+textarea{line-height:1.7;resize:vertical}
+input[type=date],input[type=datetime-local]{color-scheme:dark}
+label.fl{display:block;font-size:11px;color:var(--ink3);letter-spacing:.04em;margin:0 0 5px}
+.srch{max-width:240px}
+.w-auto{width:auto}
+/* table */
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
+th{font-size:11px;color:var(--ink3);font-weight:600;letter-spacing:.04em;white-space:nowrap}
+th.sortable{cursor:pointer;user-select:none}
+th.sortable:hover{color:var(--gold-l)}
+tr:hover td{background:rgba(217,165,58,.04)}
+.tag-pill{display:inline-block;background:var(--panel2);border:1px solid var(--line2);color:var(--gold-l);font-size:10px;padding:2px 7px;border-radius:10px;white-space:nowrap;margin:1px 2px 1px 0}
+.st{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 9px;border-radius:12px}
+.st.draft{background:rgba(143,133,114,.15);color:var(--ink3)}
+.st.pub{background:rgba(74,157,106,.18);color:#7bc99a}
+.lnk-on{color:#7bc99a;font-size:11px}.lnk-off{color:var(--ink3);font-size:11px}
+.row-acts{display:flex;gap:6px;flex-wrap:wrap}
+.muted{color:var(--ink3);font-size:12px}
+.empty{text-align:center;color:var(--ink3);padding:50px 20px}
+.mono{font-family:var(--mono);font-size:11px;color:var(--ink3)}
+.aibadge{font-size:10px;background:rgba(91,134,193,.2);color:#9bbcf0;border-radius:8px;padding:1px 6px;margin-left:5px}
+/* modal */
+.mbg{position:fixed;inset:0;background:rgba(5,4,3,.72);z-index:100;display:none;align-items:flex-start;justify-content:center;padding:0;overflow-y:auto}
+.mbg.open{display:block}
+.modal{max-width:760px;margin:24px auto;background:var(--panel);border:1px solid var(--line2);border-radius:var(--rl);overflow:hidden}
+@media(max-width:600px){.modal{margin:0;border-radius:0;min-height:100vh}}
+.m-head{position:sticky;top:0;background:#0f0d0b;border-bottom:1px solid var(--line);padding:0 14px;height:52px;display:flex;align-items:center;gap:10px;z-index:2}
+.m-title{font-size:14px;font-weight:700;color:var(--gold-l);flex:1}
+.m-x{background:var(--panel2);border:1px solid var(--line2);color:var(--ink);width:32px;height:32px;border-radius:50%;font-size:16px}
+.m-body{padding:18px 18px 24px}
+.fg{margin-bottom:15px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:560px){.grid2{grid-template-columns:1fr}}
+.m-foot{display:flex;gap:10px;align-items:center;margin-top:18px;padding-top:16px;border-top:1px solid var(--line);flex-wrap:wrap}
+.m-foot .sp{margin-left:auto}
+.hint{font-size:11px;color:var(--ink3);margin-top:5px;line-height:1.6}
+.orig-wrap{display:none}
+/* tag editor */
+.tag-edit{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--panel2);border:1px solid var(--line2);border-radius:var(--r);padding:7px 8px;min-height:40px}
+.tag-edit .chip{display:inline-flex;align-items:center;gap:5px;background:var(--gold-d);color:#1a1409;font-size:12px;font-weight:600;padding:3px 8px;border-radius:12px}
+.tag-edit .chip b{cursor:pointer}
+.tag-edit input{border:none;background:none;flex:1;min-width:110px;padding:4px;width:auto}
+.tag-sugg{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.tag-sugg button{background:var(--panel2);border:1px solid var(--line2);color:var(--ink2);font-size:11px;padding:3px 9px;border-radius:12px}
+.tag-sugg button:hover{border-color:var(--gold-d);color:var(--gold-l)}
+/* settings */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--rl);padding:18px;margin-bottom:16px}
+.card h3{font-size:14px;color:var(--gold-l);margin-bottom:4px}
+.card .cdesc{font-size:12px;color:var(--ink3);margin-bottom:14px;line-height:1.7}
+.kw-list{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.kw-item{display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line2);border-radius:var(--r);padding:8px 10px}
+.kw-item .kw-name{flex:1;font-size:13px}
+.kw-item .kw-del{background:none;border:none;color:var(--red);font-size:16px}
+.kw-add{display:flex;gap:8px}
+.kw-add input{flex:1}
+.seg{display:inline-flex;border:1px solid var(--line2);border-radius:var(--r);overflow:hidden}
+.seg button{padding:9px 18px;background:var(--panel2);border:none;color:var(--ink3);font-size:13px}
+.seg button.on{background:var(--gold-d);color:#1a1409;font-weight:700}
+.soon-banner{background:rgba(91,134,193,.12);border:1px solid rgba(91,134,193,.4);color:#9bbcf0;border-radius:var(--r);padding:11px 14px;font-size:12px;line-height:1.7;margin-bottom:16px}
+#toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:#0f0d0b;border:1px solid var(--line2);color:var(--ink);padding:11px 20px;border-radius:24px;font-size:13px;z-index:200;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
+#toast.show{opacity:1}
+#toast.err{border-color:var(--red);color:#ecb0a0}
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="box">
+    <div style="font-size:40px">🔒</div>
+    <p style="margin:14px 0;color:var(--ink2)">スタッフ権限が必要です。</p>
+    <a class="btn" href="/tdhome.html">管理トップへ</a>
+  </div>
+</div>
+
+<div id="app">
+  <div class="hdr">
+    <div class="ht">📰 テキーラニュース管理</div>
+    <div class="hr">
+      <a class="hnav" href="/tequila_news.html" target="_blank">会員ページ ↗</a>
+      <a class="hnav" href="/tdhome.html">🏠 管理トップ</a>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="tabs">
+      <button class="tab on" data-pane="list">記事一覧</button>
+      <button class="tab" data-pane="collect">ニュース検索（手動収集）</button>
+      <button class="tab" data-pane="settings">設定</button>
+    </div>
+
+    <!-- 記事一覧 -->
+    <div class="pane on" id="pane-list">
+      <div class="toolbar">
+        <button class="btn pri" id="btn-new">＋ 記事を作成</button>
+        <input class="srch" id="srch" placeholder="タイトル・出典・本文で検索">
+        <select id="fstatus" class="w-auto">
+          <option value="">すべての状態</option>
+          <option value="pub">公開中</option>
+          <option value="draft">非公開</option>
+        </select>
+        <select id="ftag" class="w-auto"><option value="">すべてのタグ</option></select>
+        <span class="sp muted" id="count"></span>
+      </div>
+      <div id="tbl"></div>
+    </div>
+
+    <!-- 手動収集（Phase2でAI接続） -->
+    <div class="pane" id="pane-collect">
+      <div class="soon-banner">
+        🤖 <b>AIによるニュース検索</b>は、おすすめの生成AI（Grok / Live Search 等）のAPIキー設定後に有効になります。毎朝の自動収集に加えて、ここでキーワードと期間を指定した随時検索ができます。現状は条件入力のみ可能です。
+      </div>
+      <div class="card">
+        <h3>キーワードと期間で検索</h3>
+        <div class="cdesc">対象トピック（キーワード）と期間を指定してニュースを収集します。収集結果は「非公開（下書き）」として記事一覧に追加され、内容を確認・訂正してから公開します。</div>
+        <div class="fg">
+          <label class="fl">検索キーワード（タップで選択／複数可）</label>
+          <div class="tag-sugg" id="collect-kw"></div>
+        </div>
+        <div class="grid2">
+          <div class="fg"><label class="fl">期間（開始）</label><input type="date" id="collect-from"></div>
+          <div class="fg"><label class="fl">期間（終了）</label><input type="date" id="collect-to"></div>
+        </div>
+        <div class="fg">
+          <label class="fl">追加の自由キーワード（任意・カンマ区切り）</label>
+          <input id="collect-free" placeholder="例: Casa Dragones, 増税">
+        </div>
+        <button class="btn pri" id="btn-collect" disabled>AIで検索して下書き追加（準備中）</button>
+      </div>
+    </div>
+
+    <!-- 設定 -->
+    <div class="pane" id="pane-settings">
+      <div class="card">
+        <h3>収集キーワード／トピック</h3>
+        <div class="cdesc">AIが毎朝ニュースを収集する際の対象トピックです（記事作成時のタグ候補・手動検索の候補にもなります）。自由に追加・削除できます。</div>
+        <div class="kw-list" id="kw-list"></div>
+        <div class="kw-add">
+          <input id="kw-input" placeholder="新しいキーワードを追加（例: テキーラ価格動向）">
+          <button class="btn" id="kw-add-btn">追加</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>会員ページの公開範囲</h3>
+        <div class="cdesc">「テキーラ関連ニュース」会員ページを誰に見せるかを切り替えます。<b>有料会員のみ</b>にすると、無料会員にはロック画面（プラン案内）が表示されます。</div>
+        <div class="seg" id="seg-access">
+          <button data-v="member">ログイン会員 全員</button>
+          <button data-v="paid">有料会員のみ</button>
+        </div>
+      </div>
+      <div style="text-align:right">
+        <button class="btn pri" id="btn-save-settings">設定を保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 記事編集モーダル -->
+<div class="mbg" id="m-edit">
+  <div class="modal">
+    <div class="m-head">
+      <div class="m-title" id="m-edit-title">記事を作成</div>
+      <button class="m-x" id="m-edit-x">✕</button>
+    </div>
+    <div class="m-body">
+      <div class="fg">
+        <label class="fl">タイトル（原語・必須）</label>
+        <input id="f-title" placeholder="元記事の見出し">
+      </div>
+      <div class="fg">
+        <label class="fl">タイトル（和訳）<span class="muted">— 原文が日本語ならそのままでOK</span></label>
+        <input id="f-titleJa" placeholder="日本語タイトル">
+      </div>
+      <div class="fg">
+        <label class="fl">サマリ（日本語）<span class="muted">— 道場ニュースにも掲載されます</span></label>
+        <textarea id="f-summary" rows="3" placeholder="記事の要約（1〜3行）"></textarea>
+      </div>
+      <div class="grid2">
+        <div class="fg">
+          <label class="fl">原文の言語</label>
+          <select id="f-lang">
+            <option value="ja">日本語</option>
+            <option value="en">英語</option>
+            <option value="es">スペイン語</option>
+            <option value="fr">フランス語</option>
+            <option value="pt">ポルトガル語</option>
+            <option value="other">その他</option>
+          </select>
+        </div>
+        <div class="fg">
+          <label class="fl">公開/非公開</label>
+          <div class="seg" id="seg-pub" style="width:100%">
+            <button data-v="draft" style="flex:1">非公開（下書き）</button>
+            <button data-v="pub" style="flex:1">公開</button>
+          </div>
+        </div>
+      </div>
+      <div class="fg">
+        <label class="fl">本文（和訳／日本語）</label>
+        <textarea id="f-bodyJa" rows="9" placeholder="本文の日本語（改行で段落。HTMLタグも可）"></textarea>
+        <div class="hint">プレーンテキストは改行が段落に変換されます。リンク等は &lt;a&gt; 等のHTMLをそのまま記述できます。</div>
+      </div>
+      <div class="fg orig-wrap" id="orig-wrap">
+        <label class="fl">本文（原文）<span class="muted">— 外国語の原文を残す場合</span></label>
+        <textarea id="f-body" rows="6" placeholder="原文（そのまま貼り付け）"></textarea>
+      </div>
+      <div class="fg">
+        <label class="fl">タグ（複数・手動）</label>
+        <div class="tag-edit" id="tag-edit">
+          <input id="tag-input" placeholder="入力してEnterで追加">
+        </div>
+        <div class="tag-sugg" id="tag-sugg"></div>
+      </div>
+      <div class="grid2">
+        <div class="fg">
+          <label class="fl">出典元の名称</label>
+          <input id="f-src-name" placeholder="例: El Universal / Tequila Matchmaker">
+        </div>
+        <div class="fg">
+          <label class="fl">ソースリンク（URL）</label>
+          <input id="f-src-url" placeholder="https://...">
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="fg">
+          <label class="fl">公開日付（道場で公開した日時）</label>
+          <input type="datetime-local" id="f-pubat">
+          <div class="hint">空欄で「公開」すると公開時の日時が入ります。</div>
+        </div>
+        <div class="fg">
+          <label class="fl">投稿日付（元ニュースが公開された日）</label>
+          <input type="date" id="f-srcdate">
+        </div>
+      </div>
+      <div class="m-foot">
+        <span id="f-status-info" class="muted"></span>
+        <div class="sp"></div>
+        <button class="btn" id="btn-save">保存</button>
+        <button class="btn green" id="btn-save-pub">保存して公開</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function nowISO(){return new Date().toISOString();}
+function stripHtml(h){var d=document.createElement('div');d.innerHTML=h||'';return (d.textContent||d.innerText||'').replace(/\s+/g,' ').trim();}
+var _tt;
+function toast(m,type){var t=g('toast');t.textContent=m;t.className='show'+(type==='err'?' err':'');clearTimeout(_tt);_tt=setTimeout(function(){t.className='';},2600);}
+// datetime-local <-> ISO
+function dtLocalToISO(v){ if(!v) return ''; var d=new Date(v); return isNaN(d.getTime())?'':d.toISOString(); }
+function isoToDtLocal(iso){ if(!iso) return ''; var d=new Date(iso); if(isNaN(d.getTime())) return ''; var off=d.getTimezoneOffset(); var l=new Date(d.getTime()-off*60000); return l.toISOString().slice(0,16); }
+function fmtDate(iso){ if(!iso) return '—'; var t=Date.parse(iso); if(isNaN(t)) return '—'; var d=new Date(t); return d.getFullYear()+'.'+('0'+(d.getMonth()+1)).slice(-2)+'.'+('0'+d.getDate()).slice(-2); }
+
+var DEFAULT_KEYWORDS=['新商品情報','テキーラ関連ニュース','アガベプラント関連情報','アガベスピリッツ情報','訴訟関係（アガベスピリッツ関連訴訟）'];
+
+var articles=[], config={keywords:DEFAULT_KEYWORDS.slice(),accessLevel:'member'}, editId=null, editDoc=null, editTags=[], editPub='draft';
+var sortKey='publishedAt', sortDir='desc';
+
+AuthRole.requireStaff(auth, function(){
+  g('app').style.display='block';
+  loadAll();
+}, function(){
+  g('gate').style.display='flex';
+});
+
+function loadAll(){
+  Promise.all([
+    db.collection('tequilaNewsConfig').doc('settings').get(),
+    db.collection('tequilaNews').get()
+  ]).then(function(res){
+    if(res[0].exists){
+      var c=res[0].data();
+      config.keywords=Array.isArray(c.keywords)&&c.keywords.length?c.keywords.slice():DEFAULT_KEYWORDS.slice();
+      config.accessLevel=c.accessLevel||'member';
+    }
+    articles=res[1].docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    renderSettings(); renderCollectKw(); renderTagFilter(); renderList();
+  }).catch(function(e){ toast('読み込み失敗: '+e.message,'err'); });
+}
+
+// ── タブ ──
+Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(t){
+  t.addEventListener('click',function(){
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(x){x.classList.remove('on');});
+    Array.prototype.forEach.call(document.querySelectorAll('.pane'),function(x){x.classList.remove('on');});
+    t.classList.add('on'); g('pane-'+t.dataset.pane).classList.add('on');
+  });
+});
+
+// ── 一覧 ──
+function allTags(){ var s=[]; articles.forEach(function(a){ (a.tags||[]).forEach(function(t){ if(t&&s.indexOf(t)<0) s.push(t); }); }); return s; }
+function renderTagFilter(){
+  var cur=g('ftag').value;
+  g('ftag').innerHTML='<option value="">すべてのタグ</option>'+allTags().map(function(t){return '<option value="'+esc(t)+'"'+(t===cur?' selected':'')+'>#'+esc(t)+'</option>';}).join('');
+}
+function cmp(a,b){
+  var k=sortKey, va,vb;
+  if(k==='title'){ va=(a.titleJa||a.title||''); vb=(b.titleJa||b.title||''); return (va<vb?-1:va>vb?1:0)*(sortDir==='asc'?1:-1); }
+  va=Date.parse(a[k]||'')||0; vb=Date.parse(b[k]||'')||0;
+  return (va-vb)*(sortDir==='asc'?1:-1);
+}
+function renderList(){
+  var q=(g('srch').value||'').toLowerCase(), fs=g('fstatus').value, ft=g('ftag').value;
+  var items=articles.filter(function(a){
+    var isPub=!!a.published;
+    if(fs==='pub'&&!isPub) return false;
+    if(fs==='draft'&&isPub) return false;
+    if(ft && (a.tags||[]).indexOf(ft)<0) return false;
+    if(q){ var hay=((a.title||'')+' '+(a.titleJa||'')+' '+(a.summaryJa||'')+' '+(a.sourceName||'')+' '+stripHtml(a.bodyJa||a.body||'')+' '+(a.tags||[]).join(' ')).toLowerCase(); if(hay.indexOf(q)<0) return false; }
+    return true;
+  }).sort(cmp);
+  g('count').textContent=items.length+' 件';
+  if(!items.length){ g('tbl').innerHTML='<div class="empty">記事がありません。「＋ 記事を作成」から追加してください。</div>'; return; }
+  var arrow=function(k){ return sortKey===k?(sortDir==='asc'?' ▲':' ▼'):''; };
+  var rows=items.map(function(a){
+    var isPub=!!a.published;
+    var st=isPub?'<span class="st pub">● 公開中</span>':'<span class="st draft">非公開</span>';
+    var lnk=isPub?(a.newsDocId?'<span class="lnk-on">✓連携</span>':'<span class="lnk-off">—</span>'):'';
+    var ai=a.aiGenerated?'<span class="aibadge">AI</span>':'';
+    var tags=(a.tags||[]).map(function(t){return '<span class="tag-pill">#'+esc(t)+'</span>';}).join('');
+    return '<tr>'
+      +'<td><div style="font-weight:600;max-width:32ch">'+esc(a.titleJa||a.title||'(無題)')+ai+'</div>'
+      +(a.sourceName?'<div class="mono">出典: '+esc(a.sourceName)+'</div>':'')
+      +(tags?'<div style="margin-top:3px">'+tags+'</div>':'')+'</td>'
+      +'<td>'+st+'</td>'
+      +'<td class="mono">'+fmtDate(a.publishedAt)+'</td>'
+      +'<td class="mono">'+fmtDate(a.sourceDate)+'</td>'
+      +'<td>'+lnk+'</td>'
+      +'<td><div class="row-acts">'
+      +'<button class="btn sm" data-edit="'+a.id+'">編集</button>'
+      +'<button class="btn red sm" data-del="'+a.id+'">削除</button>'
+      +'</div></td></tr>';
+  }).join('');
+  g('tbl').innerHTML='<table><thead><tr>'
+    +'<th class="sortable" data-k="title">タイトル'+arrow('title')+'</th>'
+    +'<th>状態</th>'
+    +'<th class="sortable" data-k="publishedAt">公開日'+arrow('publishedAt')+'</th>'
+    +'<th class="sortable" data-k="sourceDate">投稿日'+arrow('sourceDate')+'</th>'
+    +'<th>道場ニュース</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  Array.prototype.forEach.call(g('tbl').querySelectorAll('[data-edit]'),function(b){ b.addEventListener('click',function(){ openEdit(b.dataset.edit); }); });
+  Array.prototype.forEach.call(g('tbl').querySelectorAll('[data-del]'),function(b){ b.addEventListener('click',function(){ delArticle(b.dataset.del); }); });
+  Array.prototype.forEach.call(g('tbl').querySelectorAll('th.sortable'),function(th){
+    th.addEventListener('click',function(){ var k=th.dataset.k; if(sortKey===k) sortDir=(sortDir==='asc'?'desc':'asc'); else { sortKey=k; sortDir=(k==='title'?'asc':'desc'); } renderList(); });
+  });
+}
+g('srch').addEventListener('input',renderList);
+g('fstatus').addEventListener('change',renderList);
+g('ftag').addEventListener('change',renderList);
+
+// ── タグエディタ（モーダル内） ──
+function renderEditTags(){
+  var box=g('tag-edit'); var inp=g('tag-input');
+  Array.prototype.forEach.call(box.querySelectorAll('.chip'),function(c){c.remove();});
+  editTags.forEach(function(t,i){
+    var c=document.createElement('span'); c.className='chip';
+    c.innerHTML=esc(t)+' <b data-i="'+i+'">×</b>';
+    box.insertBefore(c,inp);
+    c.querySelector('b').addEventListener('click',function(){ editTags.splice(i,1); renderEditTags(); });
+  });
+}
+function addTag(v){ v=(v||'').trim(); if(!v) return; if(editTags.indexOf(v)<0){ editTags.push(v); renderEditTags(); } }
+g('tag-input').addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===','){ e.preventDefault(); addTag(g('tag-input').value); g('tag-input').value=''; } });
+function renderTagSuggestions(){
+  g('tag-sugg').innerHTML=config.keywords.map(function(k){return '<button type="button" data-t="'+esc(k)+'">+ '+esc(k)+'</button>';}).join('');
+  Array.prototype.forEach.call(g('tag-sugg').querySelectorAll('button'),function(b){ b.addEventListener('click',function(){ addTag(b.dataset.t); }); });
+}
+
+// ── 公開/非公開セグメント ──
+Array.prototype.forEach.call(g('seg-pub').querySelectorAll('button'),function(b){
+  b.addEventListener('click',function(){ editPub=b.dataset.v; syncPubSeg(); });
+});
+function syncPubSeg(){ Array.prototype.forEach.call(g('seg-pub').querySelectorAll('button'),function(b){ b.classList.toggle('on',b.dataset.v===editPub); }); }
+
+// ── 編集モーダル ──
+g('btn-new').addEventListener('click',function(){ openEdit(null); });
+g('f-lang').addEventListener('change',syncOrigVisibility);
+function syncOrigVisibility(){ g('orig-wrap').style.display=(g('f-lang').value!=='ja')?'block':'none'; }
+
+function openEdit(id){
+  editId=id; editDoc=id?articles.filter(function(a){return a.id===id;})[0]:null;
+  var a=editDoc||{};
+  g('m-edit-title').textContent=id?'記事を編集':'記事を作成';
+  g('f-title').value=a.title||'';
+  g('f-titleJa').value=a.titleJa||'';
+  g('f-summary').value=a.summaryJa||'';
+  g('f-lang').value=a.originalLang||'ja';
+  g('f-bodyJa').value=a.bodyJa||'';
+  g('f-body').value=a.body||'';
+  g('f-src-name').value=a.sourceName||'';
+  g('f-src-url').value=a.sourceUrl||'';
+  g('f-pubat').value=isoToDtLocal(a.publishedAt||'');
+  g('f-srcdate').value=(a.sourceDate||'').slice(0,10);
+  editTags=(a.tags||[]).slice();
+  editPub=a.published?'pub':'draft';
+  g('tag-input').value='';
+  renderEditTags(); renderTagSuggestions(); syncOrigVisibility(); syncPubSeg();
+  g('f-status-info').innerHTML=id?('最終更新: '+fmtDate(a.updatedAt)+(a.aiGenerated?' ・ <span style="color:#9bbcf0">AI生成</span>':'')):'';
+  g('m-edit').classList.add('open'); document.body.style.overflow='hidden';
+  g('f-title').focus();
+}
+function closeEdit(){ g('m-edit').classList.remove('open'); document.body.style.overflow=''; }
+g('m-edit-x').addEventListener('click',closeEdit);
+g('m-edit').addEventListener('click',function(e){ if(e.target===g('m-edit')) closeEdit(); });
+
+function bodyToHtml(raw){
+  var s=String(raw||'').trim(); if(!s) return '';
+  if(/<(p|br|div|h[1-6]|ul|ol|li|a|img|strong|em|b|i)\b/i.test(s)) return s;
+  return s.split(/\n{2,}/).map(function(p){ return '<p>'+esc(p.trim()).replace(/\n/g,'<br>')+'</p>'; }).join('\n');
+}
+
+function saveArticle(forcePublish){
+  var title=(g('f-title').value||'').trim();
+  var titleJa=(g('f-titleJa').value||'').trim();
+  if(!title && !titleJa){ toast('タイトルは必須です','err'); return; }
+  if(forcePublish) editPub='pub';
+  var willPublish=(editPub==='pub');
+  var data={
+    title:title,
+    titleJa:titleJa,
+    summaryJa:(g('f-summary').value||'').trim(),
+    originalLang:g('f-lang').value||'ja',
+    bodyJa:bodyToHtml(g('f-bodyJa').value),
+    body:(g('f-lang').value!=='ja')?(g('f-body').value||'').trim():'',
+    sourceName:(g('f-src-name').value||'').trim(),
+    sourceUrl:(g('f-src-url').value||'').trim(),
+    tags:editTags.slice(),
+    sourceDate:(g('f-srcdate').value||''),
+    published:willPublish,
+    updatedAt:nowISO()
+  };
+  var pubRaw=g('f-pubat').value;
+  var wasPublished=editDoc&&editDoc.published;
+  if(pubRaw){ data.publishedAt=dtLocalToISO(pubRaw); }
+  else if(willPublish){ data.publishedAt=(editDoc&&editDoc.publishedAt)||nowISO(); }
+  else if(editDoc&&editDoc.publishedAt){ data.publishedAt=editDoc.publishedAt; }
+  if(editDoc&&editDoc.createdAt) ; // keep
+  if(!editId){ data.createdAt=nowISO(); data.aiGenerated=false; }
+  if(editDoc&&editDoc.newsDocId) data.newsDocId=editDoc.newsDocId;
+
+  var btn=forcePublish?g('btn-save-pub'):g('btn-save'); var prev=btn.textContent; btn.disabled=true; btn.textContent='保存中...';
+  var ref=editId?db.collection('tequilaNews').doc(editId):db.collection('tequilaNews').doc();
+  var docId=editId||ref.id;
+  ref.set(data,{merge:true}).then(function(){
+    if(willPublish){
+      return upsertNewsSummary(docId,data).then(function(newsId){
+        if(newsId&&newsId!==data.newsDocId) return ref.set({newsDocId:newsId},{merge:true});
+      });
+    }else if(wasPublished && editDoc&&editDoc.newsDocId){
+      // 公開→非公開: 道場ニュースのサマリを非公開化
+      return db.collection('news').doc(editDoc.newsDocId).set({published:false,updatedAt:nowISO()},{merge:true}).catch(function(){});
+    }
+  }).then(function(){
+    toast(willPublish?'公開しました':'保存しました');
+    closeEdit(); loadAll();
+  }).catch(function(e){ toast('保存失敗: '+e.message,'err'); })
+  .finally(function(){ btn.disabled=false; btn.textContent=prev; });
+}
+g('btn-save').addEventListener('click',function(){ saveArticle(false); });
+g('btn-save-pub').addEventListener('click',function(){ saveArticle(true); });
+
+// 道場ニュース(news)に「サマリ＋会員記事へのリンク」を投稿/更新
+function upsertNewsSummary(articleId,data){
+  var link='/tequila_news.html?id='+articleId;
+  var disp=data.titleJa||data.title;
+  var summary=data.summaryJa?('<p>'+esc(data.summaryJa)+'</p>'):'';
+  var body=summary
+    +'<p><a href="'+link+'">▶ 会員コンテンツで全文を読む</a></p>'
+    +(data.sourceName?'<p style="font-size:12px;color:#888">出典: '+esc(data.sourceName)+(data.sourceUrl?' / <a href="'+esc(data.sourceUrl)+'" target="_blank" rel="noopener">ソース</a>':'')+'</p>':'');
+  var nref=data.newsDocId?db.collection('news').doc(data.newsDocId):db.collection('news').doc();
+  var startISO=data.publishedAt||nowISO();
+  var nd={
+    type:'info', title:'📰 '+disp, body:body,
+    publishStart:startISO, publishEnd:'', date:startISO.slice(0,10),
+    published:true, updatedAt:nowISO(), tequilaNewsId:articleId
+  };
+  if(!data.newsDocId) nd.createdAt=nowISO();
+  return nref.set(nd,{merge:true}).then(function(){ return nref.id; });
+}
+
+function delArticle(id){
+  var a=articles.filter(function(x){return x.id===id;})[0]; if(!a) return;
+  if(!confirm('「'+(a.titleJa||a.title||'(無題)')+'」を削除しますか？\n道場ニュースのサマリも削除されます。')) return;
+  var tasks=[db.collection('tequilaNews').doc(id).delete()];
+  if(a.newsDocId) tasks.push(db.collection('news').doc(a.newsDocId).delete().catch(function(){}));
+  Promise.all(tasks).then(function(){ toast('削除しました'); loadAll(); })
+  .catch(function(e){ toast('削除失敗: '+e.message,'err'); });
+}
+
+// ── 手動収集タブ（候補キーワード表示のみ。検索はPhase2） ──
+var collectSel=[];
+function renderCollectKw(){
+  g('collect-kw').innerHTML=config.keywords.map(function(k){return '<button type="button" data-k="'+esc(k)+'"'+(collectSel.indexOf(k)>=0?' style="border-color:var(--gold-d);color:var(--gold-l)"':'')+'>'+(collectSel.indexOf(k)>=0?'✓ ':'')+esc(k)+'</button>';}).join('');
+  Array.prototype.forEach.call(g('collect-kw').querySelectorAll('button'),function(b){
+    b.addEventListener('click',function(){ var k=b.dataset.k; var i=collectSel.indexOf(k); if(i>=0) collectSel.splice(i,1); else collectSel.push(k); renderCollectKw(); });
+  });
+}
+
+// ── 設定 ──
+function renderSettings(){
+  var el=g('kw-list');
+  el.innerHTML=config.keywords.map(function(k,i){
+    return '<div class="kw-item"><span class="kw-name">'+esc(k)+'</span><button class="kw-del" data-i="'+i+'" title="削除">×</button></div>';
+  }).join('')||'<div class="muted">キーワードがありません</div>';
+  Array.prototype.forEach.call(el.querySelectorAll('.kw-del'),function(b){
+    b.addEventListener('click',function(){ config.keywords.splice(Number(b.dataset.i),1); renderSettings(); });
+  });
+  Array.prototype.forEach.call(g('seg-access').querySelectorAll('button'),function(b){
+    b.classList.toggle('on', b.dataset.v===config.accessLevel);
+  });
+}
+g('kw-add-btn').addEventListener('click',function(){
+  var v=(g('kw-input').value||'').trim(); if(!v) return;
+  if(config.keywords.indexOf(v)>=0){ toast('既に存在します','err'); return; }
+  config.keywords.push(v); g('kw-input').value=''; renderSettings();
+});
+g('kw-input').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); g('kw-add-btn').click(); } });
+Array.prototype.forEach.call(g('seg-access').querySelectorAll('button'),function(b){
+  b.addEventListener('click',function(){ config.accessLevel=b.dataset.v; renderSettings(); });
+});
+g('btn-save-settings').addEventListener('click',function(){
+  var btn=g('btn-save-settings'); btn.disabled=true; btn.textContent='保存中...';
+  db.collection('tequilaNewsConfig').doc('settings').set({
+    keywords:config.keywords, accessLevel:config.accessLevel, updatedAt:nowISO()
+  },{merge:true}).then(function(){ toast('設定を保存しました'); renderCollectKw(); renderTagSuggestions(); })
+  .catch(function(e){ toast('保存失敗: '+e.message,'err'); })
+  .finally(function(){ btn.disabled=false; btn.textContent='設定を保存'; });
+});
+
+document.addEventListener('keydown',function(e){ if(e.key==='Escape'&&g('m-edit').classList.contains('open')) closeEdit(); });
+</script>
+</body>
+</html>
