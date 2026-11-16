@@ -3068,7 +3068,8 @@ const TQNEWS_DEFAULT_KEYWORDS = [
   '新商品情報', 'テキーラ関連ニュース', 'アガベプラント関連情報',
   'アガベスピリッツ情報', '訴訟関係（アガベスピリッツ関連訴訟）'
 ];
-const XAI_ENDPOINT = 'https://api.x.ai/v1/chat/completions';
+// xAI Agent Tools API（Responses API）。旧Live Search(search_parameters)は廃止されたため web_search ツールを使用。
+const XAI_ENDPOINT = 'https://api.x.ai/v1/responses';
 
 function tqnDateStr(d) { return d.toISOString().slice(0, 10); }
 
@@ -3089,7 +3090,7 @@ async function tqnLoadConfig() {
 }
 
 // Grok に対しキーワード＋期間でニュースを検索・整形させ、記事配列を返す。
-// Live Search（search_parameters）を使用。仕様変更時はこの関数を調整する。
+// xAI Agent Tools API（/v1/responses ＋ web_search ツール）を使用。仕様変更時はこの関数を調整する。
 async function grokCollectNews({ apiKey, model, keywords, fromDate, toDate, maxItems }) {
   if (!apiKey) throw new Error('XAI_API_KEY 未設定');
   const kwList = (keywords || []).filter(Boolean);
@@ -3127,20 +3128,13 @@ async function grokCollectNews({ apiKey, model, keywords, fromDate, toDate, maxI
 
   const body = {
     model: model,
-    messages: [
+    input: [
       { role: 'system', content: sys },
       { role: 'user', content: user }
     ],
-    search_parameters: {
-      mode: 'on',
-      sources: [{ type: 'web' }, { type: 'news' }, { type: 'x' }],
-      from_date: fromDate,
-      to_date: toDate,
-      return_citations: true,
-      max_search_results: 30
-    },
+    tools: [{ type: 'web_search' }],
     temperature: 0.2,
-    max_tokens: 8000
+    max_output_tokens: 8000
   };
 
   const resp = await fetch(XAI_ENDPOINT, {
@@ -3151,19 +3145,38 @@ async function grokCollectNews({ apiKey, model, keywords, fromDate, toDate, maxI
   const txt = await resp.text();
   if (!resp.ok) throw new Error('xAI API ' + resp.status + ': ' + txt.slice(0, 500));
   let data; try { data = JSON.parse(txt); } catch (e) { throw new Error('xAI応答のJSON解析に失敗: ' + txt.slice(0, 300)); }
-  const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-  if (!content) throw new Error('xAI応答にcontentがありません');
-  const citations = (data.citations || (data.choices[0].message && data.choices[0].message.citations) || []);
-  // contentからJSONを抽出（コードフェンスや前後テキストに耐性を持たせる）
+
+  // Responses API の出力テキストを抽出（output_text 便宜フィールド → output[].content[].text → 旧choices形式の順でフォールバック）
+  let content = '';
+  if (typeof data.output_text === 'string') {
+    content = data.output_text;
+  } else if (Array.isArray(data.output)) {
+    data.output.forEach((item) => {
+      if (item && (item.type === 'message' || item.role === 'assistant') && Array.isArray(item.content)) {
+        item.content.forEach((c) => {
+          if (c && typeof c.text === 'string' && (c.type === 'output_text' || c.type === 'text' || !c.type)) content += c.text;
+        });
+      } else if (item && typeof item.text === 'string') {
+        content += item.text;
+      }
+    });
+  }
+  if (!content && data.choices && data.choices[0] && data.choices[0].message) {
+    content = data.choices[0].message.content || '';
+  }
+  if (!content) throw new Error('xAI応答からテキストを抽出できません: ' + txt.slice(0, 400));
+
+  // content からJSONを抽出（コードフェンスや前後テキストに耐性を持たせる）
   let parsed;
   try { parsed = JSON.parse(content); }
   catch (e) {
-    const m = content.match(/\{[\s\S]*\}/);
+    let s = String(content).replace(/```json/gi, '').replace(/```/g, '');
+    const m = s.match(/\{[\s\S]*\}/);
     if (!m) throw new Error('記事JSONを抽出できません: ' + String(content).slice(0, 300));
     parsed = JSON.parse(m[0]);
   }
   const articles = Array.isArray(parsed) ? parsed : (parsed.articles || []);
-  return { articles: Array.isArray(articles) ? articles : [], citations };
+  return { articles: Array.isArray(articles) ? articles : [], citations: [] };
 }
 
 // 記事配列を tequilaNews に「下書き（非公開）」として保存。sourceUrlで重複除外。
