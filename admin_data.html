@@ -1226,7 +1226,7 @@ tbody tr:hover{background:rgba(200,146,30,.025)}
       <div class="fg"><label class="fl">備考 <span class="db-field">memo</span></label><input class="fi" id="rsv-memo" placeholder="特記事項..."></div>
       <div id="rsv-hours-warn" style="display:none;font-size:12px;color:var(--red);padding:6px 10px;background:var(--red-l);border-radius:var(--r);margin-top:4px"></div>
     </div>
-    <div class="mfoot"><button class="btn bg2" data-close="m-reservation">キャンセル</button><button class="btn bp" id="btn-save-reservation">保存</button></div>
+    <div class="mfoot"><button class="btn bd" id="btn-del-reservation" style="display:none;margin-right:auto" onclick="deleteReservationFromModal()">🗑 削除</button><button class="btn bg2" data-close="m-reservation">キャンセル</button><button class="btn bp" id="btn-save-reservation">保存</button></div>
   </div>
 </div>
 
@@ -2381,6 +2381,7 @@ function _rsvResolveExisting(code){
 function openReservationModal(id){
   editId.reservation=id;
   g("mt-reservation").textContent=id?"予約編集":"予約登録";
+  var _delb=g("btn-del-reservation"); if(_delb) _delb.style.display=id?"":"none"; // 既存予約の編集時だけ削除ボタン表示
   _rsvInitFilters();
   rsvEnsureMembers(function(){ _rsvPopulateModal(id); });
   openM("m-reservation");
@@ -2411,6 +2412,23 @@ function _rsvPopulateModal(id){
     var nid=genRsvId();
     g("kb-reservation").innerHTML='<span class="keypart kp-nom">'+nid.slice(0,2)+'</span><span class="keypart kp-seq">'+nid.slice(2)+'</span><span class="klabel">reservationId</span>';
   }
+}
+
+// 予約編集モーダルからの削除（カレンダー再描画・再公開まで行う）
+function deleteReservationFromModal(){
+  var id=editId.reservation; if(!id){ return; }
+  var r=(cache.reservations||[]).find(function(x){return x.id===id;});
+  confirmDel("予約「"+id+"」を削除しますか？",function(){
+    journaledDelete("reservations", id)
+      .then(function(){
+        toast("予約を削除しました");
+        closeM("m-reservation");
+        if(r&&r.reservationDate) autoPublishCalForMonth(r.reservationDate,"予約削除");
+        loadReservations();
+        if(typeof calRenderMonth==="function") calRenderMonth();
+      })
+      .catch(function(e){ toast("削除失敗: "+(e&&e.message||e),"err"); });
+  });
 }
 
 FORM_MODALS.push("m-reservation");
