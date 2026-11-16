@@ -74,6 +74,11 @@ tr:hover td{background:rgba(217,165,58,.04)}
 .st.draft{background:rgba(143,133,114,.15);color:var(--ink3)}
 .st.pub{background:rgba(74,157,106,.18);color:#7bc99a}
 .lnk-on{color:#7bc99a;font-size:11px}.lnk-off{color:var(--ink3);font-size:11px}
+button.st,button.lnktgl{border:1px solid transparent;cursor:pointer;font-family:var(--sans)}
+button.st:hover,button.lnktgl:hover{filter:brightness(1.15)}
+.lnktgl{font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px}
+.lnktgl.on{background:rgba(74,157,106,.18);color:#7bc99a;border-color:rgba(74,157,106,.4)}
+.lnktgl.off{background:rgba(143,133,114,.12);color:var(--ink3);border-color:var(--line2)}
 .row-acts{display:flex;gap:6px;flex-wrap:wrap}
 .muted{color:var(--ink3);font-size:12px}
 .empty{text-align:center;color:var(--ink3);padding:50px 20px}
@@ -278,6 +283,13 @@ tr:hover td{background:rgba(217,165,58,.04)}
         </div>
       </div>
       <div class="fg">
+        <label class="fl">道場ニュース連携<span class="muted">— 公開時にTOP/道場ニュースへサマリを掲載するか</span></label>
+        <div class="seg" id="seg-link" style="width:100%">
+          <button data-v="off" style="flex:1">連携しない</button>
+          <button data-v="on" style="flex:1">道場ニュースに載せる</button>
+        </div>
+      </div>
+      <div class="fg">
         <label class="fl">本文（和訳／日本語）</label>
         <textarea id="f-bodyJa" rows="9" placeholder="本文の日本語（改行で段落。HTMLタグも可）"></textarea>
         <div class="hint">プレーンテキストは改行が段落に変換されます。リンク等は &lt;a&gt; 等のHTMLをそのまま記述できます。</div>
@@ -342,7 +354,7 @@ function fmtDate(iso){ if(!iso) return '—'; var t=Date.parse(iso); if(isNaN(t)
 
 var DEFAULT_KEYWORDS=['新商品情報','テキーラ関連ニュース','アガベプラント関連情報','アガベスピリッツ情報','訴訟関係（アガベスピリッツ関連訴訟）'];
 
-var articles=[], config={keywords:DEFAULT_KEYWORDS.slice(),accessLevel:'member',autoEnabled:true,aiModel:'grok-4',lastRun:null}, editId=null, editDoc=null, editTags=[], editPub='draft';
+var articles=[], config={keywords:DEFAULT_KEYWORDS.slice(),accessLevel:'member',autoEnabled:true,aiModel:'grok-4',lastRun:null}, editId=null, editDoc=null, editTags=[], editPub='draft', editLinked=false;
 var sortKey='publishedAt', sortDir='desc';
 var fns=null; try{ fns=firebase.app().functions('asia-northeast1'); }catch(e){}
 
@@ -380,6 +392,9 @@ Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(t){
   });
 });
 
+// 連携状態の判定（newsLinked未設定の旧データは newsDocId の有無で判定）
+function isLinked(a){ return (a && a.newsLinked!==undefined) ? !!a.newsLinked : !!(a && a.newsDocId); }
+
 // ── 一覧 ──
 function allTags(){ var s=[]; articles.forEach(function(a){ (a.tags||[]).forEach(function(t){ if(t&&s.indexOf(t)<0) s.push(t); }); }); return s; }
 function renderTagFilter(){
@@ -407,8 +422,9 @@ function renderList(){
   var arrow=function(k){ return sortKey===k?(sortDir==='asc'?' ▲':' ▼'):''; };
   var rows=items.map(function(a){
     var isPub=!!a.published;
-    var st=isPub?'<span class="st pub">● 公開中</span>':'<span class="st draft">非公開</span>';
-    var lnk=isPub?(a.newsDocId?'<span class="lnk-on">✓連携</span>':'<span class="lnk-off">—</span>'):'';
+    var st='<button class="st '+(isPub?'pub':'draft')+'" data-toggle="published" data-id="'+a.id+'" title="クリックで公開/非公開を切替">'+(isPub?'● 公開中':'非公開')+'</button>';
+    var _lk=isLinked(a);
+    var lnk='<button class="lnktgl '+(_lk?'on':'off')+'" data-toggle="newsLinked" data-id="'+a.id+'" title="クリックで道場ニュース連携を切替">'+(_lk?'🔗 連携':'未連携')+'</button>';
     var ai=a.aiGenerated?'<span class="aibadge">AI</span>':'';
     var tags=(a.tags||[]).map(function(t){return '<span class="tag-pill">#'+esc(t)+'</span>';}).join('');
     return '<tr>'
@@ -432,6 +448,7 @@ function renderList(){
     +'<th>道場ニュース</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
   Array.prototype.forEach.call(g('tbl').querySelectorAll('[data-edit]'),function(b){ b.addEventListener('click',function(){ openEdit(b.dataset.edit); }); });
   Array.prototype.forEach.call(g('tbl').querySelectorAll('[data-del]'),function(b){ b.addEventListener('click',function(){ delArticle(b.dataset.del); }); });
+  Array.prototype.forEach.call(g('tbl').querySelectorAll('[data-toggle]'),function(b){ b.addEventListener('click',function(){ toggleField(b.dataset.id, b.dataset.toggle); }); });
   Array.prototype.forEach.call(g('tbl').querySelectorAll('th.sortable'),function(th){
     th.addEventListener('click',function(){ var k=th.dataset.k; if(sortKey===k) sortDir=(sortDir==='asc'?'desc':'asc'); else { sortKey=k; sortDir=(k==='title'?'asc':'desc'); } renderList(); });
   });
@@ -463,6 +480,11 @@ Array.prototype.forEach.call(g('seg-pub').querySelectorAll('button'),function(b)
   b.addEventListener('click',function(){ editPub=b.dataset.v; syncPubSeg(); });
 });
 function syncPubSeg(){ Array.prototype.forEach.call(g('seg-pub').querySelectorAll('button'),function(b){ b.classList.toggle('on',b.dataset.v===editPub); }); }
+// ── 道場ニュース連携セグメント ──
+Array.prototype.forEach.call(g('seg-link').querySelectorAll('button'),function(b){
+  b.addEventListener('click',function(){ editLinked=(b.dataset.v==='on'); syncLinkSeg(); });
+});
+function syncLinkSeg(){ Array.prototype.forEach.call(g('seg-link').querySelectorAll('button'),function(b){ b.classList.toggle('on',b.dataset.v===(editLinked?'on':'off')); }); }
 
 // ── 編集モーダル ──
 g('btn-new').addEventListener('click',function(){ openEdit(null); });
@@ -485,8 +507,9 @@ function openEdit(id){
   g('f-srcdate').value=(a.sourceDate||'').slice(0,10);
   editTags=(a.tags||[]).slice();
   editPub=a.published?'pub':'draft';
+  editLinked=isLinked(a);
   g('tag-input').value='';
-  renderEditTags(); renderTagSuggestions(); syncOrigVisibility(); syncPubSeg();
+  renderEditTags(); renderTagSuggestions(); syncOrigVisibility(); syncPubSeg(); syncLinkSeg();
   g('f-status-info').innerHTML=id?('最終更新: '+fmtDate(a.updatedAt)+(a.aiGenerated?' ・ <span style="color:#9bbcf0">AI生成</span>':'')):'';
   g('m-edit').classList.add('open'); document.body.style.overflow='hidden';
   g('f-title').focus();
@@ -519,6 +542,7 @@ function saveArticle(forcePublish){
     tags:editTags.slice(),
     sourceDate:(g('f-srcdate').value||''),
     published:willPublish,
+    newsLinked:editLinked,
     updatedAt:nowISO()
   };
   var pubRaw=g('f-pubat').value;
@@ -534,19 +558,30 @@ function saveArticle(forcePublish){
   var ref=editId?db.collection('tequilaNews').doc(editId):db.collection('tequilaNews').doc();
   var docId=editId||ref.id;
   ref.set(data,{merge:true}).then(function(){
-    if(willPublish){
-      return upsertNewsSummary(docId,data).then(function(newsId){
-        if(newsId&&newsId!==data.newsDocId) return ref.set({newsDocId:newsId},{merge:true});
-      });
-    }else if(wasPublished && editDoc&&editDoc.newsDocId){
-      // 公開→非公開: 道場ニュースのサマリを非公開化
-      return db.collection('news').doc(editDoc.newsDocId).set({published:false,updatedAt:nowISO()},{merge:true}).catch(function(){});
-    }
+    return applyNewsSync(ref, docId, data);
   }).then(function(){
     toast(willPublish?'公開しました':'保存しました');
     closeEdit(); loadAll();
   }).catch(function(e){ toast('保存失敗: '+e.message,'err'); })
   .finally(function(){ btn.disabled=false; btn.textContent=prev; });
+}
+
+// 公開かつ連携ONのときのみ道場ニュースにサマリを掲載。それ以外はサマリを削除。
+function applyNewsSync(ref, docId, data){
+  var linked=(data.newsLinked!==undefined)?!!data.newsLinked:!!data.newsDocId;
+  if(data.published && linked){
+    return upsertNewsSummary(docId, data).then(function(newsId){
+      if(newsId && newsId!==data.newsDocId) return ref.set({newsDocId:newsId},{merge:true});
+    });
+  }
+  // 非公開 or 連携OFF → 既存サマリを削除してリンクを解除
+  if(data.newsDocId){
+    var oldId=data.newsDocId;
+    return db.collection('news').doc(oldId).delete().catch(function(){}).then(function(){
+      return ref.set({newsDocId:firebase.firestore.FieldValue.delete()},{merge:true});
+    });
+  }
+  return Promise.resolve();
 }
 g('btn-save').addEventListener('click',function(){ saveArticle(false); });
 g('btn-save-pub').addEventListener('click',function(){ saveArticle(true); });
@@ -568,6 +603,22 @@ function upsertNewsSummary(articleId,data){
   };
   if(!data.newsDocId) nd.createdAt=nowISO();
   return nref.set(nd,{merge:true}).then(function(){ return nref.id; });
+}
+
+// 一覧から「公開/非公開」「連携/非連携」をワンクリック切替
+function toggleField(id, field){
+  var a=articles.filter(function(x){return x.id===id;})[0]; if(!a) return;
+  var ref=db.collection('tequilaNews').doc(id);
+  var cur=(field==='newsLinked')?isLinked(a):!!a[field];
+  var upd={updatedAt:nowISO()}; upd[field]=!cur;
+  if(field==='published' && !cur && !a.publishedAt) upd.publishedAt=nowISO();
+  ref.set(upd,{merge:true}).then(function(){
+    var data=Object.assign({}, a, upd); // 同期判定に必要な全フィールドを含める
+    return applyNewsSync(ref, id, data);
+  }).then(function(){
+    var label=(field==='published')?(!cur?'公開しました':'非公開にしました'):(!cur?'道場ニュースに連携しました':'連携を解除しました');
+    toast(label); loadAll();
+  }).catch(function(e){ toast('失敗: '+e.message,'err'); });
 }
 
 function delArticle(id){
