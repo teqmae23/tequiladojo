@@ -3394,12 +3394,21 @@ exports.tequilaNewsDaily = functions.region('asia-northeast1')
     return null;
   });
 
-// 7時の自動収集が失敗した日（xAI混雑の429など）は 8:30 / 10:30 / 13:30 (JST) に再試行する。
-// その日の自動収集が成功済みなら何もしない。
+// 自動収集が失敗したら、成功するまで1時間ごと（毎時0分, JST）に再実行する。
+// 直近の定時(7:00 JST)以降に自動収集が成功していれば何もしない（＝次の定時まで待つ）。
+function tqnCycleStart(now) {
+  // 直近の 7:00 JST（UTC 22:00）を返す
+  const d = new Date(now.getTime());
+  d.setUTCHours(22, 0, 0, 0);
+  if (d.getTime() > now.getTime()) d.setUTCDate(d.getUTCDate() - 1);
+  return d;
+}
 exports.tequilaNewsDailyRetry = functions.region('asia-northeast1')
   .runWith({ secrets: ['XAI_API_KEY'], timeoutSeconds: 300, memory: '512MB' })
-  .pubsub.schedule('30 8,10,13 * * *').timeZone('Asia/Tokyo')
+  .pubsub.schedule('0 * * * *').timeZone('Asia/Tokyo')
   .onRun(async () => {
+    const now = new Date();
+    if (new Date(now.getTime() + 9 * 3600 * 1000).getUTCHours() === 7) return null; // 7時は定時実行に任せる
     const cfg = await tqnLoadConfig();
     if (!cfg.autoEnabled) return null;
     let last = null;
@@ -3407,12 +3416,10 @@ exports.tequilaNewsDailyRetry = functions.region('asia-northeast1')
       const snap = await db.collection('tequilaNewsConfig').doc('settings').get();
       const d = (snap.exists && snap.data()) || {};
       last = d.lastAutoRun || (d.lastRun && d.lastRun.source === 'auto' ? d.lastRun : null);
-    } catch (e) { /* ignore */ }
-    const today = tqnJstDateStr(new Date());
-    if (last && last.ok && last.at && tqnJstDateStr(new Date(last.at)) === today) {
-      console.log('tequilaNewsDailyRetry: 本日の自動収集は成功済み');
-      return null;
-    }
+    } catch (e) { return null; } // 状態が読めない時は無理に実行しない
+    const lastAt = last && last.at ? Date.parse(last.at) : NaN;
+    if (last && last.ok && lastAt >= tqnCycleStart(now).getTime()) return null; // 成功済み → 次の定時まで待つ
+    console.log('tequilaNewsDailyRetry: 前回の自動収集が未成功のため再実行');
     await tqnAutoCollect('tequilaNewsDailyRetry', cfg);
     return null;
   });
