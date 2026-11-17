@@ -397,6 +397,7 @@ function loadAll(){
       config.autoEnabled=(c.autoEnabled!==false);
       config.aiModel=c.aiModel||'grok-4';
       config.lastRun=c.lastRun||null;
+      config.lastAutoRun=c.lastAutoRun||null;
     }
     articles=res[1].docs.map(function(d){return Object.assign({id:d.id},d.data());});
     renderSettings(); renderCollectKw(); renderTagFilter(); renderList();
@@ -811,12 +812,19 @@ function renderSettings(){
 }
 function renderLastRun(){
   var el=g('lastrun'); if(!el) return;
-  var r=config.lastRun;
-  if(!r){ el.textContent='最終実行: まだ実行されていません。'; return; }
-  var when=r.at?fmtDate(r.at)+' '+(r.at.slice(11,16)||''):'';
-  var src=r.source==='manual'?'手動':'自動';
-  if(r.ok){ el.innerHTML='最終実行: '+esc(when)+'（'+src+'）<span style="color:#7bc99a">成功</span> — 追加 '+(r.added||0)+'件 / 重複スキップ '+(r.skipped||0)+'件'; }
-  else{ el.innerHTML='最終実行: '+esc(when)+'（'+src+'）<span style="color:#ecb0a0">失敗</span> — '+esc(r.error||''); }
+  var r=config.lastRun, ra=config.lastAutoRun;
+  if(!r&&!ra){ el.textContent='最終実行: まだ実行されていません。'; return; }
+  // 実行時刻は端末のローカル時刻（日本ならJST）で表示
+  function when(x){ var t=Date.parse(x&&x.at||''); if(isNaN(t)) return ''; var d=new Date(t); return fmtDate(x.at)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
+  function line(label,x){
+    var src=x.source==='manual'?'手動':'自動';
+    var head=label+': '+esc(when(x))+'（'+src+'）';
+    return x.ok ? head+'<span style="color:#7bc99a">成功</span> — 追加 '+(x.added||0)+'件 / 重複スキップ '+(x.skipped||0)+'件'
+                : head+'<span style="color:#ecb0a0">失敗</span> — '+esc(x.error||'');
+  }
+  var html=r?line('最終実行',r):'';
+  if(ra&&(!r||ra.at!==r.at)) html+=(html?'<br>':'')+line('最終の自動実行',ra);
+  el.innerHTML=html+'<br><span style="opacity:.75">※自動収集は毎朝7:00。失敗した日は8:30／10:30／13:30に自動で再試行します。</span>';
 }
 Array.prototype.forEach.call(g('seg-auto').querySelectorAll('button'),function(b){
   b.addEventListener('click',function(){ config.autoEnabled=(b.dataset.v==='on'); renderSettings(); });
