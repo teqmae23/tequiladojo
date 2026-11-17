@@ -3072,6 +3072,39 @@ const TQNEWS_DEFAULT_KEYWORDS = [
 const XAI_ENDPOINT = 'https://api.x.ai/v1/responses';
 
 function tqnDateStr(d) { return d.toISOString().slice(0, 10); }
+function tqnJstDateStr(d) { return new Date(d.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10); }
+
+// xAI API 呼び出し（混雑時の 429 / 一時的な 5xx は待ってから再試行）
+// 関数のタイムアウト(300秒)に収まるよう、開始から maxElapsedMs を過ぎたら再試行しない。
+async function xaiFetch(apiKey, body, { maxAttempts = 3, maxElapsedMs = 150 * 1000 } = {}) {
+  const started = Date.now();
+  let lastErr = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let resp, txt;
+    try {
+      resp = await fetch(XAI_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+        body: JSON.stringify(body)
+      });
+      txt = await resp.text();
+    } catch (e) {
+      lastErr = new Error('xAI API 接続エラー: ' + String(e && e.message ? e.message : e).slice(0, 300));
+      resp = null;
+    }
+    if (resp && resp.ok) return txt;
+    const status = resp ? resp.status : 0;
+    if (resp) lastErr = new Error('xAI API ' + status + ': ' + String(txt || '').slice(0, 500));
+    const retryable = !resp || status === 429 || status >= 500;
+    if (!retryable || attempt >= maxAttempts) break;
+    const ra = resp ? Number(resp.headers.get('retry-after')) : NaN;
+    const waitMs = Math.min(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 20000 * attempt, 60000);
+    if (Date.now() - started + waitMs > maxElapsedMs) break;
+    console.warn('xaiFetch: ' + status + ' → ' + Math.round(waitMs / 1000) + '秒後に再試行 (' + (attempt + 1) + '/' + maxAttempts + ')');
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+  throw lastErr || new Error('xAI API 呼び出しに失敗しました');
+}
 
 // 設定の読み込み（キーワード・モデル・自動収集ON/OFF）
 async function tqnLoadConfig() {
@@ -3143,13 +3176,7 @@ async function grokCollectNews({ apiKey, model, keywords, fromDate, toDate, maxI
     max_output_tokens: 8000
   };
 
-  const resp = await fetch(XAI_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-    body: JSON.stringify(body)
-  });
-  const txt = await resp.text();
-  if (!resp.ok) throw new Error('xAI API ' + resp.status + ': ' + txt.slice(0, 500));
+  const txt = await xaiFetch(apiKey, body);
   let data; try { data = JSON.parse(txt); } catch (e) { throw new Error('xAI応答のJSON解析に失敗: ' + txt.slice(0, 300)); }
 
   // Responses API の出力テキストを抽出（output_text 便宜フィールド → output[].content[].text → 旧choices形式の順でフォールバック）
@@ -3260,13 +3287,7 @@ async function grokArticleFromUrl({ apiKey, model, url, keywords }) {
     temperature: 0.2,
     max_output_tokens: 8000
   };
-  const resp = await fetch(XAI_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-    body: JSON.stringify(body)
-  });
-  const txt = await resp.text();
-  if (!resp.ok) throw new Error('xAI API ' + resp.status + ': ' + txt.slice(0, 500));
+  const txt = await xaiFetch(apiKey, body);
   let data; try { data = JSON.parse(txt); } catch (e) { throw new Error('xAI応答のJSON解析に失敗: ' + txt.slice(0, 300)); }
   let content = '';
   if (typeof data.output_text === 'string') {
@@ -3341,7 +3362,24 @@ async function tqnRun({ apiKey, keywords, fromDate, toDate, maxItems, model, sou
   } catch (e) {
     run.error = String(e && e.message ? e.message : e).slice(0, 800);
   }
-  try { await db.collection('tequilaNewsConfig').doc('settings').set({ lastRun: run }, { merge: true }); } catch (e) { /* ignore */ }
+  // lastRun: 直近の実行（手動含む）／lastAutoRun: 直近の自動実行（手動で上書きされない）
+  const upd = { lastRun: run };
+  if (run.source === 'auto') upd.lastAutoRun = run;
+  try { await db.collection('tequilaNewsConfig').doc('settings').set(upd, { merge: true }); } catch (e) { /* ignore */ }
+  return run;
+}
+
+// 自動収集の本体（毎朝7時と、その再試行で共用）
+async function tqnAutoCollect(label, cfg) {
+  const apiKey = xaiApiKey.value();
+  if (!apiKey) { console.warn(label + ': XAI_API_KEY 未設定'); return null; }
+  const now = new Date();
+  const from = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000); // 直近2日
+  const run = await tqnRun({
+    apiKey, keywords: cfg.keywords, fromDate: tqnDateStr(from), toDate: tqnDateStr(now),
+    maxItems: cfg.maxPerRun, model: cfg.aiModel, source: 'auto'
+  });
+  console.log(label + ':', JSON.stringify(run));
   return run;
 }
 
@@ -3352,15 +3390,37 @@ exports.tequilaNewsDaily = functions.region('asia-northeast1')
   .onRun(async () => {
     const cfg = await tqnLoadConfig();
     if (!cfg.autoEnabled) { console.log('tequilaNewsDaily: 自動収集OFF'); return null; }
-    const apiKey = xaiApiKey.value();
-    if (!apiKey) { console.warn('tequilaNewsDaily: XAI_API_KEY 未設定'); return null; }
+    await tqnAutoCollect('tequilaNewsDaily', cfg);
+    return null;
+  });
+
+// 自動収集が失敗したら、成功するまで1時間ごと（毎時0分, JST）に再実行する。
+// 直近の定時(7:00 JST)以降に自動収集が成功していれば何もしない（＝次の定時まで待つ）。
+function tqnCycleStart(now) {
+  // 直近の 7:00 JST（UTC 22:00）を返す
+  const d = new Date(now.getTime());
+  d.setUTCHours(22, 0, 0, 0);
+  if (d.getTime() > now.getTime()) d.setUTCDate(d.getUTCDate() - 1);
+  return d;
+}
+exports.tequilaNewsDailyRetry = functions.region('asia-northeast1')
+  .runWith({ secrets: ['XAI_API_KEY'], timeoutSeconds: 300, memory: '512MB' })
+  .pubsub.schedule('0 * * * *').timeZone('Asia/Tokyo')
+  .onRun(async () => {
     const now = new Date();
-    const from = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000); // 直近2日
-    const run = await tqnRun({
-      apiKey, keywords: cfg.keywords, fromDate: tqnDateStr(from), toDate: tqnDateStr(now),
-      maxItems: cfg.maxPerRun, model: cfg.aiModel, source: 'auto'
-    });
-    console.log('tequilaNewsDaily:', JSON.stringify(run));
+    if (new Date(now.getTime() + 9 * 3600 * 1000).getUTCHours() === 7) return null; // 7時は定時実行に任せる
+    const cfg = await tqnLoadConfig();
+    if (!cfg.autoEnabled) return null;
+    let last = null;
+    try {
+      const snap = await db.collection('tequilaNewsConfig').doc('settings').get();
+      const d = (snap.exists && snap.data()) || {};
+      last = d.lastAutoRun || (d.lastRun && d.lastRun.source === 'auto' ? d.lastRun : null);
+    } catch (e) { return null; } // 状態が読めない時は無理に実行しない
+    const lastAt = last && last.at ? Date.parse(last.at) : NaN;
+    if (last && last.ok && lastAt >= tqnCycleStart(now).getTime()) return null; // 成功済み → 次の定時まで待つ
+    console.log('tequilaNewsDailyRetry: 前回の自動収集が未成功のため再実行');
+    await tqnAutoCollect('tequilaNewsDailyRetry', cfg);
     return null;
   });
 
