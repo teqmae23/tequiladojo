@@ -2717,7 +2717,7 @@ function calUpdateCopyBar(){
       var sk=calCopySrc.key;
       var srcDisp=sk.slice(0,4)+'/'+sk.slice(4,6)+'/'+sk.slice(6,8);
       var bt=calCopySrc.data.businessType; var btLabel=CAL_BT_LABEL[bt]||('タイプ'+bt);
-      msg='📋 '+srcDisp+'（'+btLabel+'）をコピー中';
+      msg='📋 '+srcDisp+'（'+btLabel+'）'+(calCopySrc.peCount?'＋個人予定'+calCopySrc.peCount+'件':'')+'をコピー中';
       if(calPasteDsts.size) msg+=' → ペースト先 '+calPasteDsts.size+'件選択中';
       else msg+=' → ペースト先の日付をクリック（複数可・月跨ぎ可）';
     }
@@ -2743,7 +2743,24 @@ async function calExecuteCopy(){
     var _beforeSnaps=await Promise.all(_dstKeys.map(function(k){return db.collection('schedules').doc(k).get();}));
     _beforeSnaps.forEach(function(s,i){ _beforeMap[_dstKeys[i]]=s.exists?s.data():null; });
   }catch(e){ /* before取得失敗時はnullのまま記録 */ }
+  // 個人予定（テンプレート分＝夜勤・日勤などのワンタッチ入力）も一緒にコピー。ペースト先に同じ予定があればスキップ。
+  var _peUidV=_peUid(), _peSrc=[], _peAll=[], _peAdds=[];
+  if(_peUidV){
+    try{
+      var _peSnap=await db.collection('personalEvents').where('uid','==',_peUidV).get();
+      _peAll=_peSnap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+      _peSrc=_peAll.filter(function(p){ return String(p.date||'')===calCopySrc.key && peIsTemplate(p); });
+    }catch(e){ toast('個人予定の読み込みに失敗したため、営業予定のみコピーします','err'); _peSrc=[]; }
+  }
   calPasteDsts.forEach(function(key){
+    _peSrc.forEach(function(p){
+      var exists=_peAll.some(function(q){ return String(q.date||'')===key && _peSameSlot(p,q); });
+      if(exists) return;
+      var pd={ uid:_peUidV, date:key, title:p.title||'', allDay:false, start:p.start||null, end:p.end||null, template:true, createdAt:new Date().toISOString() };
+      var ref=db.collection('personalEvents').doc();
+      batch.set(ref,pd);
+      _peAdds.push({id:ref.id,data:pd});
+    });
     var data={scheduleId:key,businessType:tv};
     if(srcData.openTime!==undefined) data.openTime=srcData.openTime;
     if(srcData.closeTime!==undefined) data.closeTime=srcData.closeTime;
@@ -2752,9 +2769,11 @@ async function calExecuteCopy(){
     var _b=_beforeMap[key]||null;
     _pasteJournal.push({key:key,before:_b,after:_b?Object.assign({},_b,data):data});
   });
+  if(calPasteDsts.size+_peAdds.length>450){ toast('一度にコピーできる件数を超えています。ペースト先を減らしてください','err'); return; }
   try{
     await batch.commit();
     _pasteJournal.forEach(function(j){ writeJournal(j.before?'update':'create','schedules',j.key,j.before,j.after); });
+    _peAdds.forEach(function(a){ try{ writeJournal('create','personalEvents',a.id,null,a.data); }catch(e){} });
     var n=calPasteDsts.size;
     var affectedYm=new Set();
     calPasteDsts.forEach(function(key){affectedYm.add(key.slice(0,6));});
@@ -2762,13 +2781,21 @@ async function calExecuteCopy(){
     affectedYm.forEach(function(ym){calSaveUpdateTime(ym);calCheckUnpublished(ym);});
     calUpdateCopyBar();
     calFetchHolidays(calRenderMonth);
-    toast(n+'件にコピーしました');
+    toast(n+'件にコピーしました'+(_peAdds.length?'（個人予定 '+_peAdds.length+'件を含む）':''));
   }catch(e){toast('コピー失敗: '+e.message,'err');}
 }
 function calHandleCopyCellClick(schKey,sch){
   if(!calCopySrc){
     if(!sch){toast('この日付には営業予定が設定されていません','err');return;}
-    calCopySrc={key:schKey,data:sch};calPasteDsts=new Set();
+    calCopySrc={key:schKey,data:sch,peCount:null};calPasteDsts=new Set();
+    // コピー元のテンプレート個人予定の件数をバーに表示
+    (function(src){ var u=_peUid(); if(!u) return;
+      db.collection('personalEvents').where('uid','==',u).get().then(function(snap){
+        if(calCopySrc!==src) return;
+        src.peCount=snap.docs.map(function(d){return d.data();}).filter(function(p){ return String(p.date||'')===src.key && peIsTemplate(p); }).length;
+        calUpdateCopyBar();
+      }).catch(function(){});
+    })(calCopySrc);
   }else{
     if(schKey===calCopySrc.key) return;
     if(calPasteDsts.has(schKey)) calPasteDsts.delete(schKey);
@@ -3008,7 +3035,16 @@ function _peNormT(v){ v=String(v||'').replace(/[^0-9]/g,''); if(!v) return ''; i
 function peAlldayToggle(){ var ad=g('pe-allday').checked; g('pe-start').disabled=ad; g('pe-end').disabled=ad; if(ad){ g('pe-start').value=''; g('pe-end').value=''; } }
 function peReset(){ g('pe-title').value=''; g('pe-allday').checked=false; g('pe-start').value=''; g('pe-end').value=''; g('pe-start').disabled=false; g('pe-end').disabled=false; }
 // 勤務シフトのワンタッチ入力（タイトル・時刻をセットしてそのまま追加）
-function peQuick(title,start,end){ g('pe-title').value=title; g('pe-allday').checked=false; peAlldayToggle(); g('pe-start').value=start; g('pe-end').value=end; peAdd(); }
+var PE_TEMPLATES=[ {title:'夜勤',start:'1200',end:'2400'}, {title:'夜勤',start:'0000',end:'0830'}, {title:'日勤',start:'0830',end:'1700'} ];
+var _peAddAsTemplate=false;
+function peQuick(title,start,end){ g('pe-title').value=title; g('pe-allday').checked=false; peAlldayToggle(); g('pe-start').value=start; g('pe-end').value=end; _peAddAsTemplate=true; try{ peAdd(); }finally{ _peAddAsTemplate=false; } }
+// テンプレート（ワンタッチ入力）由来の個人予定か（template フラグ、または既存データはタイトル・時刻の一致で判定）
+function peIsTemplate(p){
+  if(!p||p.allDay) return false;
+  if(p.template) return true;
+  return PE_TEMPLATES.some(function(t){ return t.title===(p.title||'') && t.start===(p.start||'') && t.end===(p.end||''); });
+}
+function _peSameSlot(a,b){ return (a.title||'')===(b.title||'') && (a.start||'')===(b.start||'') && (a.end||'')===(b.end||''); }
 // 個人予定は非公開（公開カレンダーHTMLに出ない）ため、追加・削除の再描画では
 // HTML公開警告（未出力＝公開を促す表示）を出さない。ラッパ前の素の再描画を使う。
 function _peRenderMonth(){ if(typeof _origCalRenderMonth==='function') _origCalRenderMonth(); else calRenderMonth(); }
@@ -3038,6 +3074,7 @@ function peAdd(){
     if(!start && !end){ allDay=true; } // 時刻未入力は終日扱い
   }
   var data={ uid:uid, date:date8, title:title, allDay:!!allDay, start:(allDay?null:(start||null)), end:(allDay?null:(end||null)), createdAt:new Date().toISOString() };
+  if(_peAddAsTemplate) data.template=true;
   db.collection('personalEvents').add(data).then(function(ref){
     try{ writeJournal('create','personalEvents',ref.id,null,data); }catch(e){}
     peReset(); peRenderDay(date8); _peRenderMonth(); toast('個人予定を追加しました');
