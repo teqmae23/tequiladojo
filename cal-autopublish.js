@@ -182,7 +182,7 @@
     var modal='<div id="cal-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.45);align-items:center;justify-content:center;padding:14px">'
       +'<div style="background:#fff;border-radius:14px;max-width:420px;width:100%;max-height:85vh;overflow:auto;box-shadow:0 12px 44px rgba(0,0,0,.3);position:relative">'
       +'<button id="cm-close" aria-label="閉じる" style="position:absolute;top:6px;right:8px;border:none;background:transparent;font-size:22px;line-height:1;color:#888;cursor:pointer;padding:4px 8px">✕</button>'
-      +'<div style="display:flex;align-items:center;gap:6px;padding:16px 44px 6px">'
+      +'<div style="display:flex;align-items:center;gap:6px;padding:40px 14px 6px">'
       +'<button id="cm-prev" aria-label="前の日" style="border:1px solid #ddd;background:#fff;border-radius:8px;font-size:20px;line-height:1;color:#333;cursor:pointer;padding:5px 13px">&#8249;</button>'
       +'<div id="cm-date" style="flex:1;text-align:center;font-weight:700"></div>'
       +'<button id="cm-next" aria-label="次の日" style="border:1px solid #ddd;background:#fff;border-radius:8px;font-size:20px;line-height:1;color:#333;cursor:pointer;padding:5px 13px">&#8250;</button>'
