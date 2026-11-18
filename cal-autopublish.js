@@ -18,6 +18,7 @@
 
   function calPad(n){ return String(n).padStart(2,'0'); }
   function calFmtT(h){ if(!h||h.length<4) return ''; return h.slice(0,2)+':'+h.slice(2,4); }
+  function calRsvOkText(sch){ if(!sch||!sch.reservable) return ''; var s=calFmtT(String(sch.reservableStart||'')), e=calFmtT(String(sch.reservableEnd||'')); return (s&&e?(s+'～'+e+' '):'')+'予約・貸切可'; }
   function calDkey(y,m,d){ return y+'-'+calPad(m+1)+'-'+calPad(d); }
   function calIsC23(m,d){ return d===23||(m===1&&d===3); }
   function calBuildAnnivMap(y,m){
@@ -85,6 +86,7 @@
         var memoStr=sch.memo?'<span style="font-size:9px;color:#222;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">'+sch.memo+'</span>':'<span style="flex:1"></span>';
         if(sch.memo){ trow+='<div style="display:flex;align-items:flex-end;margin-top:1px">'+memoStr+'</div>'; }
       }
+      if(sch&&calRsvOkText(sch)) trow+='<div class="cal-rsvok" style="font-size:9px;font-weight:700;color:#185FA5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px">'+calRsvOkText(sch)+'</div>';
       var rvs2=(!isOther)?rsvMap[day]:null;
       var rsvRow2='';
       if(rvs2&&rvs2.length){
@@ -136,6 +138,7 @@
           if(timeHtml2) timePart='<div class="leitime">'+timeHtml2+'</div>';
         }
       }
+      if(sch&&calRsvOkText(sch)) timePart+='<div class="leitime cal-rsvok" style="font-size:11px;font-weight:700;color:#185FA5">'+calRsvOkText(sch)+'</div>';
       var names=[];
       if(isHol)names.push('<span style="font-size:11px;color:#E24B4A">'+calHolidays[key]+'</span>');
       if(anniv)names.push('<span style="font-size:11px;color:#993556">'+(anniv.nameJa||anniv.name||'')+'</span>');
@@ -173,7 +176,7 @@
       if(_amap[_key]) _amap[_key].forEach(function(a){ var nm=a.name||a.nameJa||''; if(nm) _ans.push(nm); });
       if(calIsC23(m2,_i) && _ans.indexOf('テキーラの日')<0) _ans.push('テキーラの日');
       var _rv=(rsvMap[_i]||[]).slice().sort(function(a,b){return String(a.startTime||'').localeCompare(String(b.startTime||''));}).map(function(r){return {c:(r.charterType===1||r.charterType==='1')?1:0,s:calFmtT(r.startTime),e:calFmtT(r.endTime),g:(r.guests!=null&&r.guests!=='')?r.guests:''};});
-      _dd.push({d:_i,dow:_PDOW[new Date(y,m2,_i).getDay()],hol:calHolidays[_key]||'',an:_ans,btl:_btn>=0?(CAL_BT_LABEL[_btn]||''):'',bt:_btn,o:(_s&&_s.openTime)?calFmtT(_s.openTime):'',cl:(_s&&_s.closeTime)?calFmtT(_s.closeTime):'',memo:(_s&&_s.memo)||'',rv:_rv});
+      _dd.push({d:_i,dow:_PDOW[new Date(y,m2,_i).getDay()],hol:calHolidays[_key]||'',an:_ans,btl:_btn>=0?(CAL_BT_LABEL[_btn]||''):'',bt:_btn,o:(_s&&_s.openTime)?calFmtT(_s.openTime):'',cl:(_s&&_s.closeTime)?calFmtT(_s.closeTime):'',memo:(_s&&_s.memo)||'',rs:calRsvOkText(_s),rv:_rv});
     }
     var _json=JSON.stringify(_dd).replace(/</g,'\\u003c');
     var modal='<div id="cal-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.45);align-items:center;justify-content:center;padding:14px">'
@@ -197,6 +200,7 @@
       +'else if(x.btl){h+=\'<div style="font-size:20px;font-weight:700;margin:12px 0">\'+esc(x.btl)+\'</div>\';}'
       +'else{h+=\'<div style="font-size:16px;color:#999;margin:12px 0">予定未定</div>\';}'
       +'if(x.memo)h+=\'<div style="font-size:14px;color:#444;margin:6px 0;white-space:pre-wrap">\'+esc(x.memo)+\'</div>\';'
+      +'if(x.rs)h+=\'<div style="font-size:15px;font-weight:700;color:#185FA5;margin:8px 0">\'+esc(x.rs)+\'</div>\';'
       +'if(x.rv&&x.rv.length){h+=\'<div style="margin-top:14px;border-top:1px solid #eee;padding-top:10px"><div style="font-size:12px;color:#999;margin-bottom:6px">ご予約</div>\';'
       +'x.rv.forEach(function(r){var ic=r.c?"background:#c0392b;color:#fff":"background:#185FA5;color:#fff";var tc=r.c?"#c0392b":"#185FA5";'
       +'h+=\'<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px"><span style="font-size:11px;font-weight:700;\'+ic+\';border-radius:3px;padding:1px 6px">\'+(r.c?"貸":"予")+\'</span><span style="font-size:15px;font-weight:700;font-family:monospace;color:\'+tc+\'">\'+esc(r.s)+"〜"+esc(r.e)+\'</span><span style="font-size:14px;color:#555">\'+esc(r.g)+"名"+(r.c?"（貸切）":"")+\'</span></div>\';});h+="</div>";}'
