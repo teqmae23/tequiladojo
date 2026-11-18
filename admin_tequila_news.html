@@ -432,6 +432,10 @@ Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(t){
 });
 
 // 連携状態の判定（newsLinked未設定の旧データは newsDocId の有無で判定）
+// HOTマーク: オンにしてから7日経過で自動的にオフ扱い（再度オンにすると、その時点から7日）
+var HOT_DAYS=7;
+function hotSince(a){ var t=Date.parse((a&&(a.hotAt||a.updatedAt))||''); return isNaN(t)?0:t; }
+function isHot(a){ return !!(a&&a.hot) && (Date.now()-hotSince(a)) < HOT_DAYS*864e5; }
 function isLinked(a){ return (a && a.newsLinked!==undefined) ? !!a.newsLinked : !!(a && a.newsDocId); }
 
 // URL正規化（重複判定用）: プロトコル/www/末尾スラッシュ/フラグメント/追跡パラメータの差異を吸収
@@ -487,12 +491,13 @@ function renderList(){
     var _lk=isLinked(a);
     var lnk='<button class="lnktgl '+(_lk?'on':'off')+'" data-toggle="newsLinked" data-id="'+a.id+'" title="クリックで道場ニュース連携を切替">'+(_lk?'🔗 連携':'未連携')+'</button>';
     var ai=a.aiGenerated?'<span class="aibadge">AI</span>':'';
-    var hot='<button class="hottgl '+(a.hot?'on':'off')+'" data-toggle="hot" data-id="'+a.id+'" title="クリックでHOTマークを切替">'+(a.hot?'🔥 HOT':'HOT')+'</button>';
+    var _hot=isHot(a), _hotLeft=_hot?Math.max(1,Math.ceil((hotSince(a)+HOT_DAYS*864e5-Date.now())/864e5)):0;
+    var hot='<button class="hottgl '+(_hot?'on':'off')+'" data-toggle="hot" data-id="'+a.id+'" title="'+(_hot?'あと'+_hotLeft+'日で自動オフ。クリックでHOTを外す':'クリックでHOTを付ける（7日間表示）')+'">'+(_hot?'🔥 HOT':'HOT')+'</button>';
     var _u=normUrl(a.sourceUrl);
     var dup=(_u&&urlCounts[_u]>1)?'<span class="dup-badge" title="同じソースURLの記事が複数あります">重複</span>':'';
     var tip=((a.sourceName?'出典: '+a.sourceName+'　':'')+(a.tags||[]).map(function(t){return '#'+t;}).join(' ')).trim();
     return '<tr>'
-      +'<td><div class="tcell"'+(tip?' title="'+esc(tip)+'"':'')+'>'+dup+(a.hot?'<span class="hotbadge">HOT</span>':'')+esc(a.titleJa||a.title||'(無題)')+ai+'</div></td>'
+      +'<td><div class="tcell"'+(tip?' title="'+esc(tip)+'"':'')+'>'+dup+(isHot(a)?'<span class="hotbadge">HOT</span>':'')+esc(a.titleJa||a.title||'(無題)')+ai+'</div></td>'
       +'<td>'+st+'</td>'
       +'<td>'+hot+'</td>'
       +'<td class="mono">'+fmtDate(a.publishedAt)+'</td>'
@@ -674,8 +679,9 @@ function upsertNewsSummary(articleId,data){
 function toggleField(id, field){
   var a=articles.filter(function(x){return x.id===id;})[0]; if(!a) return;
   var ref=db.collection('tequilaNews').doc(id);
-  var cur=(field==='newsLinked')?isLinked(a):!!a[field];
+  var cur=(field==='newsLinked')?isLinked(a):(field==='hot')?isHot(a):!!a[field];
   var upd={updatedAt:nowISO()}; upd[field]=!cur;
+  if(field==='hot') upd.hotAt=!cur?nowISO():null;
   if(field==='published' && !cur && !a.publishedAt) upd.publishedAt=nowISO();
   ref.set(upd,{merge:true}).then(function(){
     if(field==='hot') return; // HOTマークは道場ニュース連携に影響しない
