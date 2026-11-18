@@ -185,11 +185,11 @@
       +'<div style="display:flex;align-items:center;padding:16px 44px 6px">'
       +'<div id="cm-date" style="flex:1;text-align:center;font-weight:700"></div>'
       +'</div><div id="cm-body" style="padding:4px 20px 10px"></div><div style="display:flex;justify-content:space-between;align-items:center;padding:6px 14px 16px;border-top:1px solid #eee"><button id="cm-prev" aria-label="前の日" style="border:1px solid #ddd;background:#fff;border-radius:8px;font-size:20px;line-height:1;color:#333;cursor:pointer;padding:5px 13px">&#8249;</button><button id="cm-next" aria-label="次の日" style="border:1px solid #ddd;background:#fff;border-radius:8px;font-size:20px;line-height:1;color:#333;cursor:pointer;padding:5px 13px">&#8250;</button></div></div></div>';
-    var js='<script>(function(){var DD='+_json+';var byD={};DD.forEach(function(x){byD[x.d]=x;});var cur=null;'
+    var js='<script>(function(){var YM="'+y+'年'+(m2+1)+'月";var DD='+_json+';var byD={};DD.forEach(function(x){byD[x.d]=x;});var cur=null;'
       +'var modal=document.getElementById("cal-modal"),elDate=document.getElementById("cm-date"),elBody=document.getElementById("cm-body"),elPrev=document.getElementById("cm-prev"),elNext=document.getElementById("cm-next");'
       +'function esc(s){return String(s==null?"":s).replace(/[&<>\\"]/g,function(c){return({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"})[c];});}'
       +'function render(d){var x=byD[d];if(!x)return;cur=d;var dc=x.dow==="日"?"#E24B4A":x.dow==="土"?"#378ADD":"#333";'
-      +'elDate.innerHTML=\'<span style="font-size:26px;color:\'+dc+\'">\'+x.d+\'</span><span style="font-size:14px;color:\'+dc+\'"> 日（\'+x.dow+\'）</span>\';'
+      +'elDate.innerHTML=\'<span style="font-size:15px;color:\'+dc+\'">\'+YM+\'</span><span style="font-size:26px;color:\'+dc+\'">\'+x.d+\'</span><span style="font-size:14px;color:\'+dc+\'">日（\'+x.dow+\'）</span>\';'
       +'var h="";if(x.hol)h+=\'<div style="color:#E24B4A;font-weight:600;margin-bottom:3px">\'+esc(x.hol)+\'</div>\';'
       +'x.an.forEach(function(a){h+=\'<div style="color:#993556;font-weight:600;margin-bottom:3px">\'+esc(a)+\'</div>\';});'
       +'var bt=x.bt;'
