@@ -238,7 +238,7 @@ button.st:hover,button.lnktgl:hover{filter:brightness(1.15)}
       </div>
       <div class="card">
         <h3>自動収集（AI）</h3>
-        <div class="cdesc">毎朝7時（JST）にGrokが上記キーワードでニュースを収集し、<b>非公開（下書き）</b>として自動追加します。内容を確認・訂正してから公開してください。</div>
+        <div class="cdesc">毎朝7時（JST）にGrokが日本・アメリカ・メキシコの各地域を、その地域の言語（日本語・英語・スペイン語）でWeb検索とX検索して候補を探し、1件ずつ記事化して<b>非公開（下書き）</b>として自動追加します（1回最大15件）。上記キーワードは注目トピックとして使われます。内容を確認・訂正してから公開してください。</div>
         <div class="grid2">
           <div class="fg">
             <label class="fl">毎朝の自動収集</label>
@@ -257,6 +257,15 @@ button.st:hover,button.lnktgl:hover{filter:brightness(1.15)}
         <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <button class="btn" id="btn-rerun-auto">🔄 自動収集を今すぐ再実行</button>
           <span class="muted" id="rerun-msg" style="font-size:12px"></span>
+        </div>
+        <div style="margin-top:14px;border-top:1px dashed var(--line2);padding-top:10px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <b style="font-size:13px">記事化キュー</b>
+            <span class="muted" id="queue-sum" style="font-size:12px;flex:1"></span>
+            <button class="btn" id="btn-queue-reload" style="padding:4px 10px;font-size:12px">↻ 更新</button>
+          </div>
+          <div class="muted" style="font-size:11px;line-height:1.6;margin-bottom:6px">AI収集は「①候補URLを探す → ②1件ずつ記事化」の2段階です。②で失敗した候補は毎時の再実行で最大3回まで自動でやり直します。</div>
+          <div id="queue-list" style="font-size:12px;line-height:1.7"></div>
         </div>
       <div style="text-align:right">
         <button class="btn pri" id="btn-save-settings">設定を保存</button>
@@ -404,6 +413,7 @@ function loadAll(){
     }
     articles=res[1].docs.map(function(d){return Object.assign({id:d.id},d.data());});
     renderSettings(); renderCollectKw(); renderTagFilter(); renderList();
+    loadQueue();
   }).catch(function(e){ toast('読み込み失敗: '+e.message,'err'); });
 }
 
@@ -787,9 +797,9 @@ g('btn-collect').addEventListener('click',function(){
   btn.disabled=true; btn.textContent='検索中...（最大5分）'; msg.style.color=''; msg.textContent='Grokがニュースを検索・整形しています。しばらくお待ちください…';
   fns.httpsCallable('collectTequilaNews')(payload).then(function(res){
     var d=res.data||{};
-    msg.innerHTML='<span style="color:#7bc99a">完了</span> — '+(d.found||0)+'件ヒット、'+(d.added||0)+'件を下書き追加（重複スキップ '+(d.skipped||0)+'件）。期間 '+esc(d.fromDate||'')+'〜'+esc(d.toDate||'');
-    toast((d.added||0)+'件を下書き追加しました');
-    loadAll();
+    msg.innerHTML='<span style="color:#7bc99a">完了</span> — '+(d.found||0)+'件ヒット、'+(d.added||0)+'件を記事化キューに追加（登録済みスキップ '+(d.skipped||0)+'件）。期間 '+esc(d.fromDate||'')+'〜'+esc(d.toDate||'')+'<br>※記事は1件ずつ作成され、数分で記事一覧に下書きとして追加されます。進み具合は「設定」タブの記事化キューで確認できます。';
+    toast((d.added||0)+'件を記事化キューに追加しました');
+    loadAll(); setTimeout(loadAll,90000); setTimeout(loadAll,240000);
   }).catch(function(e){
     msg.style.color='#ecb0a0'; msg.textContent='エラー: '+(e&&e.message?e.message:e);
   }).finally(function(){ btn.disabled=false; btn.textContent='AIで検索して下書き追加'; });
@@ -822,13 +832,47 @@ function renderLastRun(){
   function line(label,x){
     var src=x.source==='manual'?'手動':(x.source==='auto-manual'?'手動再実行':'自動');
     var head=label+': '+esc(when(x))+'（'+src+'）';
-    return x.ok ? head+'<span style="color:#7bc99a">成功</span> — 追加 '+(x.added||0)+'件 / 重複スキップ '+(x.skipped||0)+'件'
+    var okTxt=x.mode==='two-stage'
+      ? ('候補 '+(x.found||0)+'件 → 記事化キュー '+(x.added||0)+'件 / 登録済みスキップ '+(x.skipped||0)+'件'+(x.xSearch===false?'（X検索なし）':''))
+      : ('追加 '+(x.added||0)+'件 / 重複スキップ '+(x.skipped||0)+'件');
+    return x.ok ? head+'<span style="color:#7bc99a">成功</span> — '+okTxt
                 : head+'<span style="color:#ecb0a0">失敗</span> — '+esc(x.error||'');
   }
   var html=r?line('最終実行',r):'';
   if(ra&&(!r||ra.at!==r.at)) html+=(html?'<br>':'')+line('最終の自動実行',ra);
   el.innerHTML=html+'<br><span style="opacity:.75">※自動収集は毎朝7:00。失敗したら成功するまで1時間ごとに再実行し、成功後は次の7:00まで待ちます。</span>';
 }
+// 記事化キュー（直近の候補の処理状況）
+var QUEUE_LABEL={pending:'⏳ 待機',processing:'🔄 記事化中',done:'✓ 完了',failed:'✗ 失敗'};
+function loadQueue(){
+  var sum=g('queue-sum'), box=g('queue-list'); if(!sum||!box) return;
+  db.collection('tequilaNewsQueue').orderBy('createdAt','desc').limit(40).get().then(function(snap){
+    var rows=snap.docs.map(function(d){return Object.assign({id:d.id},d.data());});
+    var c={pending:0,processing:0,done:0,failed:0}; rows.forEach(function(r){ if(c[r.status]!=null) c[r.status]++; });
+    sum.textContent=rows.length?('直近'+rows.length+'件：待機 '+c.pending+' / 記事化中 '+c.processing+' / 完了 '+c.done+' / 失敗 '+c.failed):'まだ候補はありません';
+    var show=rows.filter(function(r){ return r.status!=='done'; }).concat(rows.filter(function(r){ return r.status==='done'; }).slice(0,10));
+    box.innerHTML=show.map(function(r){
+      var st=QUEUE_LABEL[r.status]||esc(r.status||'');
+      if(r.status==='failed') st='<span style="color:#ecb0a0">'+st+'（'+(r.attempts||0)+'回）</span>';
+      if(r.status==='done') st='<span style="color:#7bc99a">'+st+'</span>';
+      var t=esc(r.titleJa||r.title||r.url);
+      var link='<a href="'+esc(r.url)+'" target="_blank" rel="noopener" style="word-break:break-all">'+t+'</a>';
+      var act=r.status==='done'&&r.articleId?' <a href="#" class="q-open" data-id="'+esc(r.articleId)+'">編集</a>'
+        :(r.status==='failed'?' <a href="#" class="q-retry" data-id="'+esc(r.id)+'">再試行</a>':'');
+      var err=r.status==='failed'&&r.error?'<div style="color:#ecb0a0;font-size:11px;margin-left:1.5em">'+esc(r.error)+'</div>':'';
+      return '<div>'+st+' '+link+(r.sourceName?' <span class="muted">（'+esc(r.sourceName)+'）</span>':'')+act+err+'</div>';
+    }).join('');
+  }).catch(function(e){ sum.textContent='キューを読み込めません: '+e.message; });
+}
+g('btn-queue-reload').addEventListener('click',function(){ loadAll(); });
+g('queue-list').addEventListener('click',function(e){
+  var a=e.target.closest&&e.target.closest('.q-open,.q-retry'); if(!a) return;
+  e.preventDefault();
+  if(a.classList.contains('q-open')){ openEdit(a.dataset.id); return; }
+  db.collection('tequilaNewsQueue').doc(a.dataset.id).update({status:'pending',updatedAt:new Date().toISOString()})
+    .then(function(){ toast('再試行を開始しました'); setTimeout(loadQueue,1500); })
+    .catch(function(err){ toast('再試行できません: '+err.message,'err'); });
+});
 // 自動収集の手動再実行（自動収集と同じ条件で実行。成功すれば1時間ごとの再実行は止まる）
 g('btn-rerun-auto').addEventListener('click',function(){
   if(!fns){ toast('Functions初期化エラー','err'); return; }
@@ -836,7 +880,7 @@ g('btn-rerun-auto').addEventListener('click',function(){
   btn.disabled=true; btn.textContent='実行中...（最大5分）'; msg.style.color=''; msg.textContent='Grokでニュースを収集しています…';
   fns.httpsCallable('rerunTequilaNewsAuto')({}).then(function(res){
     var r=res.data||{};
-    if(r.ok){ msg.style.color='#7bc99a'; msg.textContent='成功 — 追加 '+(r.added||0)+'件 / 重複スキップ '+(r.skipped||0)+'件'; toast('再実行に成功しました'); }
+    if(r.ok){ msg.style.color='#7bc99a'; msg.textContent='成功 — 候補 '+(r.found||0)+'件 → 記事化キュー '+(r.added||0)+'件（数分で記事一覧に下書き追加）'; toast('再実行に成功しました'); setTimeout(loadAll,90000); setTimeout(loadAll,240000); }
     else{ msg.style.color='#ecb0a0'; msg.textContent='失敗 — '+(r.error||''); }
     return loadAll();
   }).catch(function(e){
