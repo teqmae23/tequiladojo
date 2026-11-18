@@ -83,10 +83,10 @@
         } else if(CAL_BT_LABEL[bt]){
           trow='<div style="margin-top:2px"><span class="cal-ei">'+CAL_BT_LABEL[bt]+'</span></div>';
         }
+        if(sch&&calRsvOkText(sch)) trow+='<div class="cal-rsvok" style="font-size:9px;font-weight:700;color:#185FA5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px">'+calRsvOkText(sch)+'</div>';
         var memoStr=sch.memo?'<span style="font-size:9px;color:#222;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">'+sch.memo+'</span>':'<span style="flex:1"></span>';
         if(sch.memo){ trow+='<div style="display:flex;align-items:flex-end;margin-top:1px">'+memoStr+'</div>'; }
       }
-      if(sch&&calRsvOkText(sch)) trow+='<div class="cal-rsvok" style="font-size:9px;font-weight:700;color:#185FA5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px">'+calRsvOkText(sch)+'</div>';
       var rvs2=(!isOther)?rsvMap[day]:null;
       var rsvRow2='';
       if(rvs2&&rvs2.length){
@@ -197,8 +197,8 @@
       +'else if(x.o&&x.cl){h+=\'<div style="margin:12px 0"><span style="display:inline-block;font-size:12px;font-weight:700;background:\'+(bt===7?"#f4e2c6":"#FEF9C3")+\';color:\'+(bt===7?"#9a5800":"#333")+\';border-radius:5px;padding:2px 8px;margin-right:8px">\'+esc(x.btl||(bt===7?"貸切":"営業"))+\'</span><span style="font-size:24px;font-weight:700;font-family:monospace">\'+esc(x.o)+"〜"+esc(x.cl)+\'</span></div>\';}'
       +'else if(x.btl){h+=\'<div style="font-size:20px;font-weight:700;margin:12px 0">\'+esc(x.btl)+\'</div>\';}'
       +'else{h+=\'<div style="font-size:16px;color:#999;margin:12px 0">予定未定</div>\';}'
-      +'if(x.memo)h+=\'<div style="font-size:14px;color:#444;margin:6px 0;white-space:pre-wrap">\'+esc(x.memo)+\'</div>\';'
       +'if(x.rs)h+=\'<div style="font-size:15px;font-weight:700;color:#185FA5;margin:8px 0">\'+esc(x.rs)+\'</div>\';'
+      +'if(x.memo)h+=\'<div style="font-size:14px;color:#444;margin:6px 0;white-space:pre-wrap">\'+esc(x.memo)+\'</div>\';'
       +'if(x.rv&&x.rv.length){h+=\'<div style="margin-top:14px;border-top:1px solid #eee;padding-top:10px"><div style="font-size:12px;color:#999;margin-bottom:6px">ご予約</div>\';'
       +'x.rv.forEach(function(r){var ic=r.c?"background:#c0392b;color:#fff":"background:#185FA5;color:#fff";var tc=r.c?"#c0392b":"#185FA5";'
       +'h+=\'<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px"><span style="font-size:11px;font-weight:700;\'+ic+\';border-radius:3px;padding:1px 6px">\'+(r.c?"貸":"予")+\'</span><span style="font-size:15px;font-weight:700;font-family:monospace;color:\'+tc+\'">\'+esc(r.s)+"〜"+esc(r.e)+\'</span><span style="font-size:14px;color:#555">\'+esc(r.g)+"名"+(r.c?"（貸切）":"")+\'</span></div>\';});h+="</div>";}'
