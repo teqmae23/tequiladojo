@@ -254,7 +254,10 @@ button.st:hover,button.lnktgl:hover{filter:brightness(1.15)}
           </div>
         </div>
         <div id="lastrun" class="muted" style="font-size:12px;line-height:1.7"></div>
-      </div>
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn" id="btn-rerun-auto">🔄 自動収集を今すぐ再実行</button>
+          <span class="muted" id="rerun-msg" style="font-size:12px"></span>
+        </div>
       <div style="text-align:right">
         <button class="btn pri" id="btn-save-settings">設定を保存</button>
       </div>
@@ -817,7 +820,7 @@ function renderLastRun(){
   // 実行時刻は端末のローカル時刻（日本ならJST）で表示
   function when(x){ var t=Date.parse(x&&x.at||''); if(isNaN(t)) return ''; var d=new Date(t); return fmtDate(x.at)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
   function line(label,x){
-    var src=x.source==='manual'?'手動':'自動';
+    var src=x.source==='manual'?'手動':(x.source==='auto-manual'?'手動再実行':'自動');
     var head=label+': '+esc(when(x))+'（'+src+'）';
     return x.ok ? head+'<span style="color:#7bc99a">成功</span> — 追加 '+(x.added||0)+'件 / 重複スキップ '+(x.skipped||0)+'件'
                 : head+'<span style="color:#ecb0a0">失敗</span> — '+esc(x.error||'');
@@ -826,6 +829,20 @@ function renderLastRun(){
   if(ra&&(!r||ra.at!==r.at)) html+=(html?'<br>':'')+line('最終の自動実行',ra);
   el.innerHTML=html+'<br><span style="opacity:.75">※自動収集は毎朝7:00。失敗したら成功するまで1時間ごとに再実行し、成功後は次の7:00まで待ちます。</span>';
 }
+// 自動収集の手動再実行（自動収集と同じ条件で実行。成功すれば1時間ごとの再実行は止まる）
+g('btn-rerun-auto').addEventListener('click',function(){
+  if(!fns){ toast('Functions初期化エラー','err'); return; }
+  var btn=g('btn-rerun-auto'), msg=g('rerun-msg');
+  btn.disabled=true; btn.textContent='実行中...（最大5分）'; msg.style.color=''; msg.textContent='Grokでニュースを収集しています…';
+  fns.httpsCallable('rerunTequilaNewsAuto')({}).then(function(res){
+    var r=res.data||{};
+    if(r.ok){ msg.style.color='#7bc99a'; msg.textContent='成功 — 追加 '+(r.added||0)+'件 / 重複スキップ '+(r.skipped||0)+'件'; toast('再実行に成功しました'); }
+    else{ msg.style.color='#ecb0a0'; msg.textContent='失敗 — '+(r.error||''); }
+    return loadAll();
+  }).catch(function(e){
+    msg.style.color='#ecb0a0'; msg.textContent='エラー: '+(e&&e.message?e.message:e);
+  }).finally(function(){ btn.disabled=false; btn.textContent='🔄 自動収集を今すぐ再実行'; });
+});
 Array.prototype.forEach.call(g('seg-auto').querySelectorAll('button'),function(b){
   b.addEventListener('click',function(){ config.autoEnabled=(b.dataset.v==='on'); renderSettings(); });
 });

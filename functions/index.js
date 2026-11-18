@@ -3364,20 +3364,20 @@ async function tqnRun({ apiKey, keywords, fromDate, toDate, maxItems, model, sou
   }
   // lastRun: 直近の実行（手動含む）／lastAutoRun: 直近の自動実行（手動で上書きされない）
   const upd = { lastRun: run };
-  if (run.source === 'auto') upd.lastAutoRun = run;
+  if (run.source === 'auto' || run.source === 'auto-manual') upd.lastAutoRun = run;
   try { await db.collection('tequilaNewsConfig').doc('settings').set(upd, { merge: true }); } catch (e) { /* ignore */ }
   return run;
 }
 
 // 自動収集の本体（毎朝7時と、その再試行で共用）
-async function tqnAutoCollect(label, cfg) {
+async function tqnAutoCollect(label, cfg, source) {
   const apiKey = xaiApiKey.value();
   if (!apiKey) { console.warn(label + ': XAI_API_KEY 未設定'); return null; }
   const now = new Date();
   const from = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000); // 直近2日
   const run = await tqnRun({
     apiKey, keywords: cfg.keywords, fromDate: tqnDateStr(from), toDate: tqnDateStr(now),
-    maxItems: cfg.maxPerRun, model: cfg.aiModel, source: 'auto'
+    maxItems: cfg.maxPerRun, model: cfg.aiModel, source: source || 'auto'
   });
   console.log(label + ':', JSON.stringify(run));
   return run;
@@ -3422,6 +3422,20 @@ exports.tequilaNewsDailyRetry = functions.region('asia-northeast1')
     console.log('tequilaNewsDailyRetry: 前回の自動収集が未成功のため再実行');
     await tqnAutoCollect('tequilaNewsDailyRetry', cfg);
     return null;
+  });
+
+// 自動収集の手動再実行（管理画面の「今すぐ再実行」ボタン）
+// 自動収集と同じ条件（設定キーワード・直近2日）で実行し、結果は lastAutoRun にも記録する。
+// 成功すれば1時間ごとの再実行は止まり、次の7:00まで待つ。
+exports.rerunTequilaNewsAuto = functions.region('asia-northeast1')
+  .runWith({ secrets: ['XAI_API_KEY'], timeoutSeconds: 300, memory: '512MB' })
+  .https.onCall(async (data, context) => {
+    await assertStaff(context);
+    if (!xaiApiKey.value()) throw new functions.https.HttpsError('failed-precondition', 'XAI_API_KEY が未設定です。GCPシークレットに設定してください。');
+    const cfg = await tqnLoadConfig();
+    const run = await tqnAutoCollect('rerunTequilaNewsAuto', cfg, 'auto-manual');
+    if (!run) throw new functions.https.HttpsError('internal', '実行できませんでした');
+    return run;
   });
 
 // 手動収集（管理画面から：キーワード＋期間を指定して随時実行）
