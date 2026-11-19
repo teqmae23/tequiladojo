@@ -3460,6 +3460,7 @@ exports.tequilaNewsQueueWorker = functions.region('asia-northeast1')
         createdAt: nowISO, updatedAt: nowISO
       };
       const added = await db.collection('tequilaNews').add(doc);
+      writeServerJournal('create', 'tequilaNews', added.id, null, doc, 'tequilaNewsQueueWorker');
       await ref.update({ status: 'done', articleId: added.id, error: '', updatedAt: nowISO });
     } catch (e) {
       await ref.update({ status: 'failed', error: String(e && e.message ? e.message : e).slice(0, 500), updatedAt: new Date().toISOString() });
@@ -3606,5 +3607,6 @@ exports.articleFromUrl = functions.region('asia-northeast1')
       createdAt: nowISO, updatedAt: nowISO
     };
     const ref = await db.collection('tequilaNews').add(doc);
+    writeServerJournal('create', 'tequilaNews', ref.id, null, doc, 'articleFromUrl');
     return { ok: true, id: ref.id };
   });
