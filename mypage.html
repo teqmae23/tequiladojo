@@ -380,11 +380,11 @@ select.fi{min-width:80px}
         <div><div class="md-tt" data-i18n="mp_map_t">🗺 蒸留所マップ</div><div class="md-dd" data-i18n="mp_map_d">飲んだ蒸留所をマップで確認できます</div></div>
         <span class="md-cv">›</span>
       </a>
-      <!-- 過去のイベント（終了したイベント。クリックで展開） -->
+      <!-- 過去のセミナー・イベント（終了したイベント・参加登録したセミナー。クリックで展開） -->
       <div id="past-events-wrap" style="display:none">
         <div class="md-tile" style="cursor:pointer" onclick="togglePastEvents()">
           <span class="md-ic">📅</span>
-          <div><div class="md-tt">過去のイベント</div><div class="md-dd"><span id="past-events-count">0</span>件 ・ タップで展開</div></div>
+          <div><div class="md-tt">過去のセミナー・イベント</div><div class="md-dd"><span id="past-events-count">0</span>件 ・ タップで展開</div></div>
           <span class="md-cv" id="past-events-cv" style="transition:transform .2s">›</span>
         </div>
         <div id="past-events-list" style="display:none;margin-top:4px;padding-left:1em"></div>
@@ -718,13 +718,18 @@ async function loadEventBanners(memberDoc){
     const active=evs.filter(ev=>!isPast(ev));
     const past=evs.filter(isPast);
     box.innerHTML=active.map(card).join('');
-    const pastWrap=document.getElementById('past-events-wrap');
-    const pastList=document.getElementById('past-events-list');
-    const pastCnt=document.getElementById('past-events-count');
-    if(pastList) pastList.innerHTML=past.map(card).join('');
-    if(pastCnt) pastCnt.textContent=String(past.length);
-    if(pastWrap) pastWrap.style.display=past.length?'block':'none';
+    _pastItems.events=past.map(ev=>({key:String(ev.endDate||ev.startDate||''),html:card(ev)}));
+    renderPastItems();
   }catch(e){ console.warn('event banners error:',e); }
+}
+// 「過去のセミナー・イベント」枠: 終了したイベントと終了したセミナーを、新しい順にまとめて表示
+var _pastItems={events:[],seminars:[]};
+function renderPastItems(){
+  var all=_pastItems.events.concat(_pastItems.seminars).sort(function(a,b){ return String(b.key).localeCompare(String(a.key)); });
+  var w=document.getElementById('past-events-wrap'), l=document.getElementById('past-events-list'), c=document.getElementById('past-events-count');
+  if(l) l.innerHTML=all.map(function(x){return x.html;}).join('');
+  if(c) c.textContent=String(all.length);
+  if(w) w.style.display=all.length?'block':'none';
 }
 // セミナー参加登録のご案内バナー（自分が参加登録したセミナー）
 async function loadSeminarBanners(){
@@ -733,14 +738,15 @@ async function loadSeminarBanners(){
     const u=firebase.auth().currentUser; if(!u) return;
     const snap=await db.collection('seminarMyJoins').where('uid','==',u.uid).get();
     let arr=snap.docs.map(d=>d.data());
-    if(!arr.length){ box.innerHTML=''; return; }
+    if(!arr.length){ box.innerHTML=''; _pastItems.seminars=[]; renderPastItems(); return; }
     const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const todayJST=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
     const ended=s=>!!(s.date&&s.date<todayJST);
     const fmt=s=>{ if(!s)return ''; const p=String(s).split('-'); return p.length===3?(p[0]+'/'+p[1]+'/'+p[2]):s; };
     // 開催日の新しい順。終了済みは下に。
     arr.sort((a,b)=>{ const ea=ended(a),eb=ended(b); if(ea!==eb) return ea?1:-1; return String((b.date||'')+' '+(b.time||'')).localeCompare(String((a.date||'')+' '+(a.time||''))); });
-    box.innerHTML=arr.map(s=>{
+    // 終了したセミナーはトップに出さず「過去のセミナー・イベント」枠へ
+    const semCard=s=>{
       const en=ended(s);
       const dt=fmt(s.date)+(s.time?(' '+s.time):'');
       const url=s.eventId?('/seminar_flow.html?e='+encodeURIComponent(s.eventId)):'#';
@@ -749,13 +755,15 @@ async function loadSeminarBanners(){
         <span style="flex:1;min-width:0">
           <span style="display:block;font-weight:700;font-size:15px;line-height:1.3">${esc(s.title||'セミナー')}${en?' <span style="font-size:11px;color:var(--red)">終了</span>':' <span style="font-size:11px;color:var(--teal)">参加登録済み</span>'}</span>
           <span style="display:block;font-size:12px;color:var(--ink2);margin-top:2px">📅 ${esc(dt)}${s.place?'　📍 '+esc(s.place):''}</span>
-          ${en?'<span style="display:block;font-size:12px;color:var(--red);margin-top:2px">このセミナーは終了しました</span>':''}
         </span>
       </a>`;
-    }).join('');
+    };
+    box.innerHTML=arr.filter(s=>!ended(s)).map(semCard).join('');
+    _pastItems.seminars=arr.filter(ended).map(s=>({key:String(s.date||''),html:semCard(s)}));
+    renderPastItems();
   }catch(e){ console.warn('seminar banners error:',e); }
 }
-// 過去のイベント枠の開閉
+// 過去のセミナー・イベント枠の開閉
 function togglePastEvents(){
   var l=document.getElementById('past-events-list'), cv=document.getElementById('past-events-cv');
   if(!l) return;
