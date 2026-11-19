@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ボトル管理 — テキーラ道場</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+var FIREBASE_CONFIG={
+  apiKey:"AIzaSyD6a3i-N1RyXyAfXmztPQrYtx4x62YGth0",
+  authDomain:"tequiladojo.firebaseapp.com",
+  projectId:"tequiladojo",
+  storageBucket:"tequiladojo.firebasestorage.app",
+  messagingSenderId:"56663296233",
+  appId:"1:56663296233:web:c8cac2fcbeb4faa09e0878",
+  measurementId:"G-KMS18946JQ"
+};
+</script>
+<script src="/auth-role.js?v=20261014"></script>
+<script>window.JOURNAL_PAGE='admin_bottles';</script>
+<script src="/journal.js?v=20260706"></script>
+<style>
+:root{
+  --bg:#f5f2eb;--panel:#ffffff;--panel2:#faf8f3;--line:#e2dbcc;--line2:#cbc0aa;
+  --ink:#1d1812;--ink2:#433b30;--ink3:#665d4e;
+  --gold:#b8860b;--gold-d:#c99a2e;--gold-l:#8a6408;
+  --ok:#1f7a45;--ng:#b3261e;
+  --r:8px;--rl:12px;
+  --sans:'Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif;
+  --mono:'SFMono-Regular',Consolas,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--bg);color:var(--ink);min-height:100vh;font-size:15px;line-height:1.6}
+button{cursor:pointer;font-family:var(--sans)}
+#gate{display:none;min-height:100vh;align-items:center;justify-content:center;padding:24px;text-align:center}
+.hdr{background:#fff;border-bottom:1px solid var(--line);box-shadow:0 1px 4px rgba(0,0,0,.06);padding:0 16px;height:54px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:40}
+.hdr .ht{font-size:17px;font-weight:700;color:var(--gold-l)}
+.hdr .hr{margin-left:auto;display:flex;gap:8px}
+.hnav{padding:6px 11px;border:1px solid var(--line2);border-radius:6px;color:var(--ink2);font-size:13px;text-decoration:none;background:var(--panel)}
+#app{display:none}
+.wrap{max-width:1280px;margin:0 auto;padding:16px 14px 80px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--rl);padding:12px 14px;margin-bottom:12px}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.row+.row{margin-top:8px}
+.lb{font-size:13px;color:var(--ink3);font-weight:600;white-space:nowrap}
+select,input{font-family:var(--sans);font-size:14px;background:var(--panel2);border:1px solid var(--line2);border-radius:6px;color:var(--ink);padding:6px 8px}
+input[type=search]{min-width:220px}
+.btn{padding:6px 12px;border:1px solid var(--line2);border-radius:var(--r);background:var(--panel2);color:var(--ink);font-size:14px}
+.btn:hover{border-color:var(--gold-d)}
+.chk{display:inline-flex;align-items:center;gap:4px;font-size:14px;padding:3px 8px;border:1px solid var(--line2);border-radius:14px;background:var(--panel2);cursor:pointer;user-select:none}
+.chk input{margin:0}
+.sortkey{display:inline-flex;gap:4px;align-items:center}
+.sortkey .n{font-size:12px;color:var(--ink3)}
+.count{margin-left:auto;font-size:13px;color:var(--ink3)}
+.tblwrap{overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--rl)}
+table{border-collapse:collapse;width:100%;min-width:980px}
+th,td{border:1px solid var(--line);padding:5px 8px;font-size:14px;vertical-align:middle}
+th{background:#f3eee3;color:var(--ink2);font-size:13px;font-weight:700;white-space:nowrap;position:sticky;top:0;z-index:2}
+th select{font-size:13px;padding:3px 6px;background:#fff;font-weight:700}
+td.m{text-align:center;background:#fffdf8}
+td.nom{font-family:var(--mono);font-weight:700}
+td.bid{font-family:var(--mono);white-space:nowrap}
+td.brand,td.master{font-weight:600}
+td select,td input{width:100%;min-width:90px;font-size:14px;padding:4px 6px;background:#fff}
+td input[type=number]{text-align:right}
+.st-serving{background:#fff1e0!important;color:#9a4f00;font-weight:700}
+.st-keep{background:#fde7f0!important;color:#a3305f;font-weight:700}
+.st-away{background:#e8eefb!important;color:#2a4f8f;font-weight:700}
+.st-stock{background:#fff!important;color:var(--ink)}
+.st-ended{background:#ecebe8!important;color:#777}
+tr.saving td{opacity:.6}
+.empty{text-align:center;color:var(--ink3);padding:40px 10px}
+.hint{font-size:12px;color:var(--ink3);margin-top:6px;line-height:1.6}
+#toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#fff;border:1px solid var(--line2);box-shadow:0 4px 16px rgba(0,0,0,.15);color:var(--ink);padding:10px 18px;border-radius:24px;font-size:14px;z-index:200;opacity:0;transition:opacity .2s;pointer-events:none}
+#toast.show{opacity:1}
+#toast.err{border-color:var(--ng);color:var(--ng)}
+</style>
+</head>
+<body>
+<div id="gate"><div><div style="font-size:40px">🔒</div><p style="margin:14px 0;color:var(--ink2)">オーナー権限が必要です。</p><a class="hnav" href="/tdhome.html">管理トップへ</a></div></div>
+
+<div id="app">
+  <div class="hdr">
+    <span class="ht">🍾 ボトル管理</span>
+    <div class="hr"><a class="hnav" href="/admin_tequila.html?tab=bdata">ボトルデータ（詳細編集）</a><a class="hnav" href="/tdhome.html">🏠 管理トップ</a></div>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <div class="row">
+        <span class="lb">状態</span>
+        <span id="f-status"></span>
+        <input type="search" id="f-q" placeholder="NOM・ブランド・ボトル名・ボトルIDで検索">
+        <span class="count" id="count"></span>
+      </div>
+      <div class="row">
+        <span class="lb">並び順</span>
+        <span id="sortkeys"></span>
+        <button class="btn" id="btn-reload">↻ 再読込</button>
+      </div>
+      <div class="hint">状態と選択項目の値はその場で変更でき、変更すると即保存されます。選択項目（3列）は見出しのプルダウンで表示する項目を選べます。同じ NOM・ブランド・ボトルマスタが続く行はまとめて表示します。</div>
+    </div>
+    <div class="tblwrap"><div id="tbl"><div class="empty">読み込み中…</div></div></div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+var auth=firebase.auth(), db=firebase.firestore();
+function g(id){return document.getElementById(id);}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+var _tt=null; function toast(m,t){var e=g('toast');e.textContent=m;e.className='show'+(t==='err'?' err':'');clearTimeout(_tt);_tt=setTimeout(function(){e.className='';},2600);}
+function jlog(op,col,id,before,after){ try{ if(typeof window.writeJournal==='function') window.writeJournal(op,col,id,before,after); }catch(e){} }
+function lsGet(k,d){ try{ var v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch(e){ return d; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
+
+// ── 状態 ──
+// bottleData.status に保存。keep/away はこの画面で追加した値。
+// キープ購入で作られた個体（lotNo='KEEP'、status='ended'）や keepBottles の元個体は、状態未変更ならキープとして表示。
+var STATUS=[
+  {v:'serving',l:'提供中'},
+  {v:'keep',   l:'キープ'},
+  {v:'away',   l:'退避'},
+  {v:'stock',  l:'在庫'},
+  {v:'ended',  l:'提供終了'}
+];
+var ST_ORDER={}; STATUS.forEach(function(s,i){ ST_ORDER[s.v]=i; });
+var ST_LABEL={}; STATUS.forEach(function(s){ ST_LABEL[s.v]=s.l; });
+var keepSourceSet={};
+function stateOf(r){
+  var st=String(r.status||'');
+  if(r.statusByBottleMgmt && ST_ORDER[st]!=null) return st; // この画面で明示的に設定した値を優先
+  if(keepSourceSet[String(r.id)] || String(r.lotNo||'').toUpperCase()==='KEEP') return 'keep';
+  if(ST_ORDER[st]!=null) return st;
+  return 'serving'; // 未設定は提供中（admin_tequila と同じ既定）
+}
+
+// ── 選択項目（3列） ──
+var FIELDS=[
+  {k:'remaining',   l:'残量(ml)',     t:'number'},
+  {k:'volume',      l:'容量(ml)',     t:'number'},
+  {k:'price',       l:'10ml単価(円)', t:'number'},
+  {k:'location',    l:'保管場所',     t:'text'},
+  {k:'lotNo',       l:'ロット番号',   t:'text'},
+  {k:'visibility',  l:'公開区分',     t:'select', opts:[{v:'0',l:'公開'},{v:'1',l:'非公開'}]},
+  {k:'purchaseDate',l:'購入日',       t:'date'},
+  {k:'serveStart',  l:'提供開始日',   t:'date'},
+  {k:'serveEnd',    l:'提供終了日',   t:'date'},
+  {k:'cost',        l:'仕入れ価格(円)',t:'number'},
+  {k:'abv',         l:'度数(%)',      t:'number'},
+  {k:'suffix',      l:'追記',         t:'text'},
+  {k:'note',        l:'メモ',         t:'text'}
+];
+var FIELD_BY={}; FIELDS.forEach(function(f){ FIELD_BY[f.k]=f; });
+var selCols=lsGet('bm_cols',['remaining','location','price']).filter(function(k){return FIELD_BY[k];});
+while(selCols.length<3) selCols.push(FIELDS[selCols.length].k);
+
+// ── 並び順（最大3キー） ──
+var SORT_KEYS=[
+  {v:'',     l:'（なし）'},
+  {v:'nom',  l:'NOM番号'},
+  {v:'name', l:'ボトル名'},
+  {v:'status',l:'状態'},
+  {v:'sel1', l:'選択項目1'},
+  {v:'sel2', l:'選択項目2'},
+  {v:'sel3', l:'選択項目3'}
+];
+var sortSpec=lsGet('bm_sort',[{k:'nom',d:'asc'},{k:'name',d:'asc'},{k:'status',d:'asc'}]);
+var statusFilter=lsGet('bm_status',{serving:true,keep:true,away:true,stock:true,ended:false});
+
+var rows=[], brandMap={}, masterMap={};
+
+AuthRole.requireOwner(auth,function(){ g('app').style.display='block'; renderControls(); load(); },function(){ g('gate').style.display='flex'; });
+
+function load(){
+  g('tbl').innerHTML='<div class="empty">読み込み中…</div>';
+  return Promise.all([
+    db.collection('bottleData').get(),
+    db.collection('bottles').get(),
+    db.collection('brands').get(),
+    db.collection('keepBottles').get().catch(function(){ return {docs:[]}; })
+  ]).then(function(res){
+    masterMap={}; res[1].docs.forEach(function(d){ masterMap[d.id]=d.data()||{}; });
+    brandMap={}; res[2].docs.forEach(function(d){ brandMap[d.id]=d.data()||{}; });
+    keepSourceSet={}; res[3].docs.forEach(function(d){ var k=d.data()||{}; if(k.sourceBottleDataId) keepSourceSet[String(k.sourceBottleDataId)]=true; });
+    rows=res[0].docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    render();
+  }).catch(function(e){ g('tbl').innerHTML='<div class="empty">読み込み失敗: '+esc(e.message)+'</div>'; });
+}
+
+// ── 表示用の値 ──
+function masterIdOf(r){ return String(r.bottleId||'').trim(); }
+function nomOf(r){ if(r.nom!=null&&r.nom!=='') return String(r.nom); var s=masterIdOf(r); return s.length>=4?s.slice(0,4):''; }
+function brandIdOf(r){ if(r.brandId) return String(r.brandId); var s=masterIdOf(r); return s.length>=7?s.slice(0,7):''; }
+function brandNameOf(r){ var b=brandMap[brandIdOf(r)]; return b?(b.brandEs||b.brandJa||b.name||''):''; }
+function masterNameOf(r){
+  var m=masterMap[masterIdOf(r)];
+  return (m&&(m.bottleEs||m.bottleEn||m.bottleJa||m.name))||r.bottleEsBase||r.bottleEs||r.bottleJa||'(名称未設定)';
+}
+function bidOf(r){ return String(r.bottleDataId||r.id); }
+function fieldVal(r,k){ var v=r[k]; return v==null?'':v; }
+
+function cmpVal(a,b){
+  var an=(a===''||a==null), bn=(b===''||b==null);
+  if(an&&bn) return 0; if(an) return 1; if(bn) return -1; // 空欄は常に後ろ
+  var na=parseFloat(a), nb=parseFloat(b);
+  if(!isNaN(na)&&!isNaN(nb)&&String(na)===String(a).trim()&&String(nb)===String(b).trim()) return na-nb;
+  return String(a).localeCompare(String(b),'ja');
+}
+function keyVal(r,k){
+  if(k==='nom') return nomOf(r);
+  if(k==='name') return masterNameOf(r);
+  if(k==='status') return ST_ORDER[stateOf(r)];
+  if(k==='sel1') return fieldVal(r,selCols[0]);
+  if(k==='sel2') return fieldVal(r,selCols[1]);
+  if(k==='sel3') return fieldVal(r,selCols[2]);
+  return '';
+}
+function sortRows(list){
+  var spec=sortSpec.filter(function(s){return s&&s.k;});
+  return list.slice().sort(function(a,b){
+    for(var i=0;i<spec.length;i++){
+      var c=cmpVal(keyVal(a,spec[i].k),keyVal(b,spec[i].k));
+      if(c) return spec[i].d==='desc'?-c:c;
+    }
+    // 最後は同じボトルマスタをまとめ、ボトルID順
+    return cmpVal(masterIdOf(a),masterIdOf(b)) || cmpVal(bidOf(a),bidOf(b));
+  });
+}
+
+// ── 操作パネル ──
+function renderControls(){
+  g('f-status').innerHTML=STATUS.map(function(s){
+    return '<label class="chk"><input type="checkbox" data-st="'+s.v+'"'+(statusFilter[s.v]?' checked':'')+'>'+s.l+'</label>';
+  }).join(' ');
+  Array.prototype.forEach.call(g('f-status').querySelectorAll('input'),function(c){
+    c.addEventListener('change',function(){ statusFilter[c.dataset.st]=c.checked; lsSet('bm_status',statusFilter); render(); });
+  });
+  var html='';
+  for(var i=0;i<3;i++){
+    var s=sortSpec[i]||{k:'',d:'asc'};
+    html+='<span class="sortkey"><span class="n">'+(i+1)+'.</span><select data-sk="'+i+'">'+SORT_KEYS.map(function(o){return '<option value="'+o.v+'"'+(o.v===s.k?' selected':'')+'>'+o.l+'</option>';}).join('')+'</select>'
+      +'<select data-sd="'+i+'"><option value="asc"'+(s.d!=='desc'?' selected':'')+'>昇順</option><option value="desc"'+(s.d==='desc'?' selected':'')+'>降順</option></select></span> ';
+  }
+  g('sortkeys').innerHTML=html;
+  Array.prototype.forEach.call(g('sortkeys').querySelectorAll('select'),function(el){
+    el.addEventListener('change',function(){
+      var next=[];
+      for(var i=0;i<3;i++){ var k=g('sortkeys').querySelector('[data-sk="'+i+'"]').value, d=g('sortkeys').querySelector('[data-sd="'+i+'"]').value; next.push({k:k,d:d}); }
+      sortSpec=next; lsSet('bm_sort',sortSpec); render();
+    });
+  });
+  g('f-q').addEventListener('input',render);
+  g('btn-reload').addEventListener('click',load);
+}
+
+// ── 表 ──
+function cellEditor(r,k){
+  var f=FIELD_BY[k], v=fieldVal(r,k);
+  if(f.t==='select') return '<select data-edit="'+k+'" data-id="'+esc(r.id)+'"><option value=""></option>'+f.opts.map(function(o){return '<option value="'+o.v+'"'+(String(v)===o.v?' selected':'')+'>'+o.l+'</option>';}).join('')+'</select>';
+  var type=f.t==='number'?'number':(f.t==='date'?'date':'text');
+  return '<input type="'+type+'" data-edit="'+k+'" data-id="'+esc(r.id)+'" value="'+esc(v)+'">';
+}
+function render(){
+  var q=(g('f-q').value||'').trim().toLowerCase();
+  var list=rows.filter(function(r){
+    if(!statusFilter[stateOf(r)]) return false;
+    if(q){ var hay=(nomOf(r)+' '+brandNameOf(r)+' '+masterNameOf(r)+' '+bidOf(r)+' '+(r.lotNo||'')).toLowerCase(); if(hay.indexOf(q)<0) return false; }
+    return true;
+  });
+  list=sortRows(list);
+  g('count').textContent=list.length+' 本 / 全'+rows.length+'本';
+  if(!list.length){ g('tbl').innerHTML='<div class="empty">該当するボトルがありません</div>'; return; }
+  // 連続する同じ「NOM＋ブランド＋ボトルマスタ」の行数（セル結合用）
+  var span=new Array(list.length).fill(0);
+  for(var i=0;i<list.length;){
+    var gk=nomOf(list[i])+'|'+brandIdOf(list[i])+'|'+masterIdOf(list[i]), j=i+1;
+    while(j<list.length && (nomOf(list[j])+'|'+brandIdOf(list[j])+'|'+masterIdOf(list[j]))===gk) j++;
+    span[i]=j-i; i=j;
+  }
+  var head='<tr><th>NOM</th><th>ブランド</th><th>ボトルマスタ</th><th>ボトルID</th><th>状態</th>'
+    +selCols.map(function(k,ci){ return '<th><select data-col="'+ci+'">'+FIELDS.map(function(f){return '<option value="'+f.k+'"'+(f.k===k?' selected':'')+'>'+f.l+'</option>';}).join('')+'</select></th>'; }).join('')+'</tr>';
+  var body=list.map(function(r,i){
+    var st=stateOf(r), h='<tr data-row="'+esc(r.id)+'">';
+    if(span[i]){
+      var rs=span[i]>1?' rowspan="'+span[i]+'"':'';
+      h+='<td class="m nom"'+rs+'>'+esc(nomOf(r))+'</td><td class="m brand"'+rs+'>'+esc(brandNameOf(r))+'</td><td class="m master"'+rs+'>'+esc(masterNameOf(r))+'</td>';
+    }
+    h+='<td class="bid">'+esc(bidOf(r))+'</td>';
+    h+='<td class="st-'+st+'"><select class="st-'+st+'" data-status data-id="'+esc(r.id)+'">'+STATUS.map(function(s){return '<option value="'+s.v+'"'+(s.v===st?' selected':'')+'>'+s.l+'</option>';}).join('')+'</select></td>';
+    h+=selCols.map(function(k){ return '<td>'+cellEditor(r,k)+'</td>'; }).join('');
+    return h+'</tr>';
+  }).join('');
+  g('tbl').innerHTML='<table><thead>'+head+'</thead><tbody>'+body+'</tbody></table>';
+  Array.prototype.forEach.call(g('tbl').querySelectorAll('th select[data-col]'),function(el){
+    el.addEventListener('change',function(){ selCols[+el.dataset.col]=el.value; lsSet('bm_cols',selCols); render(); });
+  });
+  Array.prototype.forEach.call(g('tbl').querySelectorAll('select[data-status]'),function(el){
+    el.addEventListener('change',function(){ saveStatus(el.dataset.id, el.value); });
+  });
+  Array.prototype.forEach.call(g('tbl').querySelectorAll('[data-edit]'),function(el){
+    el.addEventListener('change',function(){ saveField(el.dataset.id, el.dataset.edit, el.value); });
+  });
+}
+
+// ── 保存 ──
+function rowById(id){ return rows.filter(function(r){return r.id===id;})[0]; }
+function markSaving(id,on){ var tr=g('tbl').querySelector('tr[data-row="'+id.replace(/"/g,'')+'"]'); if(tr) tr.classList.toggle('saving',!!on); }
+function saveStatus(id, st){
+  var r=rowById(id); if(!r) return;
+  // メニュー（visibility）と整合: 提供中なら公開、それ以外は非公開（admin_tequila のボトルデータ保存と同じ考え方）
+  var upd={status:st, statusByBottleMgmt:true, visibility:(st==='serving'?'0':'1'), updatedAt:new Date().toISOString()};
+  var before={status:r.status==null?null:r.status, visibility:r.visibility==null?null:r.visibility};
+  markSaving(id,true);
+  db.collection('bottleData').doc(id).update(upd).then(function(){
+    Object.assign(r,upd); jlog('update','bottleData',id,before,upd);
+    toast(bidOf(r)+' を「'+ST_LABEL[st]+'」にしました'); render();
+  }).catch(function(e){ markSaving(id,false); toast('保存失敗: '+e.message,'err'); render(); });
+}
+function saveField(id, k, raw){
+  var r=rowById(id), f=FIELD_BY[k]; if(!r||!f) return;
+  var v=raw;
+  if(f.t==='number'){ v=(raw===''?null:parseFloat(raw)); if(v!=null&&isNaN(v)){ toast('数値を入力してください','err'); render(); return; } }
+  else { v=String(raw).trim(); if(v==='') v=null; }
+  var upd={updatedAt:new Date().toISOString()}; upd[k]=v;
+  var before={}; before[k]=r[k]==null?null:r[k];
+  markSaving(id,true);
+  db.collection('bottleData').doc(id).update(upd).then(function(){
+    Object.assign(r,upd); jlog('update','bottleData',id,before,upd);
+    markSaving(id,false); toast(bidOf(r)+'：'+f.l+'を保存しました');
+  }).catch(function(e){ markSaving(id,false); toast('保存失敗: '+e.message,'err'); render(); });
+}
+</script>
+</body>
+</html>
