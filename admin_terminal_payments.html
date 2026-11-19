@@ -136,6 +136,7 @@ tr.r-ng{background:#fdf6f4}
         <button class="btn bp" id="btn-reload">🔄 更新</button>
         <button class="btn bp" id="btn-add" title="WisePad単独で決済した分を手入力して来場に紐づけ">＋ 手入力で追加</button>
         <button class="btn bs" id="btn-cancel-unprocessed" title="表示中の未処理（処理中/未処理）の決済をすべて中断にする">⛔ 未処理を一括中断</button>
+        <button class="btn bs" id="btn-terminal-reset" title="前回の決済（エラー・中止）の金額が端末に出続ける時に。未処理・処理中の決済をすべて中止し、端末アプリの読み取り待ちも解除します">🔄 端末リセット</button>
       </div>
       <div class="summary" id="summary" style="display:none"></div>
     </div>
@@ -637,6 +638,25 @@ async function saveAdd(){
   }
 }
 g("btn-cancel-unprocessed").addEventListener("click",cancelAllUnprocessed);
+// 端末リセット: 未処理・処理中の決済をすべて中止し、端末アプリへ terminalControl/reset で読み取り待ちの解除を指示
+g("btn-terminal-reset").addEventListener("click",async function(){
+  if(!confirm("端末をリセットしますか？\n未処理・処理中の決済をすべて中止し、端末の読み取り待ちを解除します。\n（決済済みのものには影響しません）")) return;
+  var FV=firebase.firestore.FieldValue, n=0;
+  try{
+    var batch=db.batch();
+    var snaps=await Promise.all([
+      db.collection("terminalPayments").where("status","==","pending").get(),
+      db.collection("terminalPayments").where("status","==","processing").get()
+    ]);
+    snaps.forEach(function(sn){ sn.docs.forEach(function(d){ batch.set(d.ref,{status:"canceled",errorMessage:"reset（端末リセットで中止）",updatedAt:FV.serverTimestamp()},{merge:true}); n++; }); });
+    var u=firebase.auth().currentUser;
+    batch.set(db.collection("terminalControl").doc("reset"),{resetAt:FV.serverTimestamp(),by:u?(u.email||u.uid):null},{merge:true});
+    await batch.commit();
+    try{ if(typeof writeJournal==="function") writeJournal("update","terminalControl","reset",null,{reset:true,canceled:n}); }catch(e){}
+    toast("端末をリセットしました"+(n?"（"+n+"件の決済を中止）":""));
+    if(typeof load==="function") load(); else g("btn-reload").click();
+  }catch(e){ toast("リセット失敗: "+e.message,"err"); }
+});
 g("btn-add").addEventListener("click",openAdd);
 g("am-close").addEventListener("click",closeAdd);
 g("add-modal").addEventListener("click",function(e){ if(e.target===g("add-modal")) closeAdd(); });

@@ -52,6 +52,17 @@ class MainActivity : AppCompatActivity() {
     private var queueListener: ListenerRegistration? = null
     private var processing = false
 
+    // 前回の決済の「読み取り待ち」が端末に残ったまま次の決済に進むと、WisePad 3 に
+    // 前回（エラー/中止）の金額が出続ける。読み取り中の操作を保持し、次の決済の前に必ず中止する。
+    private var collectCancelable: Cancelable? = null
+    private var currentDoc: DocumentReference? = null
+    private var currentDocListener: ListenerRegistration? = null
+    // 会計画面の「端末リセット」指示（terminalControl/reset）の待ち受け
+    private var controlListener: ListenerRegistration? = null
+    private val appStartedAtSec = System.currentTimeMillis() / 1000
+    // pending のまま放置された古いリクエストは処理しない（古い金額が流れてくるのを防ぐ）
+    private val pendingMaxAgeSec = 3 * 60L
+
     private val prefs by lazy { getSharedPreferences("tdterminal", MODE_PRIVATE) }
 
     private val requiredPermissions = arrayOf(
@@ -174,6 +185,7 @@ class MainActivity : AppCompatActivity() {
                     processing = false
                     runOnUiThread { status("接続完了: ${r.serialNumber ?: ""}（会計画面からの決済を待ち受け中）"); refreshUi() }
                     startQueueListener()
+                    startControlListener()
                 }
                 override fun onFailure(e: TerminalException) {
                     runOnUiThread { status("接続失敗: ${e.errorMessage}") }
@@ -217,6 +229,15 @@ class MainActivity : AppCompatActivity() {
     // 決済本体（手入力・会計画面リクエストの両方から呼ぶ）。
     // doc が非nullなら、成否を terminalPayments の該当ドキュメントに書き戻す。
     private fun startCharge(amount: Long, doc: DocumentReference?) {
+        // 端末に前回の読み取り待ちが残っていれば、必ず中止してから新しい決済を始める
+        cancelInFlight {
+            currentDoc = doc
+            watchCurrentDoc(doc)
+            startChargeInner(amount, doc)
+        }
+    }
+
+    private fun startChargeInner(amount: Long, doc: DocumentReference?) {
         // 事前チェック: 端末が実際に接続状態か（切断中なら空振り決済を避け、明確に失敗させる）。
         val notConnected = !Terminal.isInitialized() ||
             Terminal.getInstance().connectedReader == null ||
@@ -248,8 +269,9 @@ class MainActivity : AppCompatActivity() {
         status("カードを端末にタッチ/挿入してください（¥$amount）")
         Terminal.getInstance().retrievePaymentIntent(clientSecret, object : PaymentIntentCallback {
             override fun onSuccess(paymentIntent: PaymentIntent) {
-                Terminal.getInstance().collectPaymentMethod(paymentIntent, object : PaymentIntentCallback {
+                collectCancelable = Terminal.getInstance().collectPaymentMethod(paymentIntent, object : PaymentIntentCallback {
                     override fun onSuccess(collected: PaymentIntent) {
+                        collectCancelable = null
                         runOnUiThread { status("処理中...") }
                         // SDK-VERSION: v4 は confirmPaymentIntent、v3 以前は processPayment
                         Terminal.getInstance().confirmPaymentIntent(collected, object : PaymentIntentCallback {
@@ -272,7 +294,17 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    // 中止・置き換え済みの古い決済のコールバック（遅れて届く失敗通知など）は無視する
+    private fun isCurrent(doc: DocumentReference?) = doc?.id == currentDoc?.id
+
     private fun succeedPayment(doc: DocumentReference?, piId: String?, amount: Long) {
+        // 成功は（古い決済であっても）実際に課金されているので必ず記録する
+        if (!isCurrent(doc)) {
+            doc?.update(mapOf("status" to "succeeded", "paymentIntentId" to (piId ?: ""), "updatedAt" to FieldValue.serverTimestamp()))
+            return
+        }
+        collectCancelable = null
+        clearCurrentDoc()
         runOnUiThread { status("✅ 決済完了（¥$amount）"); b.amount.setText("") }
         doc?.update(
             mapOf(
@@ -285,7 +317,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun failPayment(doc: DocumentReference?, msg: String) {
-        runOnUiThread { status(msg) }
+        if (!isCurrent(doc)) return // 置き換え済みの決済の失敗通知（canceled のまま残す）
+        collectCancelable = null
+        clearCurrentDoc()
+        // 失敗した金額を入力欄に残さない（次の手入力決済で前回の金額が使われるのを防ぐ）
+        runOnUiThread { status(msg); b.amount.setText("") }
         doc?.update(
             mapOf(
                 "status" to "failed",
@@ -306,11 +342,40 @@ class MainActivity : AppCompatActivity() {
             .whereEqualTo("status", "pending")
             .addSnapshotListener { snap, err ->
                 if (err != null || snap == null) return@addSnapshotListener
-                if (processing) return@addSnapshotListener
-                // createdAt 昇順で最初の pending を処理（1件ずつ）
-                val d = snap.documents
-                    .sortedBy { it.getTimestamp("createdAt")?.seconds ?: Long.MAX_VALUE }
-                    .firstOrNull() ?: return@addSnapshotListener
+                val nowSec = System.currentTimeMillis() / 1000
+                // 古い pending は処理せずキャンセル扱いにする（以前の会計の金額が流れてくるのを防ぐ）
+                val fresh = snap.documents.filter { doc ->
+                    val created = doc.getTimestamp("createdAt")?.seconds ?: return@filter true // 書き込み直後(未確定)は新しいもの
+                    if (nowSec - created > pendingMaxAgeSec) {
+                        doc.reference.update(mapOf(
+                            "status" to "canceled",
+                            "errorMessage" to "expired（受信が遅れたため自動キャンセル）",
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        ))
+                        false
+                    } else true
+                }
+                // 新しい順で最新の1件だけを処理し、それより古い pending はキャンセル
+                val sorted = fresh.sortedByDescending { it.getTimestamp("createdAt")?.seconds ?: Long.MAX_VALUE }
+                val d = sorted.firstOrNull() ?: return@addSnapshotListener
+                sorted.drop(1).forEach { old ->
+                    old.reference.update(mapOf(
+                        "status" to "canceled",
+                        "errorMessage" to "superseded（新しい会計で自動キャンセル）",
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ))
+                }
+                if (processing) {
+                    if (currentDoc?.id == d.id) return@addSnapshotListener
+                    // 処理中に新しい会計が来た＝前の決済は放棄されている。前の読み取りを中止して新しい方を処理
+                    currentDoc?.update(mapOf(
+                        "status" to "canceled",
+                        "errorMessage" to "superseded（新しい会計で自動キャンセル）",
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ))
+                    clearCurrentDoc()
+                    processing = false
+                }
                 val amount = d.getLong("amount") ?: return@addSnapshotListener
                 if (amount <= 0) return@addSnapshotListener
                 // 端末未接続なら黙って無視せず、会計画面に理由を返す（無反応で固まらせない）。
@@ -341,14 +406,73 @@ class MainActivity : AppCompatActivity() {
             }
     }
 
-    private fun stopQueueListener() { queueListener?.remove(); queueListener = null }
+    private fun stopQueueListener() {
+        queueListener?.remove(); queueListener = null
+        controlListener?.remove(); controlListener = null
+    }
+
+    // 読み取り中（カード待ち）の操作があれば中止し、終わってから next を実行する。
+    private fun cancelInFlight(next: () -> Unit) {
+        val c = collectCancelable
+        collectCancelable = null
+        if (c == null || c.isCompleted) { next(); return }
+        c.cancel(object : Callback {
+            override fun onSuccess() { runOnUiThread { next() } }
+            override fun onFailure(e: TerminalException) { runOnUiThread { next() } }
+        })
+    }
+
+    // 処理中ドキュメントが会計画面から canceled にされたら、端末の読み取りも止める
+    private fun watchCurrentDoc(doc: DocumentReference?) {
+        currentDocListener?.remove(); currentDocListener = null
+        if (doc == null) return
+        currentDocListener = doc.addSnapshotListener { snap, _ ->
+            if (snap == null || !snap.exists()) return@addSnapshotListener
+            if (snap.getString("status") == "canceled" && currentDoc?.id == doc.id) {
+                cancelInFlight {
+                    clearCurrentDoc()
+                    processing = false
+                    b.amount.setText("")
+                    status("会計画面で中止されました（決済の待ち受けに戻りました）")
+                }
+            }
+        }
+    }
+
+    private fun clearCurrentDoc() {
+        currentDocListener?.remove(); currentDocListener = null
+        currentDoc = null
+    }
+
+    // 会計画面の「端末リセット」ボタン → terminalControl/reset.resetAt が更新されたらリセット
+    private fun startControlListener() {
+        if (controlListener != null) return
+        controlListener = FirebaseFirestore.getInstance()
+            .collection("terminalControl").document("reset")
+            .addSnapshotListener { snap, _ ->
+                val at = snap?.getTimestamp("resetAt")?.seconds ?: return@addSnapshotListener
+                if (at < appStartedAtSec) return@addSnapshotListener // アプリ起動前の指示は無視
+                if (at <= (prefs.getLong("lastResetAt", 0L))) return@addSnapshotListener
+                prefs.edit().putLong("lastResetAt", at).apply()
+                runOnUiThread { resetProcessing() }
+            }
+    }
 
     // 決済が途中で止まって「別の決済を処理中です」から戻らない時の手動リセット。
     // アプリ再起動なしで、処理中フラグを解除して次の決済を受けられるようにする。
     private fun resetProcessing() {
-        processing = false
-        status("リセットしました（決済の待ち受けに戻りました）")
-        refreshUi()
+        currentDoc?.update(mapOf(
+            "status" to "canceled",
+            "errorMessage" to "reset（端末リセットで中止）",
+            "updatedAt" to FieldValue.serverTimestamp()
+        ))
+        cancelInFlight {
+            clearCurrentDoc()
+            processing = false
+            b.amount.setText("")
+            status("リセットしました（前回の決済を中止し、待ち受けに戻りました）")
+            refreshUi()
+        }
     }
 
     override fun onDestroy() {

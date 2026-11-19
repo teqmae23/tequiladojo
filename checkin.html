@@ -480,6 +480,7 @@ select.fs{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns=
           <button type="button" class="btn bp sm" id="ct-start" onclick="startTerminalPayment()">端末に送信</button>
           <button type="button" class="btn bs sm" id="ct-cancel" onclick="cancelTerminalPayment()" style="display:none">中止</button>
           <button type="button" class="btn bs sm" id="ct-slip" onclick="printCardSlip()" style="display:none">🖨️ カード明細</button>
+          <button type="button" class="btn bs sm" id="ct-reset" onclick="resetTerminalAll()" title="前回の決済（エラー・中止）が端末に残っている時に。未処理の決済をすべて中止し、端末アプリの読み取り待ちも解除します" style="margin-left:auto">🔄 端末リセット</button>
         </div>
         <div id="ct-status" style="font-size:12px;color:var(--ink2)">端末アプリ（WisePad 3接続）に決済リクエストを送ります。</div>
       </div>
@@ -2874,8 +2875,9 @@ async function _ctCleanupStale(){
     var FV=firebase.firestore.FieldValue, now=Date.now(), batch=db.batch(), n=0;
     var pend=await db.collection('terminalPayments').where('status','==','pending').get();
     pend.docs.forEach(function(d){ batch.set(d.ref,{status:'canceled',errorMessage:'superseded（新しい会計で自動キャンセル）',updatedAt:FV.serverTimestamp()},{merge:true}); n++; });
+    // 新しい会計を始める＝前の決済（エラーで止まった読み取り待ち等）は放棄されている。処理中も年齢に関係なく中止する
     var proc=await db.collection('terminalPayments').where('status','==','processing').get();
-    proc.docs.forEach(function(d){ var dt=d.data()||{}; var ms=(dt.updatedAt&&dt.updatedAt.toMillis)?dt.updatedAt.toMillis():0; if(!ms||(now-ms)>10*60*1000){ batch.set(d.ref,{status:'canceled',errorMessage:'stale-processing（応答なしのため自動キャンセル）',updatedAt:FV.serverTimestamp()},{merge:true}); n++; } });
+    proc.docs.forEach(function(d){ batch.set(d.ref,{status:'canceled',errorMessage:'superseded（新しい会計で自動キャンセル）',updatedAt:FV.serverTimestamp()},{merge:true}); n++; });
     if(n) await batch.commit();
   }catch(e){ /* 掃除失敗は致命的でないので続行 */ }
 }
@@ -2953,6 +2955,27 @@ async function startTerminalPayment(){
     g('ct-status').textContent='送信失敗: '+e.message; g('ct-status').style.color='var(--red)';
     g('ct-start').disabled=false; g('ct-cancel').style.display='none';
   }
+}
+// 端末リセット: 未処理(pending)・処理中(processing)の決済をすべて中止し、端末アプリに
+// terminalControl/reset で「読み取り待ちを解除して待ち受けに戻る」よう指示する。
+async function resetTerminalAll(){
+  if(!confirm('端末をリセットしますか？\n未処理・処理中の決済をすべて中止し、端末の読み取り待ちを解除します。\n（決済済みのものには影響しません）')) return;
+  var FV=firebase.firestore.FieldValue, n=0;
+  try{
+    var batch=db.batch();
+    var snaps=await Promise.all([
+      db.collection('terminalPayments').where('status','==','pending').get(),
+      db.collection('terminalPayments').where('status','==','processing').get()
+    ]);
+    snaps.forEach(function(sn){ sn.docs.forEach(function(d){ batch.set(d.ref,{status:'canceled',errorMessage:'reset（端末リセットで中止）',updatedAt:FV.serverTimestamp()},{merge:true}); n++; }); });
+    var user=auth.currentUser;
+    batch.set(db.collection('terminalControl').doc('reset'),{resetAt:FV.serverTimestamp(),by:user?(user.email||user.uid):null},{merge:true});
+    await batch.commit();
+    try{ if(typeof writeJournal==='function') writeJournal('update','terminalControl','reset',null,{reset:true,canceled:n}); }catch(e){}
+  }catch(e){ toast('リセット失敗: '+e.message,'err'); return; }
+  resetCardTerminal();
+  toggleCardSection();
+  toast('端末をリセットしました'+(n?'（'+n+'件の決済を中止）':''));
 }
 async function cancelTerminalPayment(){
   if(!_ctDocId) return;
