@@ -83,6 +83,8 @@ button.st:hover,button.lnktgl:hover{filter:brightness(1.15)}
 .lnktgl.on{background:#dcf1e3;color:var(--ok);border-color:#9fd2b2}
 .lnktgl.off{background:#f1ede4;color:var(--ink3);border-color:var(--line2)}
 .row-acts{display:flex;gap:6px;flex-wrap:nowrap}
+.chip-m{display:inline-flex;align-items:center;gap:6px;background:#fbf5e6;border:1px solid var(--gold-d);color:var(--gold-l);font-size:14px;font-weight:600;padding:4px 10px;border-radius:14px}
+.chip-m b{cursor:pointer;color:var(--ng);font-size:15px}
 .row-acts .btn{white-space:nowrap}
 .btn.untag{color:var(--gold-l);border-color:var(--gold-d);background:#fbf5e6;white-space:nowrap}
 .muted{color:var(--ink3);font-size:13px}
@@ -159,6 +161,7 @@ button.st:hover,button.lnktgl:hover{filter:brightness(1.15)}
     <div class="tabs">
       <button class="tab on" data-pane="list">記事一覧</button>
       <button class="tab" data-pane="collect">ニュース検索（手動収集）</button>
+      <button class="tab" data-pane="tags">タグ管理</button>
       <button class="tab" data-pane="settings">設定</button>
     </div>
 
@@ -226,10 +229,27 @@ button.st:hover,button.lnktgl:hover{filter:brightness(1.15)}
     </div>
 
     <!-- 設定 -->
+    <div class="pane" id="pane-tags">
+      <div class="card">
+        <h3>公式タグ</h3>
+        <div class="cdesc">AIが記事に付けてよいタグの一覧です。<b>AIはこの中からしか選べず（1記事最大3つ）、ここにないタグは自動で捨てられます。</b>記事編集画面のタグ候補にもなります。</div>
+        <div class="tag-sugg" id="tm-master" style="margin-bottom:10px"></div>
+        <div class="kw-add"><input id="tm-add-input" placeholder="公式タグを追加（例: メスカル）"><button class="btn" id="tm-add-btn">追加</button></div>
+      </div>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+          <h3 style="margin:0;flex:1">使用中のタグ</h3>
+          <button class="btn red sm" id="tm-purge">公式タグ以外をまとめて削除</button>
+        </div>
+        <div class="cdesc">記事に付いているタグと記事数です。「統合・名前変更」は全記事のタグを付け替え、以後AIが同じタグを付けても自動で付け替えます。「削除」は全記事から外し、以後AIが付けても捨てます。</div>
+        <div id="tm-list"></div>
+      </div>
+    </div>
+
     <div class="pane" id="pane-settings">
       <div class="card">
         <h3>収集キーワード／トピック</h3>
-        <div class="cdesc">AIが毎朝ニュースを収集する際の対象トピックです（記事作成時のタグ候補・手動検索の候補にもなります）。自由に追加・削除できます。</div>
+        <div class="cdesc">AIが毎朝ニュースを収集する際の対象トピックです（手動検索の候補にもなります）。記事に付けるタグは「タグ管理」タブの公式タグで管理します。自由に追加・削除できます。</div>
         <div class="kw-list" id="kw-list"></div>
         <div class="kw-add">
           <input id="kw-input" placeholder="新しいキーワードを追加（例: テキーラ価格動向）">
@@ -413,6 +433,8 @@ function loadAll(){
     if(res[0].exists){
       var c=res[0].data();
       config.keywords=Array.isArray(c.keywords)&&c.keywords.length?c.keywords.slice():DEFAULT_KEYWORDS.slice();
+      config.tagMaster=Array.isArray(c.tagMaster)&&c.tagMaster.length?c.tagMaster.slice():config.keywords.slice();
+      config.tagAliases=(c.tagAliases&&typeof c.tagAliases==='object')?Object.assign({},c.tagAliases):{};
       config.accessLevel=c.accessLevel||'member';
       config.autoEnabled=(c.autoEnabled!==false);
       config.aiModel=c.aiModel||'grok-4';
@@ -420,7 +442,9 @@ function loadAll(){
       config.lastAutoRun=c.lastAutoRun||null;
     }
     articles=res[1].docs.map(function(d){return Object.assign({id:d.id},d.data());});
-    renderSettings(); renderCollectKw(); renderTagFilter(); renderList();
+    if(!config.tagMaster) config.tagMaster=config.keywords.slice();
+    if(!config.tagAliases) config.tagAliases={};
+    renderSettings(); renderCollectKw(); renderTagFilter(); renderList(); renderTagManager();
     loadQueue();
   }).catch(function(e){ toast('読み込み失敗: '+e.message,'err'); });
 }
@@ -546,7 +570,7 @@ function renderEditTags(){
 function addTag(v){ v=(v||'').trim(); if(!v) return; if(editTags.indexOf(v)<0){ editTags.push(v); renderEditTags(); } }
 g('tag-input').addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===','){ e.preventDefault(); addTag(g('tag-input').value); g('tag-input').value=''; } });
 function renderTagSuggestions(){
-  g('tag-sugg').innerHTML=config.keywords.map(function(k){return '<button type="button" data-t="'+esc(k)+'">+ '+esc(k)+'</button>';}).join('');
+  g('tag-sugg').innerHTML=(config.tagMaster||config.keywords).map(function(k){return '<button type="button" data-t="'+esc(k)+'">+ '+esc(k)+'</button>';}).join('');
   Array.prototype.forEach.call(g('tag-sugg').querySelectorAll('button'),function(b){ b.addEventListener('click',function(){ addTag(b.dataset.t); }); });
 }
 
@@ -697,6 +721,97 @@ function toggleField(id, field){
     toast(label); loadAll();
   }).catch(function(e){ toast('失敗: '+e.message,'err'); });
 }
+
+// ── タグ管理 ──
+function tagCounts(){ var m={}; articles.forEach(function(a){ (a.tags||[]).forEach(function(t){ if(t) m[t]=(m[t]||0)+1; }); }); return m; }
+function saveTagConfig(){
+  return db.collection('tequilaNewsConfig').doc('settings').set({tagMaster:config.tagMaster,tagAliases:config.tagAliases,updatedAt:nowISO()},{merge:true});
+}
+// 全記事のタグを書き換える（fn(tags) が新しい配列を返す）。変更のあった記事だけ保存
+function rewriteTags(fn){
+  var jobs=[];
+  articles.forEach(function(a){
+    var cur=(a.tags||[]).slice(), nx=fn(cur.slice());
+    var dedup=[]; nx.forEach(function(t){ if(t&&dedup.indexOf(t)<0) dedup.push(t); });
+    if(JSON.stringify(dedup)!==JSON.stringify(cur)) jobs.push({id:a.id,tags:dedup});
+  });
+  var chunks=[]; for(var i=0;i<jobs.length;i+=400) chunks.push(jobs.slice(i,i+400));
+  return chunks.reduce(function(pr,ch){ return pr.then(function(){ var b=db.batch(); ch.forEach(function(j){ b.set(db.collection('tequilaNews').doc(j.id),{tags:j.tags,updatedAt:nowISO()},{merge:true}); }); return b.commit(); }); }, Promise.resolve())
+    .then(function(){ return jobs.length; });
+}
+function renderTagManager(){
+  var mEl=g('tm-master'), lEl=g('tm-list'); if(!mEl||!lEl) return;
+  var cnt=tagCounts();
+  mEl.innerHTML=config.tagMaster.length?config.tagMaster.map(function(t){ return '<span class="chip-m">#'+esc(t)+' <span class="muted">'+(cnt[t]||0)+'</span><b data-unmaster="'+esc(t)+'" title="公式タグから外す（記事のタグはそのまま）">×</b></span>'; }).join(''):'<span class="muted">公式タグがありません</span>';
+  var all=Object.keys(cnt).concat(config.tagMaster.filter(function(t){return !cnt[t];}));
+  all.sort(function(a,b){ var am=config.tagMaster.indexOf(a)>=0, bm=config.tagMaster.indexOf(b)>=0; if(am!==bm) return am?-1:1; return (cnt[b]||0)-(cnt[a]||0); });
+  var others=Object.keys(cnt).filter(function(t){ return config.tagMaster.indexOf(t)<0; });
+  g('tm-purge').style.display=others.length?'':'none';
+  g('tm-purge').textContent='公式タグ以外をまとめて削除（'+others.length+'種類）';
+  if(!all.length){ lEl.innerHTML='<div class="empty">タグはまだありません</div>'; return; }
+  lEl.innerHTML='<table><thead><tr><th>タグ</th><th>記事数</th><th>公式</th><th></th></tr></thead><tbody>'+all.map(function(t){
+    var isM=config.tagMaster.indexOf(t)>=0;
+    return '<tr><td><b>#'+esc(t)+'</b></td><td class="mono">'+(cnt[t]||0)+'</td>'
+      +'<td>'+(isM?'<span class="st pub">公式</span>':'<button class="btn sm" data-master="'+esc(t)+'">公式に追加</button>')+'</td>'
+      +'<td><div class="row-acts"><button class="btn sm" data-filter-tag="'+esc(t)+'">記事を見る</button><button class="btn sm" data-rename="'+esc(t)+'">統合・名前変更</button><button class="btn red sm" data-deltag="'+esc(t)+'">削除</button></div></td></tr>';
+  }).join('')+'</tbody></table>';
+}
+function tmAddMaster(t){
+  t=String(t||'').trim().replace(/^[#＃]+/,'').trim(); if(!t) return;
+  if(config.tagMaster.indexOf(t)>=0){ toast('既に公式タグです','err'); return; }
+  config.tagMaster.push(t);
+  if(config.tagAliases[t]!==undefined) delete config.tagAliases[t]; // 以前削除/統合したタグを公式に戻す場合は付け替えを解除
+  saveTagConfig().then(function(){ toast('#'+t+' を公式タグに追加しました'); renderTagManager(); renderTagSuggestions(); }).catch(function(e){ toast('失敗: '+e.message,'err'); });
+}
+g('tm-add-btn').addEventListener('click',function(){ tmAddMaster(g('tm-add-input').value); g('tm-add-input').value=''; });
+g('tm-add-input').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); g('tm-add-btn').click(); } });
+g('tm-master').addEventListener('click',function(e){
+  var b=e.target.closest&&e.target.closest('[data-unmaster]'); if(!b) return;
+  var t=b.dataset.unmaster;
+  if(!confirm('#'+t+' を公式タグから外しますか？\n（記事に付いているタグはそのまま。以後AIはこのタグを付けません）')) return;
+  config.tagMaster=config.tagMaster.filter(function(x){return x!==t;});
+  saveTagConfig().then(function(){ toast('公式タグから外しました'); renderTagManager(); renderTagSuggestions(); }).catch(function(e2){ toast('失敗: '+e2.message,'err'); });
+});
+g('tm-list').addEventListener('click',function(e){
+  var b=e.target.closest&&e.target.closest('button'); if(!b) return;
+  if(b.dataset.master){ tmAddMaster(b.dataset.master); return; }
+  if(b.dataset.filterTag){
+    g('ftag').value=b.dataset.filterTag; document.querySelector('.tab[data-pane="list"]').click(); renderList(); return;
+  }
+  if(b.dataset.rename){
+    var from=b.dataset.rename;
+    var to=prompt('#'+from+' の新しい名前（既存のタグ名を入れると、そのタグに統合します）', from);
+    if(to==null) return; to=String(to).trim().replace(/^[#＃]+/,'').trim();
+    if(!to||to===from) return;
+    rewriteTags(function(tags){ return tags.map(function(t){ return t===from?to:t; }); }).then(function(n){
+      config.tagAliases[from]=to;
+      Object.keys(config.tagAliases).forEach(function(k){ if(config.tagAliases[k]===from) config.tagAliases[k]=to; });
+      if(config.tagAliases[to]!==undefined) delete config.tagAliases[to];
+      var i=config.tagMaster.indexOf(from);
+      if(i>=0){ if(config.tagMaster.indexOf(to)>=0) config.tagMaster.splice(i,1); else config.tagMaster[i]=to; }
+      return saveTagConfig().then(function(){ toast('#'+from+' → #'+to+'（'+n+'件の記事を更新）'); return loadAll(); });
+    }).catch(function(e2){ toast('失敗: '+e2.message,'err'); });
+    return;
+  }
+  if(b.dataset.deltag){
+    var t=b.dataset.deltag, n0=tagCounts()[t]||0;
+    if(!confirm('#'+t+' を削除しますか？\n'+n0+'件の記事から外し、以後AIが付けても自動で捨てます。')) return;
+    rewriteTags(function(tags){ return tags.filter(function(x){ return x!==t; }); }).then(function(n){
+      config.tagAliases[t]='';
+      config.tagMaster=config.tagMaster.filter(function(x){return x!==t;});
+      return saveTagConfig().then(function(){ toast('#'+t+' を削除しました（'+n+'件の記事を更新）'); return loadAll(); });
+    }).catch(function(e2){ toast('失敗: '+e2.message,'err'); });
+  }
+});
+g('tm-purge').addEventListener('click',function(){
+  var cnt=tagCounts(), others=Object.keys(cnt).filter(function(t){ return config.tagMaster.indexOf(t)<0; });
+  if(!others.length) return;
+  if(!confirm('公式タグ以外の '+others.length+' 種類のタグを全記事から外します。\n\n'+others.map(function(t){return '#'+t+'（'+cnt[t]+'件）';}).join('\n')+'\n\nよろしいですか？')) return;
+  rewriteTags(function(tags){ return tags.filter(function(x){ return config.tagMaster.indexOf(x)>=0; }); }).then(function(n){
+    others.forEach(function(t){ config.tagAliases[t]=''; });
+    return saveTagConfig().then(function(){ toast(others.length+'種類のタグを削除しました（'+n+'件の記事を更新）'); return loadAll(); });
+  }).catch(function(e){ toast('失敗: '+e.message,'err'); });
+});
 
 // タグ抽出中の記事から、そのタグだけを外す
 function removeTag(id, tag){

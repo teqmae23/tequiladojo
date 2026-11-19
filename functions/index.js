@@ -3114,12 +3114,36 @@ async function tqnLoadConfig() {
     if (snap.exists) cfg = snap.data() || {};
   } catch (e) { /* ignore */ }
   const keywords = (Array.isArray(cfg.keywords) && cfg.keywords.length) ? cfg.keywords : TQNEWS_DEFAULT_KEYWORDS;
+  const tagMaster = (Array.isArray(cfg.tagMaster) && cfg.tagMaster.length) ? cfg.tagMaster.filter(Boolean) : keywords;
   return {
     keywords,
     aiModel: cfg.aiModel || 'grok-4',
     autoEnabled: cfg.autoEnabled !== false,
     maxPerRun: Number(cfg.maxPerRun) || 15,
+    tagMaster,
+    tagAliases: (cfg.tagAliases && typeof cfg.tagAliases === 'object') ? cfg.tagAliases : {},
   };
+}
+
+// AIが付けたタグを整理する（無駄なタグの増殖防止）
+//  - 管理画面で統合/削除したタグは tagAliases で付け替え（'' は削除扱い）
+//  - 公式タグ（tagMaster）にないタグは捨てる。最大3つ。
+function tqnNormalizeTags(raw, cfg) {
+  const master = (cfg && cfg.tagMaster) || [];
+  const aliases = (cfg && cfg.tagAliases) || {};
+  const byLower = {};
+  master.forEach((t) => { byLower[String(t).trim().toLowerCase()] = t; });
+  const out = [];
+  (Array.isArray(raw) ? raw : []).forEach((t0) => {
+    let t = String(t0 || '').trim().replace(/^[#＃]+/, '').trim();
+    if (!t) return;
+    if (Object.prototype.hasOwnProperty.call(aliases, t)) t = String(aliases[t] || '');
+    if (!t) return;
+    const hit = byLower[t.toLowerCase()];
+    if (!hit) return;
+    if (out.indexOf(hit) < 0) out.push(hit);
+  });
+  return out.slice(0, 3);
 }
 
 
@@ -3181,7 +3205,7 @@ async function grokArticleFromUrl({ apiKey, model, url, keywords }) {
     'web_search ツールでこのURLの内容を取得・確認すること。',
     (pageText ? ('参考（このページから抽出した本文テキスト。不足・文字化けがあれば web_search で補うこと）:\n' + pageText.slice(0, 12000)) : '（ページ本文を取得できなかったため web_search で内容を取得すること）'),
     '',
-    'tags（分類）は次の候補から該当するものを優先的に選び、必要なら適切なタグを日本語で追加すること:',
+    'tags（分類）は次の候補の中から該当するものだけを選ぶこと（最大3つ。候補にないタグは絶対に作らない。該当がなければ空配列）:',
     kwList.length ? kwList.map((k) => '・' + k).join('\n') : '（候補なし）',
     'sourceUrl には上記URLをそのまま設定すること。',
     '',
@@ -3417,7 +3441,7 @@ exports.tequilaNewsQueueWorker = functions.region('asia-northeast1')
       const dupSnap = await db.collection('tequilaNews').where('sourceUrl', '==', q.url).limit(1).get();
       if (!dupSnap.empty) { await ref.update({ status: 'done', articleId: dupSnap.docs[0].id, note: 'duplicate', updatedAt: new Date().toISOString() }); return null; }
       const cfg = await tqnLoadConfig();
-      const a = await grokArticleFromUrl({ apiKey, model: q.model || cfg.aiModel, url: q.url, keywords: cfg.keywords });
+      const a = await grokArticleFromUrl({ apiKey, model: q.model || cfg.aiModel, url: q.url, keywords: cfg.tagMaster });
       if (!a || !((a.title || '').trim() || (a.titleJa || '').trim())) throw new Error('記事を生成できませんでした（ページを取得できなかった可能性があります）');
       const nowISO = new Date().toISOString();
       const doc = {
@@ -3430,7 +3454,7 @@ exports.tequilaNewsQueueWorker = functions.region('asia-northeast1')
         sourceName: (a.sourceName || q.sourceName || '').trim(),
         sourceUrl: q.url,
         sourceDate: (a.sourceDate || q.sourceDate || '').slice(0, 10),
-        tags: Array.isArray(a.tags) ? a.tags.filter(Boolean).slice(0, 12) : [],
+        tags: tqnNormalizeTags(a.tags, cfg),
         region: q.region || '',
         published: false, newsLinked: false, aiGenerated: true, aiSource: q.source || 'auto',
         createdAt: nowISO, updatedAt: nowISO
@@ -3559,7 +3583,7 @@ exports.articleFromUrl = functions.region('asia-northeast1')
     const cfg = await tqnLoadConfig();
     let article;
     try {
-      article = await grokArticleFromUrl({ apiKey, model: cfg.aiModel, url, keywords: cfg.keywords });
+      article = await grokArticleFromUrl({ apiKey, model: cfg.aiModel, url, keywords: cfg.tagMaster });
     } catch (e) {
       throw new functions.https.HttpsError('internal', String(e && e.message ? e.message : e).slice(0, 800));
     }
@@ -3577,7 +3601,7 @@ exports.articleFromUrl = functions.region('asia-northeast1')
       sourceName: (article.sourceName || '').trim(),
       sourceUrl: (article.sourceUrl || url).trim(),
       sourceDate: (article.sourceDate || '').slice(0, 10),
-      tags: Array.isArray(article.tags) ? article.tags.filter(Boolean).slice(0, 12) : [],
+      tags: tqnNormalizeTags(article.tags, cfg),
       published: false, newsLinked: false, aiGenerated: true, aiSource: 'url',
       createdAt: nowISO, updatedAt: nowISO
     };
