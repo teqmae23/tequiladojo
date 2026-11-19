@@ -58,7 +58,7 @@ a{color:inherit}
 .tcount{font-size:12px;color:var(--ink2);font-weight:600}
 .markall{font-size:11px;color:var(--gold-d);background:var(--white);border:1px solid var(--cream3);border-radius:16px;padding:6px 12px;cursor:pointer}
 .markall:hover{background:var(--cream2);border-color:var(--gold)}
-.sortsel{margin-left:auto;font-size:12px;color:var(--ink2);background:var(--white);border:1px solid var(--cream3);border-radius:16px;padding:6px 12px}
+.sortsel{font-size:12px;color:var(--ink2);background:var(--white);border:1px solid var(--cream3);border-radius:16px;padding:6px 12px}
 .tag-filter{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
 .tag-chip{padding:5px 11px;border:1px solid var(--cream3);border-radius:16px;background:var(--white);color:var(--ink3);font-size:11px;white-space:nowrap}
 .tag-chip.on{background:var(--gold-d);color:var(--cream);border-color:var(--gold-d)}
@@ -116,6 +116,8 @@ a{color:inherit}
 .dm-src a:hover{text-decoration:underline}
 .dm-foot{margin-top:28px;text-align:center}
 .dm-foot a{font-size:12px;color:var(--ink3);text-decoration:none}
+#regionsel{margin-left:auto}
+.sortsel{width:auto;max-width:100%}
 </style>
 </head>
 <body>
@@ -157,6 +159,11 @@ a{color:inherit}
     <div class="toolbar">
       <span class="tcount" id="count"></span>
       <button class="markall" id="markall">✓ 全部既読</button>
+      <select class="sortsel" id="regionsel" title="国内／海外">
+        <option value="">国内・海外すべて</option>
+        <option value="domestic">国内</option>
+        <option value="overseas">海外</option>
+      </select>
       <select class="sortsel" id="sortsel">
         <option value="default">標準（NEW → 公開日が新しい順）</option>
         <option value="src">投稿日（元記事）が新しい順</option>
@@ -195,7 +202,11 @@ function bodyHtml(raw){
 }
 var LANG_LABEL={ja:'日本語',en:'英語',es:'スペイン語',fr:'フランス語',pt:'ポルトガル語',other:'他言語'};
 
-var articles=[], curTag='__all', sortMode='default';
+var articles=[], curTag='__all', sortMode='default', curRegion='';
+try{ curRegion=localStorage.getItem('tqnews_region')||''; }catch(e){}
+// 国内/海外の判定: region（AI収集時に付与 japan/usa/mexico/other、または手動 japan/overseas）を優先し、無ければ原文の言語で判定
+function newsScope(a){ var r=String((a&&a.region)||''); if(r==='japan') return 'domestic'; if(r) return 'overseas'; var l=(a&&a.originalLang)||'ja'; return l==='ja'?'domestic':'overseas'; }
+function inView(a){ return (curTag==='__all'||(a.tags||[]).indexOf(curTag)>=0) && (!curRegion||newsScope(a)===curRegion); }
 var currentUid=null, readRef=null, readSet={};
 var NEW_WINDOW_MS=3*24*60*60*1000; // 3日以内公開=NEW
 
@@ -277,7 +288,7 @@ function markAllRead(){
   render();
 }
 function updateUnreadCount(){
-  var items=articles.filter(function(a){return curTag==='__all'||(a.tags||[]).indexOf(curTag)>=0;});
+  var items=articles.filter(inView);
   var unread=items.filter(function(a){return !isRead(a);}).length;
   var b=g('markall'); if(b) b.style.display=unread?'':'none';
   var c=g('count'); if(c) c.textContent=items.length?(items.length+'件'+(unread?'（未読'+unread+'）':'')):'';
@@ -290,6 +301,8 @@ function applySort(){
   else if(sortMode==='src') articles.sort(function(a,b){return tsSrc(b)-tsSrc(a);});
   else if(sortMode==='srcold') articles.sort(function(a,b){return tsSrc(a)-tsSrc(b);});
 }
+g('regionsel').value=curRegion;
+g('regionsel').addEventListener('change',function(){ curRegion=g('regionsel').value; try{ localStorage.setItem('tqnews_region',curRegion); }catch(e){} render(); });
 g('sortsel').addEventListener('change',function(){ sortMode=g('sortsel').value; applySort(); render(); });
 g('markall').addEventListener('click',markAllRead);
 
@@ -306,7 +319,7 @@ function renderTags(){
 }
 
 function render(){
-  var items=articles.filter(function(a){return curTag==='__all'||(a.tags||[]).indexOf(curTag)>=0;});
+  var items=articles.filter(inView);
   var list=g('list');
   if(!items.length){ list.innerHTML=''; g('empty').style.display='block'; updateUnreadCount(); return; }
   g('empty').style.display='none';

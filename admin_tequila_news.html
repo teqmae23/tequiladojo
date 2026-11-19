@@ -175,6 +175,7 @@ button.st:hover,button.lnktgl:hover{filter:brightness(1.15)}
           <option value="pub">公開中</option>
           <option value="draft">非公開</option>
         </select>
+        <select id="fregion" class="w-auto" title="国内／海外"><option value="">国内・海外すべて</option><option value="domestic">国内</option><option value="overseas">海外</option></select>
         <select id="ftag" class="w-auto"><option value="">すべてのタグ</option></select>
         <select id="sortsel" class="w-auto" title="並べ替え">
           <option value="sourceDate:desc">投稿日が新しい順</option>
@@ -386,6 +387,14 @@ button.st:hover,button.lnktgl:hover{filter:brightness(1.15)}
           <input type="date" id="f-srcdate">
         </div>
       </div>
+      <div class="fg">
+        <label class="fl">国内／海外</label>
+        <select id="f-region" style="max-width:320px">
+          <option value="">自動（原文の言語で判定：日本語＝国内）</option>
+          <option value="japan">国内</option>
+          <option value="overseas">海外</option>
+        </select>
+      </div>
       <div class="m-foot">
         <span id="f-status-info" class="muted"></span>
         <div class="sp"></div>
@@ -406,6 +415,8 @@ var auth=firebase.auth(), db=firebase.firestore();
 function g(id){return document.getElementById(id);}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function nowISO(){return new Date().toISOString();}
+// 国内/海外の判定: region（AI収集時に付与 japan/usa/mexico/other、または手動 japan/overseas）を優先し、無ければ原文の言語で判定
+function newsScope(a){ var r=String((a&&a.region)||''); if(r==='japan') return 'domestic'; if(r) return 'overseas'; var l=(a&&a.originalLang)||'ja'; return l==='ja'?'domestic':'overseas'; }
 // 操作ジャーナル（journals コレクション）への記録。journal.js が無くても動作は止めない
 function jlog(op,col,id,before,after){ try{ if(typeof window.writeJournal==='function') window.writeJournal(op,col,id,before,after); }catch(e){} }
 function stripHtml(h){var d=document.createElement('div');d.innerHTML=h||'';return (d.textContent||d.innerText||'').replace(/\s+/g,' ').trim();}
@@ -499,12 +510,13 @@ function cmp(a,b){
   return (va-vb)*(sortDir==='asc'?1:-1);
 }
 function renderList(){
-  var q=(g('srch').value||'').toLowerCase(), fs=g('fstatus').value, ft=g('ftag').value;
+  var q=(g('srch').value||'').toLowerCase(), fs=g('fstatus').value, ft=g('ftag').value, fr=g('fregion').value;
   var items=articles.filter(function(a){
     var isPub=!!a.published;
     if(fs==='pub'&&!isPub) return false;
     if(fs==='draft'&&isPub) return false;
     if(ft && (a.tags||[]).indexOf(ft)<0) return false;
+    if(fr && newsScope(a)!==fr) return false;
     if(q){ var hay=((a.title||'')+' '+(a.titleJa||'')+' '+(a.summaryJa||'')+' '+(a.sourceName||'')+' '+stripHtml(a.bodyJa||a.body||'')+' '+(a.tags||[]).join(' ')).toLowerCase(); if(hay.indexOf(q)<0) return false; }
     return true;
   }).sort(cmp);
@@ -558,6 +570,7 @@ function renderList(){
 g('srch').addEventListener('input',renderList);
 g('fstatus').addEventListener('change',renderList);
 g('ftag').addEventListener('change',renderList);
+g('fregion').addEventListener('change',renderList);
 g('sortsel').addEventListener('change',function(){ var p=(g('sortsel').value||'').split(':'); sortKey=p[0]; sortDir=p[1]||'desc'; renderList(); });
 
 // ── タグエディタ（モーダル内） ──
@@ -608,6 +621,7 @@ function openEdit(id){
   g('f-src-url').value=a.sourceUrl||'';
   g('f-pubat').value=isoToDtLocal(a.publishedAt||'');
   g('f-srcdate').value=(a.sourceDate||'').slice(0,10);
+  var _rg=String(a.region||''); g('f-region').value=_rg===''?'':(_rg==='japan'?'japan':'overseas'); g('f-region').dataset.orig=_rg;
   editTags=(a.tags||[]).slice();
   editPub=a.published?'pub':'draft';
   editLinked=isLinked(a);
@@ -644,6 +658,7 @@ function saveArticle(forcePublish){
     sourceUrl:(g('f-src-url').value||'').trim(),
     tags:editTags.slice(),
     sourceDate:(g('f-srcdate').value||''),
+    region:(function(){ var v=g('f-region').value, o=g('f-region').dataset.orig||''; var om=o===''?'':(o==='japan'?'japan':'overseas'); return v===om?o:v; })(),
     published:willPublish,
     newsLinked:editLinked,
     updatedAt:nowISO()
