@@ -398,12 +398,16 @@ button.st:hover,button.lnktgl:hover{filter:brightness(1.15)}
 
 <div id="toast"></div>
 
+<script>window.JOURNAL_PAGE='admin_tequila_news';</script>
+<script src="/journal.js?v=20260706"></script>
 <script>
 firebase.initializeApp(FIREBASE_CONFIG);
 var auth=firebase.auth(), db=firebase.firestore();
 function g(id){return document.getElementById(id);}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function nowISO(){return new Date().toISOString();}
+// 操作ジャーナル（journals コレクション）への記録。journal.js が無くても動作は止めない
+function jlog(op,col,id,before,after){ try{ if(typeof window.writeJournal==='function') window.writeJournal(op,col,id,before,after); }catch(e){} }
 function stripHtml(h){var d=document.createElement('div');d.innerHTML=h||'';return (d.textContent||d.innerText||'').replace(/\s+/g,' ').trim();}
 var _tt;
 function toast(m,type){var t=g('toast');t.textContent=m;t.className='show'+(type==='err'?' err':'');clearTimeout(_tt);_tt=setTimeout(function(){t.className='';},2600);}
@@ -657,6 +661,7 @@ function saveArticle(forcePublish){
   var ref=editId?db.collection('tequilaNews').doc(editId):db.collection('tequilaNews').doc();
   var docId=editId||ref.id;
   ref.set(data,{merge:true}).then(function(){
+    jlog(editId?'update':'create','tequilaNews',docId,editDoc||null,data);
     return applyNewsSync(ref, docId, data);
   }).then(function(){
     toast(willPublish?'公開しました':'保存しました');
@@ -676,7 +681,7 @@ function applyNewsSync(ref, docId, data){
   // 非公開 or 連携OFF → 既存サマリを削除してリンクを解除
   if(data.newsDocId){
     var oldId=data.newsDocId;
-    return db.collection('news').doc(oldId).delete().catch(function(){}).then(function(){
+    return db.collection('news').doc(oldId).delete().then(function(){ jlog('delete','news',oldId,null,null); }).catch(function(){}).then(function(){
       return ref.set({newsDocId:firebase.firestore.FieldValue.delete()},{merge:true});
     });
   }
@@ -701,7 +706,7 @@ function upsertNewsSummary(articleId,data){
     published:true, updatedAt:nowISO(), tequilaNewsId:articleId
   };
   if(!data.newsDocId) nd.createdAt=nowISO();
-  return nref.set(nd,{merge:true}).then(function(){ return nref.id; });
+  return nref.set(nd,{merge:true}).then(function(){ jlog(data.newsDocId?'update':'create','news',nref.id,null,nd); return nref.id; });
 }
 
 // 一覧から「公開/非公開」「連携/非連携」をワンクリック切替
@@ -713,6 +718,8 @@ function toggleField(id, field){
   if(field==='hot') upd.hotAt=!cur?nowISO():null;
   if(field==='published' && !cur && !a.publishedAt) upd.publishedAt=nowISO();
   ref.set(upd,{merge:true}).then(function(){
+    var _bf={}; Object.keys(upd).forEach(function(k){ _bf[k]=(a[k]===undefined?null:a[k]); });
+    jlog('update','tequilaNews',id,_bf,upd);
     if(field==='hot') return; // HOTマークは道場ニュース連携に影響しない
     var data=Object.assign({}, a, upd); // 同期判定に必要な全フィールドを含める
     return applyNewsSync(ref, id, data);
@@ -725,7 +732,8 @@ function toggleField(id, field){
 // ── タグ管理 ──
 function tagCounts(){ var m={}; articles.forEach(function(a){ (a.tags||[]).forEach(function(t){ if(t) m[t]=(m[t]||0)+1; }); }); return m; }
 function saveTagConfig(){
-  return db.collection('tequilaNewsConfig').doc('settings').set({tagMaster:config.tagMaster,tagAliases:config.tagAliases,updatedAt:nowISO()},{merge:true});
+  var _d={tagMaster:config.tagMaster,tagAliases:config.tagAliases,updatedAt:nowISO()};
+  return db.collection('tequilaNewsConfig').doc('settings').set(_d,{merge:true}).then(function(){ jlog('update','tequilaNewsConfig','settings',null,_d); });
 }
 // 全記事のタグを書き換える（fn(tags) が新しい配列を返す）。変更のあった記事だけ保存
 function rewriteTags(fn){
@@ -733,11 +741,11 @@ function rewriteTags(fn){
   articles.forEach(function(a){
     var cur=(a.tags||[]).slice(), nx=fn(cur.slice());
     var dedup=[]; nx.forEach(function(t){ if(t&&dedup.indexOf(t)<0) dedup.push(t); });
-    if(JSON.stringify(dedup)!==JSON.stringify(cur)) jobs.push({id:a.id,tags:dedup});
+    if(JSON.stringify(dedup)!==JSON.stringify(cur)) jobs.push({id:a.id,tags:dedup,before:cur});
   });
   var chunks=[]; for(var i=0;i<jobs.length;i+=400) chunks.push(jobs.slice(i,i+400));
   return chunks.reduce(function(pr,ch){ return pr.then(function(){ var b=db.batch(); ch.forEach(function(j){ b.set(db.collection('tequilaNews').doc(j.id),{tags:j.tags,updatedAt:nowISO()},{merge:true}); }); return b.commit(); }); }, Promise.resolve())
-    .then(function(){ return jobs.length; });
+    .then(function(){ jobs.forEach(function(j){ jlog('update','tequilaNews',j.id,{tags:j.before},{tags:j.tags}); }); return jobs.length; });
 }
 function renderTagManager(){
   var mEl=g('tm-master'), lEl=g('tm-list'); if(!mEl||!lEl) return;
@@ -817,7 +825,9 @@ g('tm-purge').addEventListener('click',function(){
 function removeTag(id, tag){
   var a=articles.filter(function(x){return x.id===id;})[0]; if(!a||!tag) return;
   var tags=(a.tags||[]).filter(function(t){ return t!==tag; });
+  var _before=(a.tags||[]).slice();
   db.collection('tequilaNews').doc(id).set({tags:tags,updatedAt:nowISO()},{merge:true}).then(function(){
+    jlog('update','tequilaNews',id,{tags:_before},{tags:tags});
     a.tags=tags; toast('#'+tag+' を外しました'); loadAll();
   }).catch(function(e){ toast('失敗: '+e.message,'err'); });
 }
@@ -827,7 +837,10 @@ function delArticle(id){
   if(!confirm('「'+(a.titleJa||a.title||'(無題)')+'」を削除しますか？\n道場ニュースのサマリも削除されます。')) return;
   var tasks=[db.collection('tequilaNews').doc(id).delete()];
   if(a.newsDocId) tasks.push(db.collection('news').doc(a.newsDocId).delete().catch(function(){}));
-  Promise.all(tasks).then(function(){ toast('削除しました'); loadAll(); })
+  Promise.all(tasks).then(function(){
+    jlog('delete','tequilaNews',id,a,null);
+    if(a.newsDocId) jlog('delete','news',a.newsDocId,null,null);
+    toast('削除しました'); loadAll(); })
   .catch(function(e){ toast('削除失敗: '+e.message,'err'); });
 }
 
@@ -1014,7 +1027,7 @@ g('queue-list').addEventListener('click',function(e){
   e.preventDefault();
   if(a.classList.contains('q-open')){ openEdit(a.dataset.id); return; }
   db.collection('tequilaNewsQueue').doc(a.dataset.id).update({status:'pending',updatedAt:new Date().toISOString()})
-    .then(function(){ toast('再試行を開始しました'); setTimeout(loadQueue,1500); })
+    .then(function(){ jlog('update','tequilaNewsQueue',a.dataset.id,{status:'failed'},{status:'pending'}); toast('再試行を開始しました'); setTimeout(loadQueue,1500); })
     .catch(function(err){ toast('再試行できません: '+err.message,'err'); });
 });
 // 自動収集の手動再実行（自動収集と同じ条件で実行。成功すれば1時間ごとの再実行は止まる）
@@ -1046,10 +1059,11 @@ Array.prototype.forEach.call(g('seg-access').querySelectorAll('button'),function
 g('btn-save-settings').addEventListener('click',function(){
   var btn=g('btn-save-settings'); btn.disabled=true; btn.textContent='保存中...';
   config.aiModel=(g('f-model').value||'grok-4').trim()||'grok-4';
-  db.collection('tequilaNewsConfig').doc('settings').set({
+  var _sd={
     keywords:config.keywords, accessLevel:config.accessLevel,
     autoEnabled:config.autoEnabled, aiModel:config.aiModel, updatedAt:nowISO()
-  },{merge:true}).then(function(){ toast('設定を保存しました'); renderCollectKw(); renderTagSuggestions(); })
+  };
+  db.collection('tequilaNewsConfig').doc('settings').set(_sd,{merge:true}).then(function(){ jlog('update','tequilaNewsConfig','settings',null,_sd); toast('設定を保存しました'); renderCollectKw(); renderTagSuggestions(); })
   .catch(function(e){ toast('保存失敗: '+e.message,'err'); })
   .finally(function(){ btn.disabled=false; btn.textContent='設定を保存'; });
 });
