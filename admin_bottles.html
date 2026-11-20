@@ -71,6 +71,10 @@ td input[type=number]{text-align:right}
 .st-stock{background:#fff!important;color:var(--ink)}
 .st-ended{background:#ecebe8!important;color:#777}
 tr.saving td{opacity:.6}
+.lnk{cursor:pointer}
+.lnk:hover{color:var(--gold-l);text-decoration:underline}
+#embed-overlay{display:none;position:fixed;inset:0;z-index:6000;background:rgba(24,17,10,.55)}
+#embed-overlay iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent}
 .empty{text-align:center;color:var(--ink3);padding:40px 10px}
 .hint{font-size:12px;color:var(--ink3);margin-top:6px;line-height:1.6}
 #toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#fff;border:1px solid var(--line2);box-shadow:0 4px 16px rgba(0,0,0,.15);color:var(--ink);padding:10px 18px;border-radius:24px;font-size:14px;z-index:200;opacity:0;transition:opacity .2s;pointer-events:none}
@@ -99,12 +103,13 @@ tr.saving td{opacity:.6}
         <span id="sortkeys"></span>
         <button class="btn" id="btn-reload">↻ 再読込</button>
       </div>
-      <div class="hint">状態と選択項目の値はその場で変更でき、変更すると即保存されます。選択項目（3列）は見出しのプルダウンで表示する項目を選べます。同じ NOM・ブランド・ボトルマスタが続く行は、それぞれの列をまとめて（セル結合して）表示します。</div>
+      <div class="hint">状態と選択項目の値はその場で変更でき、変更すると即保存されます。選択項目（3列）は見出しのプルダウンで表示する項目を選べます。同じ NOM・ブランド・ボトルマスタが続く行は、それぞれの列をまとめて（セル結合して）表示します。NOM・ブランド・ボトルマスタ・ボトルIDをクリックすると、それぞれのマスタ／ボトルデータの編集画面が開きます。</div>
     </div>
     <div class="tblwrap"><div id="tbl"><div class="empty">読み込み中…</div></div></div>
   </div>
 </div>
 <div id="toast"></div>
+<div id="embed-overlay"><iframe id="embed-frame" title="編集" allowtransparency="true"></iframe></div>
 
 <script>
 if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
@@ -292,10 +297,11 @@ function render(){
     +selCols.map(function(k,ci){ return '<th><select data-col="'+ci+'">'+FIELDS.map(function(f){return '<option value="'+f.k+'"'+(f.k===k?' selected':'')+'>'+f.l+'</option>';}).join('')+'</select></th>'; }).join('')+'</tr>';
   var body=list.map(function(r,i){
     var st=stateOf(r), h='<tr data-row="'+esc(r.id)+'">';
-    if(spNom[i]) h+='<td class="m nom"'+rsAttr(spNom[i])+'>'+esc(nomOf(r))+'</td>';
-    if(spBrand[i]) h+='<td class="m brand"'+rsAttr(spBrand[i])+'>'+esc(brandNameOf(r))+'</td>';
-    if(spMaster[i]) h+='<td class="m master"'+rsAttr(spMaster[i])+'>'+esc(masterNameOf(r))+'</td>';
-    h+='<td class="bid">'+esc(bidOf(r))+'</td>';
+    var nom=nomOf(r), brid=brandIdOf(r), mid=masterIdOf(r);
+    if(spNom[i]) h+='<td class="m nom'+(nom?' lnk':'')+'"'+rsAttr(spNom[i])+(nom?' data-open="'+esc('admin_distillery.html?nom='+encodeURIComponent(nom))+'" title="蒸留所マスタを編集"':'')+'>'+esc(nom)+'</td>';
+    if(spBrand[i]) h+='<td class="m brand'+(brid?' lnk':'')+'"'+rsAttr(spBrand[i])+(brid?' data-open="'+esc('admin_tequila.html?tab=brands&edit='+encodeURIComponent(brid))+'" title="ブランドマスタを編集"':'')+'>'+esc(brandNameOf(r))+'</td>';
+    if(spMaster[i]) h+='<td class="m master'+(mid?' lnk':'')+'"'+rsAttr(spMaster[i])+(mid?' data-open="'+esc('admin_tequila.html?tab=bottles&edit='+encodeURIComponent(mid))+'" title="ボトルマスタを編集"':'')+'>'+esc(masterNameOf(r))+'</td>';
+    h+='<td class="bid lnk" data-open="'+esc('admin_tequila.html?tab=bdata&edit='+encodeURIComponent(r.id))+'" title="ボトルデータを編集">'+esc(bidOf(r))+'</td>';
     h+='<td class="st-'+st+'"><select class="st-'+st+'" data-status data-id="'+esc(r.id)+'">'+STATUS.map(function(s){return '<option value="'+s.v+'"'+(s.v===st?' selected':'')+'>'+s.l+'</option>';}).join('')+'</select></td>';
     h+=selCols.map(function(k){ return '<td>'+cellEditor(r,k)+'</td>'; }).join('');
     return h+'</tr>';
@@ -311,6 +317,31 @@ function render(){
     el.addEventListener('change',function(){ saveField(el.dataset.id, el.dataset.edit, el.value); });
   });
 }
+
+// ── マスタ編集のポップアップ（admin_distillery / admin_tequila の編集モーダルを ?embed=1 の iframe で表示） ──
+var _scrollY=0;
+function openEmbed(url){
+  _scrollY=window.scrollY;
+  g('embed-frame').src=url+(url.indexOf('?')>=0?'&':'?')+'embed=1';
+  g('embed-overlay').style.display='block';
+  document.body.style.overflow='hidden';
+}
+function closeEmbed(){
+  g('embed-overlay').style.display='none';
+  g('embed-frame').src='about:blank';
+  document.body.style.overflow='';
+}
+g('tbl').addEventListener('click',function(e){
+  var c=e.target.closest&&e.target.closest('[data-open]'); if(!c) return;
+  openEmbed(c.getAttribute('data-open'));
+});
+window.addEventListener('message',function(e){
+  var d=e.data||{};
+  if(d.type!=='tequila-embed-close') return;
+  closeEmbed();
+  if(d.saved){ var y=_scrollY; var p=load(); if(p&&p.then) p.then(function(){ window.scrollTo(0,y); }); }
+});
+document.addEventListener('keydown',function(e){ if(e.key==='Escape'&&g('embed-overlay').style.display==='block') closeEmbed(); });
 
 // ── 保存 ──
 function rowById(id){ return rows.filter(function(r){return r.id===id;})[0]; }
