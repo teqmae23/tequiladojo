@@ -99,7 +99,7 @@ tr.saving td{opacity:.6}
         <span id="sortkeys"></span>
         <button class="btn" id="btn-reload">↻ 再読込</button>
       </div>
-      <div class="hint">状態と選択項目の値はその場で変更でき、変更すると即保存されます。選択項目（3列）は見出しのプルダウンで表示する項目を選べます。同じ NOM・ブランド・ボトルマスタが続く行はまとめて表示します。</div>
+      <div class="hint">状態と選択項目の値はその場で変更でき、変更すると即保存されます。選択項目（3列）は見出しのプルダウンで表示する項目を選べます。同じ NOM・ブランド・ボトルマスタが続く行は、それぞれの列をまとめて（セル結合して）表示します。</div>
     </div>
     <div class="tblwrap"><div id="tbl"><div class="empty">読み込み中…</div></div></div>
   </div>
@@ -273,21 +273,28 @@ function render(){
   list=sortRows(list);
   g('count').textContent=list.length+' 本 / 全'+rows.length+'本';
   if(!list.length){ g('tbl').innerHTML='<div class="empty">該当するボトルがありません</div>'; return; }
-  // 連続する同じ「NOM＋ブランド＋ボトルマスタ」の行数（セル結合用）
-  var span=new Array(list.length).fill(0);
-  for(var i=0;i<list.length;){
-    var gk=nomOf(list[i])+'|'+brandIdOf(list[i])+'|'+masterIdOf(list[i]), j=i+1;
-    while(j<list.length && (nomOf(list[j])+'|'+brandIdOf(list[j])+'|'+masterIdOf(list[j]))===gk) j++;
-    span[i]=j-i; i=j;
+  // セル結合（階層）: 連続する行で NOM が同じなら NOM を、NOM＋ブランドが同じならブランドを、
+  // NOM＋ブランド＋ボトルマスタが同じならボトルマスタを、それぞれ縦に結合する
+  function spans(keyFn){
+    var sp=new Array(list.length).fill(0);
+    for(var i=0;i<list.length;){
+      var k=keyFn(list[i]), j=i+1;
+      while(j<list.length && keyFn(list[j])===k) j++;
+      sp[i]=j-i; i=j;
+    }
+    return sp;
   }
+  var spNom=spans(function(r){ return nomOf(r); });
+  var spBrand=spans(function(r){ return nomOf(r)+'|'+brandIdOf(r); });
+  var spMaster=spans(function(r){ return nomOf(r)+'|'+brandIdOf(r)+'|'+masterIdOf(r); });
+  function rsAttr(n){ return n>1?' rowspan="'+n+'"':''; }
   var head='<tr><th>NOM</th><th>ブランド</th><th>ボトルマスタ</th><th>ボトルID</th><th>状態</th>'
     +selCols.map(function(k,ci){ return '<th><select data-col="'+ci+'">'+FIELDS.map(function(f){return '<option value="'+f.k+'"'+(f.k===k?' selected':'')+'>'+f.l+'</option>';}).join('')+'</select></th>'; }).join('')+'</tr>';
   var body=list.map(function(r,i){
     var st=stateOf(r), h='<tr data-row="'+esc(r.id)+'">';
-    if(span[i]){
-      var rs=span[i]>1?' rowspan="'+span[i]+'"':'';
-      h+='<td class="m nom"'+rs+'>'+esc(nomOf(r))+'</td><td class="m brand"'+rs+'>'+esc(brandNameOf(r))+'</td><td class="m master"'+rs+'>'+esc(masterNameOf(r))+'</td>';
-    }
+    if(spNom[i]) h+='<td class="m nom"'+rsAttr(spNom[i])+'>'+esc(nomOf(r))+'</td>';
+    if(spBrand[i]) h+='<td class="m brand"'+rsAttr(spBrand[i])+'>'+esc(brandNameOf(r))+'</td>';
+    if(spMaster[i]) h+='<td class="m master"'+rsAttr(spMaster[i])+'>'+esc(masterNameOf(r))+'</td>';
     h+='<td class="bid">'+esc(bidOf(r))+'</td>';
     h+='<td class="st-'+st+'"><select class="st-'+st+'" data-status data-id="'+esc(r.id)+'">'+STATUS.map(function(s){return '<option value="'+s.v+'"'+(s.v===st?' selected':'')+'>'+s.l+'</option>';}).join('')+'</select></td>';
     h+=selCols.map(function(k){ return '<td>'+cellEditor(r,k)+'</td>'; }).join('');
