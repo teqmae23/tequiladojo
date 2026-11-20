@@ -134,6 +134,7 @@ tr.r-ng{background:#fdf6f4}
           </select>
         </label>
         <button class="btn bp" id="btn-reload">🔄 更新</button>
+        <button class="btn bs" id="btn-show-hidden" title="非表示にした失敗・中止のログも含めて全件表示します">👁 非表示も表示</button>
         <button class="btn bp" id="btn-add" title="WisePad単独で決済した分を手入力して来場に紐づけ">＋ 手入力で追加</button>
         <button class="btn bs" id="btn-cancel-unprocessed" title="表示中の未処理（処理中/未処理）の決済をすべて中断にする">⛔ 未処理を一括中断</button>
         <button class="btn bs" id="btn-terminal-reset" title="前回の決済（エラー・中止）の金額が端末に出続ける時に。未処理・処理中の決済をすべて中止し、端末アプリの読み取り待ちも解除します">🔄 端末リセット</button>
@@ -220,6 +221,7 @@ g("f-status").addEventListener("change",render);
 g("f-kind").addEventListener("change",function(){
   // サブスク時は「状態」フィルタを隠す（Stripeのpaid請求書のみ取得のため）
   g("lbl-status").style.display=(gv("f-kind")==="sub")?"none":"";
+  g("btn-show-hidden").style.display=(gv("f-kind")==="sub")?"none":"";
   load();
 });
 
@@ -392,11 +394,17 @@ function renderSub(){
   }).join("");
 }
 
+// 失敗・中止ログの非表示（hidden=true）。「非表示も表示」で全件表示。
+var showHidden=false;
+function canHide(r){ return r.status==="failed"||r.status==="canceled"; }
 function renderStore(){
   var fs=gv("f-status");
-  var rows=allRows.filter(function(r){ return fs==="all" || String(r.status)===fs; });
+  var hiddenCnt=allRows.filter(function(r){ return !!r.hidden; }).length;
+  var hb=g("btn-show-hidden");
+  if(hb){ hb.textContent=showHidden?"🙈 非表示を隠す":("👁 非表示も表示"+(hiddenCnt?"（"+hiddenCnt+"件）":"")); hb.classList.toggle("bp",showHidden); hb.classList.toggle("bs",!showHidden); }
+  var rows=allRows.filter(function(r){ return (showHidden||!r.hidden) && (fs==="all" || String(r.status)===fs); });
 
-  // 集計（成功のみ金額合計）
+  // 集計（成功のみ金額合計）。非表示にしたログも含めて全件で集計する
   var okCnt=0, okSum=0, ngCnt=0, otherCnt=0;
   allRows.forEach(function(r){
     if(r.status==="succeeded"){ okCnt++; okSum+=Number(r.amount)||0; }
@@ -415,17 +423,24 @@ function renderStore(){
   g("rows").innerHTML=rows.map(function(r){
     var pi=r.paymentIntentId?("<span class='mono'>"+esc(r.paymentIntentId)+"</span> <button class='copy' data-copy='"+esc(r.paymentIntentId)+"'>📋</button>"):"<span class='dim'>—</span>";
     var hasVk=r.visitKeys&&r.visitKeys.length;
-    // 成功した決済は、手入力・会計画面いずれも後から来場（複数可）に紐づけ・編集できる
-    var canLink=(r.status==="succeeded");
+    // 成功した決済は、手入力・会計画面いずれも後から来場（複数可）に紐づけ・編集できる。
+    // 失敗・中止は、非表示から再表示した行（または既に紐づいている行）で手動紐づけ可。
+    var canLink=(r.status==="succeeded") || (canHide(r) && !r.hidden && (r.unhiddenAt||hasVk));
     var linkBtn="<button class='btn bs sm' data-link='"+esc(r.id)+"'>"+(hasVk?"✏️編集":"🔗紐づけ")+"</button>";
     var vks=hasVk?("<span class='mono'>"+r.visitKeys.map(esc).join(", ")+"</span> "+linkBtn)
            :(canLink?linkBtn:"<span class='dim'>—</span>");
+    if(r.hidden) vks="<span class='dim'>—</span>";
     var isUnprocessed=(r.status==="pending"||r.status==="processing");
     var note=r.status==="failed"?("<span class='err-txt'>"+esc(r.errorMessage||"不明なエラー")+"</span>")
             :(r.status==="canceled"?("<span class='dim'>"+(r.canceledByAdmin?"管理者が中断":"会計画面で中止")+"</span>")
             :(isUnprocessed?("<span class='dim'>"+esc(r.description||"未処理")+"</span> <button class='btn bs sm' data-cancel='"+esc(r.id)+"'>⛔中断にする</button>")
             :"<span class='dim'>"+esc(r.description||"")+"</span>"));
-    return "<tr class='"+(r.status==="failed"?"r-ng":"")+"'>"+
+    var hideBtn=!canHide(r)?"":(r.hidden
+      ?" <button class='btn bp sm' data-unhide='"+esc(r.id)+"' title='非表示を解除します。対象来場は「紐づけ」から手動で設定してください'>↩ 再表示</button>"
+      :" <button class='btn bs sm' data-hide='"+esc(r.id)+"' title='対象来場の紐づけを解除して非表示にします'>🙈 非表示</button>");
+    note+=hideBtn;
+    if(r.hidden) note="<span class='badge' style='background:#ececec;color:#777'>非表示</span> "+note;
+    return "<tr class='"+(r.status==="failed"?"r-ng":"")+"'"+(r.hidden?" style='opacity:.6'":"")+">"+
       "<td class='mono'>"+esc(fmtTs(r.createdAt))+"</td>"+
       "<td>"+statusBadge(r.status)+"</td>"+
       "<td>"+sourceBadge(r.source)+"</td>"+
@@ -452,7 +467,39 @@ g("rows").addEventListener("click",function(e){
   if(lk){ openLink(lk.getAttribute("data-link")); return; }
   var cx=e.target.closest("[data-cancel]");
   if(cx){ cancelUnprocessed(cx.getAttribute("data-cancel")); return; }
+  var hd=e.target.closest("[data-hide]");
+  if(hd){ hideLog(hd.getAttribute("data-hide")); return; }
+  var uh=e.target.closest("[data-unhide]");
+  if(uh){ unhideLog(uh.getAttribute("data-unhide")); return; }
 });
+g("btn-show-hidden").addEventListener("click",function(){ showHidden=!showHidden; render(); });
+
+// 失敗・中止ログを非表示に: 対象来場の紐づけ（visitKeys）を解除して hidden=true。
+// 来場側の会計方法は変更しない（別の成功決済で支払済みの場合があるため）。外した来場は unlinkedVisitKeys に記録。
+async function hideLog(payId){
+  var r=allRows.find(function(x){ return x.id===payId; }); if(!r) return;
+  if(!canHide(r)){ toast("失敗・中止のログのみ非表示にできます","err"); return; }
+  var vk=(r.visitKeys||[]).slice();
+  if(!window.confirm("このログを非表示にしますか？\n\n¥"+(Number(r.amount)||0).toLocaleString()+" ／ "+fmtTs(r.createdAt)
+    +(vk.length?("\n対象来場の紐づけ（"+vk.join(", ")+"）を解除します。"):"")+"\n\n「非表示も表示」からいつでも再表示できます。")) return;
+  var FV=firebase.firestore.FieldValue;
+  var upd={hidden:true, hiddenAt:FV.serverTimestamp(), visitKeys:[], updatedAt:FV.serverTimestamp()};
+  if(vk.length) upd.unlinkedVisitKeys=vk;
+  try{
+    await db.collection("terminalPayments").doc(payId).update(upd);
+    try{ writeJournal("update","terminalPayments",payId,{hidden:!!r.hidden,visitKeys:vk},{hidden:true,visitKeys:[],unlinkedVisitKeys:vk}); }catch(e){}
+    toast("非表示にしました"+(vk.length?"（紐づけ解除 "+vk.length+"件）":""),"inf"); load();
+  }catch(e){ toast("非表示に失敗: "+e.message,"err"); }
+}
+async function unhideLog(payId){
+  var r=allRows.find(function(x){ return x.id===payId; }); if(!r) return;
+  var FV=firebase.firestore.FieldValue;
+  try{
+    await db.collection("terminalPayments").doc(payId).update({hidden:false, unhiddenAt:FV.serverTimestamp(), updatedAt:FV.serverTimestamp()});
+    try{ writeJournal("update","terminalPayments",payId,{hidden:true},{hidden:false}); }catch(e){}
+    toast("再表示しました。対象来場は「紐づけ」から設定できます","inf"); load();
+  }catch(e){ toast("再表示に失敗: "+e.message,"err"); }
+}
 
 // ── 未処理（pending/processing）のまま放置された決済を「中断」にして無効扱いにする ──
 function _setCanceledBatch(ids){
