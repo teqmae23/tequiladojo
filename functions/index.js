@@ -2117,6 +2117,7 @@ exports.refreshEnvSensor = functions.region('asia-northeast1')
     const token = switchbotToken.value();
     const secret = switchbotSecret.value();
     if (!token || !secret) { console.warn('refreshEnvSensor: SwitchBot secrets 未設定'); return null; }
+    // ── 店内 ──
     try {
       const deviceId = await resolveSwitchbotDeviceId(token, secret);
       const status = await switchbotGet('/v1.1/devices/' + encodeURIComponent(deviceId) + '/status', token, secret);
@@ -2127,15 +2128,35 @@ exports.refreshEnvSensor = functions.region('asia-northeast1')
         ok: (temperature !== null || humidity !== null),
         readAt: admin.firestore.FieldValue.serverTimestamp(), error: null
       }, { merge: true });
-      return null;
     } catch (e) {
-      console.error('refreshEnvSensor error:', e);
+      console.error('refreshEnvSensor (indoor) error:', e);
       await db.collection('settings').doc('envSensor').set({
         ok: false, error: String((e && e.message) || e),
         readAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
-      return null;
     }
+    // ── 冷凍庫（settings/envSensorConfig.freezerDeviceId が設定されている場合のみ） ──
+    try {
+      const cfg = await db.collection('settings').doc('envSensorConfig').get();
+      const fid = cfg.exists && cfg.data().freezerDeviceId;
+      if (fid) {
+        const fstat = await switchbotGet('/v1.1/devices/' + encodeURIComponent(fid) + '/status', token, secret);
+        const ft = (typeof fstat.temperature === 'number') ? fstat.temperature : null;
+        const fh = (typeof fstat.humidity === 'number') ? fstat.humidity : null;
+        await db.collection('settings').doc('envSensor').set({
+          freezerTemperature: ft, freezerHumidity: fh, freezerDeviceId: fid,
+          freezerOk: (ft !== null || fh !== null),
+          freezerReadAt: admin.firestore.FieldValue.serverTimestamp(), freezerError: null
+        }, { merge: true });
+      }
+    } catch (fe) {
+      console.error('refreshEnvSensor (freezer) error:', fe);
+      await db.collection('settings').doc('envSensor').set({
+        freezerOk: false, freezerError: String((fe && fe.message) || fe),
+        freezerReadAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
+    return null;
   });
 
 // JST の YYMMDD を返す
@@ -2211,6 +2232,8 @@ exports.logEnvHourly = functions.region('asia-northeast1')
       const e = env.exists ? env.data() : {};
       const readAtMs = (e.readAt && e.readAt.toMillis) ? e.readAt.toMillis() : 0;
       const indoorFresh = e.ok !== false && readAtMs && (Date.now() - readAtMs) <= 20 * 60 * 1000;
+      const fReadAtMs = (e.freezerReadAt && e.freezerReadAt.toMillis) ? e.freezerReadAt.toMillis() : 0;
+      const freezerFresh = e.freezerOk !== false && fReadAtMs && (Date.now() - fReadAtMs) <= 20 * 60 * 1000;
       const out = await fetchOutdoorWeather();
       const j = new Date(Date.now() + 9 * 3600 * 1000); // JST
       const p2 = (n) => String(n).padStart(2, '0');
@@ -2223,6 +2246,8 @@ exports.logEnvHourly = functions.region('asia-northeast1')
         humidity: (indoorFresh && typeof e.humidity === 'number') ? e.humidity : null,
         outdoorTemperature: out.t,
         outdoorHumidity: out.h,
+        freezerTemperature: (freezerFresh && typeof e.freezerTemperature === 'number') ? e.freezerTemperature : null,
+        freezerHumidity: (freezerFresh && typeof e.freezerHumidity === 'number') ? e.freezerHumidity : null,
         date: ymd, ym: '' + Y + M, hour: H
       }, { merge: true });
       return null;
@@ -2230,6 +2255,46 @@ exports.logEnvHourly = functions.region('asia-northeast1')
       console.error('logEnvHourly error:', err);
       return null;
     }
+  });
+
+// SwitchBotの温湿度計デバイス一覧（現在値つき）を返す。管理画面でセンサー割り当てに使う。
+exports.listSwitchbotMeters = functions.region('asia-northeast1')
+  .runWith({ secrets: [switchbotToken, switchbotSecret] })
+  .https.onCall(async (data, context) => {
+    await assertStaff(context);
+    const token = switchbotToken.value();
+    const secret = switchbotSecret.value();
+    if (!token || !secret) throw new functions.https.HttpsError('failed-precondition', 'SwitchBotのトークンが未設定です');
+    const body = await switchbotGet('/v1.1/devices', token, secret);
+    const all = (body && body.deviceList) || [];
+    // 温湿度を持ちうるデバイスに限定（Meter系 / Hub 2 / 屋外センサー）
+    const candidates = all.filter((d) => /meter|hub\s?2|iosensor|wocsensor|sensor/i.test((d.deviceType || '')));
+    const meters = [];
+    for (const d of candidates.slice(0, 30)) {
+      let t = null, h = null, err = null;
+      try {
+        const s = await switchbotGet('/v1.1/devices/' + encodeURIComponent(d.deviceId) + '/status', token, secret);
+        t = (typeof s.temperature === 'number') ? s.temperature : null;
+        h = (typeof s.humidity === 'number') ? s.humidity : null;
+      } catch (e) { err = String((e && e.message) || e); }
+      if (t !== null || h !== null) meters.push({ deviceId: d.deviceId, deviceName: d.deviceName || '', deviceType: d.deviceType || '', temperature: t, humidity: h });
+    }
+    const cfg = await db.collection('settings').doc('envSensorConfig').get();
+    const c = cfg.exists ? cfg.data() : {};
+    return { meters, indoorDeviceId: c.deviceId || null, freezerDeviceId: c.freezerDeviceId || null };
+  });
+
+// センサー割り当て（店内/冷凍庫のdeviceId）を保存。スタッフ可。
+exports.setEnvSensorDevices = functions.region('asia-northeast1')
+  .https.onCall(async (data, context) => {
+    await assertStaff(context);
+    const upd = {};
+    if (data && typeof data.indoorDeviceId === 'string') upd.deviceId = data.indoorDeviceId.trim() || null;
+    if (data && typeof data.freezerDeviceId === 'string') upd.freezerDeviceId = data.freezerDeviceId.trim() || null;
+    if (!Object.keys(upd).length) throw new functions.https.HttpsError('invalid-argument', '設定する項目がありません');
+    upd.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+    await db.collection('settings').doc('envSensorConfig').set(upd, { merge: true });
+    return { ok: true, indoorDeviceId: upd.deviceId !== undefined ? upd.deviceId : null, freezerDeviceId: upd.freezerDeviceId !== undefined ? upd.freezerDeviceId : null };
   });
 
 // ── カレンダーHTMLをサイトリポジトリへ公開（owner専用・GitHubトークンはFirestoreに保存） ──
