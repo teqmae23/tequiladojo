@@ -7,6 +7,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
 <script src="/auth-role.js?v=20261014"></script>
 <script>
 var FIREBASE_CONFIG={
@@ -89,12 +90,16 @@ td:first-child,th:first-child{text-align:center;}
 
 <div class="page" id="app" style="display:none">
 
+  <!-- 現在値（店内・冷凍庫） -->
+  <div class="stat-row" id="live-now" style="margin-bottom:12px"></div>
+
   <div class="tabs">
     <button class="tab-btn active" data-tab="daily" onclick="switchTab('daily')">日別（時間毎）</button>
     <button class="tab-btn" data-tab="monthly" onclick="switchTab('monthly')">月次分析</button>
     <button class="tab-btn" data-tab="biz" onclick="switchTab('biz')">営業データ</button>
+    <button class="tab-btn" data-tab="setting" onclick="switchTab('setting')">センサー設定</button>
   </div>
-  <div class="legend-note">実線＝店内（SwitchBot）／破線＝外気（千葉市中央区長洲1丁目・Open-Meteo）</div>
+  <div class="legend-note">実線＝店内（SwitchBot）／点線＝冷凍庫（SwitchBot）／破線＝外気（千葉市中央区長洲1丁目・Open-Meteo）</div>
 
   <!-- 日別 -->
   <div class="panel active" id="panel-daily">
@@ -122,7 +127,7 @@ td:first-child,th:first-child{text-align:center;}
     <div class="stat-row" id="m-stats"></div>
     <div class="card"><div class="chart-wrap"><canvas id="m-chart"></canvas></div></div>
     <div class="tbl-wrap">
-      <table id="m-table"><thead><tr><th>日</th><th>店内平均℃</th><th>店内℃幅</th><th>店内平均%</th><th>外気平均℃</th><th>外気平均%</th><th>件数</th></tr></thead><tbody></tbody></table>
+      <table id="m-table"><thead><tr><th>日</th><th>店内平均℃</th><th>店内℃幅</th><th>店内平均%</th><th>冷凍庫平均℃</th><th>冷凍庫平均%</th><th>外気平均℃</th><th>外気平均%</th><th>件数</th></tr></thead><tbody></tbody></table>
     </div>
     <div class="msg" id="m-msg"></div>
   </div>
@@ -148,12 +153,52 @@ td:first-child,th:first-child{text-align:center;}
     <div class="msg" id="b-msg"></div>
   </div>
 
+  <!-- センサー設定（店内/冷凍庫の割り当て） -->
+  <div class="panel" id="panel-setting">
+    <div class="legend-note">SwitchBotの温湿度計デバイスを「店内」「冷凍庫」に割り当てます。冷凍庫に設置した計測器を選んで保存してください。</div>
+    <div class="ctrl">
+      <button class="btn bp" id="btn-load-meters" onclick="loadMeters()">センサー一覧を取得</button>
+      <span class="msg" id="set-msg" style="margin:0"></span>
+    </div>
+    <div class="card" style="padding:14px">
+      <div id="meter-list" style="font-size:13px;color:var(--ink3)">「センサー一覧を取得」を押してください。</div>
+      <div id="meter-save" style="display:none;margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label>冷凍庫のセンサー</label>
+        <select id="sel-freezer" style="padding:6px 10px"></select>
+        <button class="btn bp" onclick="saveMeters()">保存</button>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <script>
 if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
 var auth=firebase.auth(), db=firebase.firestore();
+var fns=null; try{ fns=firebase.app().functions('asia-northeast1'); }catch(e){}
 document.getElementById('btn-logout').addEventListener('click',function(e){ e.preventDefault(); auth.signOut(); });
+
+// ── 現在値（店内・冷凍庫）をリアルタイム表示（監視） ──
+function _fmtAge(ms){ if(!ms) return ''; var s=Math.floor((Date.now()-ms)/1000); if(s<90) return s+'秒前'; var m=Math.floor(s/60); if(m<90) return m+'分前'; return Math.floor(m/60)+'時間前'; }
+function liveTile(label,t,h,ms,stale){
+  var cT=(t==null)?'—':round1(t); var cH=(h==null)?'—':round1(h);
+  var age=_fmtAge(ms); var warn=stale?' style="color:#b03020"':'';
+  return '<div class="stat"><div class="k">'+label+(age?' <small'+warn+'>('+age+')</small>':'')+'</div>'
+    +'<div class="v">'+cT+'<small> ℃</small> <span style="color:var(--ink3)">/</span> '+cH+'<small> %</small></div></div>';
+}
+function startLiveNow(){
+  db.collection('settings').doc('envSensor').onSnapshot(function(d){
+    var el=document.getElementById('live-now'); if(!el) return;
+    var e=d.exists?d.data():{};
+    var rMs=(e.readAt&&e.readAt.toMillis)?e.readAt.toMillis():0;
+    var fMs=(e.freezerReadAt&&e.freezerReadAt.toMillis)?e.freezerReadAt.toMillis():0;
+    var html=liveTile('🏠 店内 現在', (typeof e.temperature==='number')?e.temperature:null, (typeof e.humidity==='number')?e.humidity:null, rMs, rMs&&(Date.now()-rMs)>20*60*1000);
+    if(e.freezerDeviceId){
+      html+=liveTile('🧊 冷凍庫 現在', (typeof e.freezerTemperature==='number')?e.freezerTemperature:null, (typeof e.freezerHumidity==='number')?e.freezerHumidity:null, fMs, fMs&&(Date.now()-fMs)>20*60*1000);
+    }
+    el.innerHTML=html;
+  },function(){});
+}
 
 function pad2(n){ return String(n).padStart(2,'0'); }
 function jstNow(){ return new Date(Date.now()+9*3600*1000); }
@@ -182,34 +227,40 @@ async function loadDaily(){
     var snap=await db.collection('envLog').where('date','==',ymd).get();
     var byHour={};
     snap.forEach(function(d){ var v=d.data(); byHour[v.hour]=v; });
-    var temps=[],hums=[],oTemps=[],oHums=[], tV=[],hV=[],otV=[],ohV=[];
+    var temps=[],hums=[],oTemps=[],oHums=[],fTemps=[],fHums=[], tV=[],hV=[],otV=[],ohV=[],ftV=[],fhV=[];
     for(var h=0;h<24;h++){
       var v=byHour[h]||{};
       var t=(typeof v.temperature==='number')?v.temperature:null;
       var hu=(typeof v.humidity==='number')?v.humidity:null;
       var ot=(typeof v.outdoorTemperature==='number')?v.outdoorTemperature:null;
       var oh=(typeof v.outdoorHumidity==='number')?v.outdoorHumidity:null;
-      temps.push(t); hums.push(hu); oTemps.push(ot); oHums.push(oh);
-      if(t!=null)tV.push(t); if(hu!=null)hV.push(hu); if(ot!=null)otV.push(ot); if(oh!=null)ohV.push(oh);
+      var ft=(typeof v.freezerTemperature==='number')?v.freezerTemperature:null;
+      var fh2=(typeof v.freezerHumidity==='number')?v.freezerHumidity:null;
+      temps.push(t); hums.push(hu); oTemps.push(ot); oHums.push(oh); fTemps.push(ft); fHums.push(fh2);
+      if(t!=null)tV.push(t); if(hu!=null)hV.push(hu); if(ot!=null)otV.push(ot); if(oh!=null)ohV.push(oh); if(ft!=null)ftV.push(ft); if(fh2!=null)fhV.push(fh2);
     }
     document.getElementById('d-stats').innerHTML=
       statTile('店内 平均温度',tV,'℃','temp-c')+statTile('店内 平均湿度',hV,'%','hum-c')
+      +((ftV.length||fhV.length)?(statTile('冷凍庫 平均温度',ftV,'℃','temp-c')+statTile('冷凍庫 平均湿度',fhV,'%','hum-c')):'')
       +statTile('外気 平均温度',otV,'℃','temp-c')+statTile('外気 平均湿度',ohV,'%','hum-c');
-    drawDaily(temps,hums,oTemps,oHums);
+    drawDaily(temps,hums,oTemps,oHums,fTemps,fHums);
     msg.textContent=snap.size?('記録 '+snap.size+' 時間分'):'この日の記録はありません';
   }catch(e){ msg.textContent='読み込み失敗: '+e.message; }
 }
-function drawDaily(temps,hums,oTemps,oHums){
+function drawDaily(temps,hums,oTemps,oHums,fTemps,fHums){
   var ctx=document.getElementById('d-chart').getContext('2d');
   if(_dChart) _dChart.destroy();
   var labels=[]; for(var h=0;h<24;h++) labels.push(h+'時');
+  var ds=[
+    { label:'店内 温度(℃)', data:temps, borderColor:'#b03020', yAxisID:'y', tension:.3, spanGaps:true, pointRadius:2 },
+    { label:'店内 湿度(%)', data:hums, borderColor:'#1a6e58', yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:2 },
+    { label:'外気 温度(℃)', data:oTemps, borderColor:'#b03020', borderDash:[5,4], yAxisID:'y', tension:.3, spanGaps:true, pointRadius:0 },
+    { label:'外気 湿度(%)', data:oHums, borderColor:'#1a6e58', borderDash:[5,4], yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:0 }
+  ];
+  if(fTemps&&fTemps.some(function(x){return x!=null;})) ds.push({ label:'冷凍庫 温度(℃)', data:fTemps, borderColor:'#2b6cb0', borderDash:[2,2], yAxisID:'y', tension:.3, spanGaps:true, pointRadius:0 });
+  if(fHums&&fHums.some(function(x){return x!=null;})) ds.push({ label:'冷凍庫 湿度(%)', data:fHums, borderColor:'#9333ea', borderDash:[2,2], yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:0 });
   _dChart=new Chart(ctx,{ type:'line',
-    data:{ labels:labels, datasets:[
-      { label:'店内 温度(℃)', data:temps, borderColor:'#b03020', yAxisID:'y', tension:.3, spanGaps:true, pointRadius:2 },
-      { label:'店内 湿度(%)', data:hums, borderColor:'#1a6e58', yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:2 },
-      { label:'外気 温度(℃)', data:oTemps, borderColor:'#b03020', borderDash:[5,4], yAxisID:'y', tension:.3, spanGaps:true, pointRadius:0 },
-      { label:'外気 湿度(%)', data:oHums, borderColor:'#1a6e58', borderDash:[5,4], yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:0 }
-    ]},
+    data:{ labels:labels, datasets:ds },
     options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
       scales:{ y:{position:'left',title:{display:true,text:'温度(℃)'}}, y1:{position:'right',title:{display:true,text:'湿度(%)'},grid:{drawOnChartArea:false}} } }
   });
@@ -231,18 +282,21 @@ async function loadMonthly(){
   try{
     var snap=await db.collection('envLog').where('ym','==',ym).get();
     var byDay={};
-    var allT=[],allH=[],allOT=[],allOH=[];
+    var allT=[],allH=[],allOT=[],allOH=[],allFT=[],allFH=[];
     snap.forEach(function(d){
       var v=d.data(); var day=v.date;
-      if(!byDay[day]) byDay[day]={t:[],h:[],ot:[],oh:[]};
+      if(!byDay[day]) byDay[day]={t:[],h:[],ot:[],oh:[],ft:[],fh:[]};
       if(typeof v.temperature==='number'){ byDay[day].t.push(v.temperature); allT.push(v.temperature); }
       if(typeof v.humidity==='number'){ byDay[day].h.push(v.humidity); allH.push(v.humidity); }
       if(typeof v.outdoorTemperature==='number'){ byDay[day].ot.push(v.outdoorTemperature); allOT.push(v.outdoorTemperature); }
       if(typeof v.outdoorHumidity==='number'){ byDay[day].oh.push(v.outdoorHumidity); allOH.push(v.outdoorHumidity); }
+      if(typeof v.freezerTemperature==='number'){ byDay[day].ft.push(v.freezerTemperature); allFT.push(v.freezerTemperature); }
+      if(typeof v.freezerHumidity==='number'){ byDay[day].fh.push(v.freezerHumidity); allFH.push(v.freezerHumidity); }
     });
     var days=Object.keys(byDay).sort();
     document.getElementById('m-stats').innerHTML=
       statTile('店内 月平均温度',allT,'℃','temp-c')+statTile('店内 月平均湿度',allH,'%','hum-c')
+      +((allFT.length||allFH.length)?(statTile('冷凍庫 月平均温度',allFT,'℃','temp-c')+statTile('冷凍庫 月平均湿度',allFH,'%','hum-c')):'')
       +statTile('外気 月平均温度',allOT,'℃','temp-c')+statTile('外気 月平均湿度',allOH,'%','hum-c')
       +'<div class="stat"><div class="k">記録日数</div><div class="v">'+days.length+'<small> 日</small></div></div>';
     drawMonthly(days,byDay);
@@ -255,13 +309,17 @@ function drawMonthly(days,byDay){
   if(_mChart) _mChart.destroy();
   var labels=days.map(function(d){ return parseInt(d.slice(6,8))+'日'; });
   function dayAvg(k){ return days.map(function(d){ return byDay[d][k].length?round1(avg(byDay[d][k])):null; }); }
+  var ds=[
+    { label:'店内 温度(℃)', data:dayAvg('t'), borderColor:'#b03020', yAxisID:'y', tension:.3, spanGaps:true, pointRadius:2 },
+    { label:'店内 湿度(%)', data:dayAvg('h'), borderColor:'#1a6e58', yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:2 },
+    { label:'外気 温度(℃)', data:dayAvg('ot'), borderColor:'#b03020', borderDash:[5,4], yAxisID:'y', tension:.3, spanGaps:true, pointRadius:0 },
+    { label:'外気 湿度(%)', data:dayAvg('oh'), borderColor:'#1a6e58', borderDash:[5,4], yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:0 }
+  ];
+  var ftd=dayAvg('ft'), fhd=dayAvg('fh');
+  if(ftd.some(function(x){return x!=null;})) ds.push({ label:'冷凍庫 温度(℃)', data:ftd, borderColor:'#2b6cb0', borderDash:[2,2], yAxisID:'y', tension:.3, spanGaps:true, pointRadius:0 });
+  if(fhd.some(function(x){return x!=null;})) ds.push({ label:'冷凍庫 湿度(%)', data:fhd, borderColor:'#9333ea', borderDash:[2,2], yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:0 });
   _mChart=new Chart(ctx,{ type:'line',
-    data:{ labels:labels, datasets:[
-      { label:'店内 温度(℃)', data:dayAvg('t'), borderColor:'#b03020', yAxisID:'y', tension:.3, spanGaps:true, pointRadius:2 },
-      { label:'店内 湿度(%)', data:dayAvg('h'), borderColor:'#1a6e58', yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:2 },
-      { label:'外気 温度(℃)', data:dayAvg('ot'), borderColor:'#b03020', borderDash:[5,4], yAxisID:'y', tension:.3, spanGaps:true, pointRadius:0 },
-      { label:'外気 湿度(%)', data:dayAvg('oh'), borderColor:'#1a6e58', borderDash:[5,4], yAxisID:'y1', tension:.3, spanGaps:true, pointRadius:0 }
-    ]},
+    data:{ labels:labels, datasets:ds },
     options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
       scales:{ y:{position:'left',title:{display:true,text:'温度(℃)'}}, y1:{position:'right',title:{display:true,text:'湿度(%)'},grid:{drawOnChartArea:false}} } }
   });
@@ -269,10 +327,11 @@ function drawMonthly(days,byDay){
 function renderMonthlyTable(days,byDay){
   var tb=document.querySelector('#m-table tbody');
   tb.innerHTML=days.map(function(d){
-    var o=byDay[d]; var n=Math.max(o.t.length,o.h.length,o.ot.length,o.oh.length);
+    var o=byDay[d]; var n=Math.max(o.t.length,o.h.length,o.ot.length,o.oh.length,o.ft.length,o.fh.length);
     var tRange=o.t.length?(round1(Math.min.apply(null,o.t))+'〜'+round1(Math.max.apply(null,o.t))):'—';
     return '<tr><td>'+parseInt(d.slice(6,8))+'</td>'
       +'<td>'+(o.t.length?round1(avg(o.t)):'—')+'</td><td>'+tRange+'</td><td>'+(o.h.length?round1(avg(o.h)):'—')+'</td>'
+      +'<td>'+(o.ft.length?round1(avg(o.ft)):'—')+'</td><td>'+(o.fh.length?round1(avg(o.fh)):'—')+'</td>'
       +'<td>'+(o.ot.length?round1(avg(o.ot)):'—')+'</td><td>'+(o.oh.length?round1(avg(o.oh)):'—')+'</td>'
       +'<td>'+n+'</td></tr>';
   }).join('');
@@ -353,9 +412,48 @@ function switchTab(t){
   document.getElementById('panel-daily').classList.toggle('active', t==='daily');
   document.getElementById('panel-monthly').classList.toggle('active', t==='monthly');
   document.getElementById('panel-biz').classList.toggle('active', t==='biz');
+  document.getElementById('panel-setting').classList.toggle('active', t==='setting');
   if(t==='monthly' && !_mChart) loadMonthly();
   if(t==='biz' && !_bChart) loadBiz();
 }
+
+// ── センサー設定（店内/冷凍庫の割り当て） ──────────────
+var _meters=[], _curFreezer=null, _curIndoor=null;
+async function loadMeters(){
+  var msg=document.getElementById('set-msg'); msg.textContent='SwitchBotから取得中…';
+  if(!fns){ msg.textContent='Functions初期化エラー'; return; }
+  try{
+    var res=await fns.httpsCallable('listSwitchbotMeters')({});
+    var d=res.data||{}; _meters=d.meters||[]; _curFreezer=d.freezerDeviceId||null; _curIndoor=d.indoorDeviceId||null;
+    var list=document.getElementById('meter-list');
+    if(!_meters.length){ list.innerHTML='温湿度計デバイスが見つかりませんでした。'; document.getElementById('meter-save').style.display='none'; msg.textContent=''; return; }
+    list.innerHTML='<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="color:var(--ink3)"><th style="text-align:left;padding:4px 6px">デバイス</th><th style="text-align:left;padding:4px 6px">種別</th><th style="text-align:right;padding:4px 6px">温度</th><th style="text-align:right;padding:4px 6px">湿度</th><th style="text-align:center;padding:4px 6px">割当</th></tr></thead><tbody>'
+      +_meters.map(function(m){
+        var role=(m.deviceId===_curFreezer)?'🧊 冷凍庫':(m.deviceId===_curIndoor)?'🏠 店内':'';
+        return '<tr><td style="padding:4px 6px">'+escH(m.deviceName||'(名称なし)')+'<div style="font-size:10px;color:var(--ink3)">'+escH(m.deviceId)+'</div></td>'
+          +'<td style="padding:4px 6px;color:var(--ink3)">'+escH(m.deviceType||'')+'</td>'
+          +'<td style="padding:4px 6px;text-align:right">'+((m.temperature==null)?'—':round1(m.temperature)+'℃')+'</td>'
+          +'<td style="padding:4px 6px;text-align:right">'+((m.humidity==null)?'—':round1(m.humidity)+'%')+'</td>'
+          +'<td style="padding:4px 6px;text-align:center;font-weight:600">'+role+'</td></tr>';
+      }).join('')+'</tbody></table>';
+    var sel=document.getElementById('sel-freezer');
+    sel.innerHTML='<option value="">（未設定）</option>'+_meters.map(function(m){ return '<option value="'+escH(m.deviceId)+'"'+(m.deviceId===_curFreezer?' selected':'')+'>'+escH(m.deviceName||m.deviceId)+(m.temperature!=null?'（'+round1(m.temperature)+'℃）':'')+'</option>'; }).join('');
+    document.getElementById('meter-save').style.display='flex';
+    msg.textContent='';
+  }catch(e){ msg.textContent='取得失敗: '+(e&&e.message?e.message:e); }
+}
+async function saveMeters(){
+  var msg=document.getElementById('set-msg'); var fid=document.getElementById('sel-freezer').value||'';
+  if(fid && fid===_curIndoor){ msg.textContent='店内と同じデバイスは冷凍庫に割り当てできません'; return; }
+  msg.textContent='保存中…';
+  try{
+    await fns.httpsCallable('setEnvSensorDevices')({freezerDeviceId:fid});
+    _curFreezer=fid||null;
+    msg.textContent='保存しました（次回の取得（5分毎）から冷凍庫データが記録されます）';
+    loadMeters();
+  }catch(e){ msg.textContent='保存失敗: '+(e&&e.message?e.message:e); }
+}
+function escH(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 // ── 認証 ──────────────────────────────────
 AuthRole.requireStaff(auth,
@@ -371,6 +469,7 @@ AuthRole.requireStaff(auth,
     document.getElementById('b-end').value=_isoLocal(_bEnd);
     document.getElementById('b-start').value=_isoLocal(_bStart);
     loadDaily();
+    startLiveNow();
   },
   function(){ location.replace('tdhome.html'); }
 );
